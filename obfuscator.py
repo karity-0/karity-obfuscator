@@ -15,7 +15,7 @@ class Obfuscator:
         input_script    = self.read_input()
         output_path     = self.get_output()
         output_script   = self.obfuscate(input_script)
-
+        self.write_output(output_path, output_script)
         print(output_path)
         sys.exit(0)
 
@@ -31,10 +31,17 @@ class Obfuscator:
     def get_output(self):
         if self.args.output is None:
             input_path  = Path(self.args.input)
-            input_name  = input_path.stem
-            input_ext   = input_path.suffix
-            return f"{input_name}_obfuscated{input_ext}"
+            return input_path.with_name(f"{input_path.stem}_obfuscated{input_path.suffix}")
         return self.args.output
+
+    def write_output(self, path: str, script: str):
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(script)
+        except Exception as e:
+            print(f"cant write output script {path}", file=sys.stderr)
+            sys.exit(1)
+
 
     def obfuscate(self, script: str) -> str:
         output = f"-- obfuscated!\n{script}"
