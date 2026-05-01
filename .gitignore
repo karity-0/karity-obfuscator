@@ -1,2 +1,10 @@
-*_obfuscated.lua
+/// python ///
+*.pyc
+__pycache__
+
+/// obfuscator ///
+obfuscator/
+
+// test
 test/output
+*_obfuscated.lua
