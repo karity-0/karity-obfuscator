@@ -9,7 +9,7 @@ class Obfuscator:
     def start(self):
         arg_parser = argparse.ArgumentParser(description="lua obfuscator")
         arg_parser.add_argument("input", help="input lua script")
-        arg_parser.add_argument("-o", "--output", help="output lua sccript")
+        arg_parser.add_argument("-o", "--output", help="output lua script")
         self.args = arg_parser.parse_args()
 
         input_script    = self.read_input()
