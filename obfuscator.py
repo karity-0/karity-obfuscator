@@ -13,10 +13,9 @@ class Obfuscator:
         self.args = arg_parser.parse_args()
 
         input_script    = self.read_input()
-        output_path     = self.get_output()
+        output_path     = self.get_output_path()
         output_script   = self.obfuscate(input_script)
         self.write_output(output_path, output_script)
-        print(output_path)
         sys.exit(0)
 
     def read_input(self):
@@ -28,7 +27,7 @@ class Obfuscator:
             print(f"input script {self.args.input} not found.", file=sys.stderr)
             sys.exit(1)
 
-    def get_output(self):
+    def get_output_path(self):
         if self.args.output is None:
             input_path  = Path(self.args.input)
             return input_path.with_name(f"{input_path.stem}_obfuscated{input_path.suffix}")
