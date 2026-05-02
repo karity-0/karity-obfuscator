@@ -52,7 +52,7 @@ def main():
 
     print("obfuscating..")
     pipeline        = build_pipeline(args)
-    output_script   = pipeline.run(script)
+    output_script   = pipeline.run(script, args.verbose)
 
     print(f"saving → {output_path}")
     write_script(output_path, output_script)
