@@ -2,13 +2,15 @@ import sys
 import argparse
 from pathlib import Path
 
-from obfuscator import Pipeline, StringEncodePass
+from obfuscator\
+    import Pipeline, StringEncodePass, NumberObfuscationPass
 
 
 def build_pipeline() -> Pipeline:
     return (
         Pipeline()
         .add(StringEncodePass())
+        .add(NumberObfuscationPass())
     )
 
 
