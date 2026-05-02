@@ -1,1 +1,0 @@
-python obfuscator.py test.lua

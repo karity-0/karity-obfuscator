@@ -1,6 +1,8 @@
 from pathlib import Path
 import subprocess
 
+BASE_DIR = Path(__file__).parent
+
 def run_lua(path):
     result = subprocess.run(
         ["lua", str(path)],
@@ -11,8 +13,8 @@ def run_lua(path):
 
 
 def run_test():
-    scripts_dir = Path("scripts")
-    output_dir = Path("output")
+    scripts_dir = BASE_DIR / "scripts"
+    output_dir = BASE_DIR / "output"
     output_dir.mkdir(exist_ok=True)
 
     for script in scripts_dir.glob("*.lua"):
@@ -22,7 +24,7 @@ def run_test():
 
         obf_path = output_dir / f"{script.stem}_obfuscated.lua"
         subprocess.run(
-            ["python", "../obfuscator.py", str(script), "-o", str(obf_path)]
+            ["python", BASE_DIR.parent / "main.py", str(script), "-o", str(obf_path)]
         )
 
         rc2, out2, err2 = run_lua(obf_path)
