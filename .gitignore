@@ -1,0 +1,7 @@
+/// python ///
+*.pyc
+__pycache__
+
+// test
+test/output
+*_obfuscated.lua
