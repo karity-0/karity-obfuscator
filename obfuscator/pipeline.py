@@ -12,8 +12,11 @@ class Pipeline:
         self._passes.append(pass_)
         return self
 
-    def run(self, script: str) -> str:
+    def run(self, script: str, verbose: bool = False) -> str:
         tree = ast.parse(script)
+
+        if verbose:
+            print("tree:", ast.to_pretty_str(tree))
 
         all_replacements: list[Replacement] = []
         for pass_ in self._passes:

@@ -16,6 +16,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="lua obfuscator")
     parser.add_argument("input",              help="input lua script")
     parser.add_argument("-o", "--output",     help="output lua script")
+    parser.add_argument("-v", "--verbose", action="store_true", help="print debug info")
     return parser.parse_args()
 
 
