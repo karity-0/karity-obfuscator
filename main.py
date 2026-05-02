@@ -6,7 +6,7 @@ from obfuscator\
     import Pipeline, StringEncodePass, NumberObfuscationPass
 
 
-def build_pipeline() -> Pipeline:
+def build_pipeline(args) -> Pipeline:
     return (
         Pipeline()
         .add(StringEncodePass())
@@ -51,7 +51,7 @@ def main():
     output_path = resolve_output_path(args.input, args.output)
 
     print("obfuscating..")
-    pipeline        = build_pipeline()
+    pipeline        = build_pipeline(args)
     output_script   = pipeline.run(script)
 
     print(f"saving → {output_path}")
