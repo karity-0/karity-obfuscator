@@ -1,18 +1,25 @@
 from luaparser import ast
-from .passes.base import BasePass, Replacement
+from .passes.base import BasePass, PrePass, Replacement
 
 
 class Pipeline:
     HEADER = "-- obfuscated!\n"
 
     def __init__(self):
+        self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
 
-    def add(self, pass_: BasePass) -> "Pipeline":
-        self._passes.append(pass_)
+    def add(self, pass_: BasePass | PrePass) -> "Pipeline":
+        if isinstance(pass_, PrePass):
+            self._pre_passes.append(pass_)
+        else:
+            self._passes.append(pass_)
         return self
 
     def run(self, script: str, verbose: bool = False) -> str:
+        for pre in self._pre_passes:
+            script = pre.run(script)
+
         tree = ast.parse(script)
 
         if verbose:
@@ -23,11 +30,7 @@ class Pipeline:
             all_replacements.extend(pass_.run(script, tree))
 
         return self._apply(script, all_replacements)
-
-    # ------------------------------------------------------------------
-
-    # ------------------------------------------------------------------
-
+    
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
         for r in sorted(replacements, key=lambda r: r.start, reverse=True):
             src = src[: r.start] + r.new_text + src[r.end + 1 :]
