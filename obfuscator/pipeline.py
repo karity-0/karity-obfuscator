@@ -1,3 +1,4 @@
+from __future__ import annotations
 from luaparser import ast
 from .passes.base import BasePass, PrePass, Replacement
 
@@ -9,7 +10,7 @@ class Pipeline:
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
 
-    def add(self, pass_: BasePass | PrePass) -> "Pipeline":
+    def add(self, pass_: BasePass | PrePass) -> Pipeline:
         if isinstance(pass_, PrePass):
             self._pre_passes.append(pass_)
         else:
