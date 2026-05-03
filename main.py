@@ -6,16 +6,17 @@ from obfuscator\
     import (
         Pipeline, 
         StringEncodePass, NumberObfuscationPass,
-        RemoveCommentPass
+        RemoveCommentPass, MinifyPass
     )
 
 
 def build_pipeline(args) -> Pipeline:
     return (
         Pipeline()
-        .add(RemoveCommentPass())
         .add(StringEncodePass())
         .add(NumberObfuscationPass())
+        
+        .add(MinifyPass())
     )
 
 

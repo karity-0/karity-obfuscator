@@ -34,3 +34,10 @@ class PrePass(ABC):
     @abstractmethod
     def run(self, script: str) -> str:
         ...
+
+
+class PostPass(ABC):
+    """Pipeline._apply() 이후 최종 문자열을 받아 변환하는 pass."""
+    @abstractmethod
+    def run(self, script: str) -> str:
+        ...

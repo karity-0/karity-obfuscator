@@ -3,10 +3,5 @@ from .passes import (
     StringEncodePass,
     NumberObfuscationPass,
     RemoveCommentPass,
+    MinifyPass,
 )
-
-__all__ = ["Pipeline", 
-           "StringEncodePass", 
-           "NumberObfuscationPass",
-           "RemoveCommentPass"           
-]
