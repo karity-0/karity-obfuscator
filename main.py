@@ -3,7 +3,11 @@ import argparse
 from pathlib import Path
 
 from obfuscator\
-    import Pipeline, StringEncodePass, NumberObfuscationPass
+    import (
+        Pipeline, 
+        StringEncodePass, NumberObfuscationPass,
+        RemoveCommentPass, MinifyPass
+    )
 
 
 def build_pipeline(args) -> Pipeline:
@@ -11,6 +15,8 @@ def build_pipeline(args) -> Pipeline:
         Pipeline()
         .add(StringEncodePass())
         .add(NumberObfuscationPass())
+        
+        .add(MinifyPass())
     )
 
 

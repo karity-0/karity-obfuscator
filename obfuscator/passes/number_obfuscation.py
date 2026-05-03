@@ -5,13 +5,11 @@ from .base import BasePass, Replacement
 
 class NumberObfuscationPass(BasePass):
     """
-    x = 10
-    print(x, 30)
+    a = 10
+    
+    to
 
-    ->
-
-    x = (1+5-3+7)
-    print(x, (20+15-5))
+    a = (203292562~203292568)
     """
     
     def run(self, script: str, tree) -> list[Replacement]:

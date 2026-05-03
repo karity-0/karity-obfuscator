@@ -27,3 +27,17 @@ class BasePass(ABC):
     @staticmethod
     def walk(tree):
         return ast.walk(tree)
+    
+
+class PrePass(ABC):
+    """AST parse 전에 소스 텍스트만 받아서 변환하는 pass."""
+    @abstractmethod
+    def run(self, script: str) -> str:
+        ...
+
+
+class PostPass(ABC):
+    """Pipeline._apply() 이후 최종 문자열을 받아 변환하는 pass."""
+    @abstractmethod
+    def run(self, script: str) -> str:
+        ...
