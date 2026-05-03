@@ -14,6 +14,7 @@ lua-obfuscator/
 │       ├── base.py                # BasePass, Replacement
 │       ├── string_encode.py       # StringEncodePass
 │       └── number_obfuscation.py  # NumberObfuscationPass
+│       └── ...                    # additional passes
 └── test/
     ├── run_test.py
     ├── scripts/                   # test lua scripts
@@ -41,6 +42,7 @@ python main.py input.lua -v
 ## features
 - string obfuscation
 - number obfuscation
+- minifier
 
 ## passes
 
@@ -62,6 +64,24 @@ local a = 10
 
 -- after
 local a = (203292562~203292568)
+```
+
+**MinifyPass** — remove comments and whitespace
+
+```lua
+-- before
+a = 50
+b = 20
+
+a = a - -b
+print(a)
+
+
+a = a + -b
+print(a)
+
+-- after
+a=50 b=20 a=a - -b print(a) a=a+-b print(a)
 ```
 
 ## testing
