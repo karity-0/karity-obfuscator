@@ -1,5 +1,6 @@
 from __future__ import annotations
 from luaparser import ast
+from .verbosity import Verbosity
 from .passes.base import BasePass, PrePass, PostPass, Replacement
 
 
@@ -20,20 +21,22 @@ class Pipeline:
             self._passes.append(pass_)
         return self
 
-    def run(self, script: str, verbose: bool = False) -> str:
+    def run(self, script: str, verbose: int = 0) -> str:
         for pre in self._pre_passes:
             script = pre.run(script)
 
         for pass_ in self._passes:
             tree = ast.parse(script)
-            if verbose:
-                sep = "-" * 40
-                print(f"\n{sep} {pass_.__class__.__name__} {sep}")
-                print(ast.to_pretty_str(tree))
-                print(ast.to_lua_source(tree))
-
             replacements = pass_.run(script, tree)
             script = self._apply(script, replacements)
+            if verbose >= Verbosity.NORMAL:
+                sep = "-" * 40
+                print(f"\n{sep} {pass_.__class__.__name__} {sep}")
+                print(script)
+                if verbose >= Verbosity.DEBUG:
+                    new_tree = ast.parse(script)
+                    print(ast.to_pretty_str(new_tree))
+
 
         for post in self._post_passes:
             script = post.run(script)
