@@ -5,7 +5,7 @@ from pathlib import Path
 from obfuscator\
     import (
         Pipeline, 
-        StringEncodePass, NumberObfuscationPass,
+        StringEncodePass, NumberObfuscationPass, BooleanObfuscationPass,
         RemoveCommentPass, MinifyPass
     )
 
@@ -14,8 +14,9 @@ def build_pipeline(args) -> Pipeline:
     return (
         Pipeline()
         .add(StringEncodePass())
+        .add(BooleanObfuscationPass())
         .add(NumberObfuscationPass())
-        
+
         .add(MinifyPass())
     )
 
