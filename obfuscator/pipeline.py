@@ -24,23 +24,19 @@ class Pipeline:
         for pre in self._pre_passes:
             script = pre.run(script)
 
-        tree = ast.parse(script)
-
-        if verbose:
-            print("tree:", ast.to_pretty_str(tree))
-            print("source:", ast.to_lua_source(tree))
-
-        all_replacements: list[Replacement] = []
         for pass_ in self._passes:
-            all_replacements.extend(pass_.run(script, tree))
+            tree = ast.parse(script)
+            if verbose:
+                print("tree:", ast.to_pretty_str(tree))
+                print("source:", ast.to_lua_source(tree))
 
-        result = self._apply(script, all_replacements)
+            replacements = pass_.run(script, tree)
+            script = self._apply(script, replacements)
 
         for post in self._post_passes:
-            result = post.run(result)
+            script = post.run(script)
 
-        result = f"{self.HEADER}{result}"
-        return result
+        return f"{self.HEADER}{script}"
     
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
         for r in sorted(replacements, key=lambda r: r.start, reverse=True):
