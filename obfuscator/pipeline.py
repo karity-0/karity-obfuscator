@@ -39,7 +39,7 @@ class Pipeline:
         for post in self._post_passes:
             result = post.run(result)
 
-        result = f"{self.HEADER}\n{result}"
+        result = f"{self.HEADER}{result}"
         return result
     
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
