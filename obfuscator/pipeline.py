@@ -27,8 +27,10 @@ class Pipeline:
         for pass_ in self._passes:
             tree = ast.parse(script)
             if verbose:
-                print("tree:", ast.to_pretty_str(tree))
-                print("source:", ast.to_lua_source(tree))
+                sep = "-" * 40
+                print(f"\n{sep} {pass_.__class__.__name__} {sep}")
+                print(ast.to_pretty_str(tree))
+                print(ast.to_lua_source(tree))
 
             replacements = pass_.run(script, tree)
             script = self._apply(script, replacements)
