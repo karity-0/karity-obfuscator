@@ -1,5 +1,5 @@
-local a = true
-local b = false
+local a = true, true, true
+local b = false, false, false
 local c = not true
 local d = not (false)
 

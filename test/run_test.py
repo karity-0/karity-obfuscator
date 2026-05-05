@@ -6,8 +6,7 @@ BASE_DIR = Path(__file__).parent
 def run_lua(path):
     result = subprocess.run(
         ["lua", str(path)],
-        capture_output=True,
-        text=True
+        capture_output=True
     )
     return result.returncode, result.stdout, result.stderr
 
