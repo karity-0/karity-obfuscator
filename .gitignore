@@ -8,5 +8,4 @@ test/output
 test_out.lua
 
 // vm
-vm.lua
 vm_plain.lua
