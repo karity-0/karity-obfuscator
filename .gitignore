@@ -5,3 +5,7 @@ __pycache__
 // test
 test/output
 *_obfuscated.lua
+test_out.lua
+
+// vm
+vm_plain.lua

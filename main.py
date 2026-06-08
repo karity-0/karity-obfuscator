@@ -5,18 +5,24 @@ from pathlib import Path
 from obfuscator\
     import (
         Pipeline, 
-        StringEncodePass, NumberObfuscationPass,
-        RemoveCommentPass, MinifyPass
+        StringEncodePass, StringObfuscationPass,
+        NumberObfuscationPass, BooleanObfuscationPass,
+        RenameObfuscationPass,
+        RemoveCommentPass, MinifyPass,
+        VMPass,
     )
 
 
 def build_pipeline(args) -> Pipeline:
     return (
-        Pipeline()
-        .add(StringEncodePass())
+        Pipeline( show_header=False )
+        #.add(StringEncodePass())
+        .add(StringObfuscationPass())
+        .add(BooleanObfuscationPass())
         .add(NumberObfuscationPass())
-        
-        .add(MinifyPass())
+        #.add(RenameObfuscationPass())
+        #.add(MinifyPass())
+        .add(VMPass())
     )
 
 
@@ -24,7 +30,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description="lua obfuscator")
     parser.add_argument("input",              help="input lua script")
     parser.add_argument("-o", "--output",     help="output lua script")
-    parser.add_argument("-v", "--verbose", action="store_true", help="print debug info")
+    parser.add_argument("-v", "--verbose", action="count", default=0, help="print debug info")
     return parser.parse_args()
 
 
@@ -52,6 +58,8 @@ def write_script(path: Path, script: str) -> None:
 
 
 def main():
+    sys.setrecursionlimit(5000)
+    
     args        = parse_args()
     script      = read_script(args.input)
     output_path = resolve_output_path(args.input, args.output)
