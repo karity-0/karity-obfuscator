@@ -7,10 +7,12 @@ from .passes.base import BasePass, PrePass, PostPass, Replacement
 class Pipeline:
     HEADER = "-- obfuscated!\n"
 
-    def __init__(self):
+    def __init__(self, show_header: bool = True):
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
+
+        self.show_header = show_header
 
     def add(self, pass_: BasePass | PrePass) -> Pipeline:
         if isinstance(pass_, PrePass):
@@ -41,7 +43,7 @@ class Pipeline:
         for post in self._post_passes:
             script = post.run(script)
 
-        return f"{self.HEADER}{script}"
+        return f"{self.HEADER}{script}" if self.show_header else script
     
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
         for r in sorted(replacements, key=lambda r: r.start, reverse=True):

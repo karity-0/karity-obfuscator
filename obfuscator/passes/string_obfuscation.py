@@ -3,7 +3,7 @@ from luaparser import astnodes
 from .base import BasePass, Replacement
 
 
-_CHUNK_SIZE = 4  # string.char() 하나당 묶을 바이트 수
+_CHUNK_SIZE = 16  # string.char() 하나당 묶을 바이트 수
 
 
 def parse_lua_string(raw: str) -> bytes:
