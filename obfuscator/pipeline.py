@@ -14,7 +14,7 @@ def info_message(step: str, p: PassType, message: str):
 
 
 class Pipeline:
-    HEADER = "-- obfuscated!\n"
+    HEADER = "-- obfuscated using karity obfuscator!\n"
 
     def __init__(self, show_header: bool = True):
         self._pre_passes: list[PrePass] = []
