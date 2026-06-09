@@ -37,8 +37,20 @@ def _compile(script: str) -> bytes:
             os.unlink(out_path)
 
 
-def _to_lua_string(data: bytes) -> str:
-    return '"' + "".join(f"\\{b}" for b in data) + '"'
+def _to_base36(data: bytes) -> str:
+    """bytes → "length:base36payload" 형식"""
+    length = len(data)
+    n = int.from_bytes(data, 'big') if data else 0
+    digits = []
+    while n:
+        digits.append('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[n % 36])
+        n //= 36
+    payload = ''.join(reversed(digits)) if digits else '0'
+    ln, length_enc = length, ''
+    while ln:
+        length_enc = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[ln % 36] + length_enc
+        ln //= 36
+    return '"' + (length_enc or '0') + ':' + payload + '"' 
 
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
@@ -54,10 +66,7 @@ def _make_shuffle_map() -> dict[int, int]:
  
 def _apply_shuffle_to_vm(vm_code: str, shuffle_map: dict[int, int]) -> str:
     """vm.lua exec 분기의 op==N 숫자를 shuffle_map[N] 으로 직접 치환"""
-    def replace_op(m: re.Match) -> str:
-        n = int(m.group(1))
-        return f"op=={shuffle_map[n]}"
-    return re.sub(r'op==(\d+)', replace_op, vm_code)
+    return re.sub(r'op==(\d+)', lambda m: f"op=={shuffle_map[int(m.group(1))]}", vm_code)
 
 
 def _load_vm() -> str:
@@ -79,11 +88,11 @@ def _obfuscate_vm_output(script: str) -> str:
 
     return (
         Pipeline()
-        .add(StringObfuscationPass())
-        .add(BooleanObfuscationPass())
-        .add(NumberObfuscationPass())
-        .add(RenameObfuscationPass())
-        .add(MinifyPass())
+        #.add(StringObfuscationPass())
+        #.add(BooleanObfuscationPass())
+        #.add(NumberObfuscationPass())
+        #.add(RenameObfuscationPass())
+        #.add(MinifyPass())
     ).run(script)
 
 
@@ -104,15 +113,15 @@ class VMPass(PostPass):
         _KEY = "karityObfuscator"
         nonce, ct = encrypt_blob(blob, _KEY)
         encrypted_blob = nonce + ct
-        lua_blob = _to_lua_string(encrypted_blob)
+        lua_blob = _to_base36(encrypted_blob)
 
         # 5. 최종 출력 조합
         raw = (
             f"local _vm=(function()\n"
             f"{vm_code}\n"
-            f"return {{a=run, b=kae_decrypt}}\n"
+            f"return {{a=run}}\n"
             f"end)()\n"
-            f"_vm.a(_vm.b({lua_blob}, 'karityObfuscator'))\n"
+            f"_vm.a({lua_blob},'karityObfuscator')\n"
         )
 
         # 6. VM 출력물 재난독화

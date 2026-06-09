@@ -68,6 +68,35 @@ end
 
 ----------------------------------------
 
+local function from_base36(s)
+    local sep=s:find(':')
+    local length=0
+    for i=1,sep-1 do
+        local c=s:sub(i,i):byte(1)
+        length=length*36+(c>=48 and c<=57 and c-48 or c-55)
+    end
+    local d={}
+    for i=sep+1,#s do
+        local c=s:sub(i,i):byte(1)
+        d[#d+1]=c>=48 and c<=57 and c-48 or c-55
+    end
+    local bytes={}
+    local function is_zero()
+        for _,v in ipairs(d) do if v~=0 then return false end end
+        return true
+    end
+    while not is_zero() do
+        local rem=0
+        for i=1,#d do
+            local val=rem*36+d[i]
+            d[i]=val//256; rem=val%256
+        end
+        table.insert(bytes,1,rem)
+    end
+    while #bytes<length do table.insert(bytes,1,0) end
+    return string.char(table.unpack(bytes))
+end
+
 local function make_reader(blob)
     local pos=1; local r={}
     function r.u8() local v=blob:byte(pos); pos=pos+1; return v end
@@ -300,7 +329,8 @@ exec = function(proto, upvals, args, va_in)
     end
 end
 
-local function run(blob)
+local function run(blob,key)
+    blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
     local proto=read_proto(r)
     local env_box={v=_ENV}
