@@ -1,8 +1,10 @@
 from __future__ import annotations
 import subprocess
 import tempfile
-import os
+import secrets
+import string
 import random
+import os
 import re
 from pathlib import Path
 
@@ -50,7 +52,7 @@ def _to_base36(data: bytes) -> str:
     while ln:
         length_enc = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[ln % 36] + length_enc
         ln //= 36
-    return '"' + (length_enc or '0') + ':' + payload + '"' 
+    return '"KARITY/' + (length_enc or '0') + ':' + payload + '"' 
 
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
@@ -89,8 +91,8 @@ def _obfuscate_vm_output(script: str) -> str:
     return (
         Pipeline()
         #.add(StringObfuscationPass())
-        #.add(BooleanObfuscationPass())
-        #.add(NumberObfuscationPass())
+        .add(BooleanObfuscationPass())
+        .add(NumberObfuscationPass())
         #.add(RenameObfuscationPass())
         #.add(MinifyPass())
     ).run(script)
@@ -110,18 +112,22 @@ class VMPass(PostPass):
         vm_code = _apply_shuffle_to_vm(_load_vm(), shuffle_map)
 
         # 4. blob 암호화: nonce(8B) + ciphertext
-        _KEY = "karityObfuscator"
+        alphabet = string.ascii_letters + string.digits
+        _KEY = "karityObfuscator/" + ''.join(
+            secrets.choice(alphabet) for _ in range(16)
+        )
         nonce, ct = encrypt_blob(blob, _KEY)
         encrypted_blob = nonce + ct
         lua_blob = _to_base36(encrypted_blob)
 
         # 5. 최종 출력 조합
         raw = (
-            f"local _vm=(function()\n"
-            f"{vm_code}\n"
-            f"return {{a=run}}\n"
-            f"end)()\n"
-            f"_vm.a({lua_blob},'karityObfuscator')\n"
+            f'local a="obfuscated using karity obfuscator"\n'
+            f'return ((function(...)\n'
+            f'local k1,k2,k3,k4,k5,k6,k7 = ... '
+            f'{vm_code} return run end)'
+            f'(1032,413,258,104,953,283,120)'
+            f'({lua_blob}, "{_KEY}"))'
         )
 
         # 6. VM 출력물 재난독화
