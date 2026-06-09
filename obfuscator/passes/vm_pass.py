@@ -1,6 +1,8 @@
 from __future__ import annotations
 import subprocess
+import platform
 import tempfile
+import shutil
 import os
 from pathlib import Path
 
@@ -8,7 +10,14 @@ from .base import PostPass
 from .parser import Lua53Parser
 from .serializer import serialize
 
-_LUAC        = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
+if platform.system() == "Windows":
+    _LUAC = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
+else:
+    _LUAC = shutil.which("luac5.3") or shutil.which("luac53") or "luac5.3"
+
+if not _LUAC or (isinstance(_LUAC, Path) and not _LUAC.exists()):
+    raise FileNotFoundError("luac5.3 not found.")
+
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
 
 
