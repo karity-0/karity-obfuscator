@@ -1,4 +1,5 @@
 import sys
+import time
 import argparse
 from pathlib import Path
 
@@ -65,11 +66,17 @@ def main():
     output_path = resolve_output_path(args.input, args.output)
 
     print("obfuscating..")
+
+    start_time      = time.perf_counter()
+
     pipeline        = build_pipeline(args)
     output_script   = pipeline.run(script, args.verbose)
 
+    elapsed         = time.perf_counter() - start_time
+
     print(f"saving → {output_path}")
     write_script(output_path, output_script)
+    print(f"obfuscation completed in {elapsed:.3f}s")
 
 
 if __name__ == "__main__":
