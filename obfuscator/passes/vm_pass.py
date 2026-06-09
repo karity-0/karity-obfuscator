@@ -2,6 +2,8 @@ from __future__ import annotations
 import subprocess
 import tempfile
 import os
+import random
+import re
 from pathlib import Path
 
 from .base import PostPass
@@ -39,6 +41,25 @@ def _to_lua_string(data: bytes) -> str:
     return '"' + "".join(f"\\{b}" for b in data) + '"'
 
 
+_LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
+
+
+def _make_shuffle_map() -> dict[int, int]:
+    """원본op → 셔플op 매핑 (랜덤 순열)"""
+    ops = list(range(_LUA_OP_COUNT))
+    shuffled = ops[:]
+    random.shuffle(shuffled)
+    return {orig: shuf for orig, shuf in zip(ops, shuffled)}
+ 
+ 
+def _apply_shuffle_to_vm(vm_code: str, shuffle_map: dict[int, int]) -> str:
+    """vm.lua exec 분기의 op==N 숫자를 shuffle_map[N] 으로 직접 치환"""
+    def replace_op(m: re.Match) -> str:
+        n = int(m.group(1))
+        return f"op=={shuffle_map[n]}"
+    return re.sub(r'op==(\d+)', replace_op, vm_code)
+
+
 def _load_vm() -> str:
     src = _VM_LUA_PATH.read_text(encoding="utf-8")
     cutoff = src.find("\nif arg and arg[0]")
@@ -71,12 +92,13 @@ class VMPass(PostPass):
         # 1. luac 컴파일
         luac_bytes = _compile(script)
 
-        # 2. 파싱 → 커스텀 직렬화 (헤더 제거, debug info 제거)
+        # 2. 파싱 → 커스텀 직렬화
+        shuffle_map = _make_shuffle_map()
         proto = Lua53Parser(luac_bytes).parse()
-        blob  = serialize(proto)
+        blob  = serialize(proto, shuffle_map)
 
-        # 3. VM 코드 로드
-        vm_code = _load_vm()
+        # 3. VM 코드 로드 + opmap
+        vm_code = _apply_shuffle_to_vm(_load_vm(), shuffle_map)
 
         # 4. blob 암호화: nonce(8B) + ciphertext
         _KEY = "karityObfuscator"

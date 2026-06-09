@@ -72,6 +72,8 @@ class BinReader:
 
 
 # ---------------------------------------------------------------------------
+# 상수 태그 (커스텀)
+# ---------------------------------------------------------------------------
 CTAG_NIL   = 0
 CTAG_BOOL  = 1
 CTAG_INT   = 2
@@ -80,20 +82,25 @@ CTAG_STR   = 4
 
 
 # ---------------------------------------------------------------------------
-def serialize(proto: Proto) -> bytes:
+# 직렬화
+# ---------------------------------------------------------------------------
+def serialize(proto: Proto, shuffle_map: dict[int, int] | None = None) -> bytes:
     w = Writer()
-    _write_proto(w, proto)
+    _write_proto(w, proto, shuffle_map)
     return w.data()
 
 
-def _write_proto(w: Writer, proto: Proto):
+def _write_proto(w: Writer, proto: Proto, shuffle_map: dict[int, int] | None = None):
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
 
-    # 명령어
+    # 명령어 (shuffle_map 있으면 op 필드 remapping)
     w.u32(len(proto.code))
     for instr in proto.code:
+        if shuffle_map:
+            op    = instr & 0x3F
+            instr = (instr & ~0x3F) | shuffle_map[op]
         w.u32(instr)
 
     # 상수
@@ -125,9 +132,11 @@ def _write_proto(w: Writer, proto: Proto):
     # 중첩 proto
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub)
+        _write_proto(w, sub, shuffle_map)
 
 
+# ---------------------------------------------------------------------------
+# 역직렬화
 # ---------------------------------------------------------------------------
 def deserialize(data: bytes) -> Proto:
     r = BinReader(data)
@@ -181,6 +190,8 @@ def _read_proto(r: BinReader) -> Proto:
     )
 
 
+# ---------------------------------------------------------------------------
+# 테스트
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import sys
