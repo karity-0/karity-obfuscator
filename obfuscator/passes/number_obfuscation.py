@@ -96,7 +96,7 @@ class NumberObfuscationPass(BasePass):
             else:
                 expr = self._gen_int_expr(
                     int(node.n),
-                    random.randint(2, 4),
+                    random.randint(2, 3),
                 )
 
             replacements.append(
