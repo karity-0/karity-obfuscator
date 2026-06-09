@@ -69,6 +69,10 @@ end
 ----------------------------------------
 
 local function from_base36(s)
+    if s:sub(1,7) ~= "KARITY/" then
+        error("invalid blob")
+    end
+    s = s:sub(8)
     local sep=s:find(':')
     local length=0
     for i=1,sep-1 do
