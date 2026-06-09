@@ -1,5 +1,73 @@
 -- Lua 5.3 VM (standalone)
 
+----------------------------------------
+local _KAE_PRIMES={0x07,0x0B,0x0D,0x11,0x13,0x17,0x1D,0x1F}
+
+local function _gf_mul(a,b)
+    local p=0
+    for _=1,8 do
+        if b&1~=0 then p=p~a end
+        local hi=a&0x80
+        a=(a<<1)&0xFF
+        if hi~=0 then a=a~0x1B end
+        b=b>>1
+    end
+    return p
+end
+
+local _KAE_SBOX do
+    local function _gf_inv(x)
+        if x==0 then return 0 end
+        local r,base,exp=1,x,254
+        while exp>0 do
+            if exp&1~=0 then r=_gf_mul(r,base) end
+            base=_gf_mul(base,base); exp=exp>>1
+        end
+        return r
+    end
+    local function _affine(x)
+        local c,result=0x63,0
+        for i=0,7 do
+            local bit=((x>>i)&1)~((x>>((i+4)%8))&1)~((x>>((i+5)%8))&1)~
+                      ((x>>((i+6)%8))&1)~((x>>((i+7)%8))&1)~((c>>i)&1)
+            result=result|(bit<<i)
+        end
+        return result
+    end
+    _KAE_SBOX={}
+    for i=0,255 do _KAE_SBOX[i]=_affine(_gf_inv(i)) end
+end
+
+local function _kae_derive(key_bytes, length)
+    local K,prev={},0x6A
+    for i=0,length-1 do
+        local k0=key_bytes[i%#key_bytes+1]
+        local raw=_gf_mul(_KAE_SBOX[(k0~i~(i>>3))&0xFF],_KAE_PRIMES[i%8+1])
+        local ki=raw~((prev<<3|prev>>5)&0xFF)~((i*0x97)&0xFF)
+        K[i+1]=ki; prev=ki
+    end
+    return K
+end
+
+local function kae_decrypt(blob, key)
+    -- blob 레이아웃: nonce(8B) | ciphertext
+    local nonce={}
+    for i=1,8 do nonce[i]=blob:byte(i) end
+    local n=#blob-8
+    local key_ints={}
+    for i=1,#key do key_ints[i]=key:byte(i) end
+    local blended={}
+    for i=0,n+7 do
+        blended[i+1]=(key_ints[i%#key_ints+1]~nonce[i%8+1]~_KAE_SBOX[i&0xFF])&0xFF
+    end
+    local RK=_kae_derive(blended,n)
+    local pt={}
+    for i=1,n do pt[i]=blob:byte(8+i)~RK[i] end
+    return string.char(table.unpack(pt))
+end
+
+----------------------------------------
+
 local function make_reader(blob)
     local pos=1; local r={}
     function r.u8() local v=blob:byte(pos); pos=pos+1; return v end

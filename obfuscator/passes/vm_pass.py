@@ -7,6 +7,7 @@ from pathlib import Path
 from .base import PostPass
 from .parser import Lua53Parser
 from .serializer import serialize
+from .kae_blob import encrypt_blob
 
 _LUAC        = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
@@ -77,16 +78,19 @@ class VMPass(PostPass):
         # 3. VM 코드 로드
         vm_code = _load_vm()
 
-        # 4. blob → Lua 문자열
-        lua_blob = _to_lua_string(blob)
+        # 4. blob 암호화: nonce(8B) + ciphertext
+        _KEY = "karityObfuscator"
+        nonce, ct = encrypt_blob(blob, _KEY)
+        encrypted_blob = nonce + ct
+        lua_blob = _to_lua_string(encrypted_blob)
 
         # 5. 최종 출력 조합
         raw = (
             f"local _vm=(function()\n"
             f"{vm_code}\n"
-            f"return {{run=run}}\n"
+            f"return {{a=run, b=kae_decrypt}}\n"
             f"end)()\n"
-            f"_vm.run({lua_blob})\n"
+            f"_vm.a(_vm.b({lua_blob}, 'karityObfuscator'))\n"
         )
 
         # 6. VM 출력물 재난독화
