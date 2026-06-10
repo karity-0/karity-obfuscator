@@ -180,6 +180,7 @@ exec = function(proto, upvals, args, va_in)
     local code   = proto["code"]
     local pc     = 1
     local top    = -1
+    local _st    = 0
     local _va    = va_in or {}
 
     -- 인자 세팅

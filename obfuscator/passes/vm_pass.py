@@ -12,7 +12,7 @@ from .base import PostPass
 from .parser import Lua53Parser
 from .serializer import serialize
 from .kae_blob import encrypt_blob
-from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers
+from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers, apply_vop_to_vm
 
 _LUAC        = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
@@ -60,26 +60,30 @@ _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
 _VOP_SPACE    = 128  # 7비트 op × 256 variant = 32768, 실용 범위는 128*256
 
 
-def _make_vop_map() -> dict[int, int]:
-    """원본op(0~46) → vop(0~32767) 매핑.
+def _make_vop_map() -> dict[int, list[int]]:
+    """원본op(0~46) → alias vop 목록 매핑.
 
+    각 원본 op당 2~3개의 alias vop를 생성.
+    serialize 시 alias 중 랜덤 선택해서 emit → 같은 op라도 매번 다른 vop.
     vop = op(7비트) | (variant(8비트) << 7)
-    각 원본 op에 랜덤 variant를 배정 → 동일 op라도 매번 다른 vop로 emit됨.
-    op 필드(하위 7비트)도 랜덤 순열로 섞어서 단순 분석 방해.
     """
-    # op 필드: 0~127 중 47개를 랜덤 선택 (중복 없이)
-    op_slots = random.sample(range(_VOP_SPACE), _LUA_OP_COUNT)
-    # variant 필드: 각 원본 op에 랜덤 배정
-    vop_map: dict[int, int] = {}
-    for orig, op_slot in zip(range(_LUA_OP_COUNT), op_slots):
-        variant = random.randint(0, 255)
-        vop_map[orig] = op_slot | (variant << 7)
+    used_vops: set[int] = set()
+    vop_map: dict[int, list[int]] = {}
+
+    for orig in range(_LUA_OP_COUNT):
+        n_aliases = random.randint(2, 3)
+        aliases = []
+        for _ in range(n_aliases):
+            while True:
+                op_slot = random.randint(0, _VOP_SPACE - 1)
+                variant = random.randint(0, 255)
+                vop = op_slot | (variant << 7)
+                if vop not in used_vops:
+                    used_vops.add(vop)
+                    aliases.append(vop)
+                    break
+        vop_map[orig] = aliases
     return vop_map
-
-
-def _apply_vop_to_vm(vm_code: str, vop_map: dict[int, int]) -> str:
-    """vm.lua exec 분기의 op==N 을 vop_map[N] 으로 치환."""
-    return re.sub(r'op==(\d+)', lambda m: f"op=={vop_map[int(m.group(1))]}", vm_code)
 
 
 def _load_vm() -> str:
@@ -121,7 +125,7 @@ class VMPass(PostPass):
 
         # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
         used_ops = collect_used_ops(proto, vop_map)
-        vm_code = _apply_vop_to_vm(_load_vm(), vop_map)
+        vm_code = apply_vop_to_vm(_load_vm(), vop_map)
         vm_code = prune_and_inject_handlers(vm_code, used_ops)
 
         # 4. blob 암호화: nonce(8B) + ciphertext

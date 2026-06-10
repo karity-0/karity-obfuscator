@@ -123,22 +123,26 @@ CTAG_STR   = 4
 # ---------------------------------------------------------------------------
 # 직렬화
 # ---------------------------------------------------------------------------
-def serialize(proto: Proto, vop_map: dict[int, int] | None = None) -> bytes:
+def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None) -> bytes:
     w = Writer()
     _write_proto(w, proto, vop_map)
     return w.data()
 
 
-def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, int] | None = None):
+def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None = None):
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
 
-    # 명령어: u64 커스텀 포맷으로 emit
+    # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택)
     w.u32(len(proto.code))
     for raw in proto.code:
         orig_op = raw & 0x3F
-        vop     = vop_map[orig_op] if vop_map else orig_op
+        if vop_map:
+            aliases = vop_map[orig_op]
+            vop = aliases[random.randint(0, len(aliases) - 1)]
+        else:
+            vop = orig_op
         w.instr(raw, vop)
 
     # 상수
@@ -251,6 +255,7 @@ if __name__ == "__main__":
     print("\n=== restored ===")
     dump_proto(restored)
 
+    # 검증
     assert original.code       == restored.code,      "code mismatch"
     assert original.constants  == restored.constants,  "constants mismatch"
     assert len(original.upvalues) == len(restored.upvalues), "upvalue count mismatch"
