@@ -91,11 +91,11 @@ def _obfuscate_vm_output(script: str) -> str:
 
     return (
         Pipeline()
-        .add(StringObfuscationPass())
-        .add(BooleanObfuscationPass())
-        .add(NumberObfuscationPass())
-        .add(RenameObfuscationPass())
-        .add(MinifyPass())
+        #.add(StringObfuscationPass())
+        #.add(BooleanObfuscationPass())
+        #.add(NumberObfuscationPass())
+        #.add(RenameObfuscationPass())
+        #.add(MinifyPass())
     ).run(script)
 
 

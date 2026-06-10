@@ -9,6 +9,7 @@ import random
 import re
 
 from .parser import Proto
+from .vm_mutation import mutate_handlers
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
 
@@ -140,6 +141,8 @@ def prune_and_inject_handlers(vm_code: str, used_ops: set[int]) -> str:
         )
         for op in free_ops[:n_fake]:
             blocks[op] = _make_fake_block()
+
+    blocks = mutate_handlers(blocks)
 
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
