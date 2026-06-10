@@ -20,27 +20,27 @@ _CHAIN_END_MARKER = 'else error("unknown op "..op) end'
 # ---------------------------------------------------------------------------
 # 1. 사용 중인 opcode 수집
 # ---------------------------------------------------------------------------
-def collect_used_ops(proto: Proto, shuffle_map: dict[int, int]) -> set[int]:
+def collect_used_ops(proto: Proto, vop_map: dict[int, int]) -> set[int]:
     """
-    proto 트리를 재귀 순회하며 디스패처가 실제로 decode하는 opcode 집합을 반환.
+    proto 트리를 재귀 순회하며 디스패처가 실제로 dispatch하는 vop 집합을 반환.
 
     OP_LOADKX(원본 op==2)의 다음 명령어(EXTRAARG)는 디스패처가 직접 decode하지
     않고 건너뛰므로 used set에 포함시키지 않는다.
     """
     used: set[int] = set()
-    _collect(proto, shuffle_map, used)
+    _collect(proto, vop_map, used)
     return used
 
 
-def _collect(proto: Proto, shuffle_map: dict[int, int], used: set[int]):
+def _collect(proto: Proto, vop_map: dict[int, int], used: set[int]):
     code = proto.code
     i = 0
     n = len(code)
     while i < n:
-        instr = code[i]
+        instr   = code[i]
         orig_op = instr & 0x3F
-        shuf_op = shuffle_map[orig_op]
-        used.add(shuf_op)
+        vop     = vop_map[orig_op]
+        used.add(vop)
 
         if orig_op == 2:  # LOADKX → 다음 명령어는 EXTRAARG, 디스패치 안 됨
             i += 2
@@ -49,7 +49,7 @@ def _collect(proto: Proto, shuffle_map: dict[int, int], used: set[int]):
         i += 1
 
     for sub in proto.protos:
-        _collect(sub, shuffle_map, used)
+        _collect(sub, vop_map, used)
 
 
 # ---------------------------------------------------------------------------
@@ -129,18 +129,15 @@ def prune_and_inject_handlers(vm_code: str, used_ops: set[int]) -> str:
     # 사용되는 핸들러만 남김
     blocks = {op: body for op, body in blocks.items() if op in used_ops}
 
-    # 비어있는 opcode 번호 후보 (사용되지 않는 번호들)
-    free_ops = [op for op in range(_LUA_OP_COUNT) if op not in blocks]
-    random.shuffle(free_ops)
-
-    # 가짜 핸들러를 일부 빈자리에 삽입 (전체 빈자리의 30~70%)
-    if free_ops:
-        n_fake = random.randint(
-            max(1, len(free_ops) // 3),
-            max(1, (len(free_ops) * 7) // 10),
-        )
-        for op in free_ops[:n_fake]:
-            blocks[op] = _make_fake_block()
+    # 가짜 핸들러: used_ops 주변 vop 공간에서 랜덤 샘플
+    # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
+    n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
+    attempts = 0
+    while len(blocks) - len(used_ops) < n_fake and attempts < n_fake * 10:
+        attempts += 1
+        fake_vop = random.randint(0, 0x7FFF)
+        if fake_vop not in blocks:
+            blocks[fake_vop] = _make_fake_block()
 
     blocks = mutate_handlers(blocks)
 

@@ -108,6 +108,10 @@ local function make_reader(blob)
         local a,b,c,d=blob:byte(pos,pos+3); pos=pos+4
         return a|(b<<8)|(c<<16)|(d<<24)
     end
+    function r.u64()
+        local lo=r.u32(); local hi=r.u32()
+        return lo|(hi*0x100000000)
+    end
     function r.i64()
         local lo=r.u32(); local hi=r.u32()
         if hi==0 then return lo end
@@ -131,7 +135,7 @@ local function read_proto(r)
     local p={}
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
     local n=r.u32(); p.code={}
-    for i=1,n do p.code[i]=r.u32() end
+    for i=1,n do p.code[i]=r.u64() end
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
@@ -156,10 +160,15 @@ local function kval(k)
 end
 
 local function decode(ins)
-    local op=ins&0x3F; local A=(ins>>6)&0xFF
-    local C=(ins>>14)&0x1FF; local B=(ins>>23)&0x1FF
-    local Bx=(ins>>14)&0x3FFFF; local sBx=Bx-131071
-    return op,A,B,C,Bx,sBx
+    local op     =  ins        & 0x7F
+    local A      = (ins >> 32) & 0xFF
+    local B      = (ins >> 23) & 0x1FF
+    local C      = (ins >> 14) & 0x1FF
+    local variant= (ins >> 40) & 0xFF
+    local Bx     = (ins >> 14) & 0x3FFFF
+    local sBx    = Bx - 131071
+    local vop    = op | (variant << 7)
+    return vop,A,B,C,Bx,sBx
 end
 
 local exec
@@ -224,7 +233,8 @@ exec = function(proto, upvals, args, va_in)
         if     op==0  then rset(A,regs[B])
         elseif op==1  then rset(A,kval(consts[Bx+1]))
         elseif op==2  then
-            local ax=(code[pc]>>6)&0x3FFFFFF; pc=pc+1
+            local ei=code[pc]; pc=pc+1
+            local ax=(((ei>>32)&0xFF)<<18)|(((ei>>23)&0x1FF)<<9)|((ei>>14)&0x1FF)
             rset(A,kval(consts[ax+1]))
         elseif op==3  then rset(A,(B~=0)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end
