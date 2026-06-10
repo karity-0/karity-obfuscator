@@ -12,6 +12,7 @@ from .base import PostPass
 from .parser import Lua53Parser
 from .serializer import serialize
 from .kae_blob import encrypt_blob
+from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers
 
 _LUAC        = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
@@ -90,11 +91,11 @@ def _obfuscate_vm_output(script: str) -> str:
 
     return (
         Pipeline()
-        #.add(StringObfuscationPass())
+        .add(StringObfuscationPass())
         .add(BooleanObfuscationPass())
         .add(NumberObfuscationPass())
-        #.add(RenameObfuscationPass())
-        #.add(MinifyPass())
+        .add(RenameObfuscationPass())
+        .add(MinifyPass())
     ).run(script)
 
 
@@ -108,8 +109,10 @@ class VMPass(PostPass):
         proto = Lua53Parser(luac_bytes).parse()
         blob  = serialize(proto, shuffle_map)
 
-        # 3. VM 코드 로드 + opmap
+        # 3. VM 코드 로드 + opmap + 핸들러 prune/가짜 핸들러 삽입
+        used_ops = collect_used_ops(proto, shuffle_map)
         vm_code = _apply_shuffle_to_vm(_load_vm(), shuffle_map)
+        vm_code = prune_and_inject_handlers(vm_code, used_ops)
 
         # 4. blob 암호화: nonce(8B) + ciphertext
         alphabet = string.ascii_letters + string.digits
