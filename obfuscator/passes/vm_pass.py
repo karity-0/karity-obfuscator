@@ -4,6 +4,7 @@ import tempfile
 import secrets
 import string
 import random
+import zlib
 import os
 import re
 from pathlib import Path
@@ -129,10 +130,10 @@ class VMPass(PostPass):
         vm_code = prune_and_inject_handlers(vm_code, used_ops)
 
         # 4. blob 암호화: nonce(8B) + ciphertext
-        alphabet = string.ascii_letters + string.digits
-        _KEY = "karityObfuscator/" + ''.join(
-            secrets.choice(alphabet) for _ in range(16)
-        )
+        blob_crc  = format(zlib.crc32(blob) & 0xFFFFFFFF, '08x')
+        alphabet  = string.ascii_letters + string.digits
+        rand_tail = ''.join(secrets.choice(alphabet) for _ in range(16))
+        _KEY = f"karityObfuscator/{blob_crc}/{rand_tail}"
         nonce, ct = encrypt_blob(blob, _KEY)
         encrypted_blob = nonce + ct
         lua_blob = _to_base36(encrypted_blob)
