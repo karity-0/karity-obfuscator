@@ -7,6 +7,8 @@ local _sub = _s["sub"]
 local _sbyte = _s["byte"]
 local _sfind = _s["find"]
 local _sunpack = _s["unpack"]
+local _sformat = _s["format"]
+local _sdump = _s["dump"]
 local _t   = table
 local _ti  = _t["insert"]
 local _tu  = _t["unpack"]
@@ -79,6 +81,28 @@ local function kae_decrypt(blob, key)
     local pt={}
     for i=1,n do pt[i]=_sbyte(blob,8+i)~RK[i] end
     return _sc(_tu(pt))
+end
+
+----------------------------------------
+
+local _CRC_TABLE
+local function _crc32(data)
+    if not _CRC_TABLE then
+        _CRC_TABLE={}
+        for i=0,255 do
+            local c=i
+            for _=1,8 do
+                if c&1~=0 then c=0xEDB88320~(c>>1) else c=c>>1 end
+            end
+            _CRC_TABLE[i]=c
+        end
+    end
+    local crc=0xFFFFFFFF
+    for i=1,#data do
+        local b=_sbyte(data,i)
+        crc=_CRC_TABLE[(crc~b)&0xFF]~(crc>>8)
+    end
+    return crc~0xFFFFFFFF
 end
 
 ----------------------------------------
@@ -354,7 +378,10 @@ exec = function(proto, upvals, args, va_in)
     end
 end
 
-local function run(blob,key)
+local function run(blob,rand_tail,self_func)
+    local dump=_sdump(self_func,true)
+    local crc=_crc32(dump)
+    local key="karityObfuscator/".._sformat("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
     local proto=read_proto(r)

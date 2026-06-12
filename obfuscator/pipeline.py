@@ -37,30 +37,32 @@ class Pipeline:
             start = time.perf_counter()
             script = pre.run(script)
             elapsed = time.perf_counter() - start
-            info_message("PRE", pre, f"{elapsed:.3f}s")
+            if verbose >= Verbosity.NORMAL:
+                info_message("PRE", pre, f"{elapsed:.3f}s")
 
         for pass_ in self._passes:
             tree = ast.parse(script)
             start = time.perf_counter()
             replacements = pass_.run(script, tree)
             elapsed = time.perf_counter() - start
-            info_message("BASE", pass_, f"{elapsed:.3f}s")
+            if verbose >= Verbosity.NORMAL:
+                info_message("BASE", pass_, f"{elapsed:.3f}s")
 
             script = self._apply(script, replacements)
-            if verbose >= Verbosity.NORMAL:
-                sep = "-" * 40
-                print(f"\n{sep} {pass_.__class__.__name__} {sep}")
-                print(script)
-                if verbose >= Verbosity.DEBUG:
-                    new_tree = ast.parse(script)
-                    print(ast.to_pretty_str(new_tree))
+            if verbose >= Verbosity.DEBUG:
+                #sep = "-" * 40
+                #print(f"\n{sep} {pass_.__class__.__name__} {sep}")
+                #print(script)
+                new_tree = ast.parse(script)
+                print(ast.to_pretty_str(new_tree))
 
 
         for post in self._post_passes:
             start = time.perf_counter()
             script = post.run(script)
             elapsed = time.perf_counter() - start
-            info_message("POST", post, f"{elapsed:.3f}s")
+            if verbose >= Verbosity.NORMAL:
+                info_message("POST", post, f"{elapsed:.3f}s")
 
         return f"{self.HEADER}{script}" if self.show_header else script
     
