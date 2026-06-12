@@ -37,6 +37,12 @@ VM_OUTPUT_PASS_ORDER = [
     "minify",
 ]
 
+# VM 보호 강도 옵션 (vm_options에 매핑)
+VM_PROTECTION_OPTIONS = [
+    {"name": "fake_handlers",   "label": "Fake Handlers",   "default": True},
+    {"name": "mutate_handlers", "label": "Handler Mutation (CFF/Opaque Predicate)", "default": True},
+]
+
 
 class Api:
     """JS 쪽에서 window.pywebview.api.* 로 호출하는 백엔드 API."""
@@ -58,6 +64,7 @@ class Api:
         return {
             "main_passes": [meta_for(n) for n in MAIN_PASS_ORDER],
             "vm_output_passes": [meta_for(n) for n in VM_OUTPUT_PASS_ORDER],
+            "vm_protection_options": VM_PROTECTION_OPTIONS,
         }
 
     # ------------------------------------------------------------
@@ -65,11 +72,13 @@ class Api:
     # ------------------------------------------------------------
     def load_config(self):
         if not CONFIG_PATH.exists():
-            return {"passes": [], "vm_output_passes": []}
+            return {"passes": [], "vm_output_passes": [], "vm_options": {}}
         try:
-            return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            config = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+            config.setdefault("vm_options", {})
+            return config
         except Exception:
-            return {"passes": [], "vm_output_passes": []}
+            return {"passes": [], "vm_output_passes": [], "vm_options": {}}
 
     def save_config(self, config: dict):
         CONFIG_PATH.write_text(
@@ -119,13 +128,15 @@ class Api:
             {
                 "script": "...",          # 입력 스크립트 텍스트
                 "passes": [...],
-                "vm_output_passes": [...]
+                "vm_output_passes": [...],
+                "vm_options": {...}
             }
         """
         script = payload.get("script", "")
         config = {
             "passes": payload.get("passes", []),
             "vm_output_passes": payload.get("vm_output_passes", []),
+            "vm_options": payload.get("vm_options", {}),
         }
 
         if not script.strip():

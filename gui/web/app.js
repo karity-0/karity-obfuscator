@@ -35,6 +35,10 @@ document.addEventListener('DOMContentLoaded', () => {
     const optNumber = document.getElementById('opt-number');
     const allCheckboxes = document.querySelectorAll('.opt-checkbox');
 
+    const vmoptFakeHandlers = document.getElementById('vmopt-fake-handlers');
+    const vmoptMutateHandlers = document.getElementById('vmopt-mutate-handlers');
+    const allVmOptCheckboxes = document.querySelectorAll('.vmopt-checkbox');
+
     // Buttons
     const openFileBtn = document.getElementById('open-file-btn');
     const clearInputBtn = document.getElementById('clear-input-btn');
@@ -128,6 +132,10 @@ document.addEventListener('DOMContentLoaded', () => {
         optString.checked = vmPasses.includes('string_encode') || vmPasses.includes('string_obf');
         optBoolean.checked = vmPasses.includes('boolean_obf');
         optNumber.checked = vmPasses.includes('number_obf');
+
+        const vmOptions = savedConfig.vm_options || {};
+        vmoptFakeHandlers.checked = vmOptions.fake_handlers !== false;
+        vmoptMutateHandlers.checked = vmOptions.mutate_handlers !== false;
     }
 
     function buildPayloadConfig() {
@@ -150,7 +158,12 @@ document.addEventListener('DOMContentLoaded', () => {
         
         vm_output_passes.push("rename_obf", "minify");
 
-        return { passes, vm_output_passes };
+        const vm_options = {
+            fake_handlers: vmoptFakeHandlers.checked,
+            mutate_handlers: vmoptMutateHandlers.checked,
+        };
+
+        return { passes, vm_output_passes, vm_options };
     }
 
     // ------------------------------------------------------------
@@ -238,8 +251,8 @@ document.addEventListener('DOMContentLoaded', () => {
         setStatus('난독화 진행 중...', 'info');
         runBtn.disabled = true;
 
-        const { passes, vm_output_passes } = buildPayloadConfig();
-        const payload = { script, passes, vm_output_passes };
+        const { passes, vm_output_passes, vm_options } = buildPayloadConfig();
+        const payload = { script, passes, vm_output_passes, vm_options };
 
         const res = await pyapi.run_obfuscation(payload);
         runBtn.disabled = false;

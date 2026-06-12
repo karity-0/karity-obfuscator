@@ -70,6 +70,32 @@
       </ol>
     </section>
 
+    <section class="panel">
+      <header class="panel-head">
+        <span class="panel-title">VM PROTECTION</span>
+        <span class="panel-hint">VM 보호 옵션</span>
+      </header>
+
+      <ol id="vm-protection-list" class="pass-list">
+        <li class="pass-item" data-hint="가짜 핸들러를 삽입하여 분석을 방해합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="vmopt-checkbox" id="vmopt-fake-handlers" checked>
+            <div class="pass-info">
+              <span class="pass-name">Fake Handlers</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="핸들러 구조를 변형하여 정적 분석을 어렵게 만듭니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="vmopt-checkbox" id="vmopt-mutate-handlers" checked>
+            <div class="pass-info">
+              <span class="pass-name">Handler Mutation</span>
+            </div>
+          </label>
+        </li>
+      </ol>
+    </section>
+
     <footer class="sidebar-footer">
       <button id="save-config-btn" class="btn btn-ghost">설정 저장</button>
       <div id="config-status" class="config-status"></div>
