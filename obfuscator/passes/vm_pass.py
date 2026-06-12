@@ -13,6 +13,7 @@ from .parser import Lua53Parser
 from .serializer import serialize
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers, apply_vop_to_vm
+from .junk_injection import inject_junk
 
 _LUA         = Path(__file__).parent.parent.parent / "bin" / "lua.exe"
 _LUAC        = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
@@ -171,6 +172,8 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 _DEFAULT_VM_OPTIONS = {
     "fake_handlers": True,
     "mutate_handlers": True,
+    "junk_instructions": True,
+    "junk_rate": 0.15,
 }
 
 
@@ -183,9 +186,11 @@ class VMPass(PostPass):
         # 1. luac 컴파일
         luac_bytes = _compile(script)
 
-        # 2. 파싱 → 커스텀 직렬화
+        # 2. 파싱 → junk instruction 삽입 → 커스텀 직렬화
         vop_map = _make_vop_map()
         proto = Lua53Parser(luac_bytes).parse()
+        if self.vm_options.get("junk_instructions", True):
+            proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
         blob  = serialize(proto, vop_map)
 
         # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
