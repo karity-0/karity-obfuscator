@@ -1,10 +1,12 @@
 from __future__ import annotations
 import subprocess
+import platform
 import tempfile
 import secrets
 import string
 import random
 import zlib
+import shutil
 import os
 from pathlib import Path
 
@@ -15,8 +17,20 @@ from .kae_blob import encrypt_blob
 from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers, apply_vop_to_vm
 from .junk_injection import inject_junk
 
-_LUA         = Path(__file__).parent.parent.parent / "bin" / "lua.exe"
-_LUAC        = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
+
+if platform.system() == "Windows":
+    _LUA    = Path(__file__).parent.parent.parent / "bin" / "lua.exe"
+    _LUAC   = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
+else:
+    _LUA    = shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua5.3"
+    _LUAC   = shutil.which("luac5.3") or shutil.which("luac53") or "luac5.3"
+
+if not _LUA or (isinstance(_LUA, Path) and not _LUA.exists()):
+    raise FileNotFoundError("lua5.3 not found.")
+
+if not _LUAC or (isinstance(_LUAC, Path) and not _LUAC.exists()):
+    raise FileNotFoundError("luac5.3 not found.")
+
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
 
 
