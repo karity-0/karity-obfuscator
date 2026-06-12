@@ -7,6 +7,9 @@ _CHUNK_SIZE = 16  # string.char() 하나당 묶을 바이트 수
 
 
 def parse_lua_string(raw: str) -> bytes:
+    if not raw:
+        return b""
+    
     if raw[0] in ('"', "'"):
         raw = raw[1:-1]
 
