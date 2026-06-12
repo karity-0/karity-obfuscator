@@ -11,3 +11,5 @@ test_out.lua
 
 // vm
 vm_plain.lua
+
+config.json

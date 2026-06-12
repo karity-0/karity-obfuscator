@@ -15,6 +15,7 @@ def load_config(path: str = "config.json") -> dict:
 
 
 def build_pipeline(config: dict) -> Pipeline:
+    # todo: vm 껏을때는 show_header True여야 함.
     return build_pipeline_from_config(config, Pipeline, show_header=False)
 
 

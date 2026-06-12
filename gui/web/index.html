@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lua Obfuscator</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<div class="app">
+
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-glyph">λ</span>
+      <div class="brand-text">
+        <span class="brand-title">lua-obfuscator</span>
+        <span class="brand-sub">karity-0</span>
+      </div>
+    </div>
+
+    <section class="panel">
+      <header class="panel-head">
+        <span class="panel-title">PIPELINE OPTIONS</span>
+        <span class="panel-hint">옵션 설정</span>
+      </header>
+      
+      <ol id="pipeline-options-list" class="pass-list">
+        <li class="pass-item" data-hint="생성되는 바이트코드 자체에 추가적인 내장 데이터 난독화 처리를 적용합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-bytecode">
+            <div class="pass-info">
+              <span class="pass-name">Bytecode Obfuscation</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 문자열을 난독화합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-string">
+            <div class="pass-info">
+              <span class="pass-name">String Obfuscation</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 참/거짓 조건을 난독화합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-boolean">
+            <div class="pass-info">
+              <span class="pass-name">Boolean Obfuscation</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="출력된 결과물 스크립트에 포함된 모든 숫자를 난독화합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-number">
+            <div class="pass-info">
+              <span class="pass-name">Number Obfuscation</span>
+            </div>
+          </label>
+        </li>
+      </ol>
+    </section>
+
+    <footer class="sidebar-footer">
+      <button id="save-config-btn" class="btn btn-ghost">설정 저장</button>
+      <div id="config-status" class="config-status"></div>
+    </footer>
+  </aside>
+
+  <main class="main">
+    <div class="pipeline-strip" id="pipeline-strip">
+      <div class="pipeline-empty">선택된 옵션 없음</div>
+    </div>
+
+    <div class="editors">
+      <section class="editor-pane">
+        <header class="editor-head">
+          <span class="editor-title">INPUT</span>
+          <div class="editor-actions">
+            <span id="input-filename" class="filename"></span>
+            <button id="open-file-btn" class="btn btn-small">파일 열기</button>
+            <button id="clear-input-btn" class="btn btn-small btn-ghost">지우기</button>
+          </div>
+        </header>
+        <textarea id="input-script" class="editor" spellcheck="false"
+          placeholder="-- Lua 스크립트를 입력하거나 파일을 여세요&#10;print(&quot;hello world&quot;)"></textarea>
+      </section>
+
+      <section class="editor-pane">
+        <header class="editor-head">
+          <span class="editor-title">OUTPUT</span>
+          <div class="editor-actions">
+            <span id="elapsed-label" class="filename"></span>
+            <button id="copy-output-btn" class="btn btn-small btn-ghost">복사</button>
+            <button id="save-output-btn" class="btn btn-small">저장</button>
+          </div>
+        </header>
+        <textarea id="output-script" class="editor editor-output" spellcheck="false" readonly
+          placeholder="-- 결과가 여기에 표시됩니다"></textarea>
+      </section>
+    </div>
+
+    <div class="run-bar">
+      <div id="status-msg" class="status-msg">대기 중</div>
+      <button id="run-btn" class="btn btn-primary">
+        <span class="btn-icon">▶</span> 난독화 실행
+      </button>
+    </div>
+  </main>
+</div>
+
+<div id="tooltip" class="tooltip-box"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
