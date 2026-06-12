@@ -1,0 +1,10 @@
+{
+    "passes": [
+        "string_obf", "boolean_obf", "number_obf", "vm"
+    ],
+    "vm_output_passes": [
+        "string_obf", "boolean_obf", "number_obf",
+        "rename_obf", "minify"
+    ],
+    "vm_options": {"fake_handlers": true, "mutate_handlers": true}
+}

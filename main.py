@@ -1,29 +1,22 @@
 import sys
+import time
+import json
 import argparse
 from pathlib import Path
 
 from obfuscator\
     import (
-        Pipeline, 
-        StringEncodePass, StringObfuscationPass,
-        NumberObfuscationPass, BooleanObfuscationPass,
-        RenameObfuscationPass,
-        RemoveCommentPass, MinifyPass,
-        VMPass,
+        Pipeline, build_pipeline_from_config
     )
 
 
-def build_pipeline(args) -> Pipeline:
-    return (
-        Pipeline( show_header=False )
-        #.add(StringEncodePass())
-        .add(StringObfuscationPass())
-        .add(BooleanObfuscationPass())
-        .add(NumberObfuscationPass())
-        #.add(RenameObfuscationPass())
-        #.add(MinifyPass())
-        .add(VMPass())
-    )
+def load_config(path: str = "config.json") -> dict:
+    return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def build_pipeline(config: dict) -> Pipeline:
+    # todo: vm 껏을때는 show_header True여야 함.
+    return build_pipeline_from_config(config, Pipeline, show_header=False)
 
 
 def parse_args():
@@ -65,11 +58,18 @@ def main():
     output_path = resolve_output_path(args.input, args.output)
 
     print("obfuscating..")
-    pipeline        = build_pipeline(args)
+
+    start_time      = time.perf_counter()
+
+    config          = load_config()
+    pipeline        = build_pipeline(config)
     output_script   = pipeline.run(script, args.verbose)
+
+    elapsed         = time.perf_counter() - start_time
 
     print(f"saving → {output_path}")
     write_script(output_path, output_script)
+    print(f"obfuscation completed in {elapsed:.3f}s")
 
 
 if __name__ == "__main__":

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import random
 import struct
 from .parser import Proto, Upvalue, ConstTag
 
@@ -19,6 +20,9 @@ class Writer:
     def u32(self, v: int):
         self._buf += struct.pack('<I', v & 0xFFFFFFFF)
 
+    def u64(self, v: int):
+        self._buf += struct.pack('<Q', v & 0xFFFFFFFFFFFFFFFF)
+
     def i64(self, v: int):
         self._buf += struct.pack('<q', v)
 
@@ -32,6 +36,36 @@ class Writer:
         encoded = s.encode('utf-8')
         self.u32(len(encoded))
         self._buf += encoded
+
+    def instr(self, raw: int, vop: int):
+        """
+        커스텀 64비트 instruction 레이아웃:
+          [63:48] reserved  (16비트, 랜덤 쓰레기)
+          [47:40] variant   (8비트,  vop >> 7)
+          [39:32] A         (8비트)
+          [31:23] B         (9비트)
+          [22:14] C         (9비트)
+          [13:7]  pad       (7비트, 랜덤 쓰레기)
+          [6:0]   op        (7비트, vop & 0x7F)
+        """
+        op       = vop & 0x7F
+        variant  = (vop >> 7) & 0xFF
+        A        = (raw >> 6)  & 0xFF
+        B        = (raw >> 23) & 0x1FF
+        C        = (raw >> 14) & 0x1FF
+        pad      = random.randint(0, 0x7F)
+        reserved = random.randint(0, 0xFFFF)
+
+        val = (
+            op
+            | (pad      << 7)
+            | (C        << 14)
+            | (B        << 23)
+            | (A        << 32)
+            | (variant  << 40)
+            | (reserved << 48)
+        )
+        self.u64(val)
 
 
 # ---------------------------------------------------------------------------
@@ -50,6 +84,11 @@ class BinReader:
     def u32(self) -> int:
         v = struct.unpack_from('<I', self._data, self._pos)[0]
         self._pos += 4
+        return v
+
+    def u64(self) -> int:
+        v = struct.unpack_from('<Q', self._data, self._pos)[0]
+        self._pos += 8
         return v
 
     def i64(self) -> int:
@@ -72,6 +111,8 @@ class BinReader:
 
 
 # ---------------------------------------------------------------------------
+# 상수 태그 (커스텀)
+# ---------------------------------------------------------------------------
 CTAG_NIL   = 0
 CTAG_BOOL  = 1
 CTAG_INT   = 2
@@ -80,21 +121,29 @@ CTAG_STR   = 4
 
 
 # ---------------------------------------------------------------------------
-def serialize(proto: Proto) -> bytes:
+# 직렬화
+# ---------------------------------------------------------------------------
+def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None) -> bytes:
     w = Writer()
-    _write_proto(w, proto)
+    _write_proto(w, proto, vop_map)
     return w.data()
 
 
-def _write_proto(w: Writer, proto: Proto):
+def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None = None):
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
 
-    # 명령어
+    # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택)
     w.u32(len(proto.code))
-    for instr in proto.code:
-        w.u32(instr)
+    for raw in proto.code:
+        orig_op = raw & 0x3F
+        if vop_map:
+            aliases = vop_map[orig_op]
+            vop = aliases[random.randint(0, len(aliases) - 1)]
+        else:
+            vop = orig_op
+        w.instr(raw, vop)
 
     # 상수
     w.u32(len(proto.constants))
@@ -125,9 +174,11 @@ def _write_proto(w: Writer, proto: Proto):
     # 중첩 proto
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub)
+        _write_proto(w, sub, vop_map)
 
 
+# ---------------------------------------------------------------------------
+# 역직렬화
 # ---------------------------------------------------------------------------
 def deserialize(data: bytes) -> Proto:
     r = BinReader(data)
@@ -140,7 +191,7 @@ def _read_proto(r: BinReader) -> Proto:
     max_stack_size = r.u8()
 
     code_count = r.u32()
-    code = [r.u32() for _ in range(code_count)]
+    code = [r.u64() for _ in range(code_count)]
 
     const_count = r.u32()
     constants = []
@@ -181,6 +232,8 @@ def _read_proto(r: BinReader) -> Proto:
     )
 
 
+# ---------------------------------------------------------------------------
+# 테스트
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     import sys
