@@ -8,3 +8,4 @@ from .remove_comment import RemoveCommentPass
 from .minify import MinifyPass
 from .vm_pass import VMPass
 from .anti_debug import AntiDebugPass
+from .table_obfuscation import TableObfuscationPass

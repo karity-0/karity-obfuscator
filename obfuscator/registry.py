@@ -22,6 +22,7 @@ from .passes import (
     MinifyPass,
     VMPass,
     AntiDebugPass,
+    TableObfuscationPass,
 )
 
 
@@ -70,6 +71,11 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": AntiDebugPass,
         "label": "Anti-Debug Wrapper",
         "group": "pre",
+    },
+    "table_obf": {
+        "cls": TableObfuscationPass,
+        "label": "Table Obfuscation",
+        "group": "base",
     },
 }
 

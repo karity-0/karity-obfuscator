@@ -10,4 +10,5 @@ from .passes import (
     MinifyPass,
     VMPass,
     AntiDebugPass,
+    TableObfuscationPass, 
 )
