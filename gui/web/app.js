@@ -33,6 +33,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const optString = document.getElementById('opt-string');
     const optBoolean = document.getElementById('opt-boolean');
     const optNumber = document.getElementById('opt-number');
+    const optAntiDebug = document.getElementById('opt-anti-debug');
     const allCheckboxes = document.querySelectorAll('.opt-checkbox');
 
     const vmoptFakeHandlers = document.getElementById('vmopt-fake-handlers');
@@ -134,6 +135,7 @@ document.addEventListener('DOMContentLoaded', () => {
         
         const mainPasses = savedConfig.passes || [];
         optBytecode.checked = mainPasses.includes('string_obf') || mainPasses.includes('number_obf');
+        optAntiDebug.checked = mainPasses.includes('anti_debug');
 
         const vmPasses = savedConfig.vm_output_passes || [];
         optString.checked = vmPasses.includes('string_encode') || vmPasses.includes('string_obf');
@@ -152,6 +154,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
     function buildPayloadConfig() {
         const passes = [];
+        if (optAntiDebug.checked) {
+            passes.push("anti_debug");
+        }
         if (optBytecode.checked) {
             passes.push("string_obf", "boolean_obf", "number_obf");
         }
