@@ -178,12 +178,20 @@ def _make_fake_block() -> str:
 # ---------------------------------------------------------------------------
 # 5. 메인 진입점
 # ---------------------------------------------------------------------------
-def prune_and_inject_handlers(vm_code: str, used_ops: set[int]) -> str:
+def prune_and_inject_handlers(
+    vm_code: str,
+    used_ops: set[int],
+    fake_handlers: bool = True,
+    mutate: bool = True,
+) -> str:
     """
     used_ops에 없는 opcode 핸들러를 제거하고, 비어있는 opcode 번호에
     동작 없는 가짜 핸들러를 무작위로 채워넣는다.
 
     체인 형태(if op==N then ... elseif op==M then ... else error(...) end)는 유지된다.
+
+    fake_handlers: 빈 vop 슬롯에 더미 핸들러를 채울지 여부
+    mutate: CFF/opaque predicate/junk 등 mutate_handlers를 적용할지 여부
     """
     chain_start, chain_end = _find_chain(vm_code)
     chain = vm_code[chain_start:chain_end]
@@ -193,17 +201,19 @@ def prune_and_inject_handlers(vm_code: str, used_ops: set[int]) -> str:
     # 사용되는 핸들러만 남김
     blocks = {op: body for op, body in blocks.items() if op in used_ops}
 
-    # 가짜 핸들러: used_ops 주변 vop 공간에서 랜덤 샘플
-    # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
-    n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
-    attempts = 0
-    while len(blocks) - len(used_ops) < n_fake and attempts < n_fake * 10:
-        attempts += 1
-        fake_vop = random.randint(0, 0x7FFF)
-        if fake_vop not in blocks:
-            blocks[fake_vop] = _make_fake_block()
+    if fake_handlers:
+        # 가짜 핸들러: used_ops 주변 vop 공간에서 랜덤 샘플
+        # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
+        n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
+        attempts = 0
+        while len(blocks) - len(used_ops) < n_fake and attempts < n_fake * 10:
+            attempts += 1
+            fake_vop = random.randint(0, 0x7FFF)
+            if fake_vop not in blocks:
+                blocks[fake_vop] = _make_fake_block()
 
-    blocks = mutate_handlers(blocks)
+    if mutate:
+        blocks = mutate_handlers(blocks)
 
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]

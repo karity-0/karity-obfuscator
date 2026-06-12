@@ -80,11 +80,13 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     config 예시:
         {
             "passes": ["string_obf", "boolean_obf", "number_obf", "vm"],
-            "vm_output_passes": ["string_obf", "minify"]  # 선택, VMPass에 전달됨
+            "vm_output_passes": ["string_obf", "minify"],  # 선택, VMPass에 전달됨
+            "vm_options": {"fake_handlers": true, "mutate_handlers": true}  # 선택
         }
     """
     pipeline = pipeline_cls(show_header=show_header)
     vm_output_passes = config.get("vm_output_passes", [])
+    vm_options = config.get("vm_options", {})
 
     for name in config.get("passes", []):
         info = PASS_REGISTRY.get(name)
@@ -93,7 +95,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
 
         cls = info["cls"]
         if cls is VMPass:
-            pipeline.add(cls(vm_output_passes=vm_output_passes))
+            pipeline.add(cls(vm_output_passes=vm_output_passes, vm_options=vm_options))
         else:
             pipeline.add(cls())
 

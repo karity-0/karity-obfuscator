@@ -168,9 +168,16 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
 
 
+_DEFAULT_VM_OPTIONS = {
+    "fake_handlers": True,
+    "mutate_handlers": True,
+}
+
+
 class VMPass(PostPass):
-    def __init__(self, vm_output_passes: list[str] | None = None):
+    def __init__(self, vm_output_passes: list[str] | None = None, vm_options: dict | None = None):
         self.vm_output_passes = vm_output_passes or []
+        self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
 
     def run(self, script: str) -> str:
         # 1. luac 컴파일
@@ -184,7 +191,12 @@ class VMPass(PostPass):
         # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
         used_ops = collect_used_ops(proto, vop_map)
         vm_code = apply_vop_to_vm(_load_vm(), vop_map)
-        vm_code = prune_and_inject_handlers(vm_code, used_ops)
+        vm_code = prune_and_inject_handlers(
+            vm_code,
+            used_ops,
+            fake_handlers=self.vm_options["fake_handlers"],
+            mutate=self.vm_options["mutate_handlers"],
+        )
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (
