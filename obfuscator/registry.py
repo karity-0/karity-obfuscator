@@ -21,6 +21,7 @@ from .passes import (
     RemoveCommentPass,
     MinifyPass,
     VMPass,
+    AntiDebugPass,
 )
 
 
@@ -64,6 +65,11 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": VMPass,
         "label": "VM",
         "group": "post",
+    },
+    "anti_debug": {
+        "cls": AntiDebugPass,
+        "label": "Anti-Debug Wrapper",
+        "group": "pre",
     },
 }
 

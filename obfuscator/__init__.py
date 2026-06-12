@@ -9,4 +9,5 @@ from .passes import (
     RemoveCommentPass,
     MinifyPass,
     VMPass,
+    AntiDebugPass,
 )
