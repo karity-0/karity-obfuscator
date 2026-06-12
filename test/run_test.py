@@ -3,6 +3,10 @@ import subprocess
 
 BASE_DIR = Path(__file__).parent
 
+GREEN = "\033[92m"
+RED = "\033[91m"
+RESET = "\033[0m"
+
 def run_lua(path):
     result = subprocess.run(
         ["lua", str(path)],
@@ -16,8 +20,12 @@ def run_test():
     output_dir = BASE_DIR / "output"
     output_dir.mkdir(exist_ok=True)
 
+    total = 0
+    passed = 0
+
     for script in scripts_dir.glob("*.lua"):
         print(f"test: {script.name}")
+        total += 1
 
         rc1, out1, err1 = run_lua(script)
 
@@ -34,6 +42,14 @@ def run_test():
             print("obfuscated   :", rc2, out2, err2)
         else:
             print("test: ok")
+            passed += 1
+
+    print(f"\ntotal result: {passed}/{total} passed.")
+
+    if passed == total:
+        print(f"{GREEN}test success!{RESET}")
+    else:
+        print(f"{RED}test failed!{RESET}")
 
 if __name__ == "__main__":
     run_test()
