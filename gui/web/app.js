@@ -37,7 +37,14 @@ document.addEventListener('DOMContentLoaded', () => {
 
     const vmoptFakeHandlers = document.getElementById('vmopt-fake-handlers');
     const vmoptMutateHandlers = document.getElementById('vmopt-mutate-handlers');
+    const vmoptJunkInstructions = document.getElementById('vmopt-junk-instructions');
+    const vmoptJunkRate = document.getElementById('vmopt-junk-rate');
+    const vmoptJunkRateValue = document.getElementById('vmopt-junk-rate-value');
     const allVmOptCheckboxes = document.querySelectorAll('.vmopt-checkbox');
+
+    vmoptJunkRate?.addEventListener('input', () => {
+        vmoptJunkRateValue.textContent = Number(vmoptJunkRate.value).toFixed(2);
+    });
 
     // Buttons
     const openFileBtn = document.getElementById('open-file-btn');
@@ -136,6 +143,11 @@ document.addEventListener('DOMContentLoaded', () => {
         const vmOptions = savedConfig.vm_options || {};
         vmoptFakeHandlers.checked = vmOptions.fake_handlers !== false;
         vmoptMutateHandlers.checked = vmOptions.mutate_handlers !== false;
+        vmoptJunkInstructions.checked = vmOptions.junk_instructions !== false;
+
+        const junkRate = vmOptions.junk_rate;
+        vmoptJunkRate.value = (typeof junkRate === 'number') ? junkRate : 0.15;
+        vmoptJunkRateValue.textContent = Number(vmoptJunkRate.value).toFixed(2);
     }
 
     function buildPayloadConfig() {
@@ -161,6 +173,8 @@ document.addEventListener('DOMContentLoaded', () => {
         const vm_options = {
             fake_handlers: vmoptFakeHandlers.checked,
             mutate_handlers: vmoptMutateHandlers.checked,
+            junk_instructions: vmoptJunkInstructions.checked,
+            junk_rate: Number(vmoptJunkRate.value),
         };
 
         return { passes, vm_output_passes, vm_options };

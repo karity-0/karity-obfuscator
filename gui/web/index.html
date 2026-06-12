@@ -93,7 +93,24 @@
             </div>
           </label>
         </li>
+        <li class="pass-item" data-hint="실행에 영향을 주지 않는 더미 instruction을 바이트코드 사이에 삽입합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="vmopt-checkbox" id="vmopt-junk-instructions" checked>
+            <div class="pass-info">
+              <span class="pass-name">Junk Instructions</span>
+            </div>
+          </label>
+        </li>
       </ol>
+
+      <div class="slider-row" data-hint="instruction 사이마다 junk가 삽입될 확률입니다. 높이면 분석이 어려워지지만 코드 크기가 커집니다.">
+        <div class="slider-head">
+          <span class="slider-label">Junk Rate</span>
+          <span id="vmopt-junk-rate-value" class="slider-value">0.15</span>
+        </div>
+        <input type="range" id="vmopt-junk-rate" class="slider"
+               min="0" max="0.5" step="0.01" value="0.15">
+      </div>
     </section>
 
     <footer class="sidebar-footer">

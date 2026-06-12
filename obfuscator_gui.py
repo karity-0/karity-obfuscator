@@ -37,10 +37,23 @@ VM_OUTPUT_PASS_ORDER = [
     "minify",
 ]
 
-# VM 보호 강도 옵션 (vm_options에 매핑)
+# VM 보호 강도 옵션 (vm_options에 매핑, 체크박스)
 VM_PROTECTION_OPTIONS = [
     {"name": "fake_handlers",   "label": "Fake Handlers",   "default": True},
     {"name": "mutate_handlers", "label": "Handler Mutation (CFF/Opaque Predicate)", "default": True},
+    {"name": "junk_instructions", "label": "Junk Instructions", "default": True},
+]
+
+# VM 보호 강도 옵션 (vm_options에 매핑, 슬라이더)
+VM_PROTECTION_SLIDERS = [
+    {
+        "name": "junk_rate",
+        "label": "Junk Instruction Rate",
+        "default": 0.15,
+        "min": 0.0,
+        "max": 0.5,
+        "step": 0.01,
+    },
 ]
 
 
@@ -65,6 +78,7 @@ class Api:
             "main_passes": [meta_for(n) for n in MAIN_PASS_ORDER],
             "vm_output_passes": [meta_for(n) for n in VM_OUTPUT_PASS_ORDER],
             "vm_protection_options": VM_PROTECTION_OPTIONS,
+            "vm_protection_sliders": VM_PROTECTION_SLIDERS,
         }
 
     # ------------------------------------------------------------
@@ -213,6 +227,7 @@ def main():
         min_size=(900, 600),
         background_color="#0a0e14",
         frameless=True,
+        easy_drag=False,
     )
     webview.start(debug=False)
 
