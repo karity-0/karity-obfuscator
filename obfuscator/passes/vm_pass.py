@@ -146,26 +146,32 @@ def _load_vm() -> str:
     return src
 
 
-def _obfuscate_vm_output(script: str) -> str:
+def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
     """VM 출력물에 passes 재적용."""
-    from .string_obfuscation import StringObfuscationPass
-    from .boolean_obfuscation import BooleanObfuscationPass
-    from .number_obfuscation import NumberObfuscationPass
-    from .minify import MinifyPass
-    from .rename_obfuscation import RenameObfuscationPass
     from ..pipeline import Pipeline
+    from ..registry import PASS_REGISTRY
+ 
+    pipeline = Pipeline()
+    for name in pass_names:
+        info = PASS_REGISTRY.get(name)
+        if info is None:
+            continue
 
-    return (
-        Pipeline()
-        .add(StringObfuscationPass())
-        .add(BooleanObfuscationPass())
-        .add(NumberObfuscationPass())
-        .add(RenameObfuscationPass())
-        .add(MinifyPass())
-    ).run(script)
+        cls = info["cls"]
+
+        if cls.__name__ == "VMPass":
+            continue
+
+        pipeline.add(cls())
+ 
+    return pipeline.run(script)
+
 
 
 class VMPass(PostPass):
+    def __init__(self, vm_output_passes: list[str] | None = None):
+        self.vm_output_passes = vm_output_passes or []
+
     def run(self, script: str) -> str:
         # 1. luac 컴파일
         luac_bytes = _compile(script)
@@ -186,7 +192,7 @@ class VMPass(PostPass):
             f'local k1,k2,k3,k4,k5,k6,k7 = ... '
             f'{vm_code} return run end'
         )
-        vm_func_src = _obfuscate_vm_output(vm_func_src)
+        vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
 
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
