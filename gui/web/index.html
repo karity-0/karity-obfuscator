@@ -8,15 +8,24 @@
 </head>
 <body>
 
-<div class="app">
+<div class="window-root">
+  <div class="titlebar" id="titlebar">
+    <div class="titlebar-drag pywebview-drag-region">
+      <span class="titlebar-glyph">λ</span>
+      <span class="titlebar-title">lua-obfuscator</span>
+    </div>
+    <div class="titlebar-controls">
+      <button id="win-min" class="win-btn" title="최소화">─</button>
+      <button id="win-max" class="win-btn" title="최대화">▢</button>
+      <button id="win-close" class="win-btn win-close" title="닫기">✕</button>
+    </div>
+  </div>
+
+  <div class="app">
 
   <aside class="sidebar">
     <div class="brand">
-      <span class="brand-glyph">λ</span>
-      <div class="brand-text">
-        <span class="brand-title">lua-obfuscator</span>
-        <span class="brand-sub">karity-0</span>
-      </div>
+      <span class="brand-sub">PIPELINE CONFIG</span>
     </div>
 
     <section class="panel">
@@ -50,7 +59,7 @@
             </div>
           </label>
         </li>
-        <li class="pass-item" data-hint="출력된 결과물 스크립트에 포함된 모든 숫자를 난독화합니다.">
+        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 숫자를 난독화합니다.">
           <label class="pass-label">
             <input type="checkbox" class="opt-checkbox" id="opt-number">
             <div class="pass-info">
@@ -107,6 +116,7 @@
       </button>
     </div>
   </main>
+  </div>
 </div>
 
 <div id="tooltip" class="tooltip-box"></div>

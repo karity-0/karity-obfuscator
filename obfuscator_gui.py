@@ -41,6 +41,11 @@ VM_OUTPUT_PASS_ORDER = [
 class Api:
     """JS 쪽에서 window.pywebview.api.* 로 호출하는 백엔드 API."""
 
+    def __init__(self):
+        # 윈도우 최대화/복원용 상태
+        self._restore_geometry: tuple[int, int, int, int] | None = None
+        self._is_maximized = False
+
     # ------------------------------------------------------------
     # 메타 정보
     # ------------------------------------------------------------
@@ -158,6 +163,33 @@ class Api:
         except Exception as e:
             return {"ok": False, "error": str(e)}
 
+    # ------------------------------------------------------------
+    # 윈도우 컨트롤 (커스텀 타이틀바용)
+    # ------------------------------------------------------------
+    def window_minimize(self):
+        webview.windows[0].minimize()
+
+    def window_toggle_maximize(self):
+        win = webview.windows[0]
+
+        if self._is_maximized:
+            # 최대화 해제 -> 저장해둔 크기/위치로 복원
+            if self._restore_geometry:
+                x, y, w, h = self._restore_geometry
+                win.resize(w, h)
+                win.move(x, y)
+            self._is_maximized = False
+        else:
+            # 최대화 -> 현재 크기/위치 저장 후 화면 크기로 확장
+            self._restore_geometry = (win.x, win.y, win.width, win.height)
+            screen = webview.screens[0]
+            win.move(0, 0)
+            win.resize(screen.width, screen.height)
+            self._is_maximized = True
+
+    def window_close(self):
+        webview.windows[0].destroy()
+
 
 def main():
     api = Api()
@@ -168,7 +200,8 @@ def main():
         width=1200,
         height=800,
         min_size=(900, 600),
-        background_color="#0d1117",
+        background_color="#0a0e14",
+        frameless=True,
     )
     webview.start(debug=False)
 

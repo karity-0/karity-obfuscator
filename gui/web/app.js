@@ -1,4 +1,23 @@
 document.addEventListener('DOMContentLoaded', () => {
+    // ------------------------------------------------------------
+    // 커스텀 타이틀바 - 윈도우 컨트롤
+    // ------------------------------------------------------------
+    const winMinBtn = document.getElementById('win-min');
+    const winMaxBtn = document.getElementById('win-max');
+    const winCloseBtn = document.getElementById('win-close');
+
+    winMinBtn?.addEventListener('click', () => {
+        window.pywebview?.api?.window_minimize?.();
+    });
+
+    winMaxBtn?.addEventListener('click', () => {
+        window.pywebview?.api?.window_toggle_maximize?.();
+    });
+
+    winCloseBtn?.addEventListener('click', () => {
+        window.pywebview?.api?.window_close?.();
+    });
+
     // DOM Elements
     const pipelineStrip = document.getElementById('pipeline-strip');
     const inputScript = document.getElementById('input-script');
