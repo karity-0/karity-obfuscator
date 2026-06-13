@@ -12,6 +12,28 @@ raw instruction 레이아웃 (parser.dump_proto 기준):
     C   = (ins >> 14) & 0x1FF
     Bx  = (ins >> 14) & 0x3FFFF
     sBx = Bx - 131071   (OFFSET = 0x3FFFF >> 1 = 131071)
+
+junk 다양성 전략
+────────────────
+[전략 A] MOVE self-junk
+    MOVE A, A  — 어떤 타입에도 안전, 레지스터 다양성으로 노이즈 생성.
+
+[전략 B] dead-write junk
+    다음 instruction이 reg를 덮어쓰는 경우 MOVE reg, reg 선삽입.
+    역시 타입 무관 안전.
+
+[전략 C] junk 전용 레지스터 combination
+    max_stack을 JUNK_REG_COUNT개 확장해 원본 로직이 절대 건드리지 않는
+    전용 구간을 확보한다. 함수 진입부에 LOADK 초기화 시퀀스를 삽입하고,
+    이후 gap에서 BAND/BOR/BXOR/BNOT/UNM 조합을 자유롭게 사용.
+
+[전략 D] 숫자 보장 instruction 후 combination junk
+    직전 instruction이 "결과가 반드시 숫자"인 opcode이면 해당 레지스터에
+    net-zero combination을 삽입: 여러 연산을 연쇄해 최종 값이 원래 값과
+    동일하게 복원되도록 설계됨.
+    숫자 보장 opcode: ADD, SUB, MUL, DIV, MOD, POW, IDIV,
+                      BAND, BOR, BXOR, BNOT, SHL, SHR, UNM, LEN,
+                      LOADK(숫자 상수), FORLOOP/FORPREP(A 레지스터)
 """
 from __future__ import annotations
 import random
@@ -21,19 +43,60 @@ SBX_OFFSET = 0x3FFFF >> 1  # 131071
 
 # 다음 instruction과 의미적으로 결합되는 opcode들 (사이에 junk 삽입 금지)
 # EQ/LT/LE/TEST/TESTSET (31~35): "조건 불일치 시 다음 instruction(JMP) skip" 구조
-#   -> 사이에 junk가 끼면 skip 결과가 junk로 떨어져 분기 의미가 깨짐
 _SKIP_NEXT_OPS = {31, 32, 33, 34, 35}
 
 # jump 계열 opcode: target = i + 1 + sBx
 _JUMP_OPS = {30, 39, 40, 42}  # JMP, FORLOOP, FORPREP, TFORLOOP
 
-OP_MOVE = 0
-OP_BAND = 20
-OP_BOR  = 21
+# A를 input으로 읽는 opcode들 (junk가 직전에 A를 건드리면 위험)
+_A_IS_INPUT_OPS = {
+    36, 37, 38,   # CALL, TAILCALL, RETURN
+    41, 42, 43,   # TFORCALL, TFORLOOP, SETLIST
+    39, 40,       # FORLOOP, FORPREP
+    9,            # SETUPVAL
+    8, 10,        # SETTABUP, SETTABLE
+    29,           # CONCAT
+}
 
+# 결과 레지스터 A가 반드시 숫자인 opcode들
+_NUMERIC_DEST_OPS = {
+    13, 14, 15, 16, 17, 18, 19,   # ADD, SUB, MUL, MOD, POW, DIV, IDIV
+    20, 21, 22, 23, 24,            # BAND, BOR, BXOR, SHL, SHR
+    25, 26,                        # UNM, BNOT
+    28,                            # LEN
+}
+
+# FORLOOP/FORPREP: A 레지스터가 숫자 (루프 인덱스)
+_FORLOOP_OPS = {39, 40}
+
+OP_MOVE  = 0
+OP_LOADK = 1
+OP_ADD   = 13
+OP_SUB   = 14
+OP_BAND  = 20
+OP_BOR   = 21
+OP_BXOR  = 22
+OP_UNM   = 25
+OP_BNOT  = 26
+
+# rk(x) 에서 상수 참조: B/C 필드에 256+kidx 를 넣으면 consts[kidx] 를 읽음
+# (vm.lua: if x>=256 then return kval(consts[x-255]) end → kidx=0 이면 x=256)
+_RK_CONST_OFFSET = 256
+
+# junk 전용 레지스터 확장 개수
+JUNK_REG_COUNT = 3
+
+
+# ---------------------------------------------------------------------------
+# 인코딩 헬퍼
+# ---------------------------------------------------------------------------
 
 def _encode(op: int, a: int, b: int, c: int) -> int:
     return (op & 0x3F) | ((a & 0xFF) << 6) | ((c & 0x1FF) << 14) | ((b & 0x1FF) << 23)
+
+
+def _encode_bx(op: int, a: int, bx: int) -> int:
+    return (op & 0x3F) | ((a & 0xFF) << 6) | ((bx & 0x3FFFF) << 14)
 
 
 def _decode(ins: int) -> tuple[int, int, int, int]:
@@ -56,148 +119,305 @@ def _set_sbx(ins: int, new_sbx: int) -> int:
     return (op & 0x3F) | ((a & 0xFF) << 6) | ((bx & 0x3FFFF) << 14)
 
 
+def _is_numeric_const(c) -> bool:
+    return isinstance(c, (int, float)) and not isinstance(c, bool)
+
+
 # ---------------------------------------------------------------------------
-# junk instruction 생성
+# 전략 C: junk 전용 레지스터 초기화 시퀀스
 # ---------------------------------------------------------------------------
 
-# A에 read도 동반하는 opcode들 (junk가 직전에 A를 건드리면 위험)
-# -> 다음 instruction의 A를 junk target으로 쓸 때 이 집합에 속하면 skip
-_A_IS_INPUT_OPS = {
-    36, 37, 38,            # CALL, TAILCALL, RETURN (A=함수/리턴 시작 슬롯, 입력으로 사용)
-    41, 42, 43,            # TFORCALL, TFORLOOP, SETLIST (A=상태/테이블, 입력)
-    39, 40,                # FORLOOP, FORPREP (A..A+3 모두 루프 상태, 입력)
-    9,                      # SETUPVAL (A=read)
-    8, 10,                  # SETTABUP, SETTABLE (A=upval/table, read)
-    29,                     # CONCAT (B..C range, A is dest only actually - but keep safe)
-}
-
-
-def _gen_self_junk(reg: int, safe: bool) -> int:
-    """레지스터 reg를 자기 자신으로 덮어쓰는 무해한 junk (MOVE/BAND/BOR A,A,A).
-
-    safe=False (reg가 아직 nil일 수 있는 영역)면 MOVE만 사용 — BAND/BOR는
-    `nil & nil` 형태로 즉시 에러나기 때문.
+def _gen_junk_reg_init(junk_base: int, constants: list) -> list[int]:
     """
-    if not safe:
-        return _encode(OP_MOVE, reg, reg, 0)
+    junk 전용 레지스터 junk_base..junk_base+JUNK_REG_COUNT-1 에
+    숫자 상수를 LOADK로 초기화하는 instruction 시퀀스.
 
-    choice = random.choice((OP_MOVE, OP_BAND, OP_BOR))
-    if choice == OP_MOVE:
-        return _encode(OP_MOVE, reg, reg, 0)
-    return _encode(choice, reg, reg, reg)
-
-
-def _gen_deadwrite_junk(reg: int) -> int:
+    constants 풀에서 숫자 상수 인덱스를 찾아 사용.
+    숫자 상수가 없으면 MOVE self로 fallback (값 = nil이지만 combination에서
+    BNOT/UNM 만 쓰면 에러, BXOR/BOR/BAND nil은 에러 → 이 경우 전략 C 회피를
+    _pick_junks_for_gap 에서 처리).
     """
-    reg에 연산 결과를 쓰지만, 바로 다음 instruction이 reg를 덮어쓸 것이
-    보장된 상황에서만 사용하는 junk. ADD/SUB/BAND/BOR/BXOR A,A,A 형태로
-    실제 산술 연산을 수행하되 값이 어차피 버려짐.
+    numeric_kidxs = [i for i, c in enumerate(constants) if _is_numeric_const(c)]
+    instrs = []
+    for slot in range(junk_base, junk_base + JUNK_REG_COUNT):
+        if numeric_kidxs:
+            kidx = random.choice(numeric_kidxs)
+            instrs.append(_encode_bx(OP_LOADK, slot, kidx))
+        else:
+            # 숫자 상수 없음: MOVE self (nil → nil, 전략 C는 이 함수에서 비활성화됨)
+            instrs.append(_encode(OP_MOVE, slot, slot, 0))
+    return instrs
+
+
+# ---------------------------------------------------------------------------
+# 전략 C/D: 숫자 보장 레지스터 combination junk
+# ---------------------------------------------------------------------------
+
+def _add_junk_const(constants: list, value: int | float) -> int:
     """
-    op = random.choice((13, 14, 20, 21, 22))  # ADD, SUB, BAND, BOR, BXOR
-    return _encode(op, reg, reg, reg)
-
-
-def _pick_junk_for_gap(code: list[int], idx: int, max_stack: int, num_params: int) -> int | None:
+    junk용 상수를 constants 리스트에 추가하고 0-based 인덱스를 반환.
+    같은 값이 이미 있으면 재사용.
     """
-    code[idx-1] (junk 직전 instruction)과 code[idx] (junk 직후 instruction)을
-    참고해서, 안전한 junk instruction을 생성한다. 불가능하면 None.
+    for i, c in enumerate(constants):
+        if type(c) is type(value) and c == value:
+            return i
+    constants.append(value)
+    return len(constants) - 1
 
-    idx 는 "삽입될 위치" (이 위치에 junk가 들어가면 기존 code[idx]는 한 칸 뒤로 밀림)
 
-    num_params: 함수 진입 시점에 항상 초기화되어 있는 것이 보장되는 레지스터 범위
-                (0..num_params-1). BAND/BOR/ADD/SUB 등 "읽기 동반" 연산은
-                이 범위 밖에서는 regs[reg]가 nil일 수 있어 사용 불가.
+def _rk(kidx: int) -> int:
+    """상수 인덱스(0-based) → B/C 필드 인코딩 값."""
+    return _RK_CONST_OFFSET + kidx
+
+
+def _gen_numeric_combination(reg: int, constants: list) -> list[int]:
     """
-    next_ins = code[idx] if idx < len(code) else None
+    reg가 숫자임이 보장될 때, net-zero combination 연산 시퀀스를 반환.
+    각 패턴은 최종 값이 입력 값과 동일하게 복원된다.
 
-    # dead-write 패턴: 다음 instruction의 dest A가 num_params 범위(항상 초기화됨) 내일 때만
+    K 기반 패턴: 랜덤 정수 K를 constants에 추가해 B/C 필드 상수 참조로 인코딩.
+
+    패턴 목록:
+      ── K 없는 패턴 (self-op 기반) ──
+      P0:  BNOT×2                              (~~r = r)
+      P1:  UNM×2                               (--r = r)
+      P2:  BOR self → BAND self                (r|r=r, r&r=r)
+      P3:  BOR self × 3                        (r|r=r, 3회)
+      P4:  BNOT×2 → BOR → BAND                (4단)
+      P5:  UNM×2 → BOR → BAND                 (4단)
+      P6:  BNOT×4                              (~~~~r = r)
+      P7:  UNM×4                               (----r = r)
+      P8:  BOR → BNOT×2 → BAND                (4단)
+      P9:  BAND → BNOT×2 → BOR                (4단)
+      ── K 기반 패턴 ──
+      P10: BXOR r,r,K → BXOR r,r,K            (r^K^K = r)
+      P11: ADD r,r,K  → SUB r,r,K             (r+K-K = r)
+      P12: BNOT → BXOR r,r,K → BXOR r,r,K → BNOT   (4단 조합)
+      P13: UNM  → ADD r,r,K  → SUB r,r,K  → UNM     (4단 조합)
+      P14: BXOR r,r,K1 → BXOR r,r,K1 → BNOT×2       (4단 조합)
+      P15: ADD r,r,K  → BXOR r,r,K2 → BXOR r,r,K2 → SUB r,r,K  (4단 조합)
+    (SHL/SHR 패턴 제외: Lua >> 는 logical shift라 음수 정수에서 net-zero 불성립)
+    """
+    r = reg
+
+    def bxor_k(k_val: int):
+        ki = _rk(_add_junk_const(constants, k_val))
+        return _encode(OP_BXOR, r, r, ki)
+
+    def add_k(k_val: int):
+        ki = _rk(_add_junk_const(constants, k_val))
+        return _encode(OP_ADD, r, r, ki)
+
+    def sub_k(k_val: int):
+        ki = _rk(_add_junk_const(constants, k_val))
+        return _encode(OP_SUB, r, r, ki)
+
+    bnot = _encode(OP_BNOT, r, r, 0)
+    unm  = _encode(OP_UNM,  r, r, 0)
+    bor  = _encode(OP_BOR,  r, r, r)
+    band = _encode(OP_BAND, r, r, r)
+
+    # 난수 K 생성
+    K  = random.randint(1, 0x7FFFFFFF)
+    K2 = random.randint(1, 0x7FFFFFFF)
+
+    patterns = [
+        # P0~P9: K 없는 패턴
+        [bnot, bnot],
+        [unm,  unm],
+        [bor,  band],
+        [bor,  bor,  bor],
+        [bnot, bnot, bor,  band],
+        [unm,  unm,  bor,  band],
+        [bnot, bnot, bnot, bnot],
+        [unm,  unm,  unm,  unm],
+        [bor,  bnot, bnot, band],
+        [band, bnot, bnot, bor],
+        # P10: BXOR r,K x2
+        [bxor_k(K), bxor_k(K)],
+        # P11: ADD K → SUB K
+        [add_k(K),  sub_k(K)],
+        # P12: BNOT → BXOR K×2 → BNOT
+        [bnot, bxor_k(K), bxor_k(K), bnot],
+        # P13: UNM → ADD K → SUB K → UNM
+        [unm,  add_k(K),  sub_k(K),  unm],
+        # P14: BXOR K1×2 → BNOT×2
+        [bxor_k(K), bxor_k(K), bnot, bnot],
+        # P15: ADD K → BXOR K2×2 → SUB K
+        [add_k(K), bxor_k(K2), bxor_k(K2), sub_k(K)],
+    ]
+    return random.choice(patterns)
+
+
+# ---------------------------------------------------------------------------
+# 전략 D: 직전 instruction 기반 숫자 보장 레지스터 탐색
+# ---------------------------------------------------------------------------
+
+def _numeric_dest_from_prev(prev_ins: int, constants: list) -> int | None:
+    """
+    prev_ins (직전 instruction)이 숫자를 dest A에 쓰는 opcode인지 확인.
+    맞으면 A를 반환, 아니면 None.
+    """
+    op, a, _, _ = _decode(prev_ins)
+
+    if op in _NUMERIC_DEST_OPS:
+        return a
+
+    if op == OP_LOADK:
+        bx = (prev_ins >> 14) & 0x3FFFF
+        if bx < len(constants) and _is_numeric_const(constants[bx]):
+            return a
+
+    if op in _FORLOOP_OPS:
+        return a
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 통합 junk 선택기
+# ---------------------------------------------------------------------------
+
+def _pick_junks_for_gap(
+    code: list[int],
+    idx: int,
+    orig_stack: int,
+    junk_base: int,
+    has_numeric_junk_regs: bool,
+    constants: list,
+) -> list[int]:
+    """
+    gap idx에 삽입할 junk instruction 목록을 반환.
+    빈 리스트 = 삽입 안 함.
+
+    전략 우선순위 (확률 기반 가중치):
+      D (직전 숫자 combination) > C (전용 레지스터 combination) >
+      B (dead-write MOVE) > A (self MOVE fallback)
+    """
+    prev_ins = code[idx - 1] if idx > 0 else None
+    next_ins = code[idx]     if idx < len(code) else None
+
+    # 전략 D: 직전 instruction이 숫자 dest → combination junk
+    if prev_ins is not None and random.random() < 0.55:
+        num_reg = _numeric_dest_from_prev(prev_ins, constants)
+        if num_reg is not None:
+            return _gen_numeric_combination(num_reg, constants)
+
+    # 전략 C: junk 전용 레지스터 combination
+    if has_numeric_junk_regs and random.random() < 0.45:
+        jreg = random.randint(junk_base, junk_base + JUNK_REG_COUNT - 1)
+        return _gen_numeric_combination(jreg, constants)
+
+    # 전략 B: dead-write MOVE (다음 instruction이 reg를 덮어쓸 때)
     if next_ins is not None and random.random() < 0.4:
         nop, na, _, _ = _decode(next_ins)
-        if nop not in _A_IS_INPUT_OPS and 0 <= na < num_params:
-            return _gen_deadwrite_junk(na)
+        if nop not in _A_IS_INPUT_OPS and 0 <= na < orig_stack:
+            return [_encode(OP_MOVE, na, na, 0)]
 
-    # 기본: self-junk (max_stack 범위 내 임의 레지스터, 자기 자신 연산)
-    if max_stack <= 0:
-        return None
-    reg = random.randint(0, max(max_stack - 1, 0))
-    safe = reg < num_params
-    return _gen_self_junk(reg, safe)
+    # 전략 A: fallback MOVE self
+    if orig_stack > 0:
+        reg = random.randint(0, orig_stack - 1)
+        return [_encode(OP_MOVE, reg, reg, 0)]
+
+    return []
 
 
 # ---------------------------------------------------------------------------
 # 메인 삽입 로직
 # ---------------------------------------------------------------------------
 
-def _inject_code(code: list[int], max_stack: int, num_params: int, rate: float) -> list[int]:
+def _inject_code(
+    code: list[int],
+    max_stack: int,
+    num_params: int,
+    constants: list,
+    rate: float,
+) -> tuple[list[int], int, list]:
+    """
+    junk를 삽입한 새 code, 새 max_stack_size, 새 constants 를 반환.
+    junk 전용 레지스터 JUNK_REG_COUNT개를 max_stack에 추가한다.
+    """
     n = len(code)
     if n == 0:
-        return code
+        return code, max_stack, constants
 
-    # gap[i] : code[i] 앞에 junk를 넣을지 여부 (i == n 이면 맨 끝)
-    # LOADKX(op==2) 다음은 항상 EXTRAARG이므로 그 사이엔 삽입 금지
+    # constants는 junk K 추가로 변형되므로 복사본 사용
+    constants = list(constants)
+
+    junk_base = max_stack
+    new_max_stack = max_stack + JUNK_REG_COUNT
+    has_numeric_junk_regs = any(_is_numeric_const(c) for c in constants)
+
+    # 삽입 금지 gap 계산
     forbidden_before: set[int] = set()
     i = 0
     while i < n:
         op = code[i] & 0x3F
-        if op == 2:  # OP_LOADKX
-            forbidden_before.add(i + 1)  # EXTRAARG 앞에 삽입 금지
+        if op == 2:  # OP_LOADKX → 다음은 EXTRAARG
+            forbidden_before.add(i + 1)
             i += 2
             continue
         if op in _SKIP_NEXT_OPS:
-            forbidden_before.add(i + 1)  # 다음 JMP 앞에 삽입 금지 (skip 의미 보존)
-        if op == 41:  # TFORCALL -> 다음은 항상 TFORLOOP, 결과 레지스터 결합
+            forbidden_before.add(i + 1)
+        if op == 41:  # TFORCALL → 다음은 TFORLOOP
             forbidden_before.add(i + 1)
         i += 1
 
-    insertions: dict[int, int | None] = {}  # gap index -> junk instr (or None)
+    # gap별 junk 목록 결정
+    insertions: dict[int, list[int]] = {}
     for gap in range(0, n + 1):
         if gap in forbidden_before:
             continue
         if random.random() < rate:
-            junk = _pick_junk_for_gap(code, gap, max_stack, num_params)
-            if junk is not None:
-                insertions[gap] = junk
+            junks = _pick_junks_for_gap(
+                code, gap, max_stack, junk_base, has_numeric_junk_regs, constants
+            )
+            if junks:
+                insertions[gap] = list(junks)
 
-    if not insertions:
-        return code
+    # junk 전용 레지스터 초기화 시퀀스를 맨 앞(gap 0)에 prepend
+    init_seq = _gen_junk_reg_init(junk_base, constants)
+    insertions[0] = init_seq + insertions.get(0, [])
+
+    if not any(insertions.values()):
+        return code, new_max_stack
 
     # old index -> new index 매핑 구성
     old_to_new = [0] * n
     new_code: list[int] = []
     for gap in range(0, n + 1):
         if gap in insertions:
-            new_code.append(insertions[gap])
+            new_code.extend(insertions[gap])
         if gap < n:
             old_to_new[gap] = len(new_code)
             new_code.append(code[gap])
 
-    # 역매핑: new index -> old index (junk가 아닌 것만)
+    # 역매핑: new index -> old index
     new_to_old: dict[int, int] = {v: k for k, v in enumerate(old_to_new)}
 
+    # jump target 재계산
     for new_i, ins in enumerate(new_code):
         op = ins & 0x3F
         if op not in _JUMP_OPS:
             continue
         if new_i not in new_to_old:
-            continue  # junk instruction (jump opcode가 junk로 안 생기므로 사실상 없음)
+            continue
 
         old_i = new_to_old[new_i]
         old_sbx = _sbx(ins)
         old_target = old_i + 1 + old_sbx
 
-        # old_target이 코드 끝(n)인 경우도 처리 (old_to_new는 0..n-1만 있음)
         if old_target == n:
             new_target = len(new_code)
         elif 0 <= old_target < n:
             new_target = old_to_new[old_target]
         else:
-            # 비정상 타겟: 그대로 둠 (발생하지 않아야 함)
             continue
 
         new_sbx = new_target - new_i - 1
         new_code[new_i] = _set_sbx(ins, new_sbx)
 
-    return new_code
+    return new_code, new_max_stack, constants
 
 
 def inject_junk(proto: Proto, rate: float = 0.15) -> Proto:
@@ -207,7 +427,9 @@ def inject_junk(proto: Proto, rate: float = 0.15) -> Proto:
 
     rate: 각 gap(instruction 사이)마다 junk가 삽입될 확률.
     """
-    new_code = _inject_code(proto.code, proto.max_stack_size, proto.num_params, rate)
+    new_code, new_max_stack, new_constants = _inject_code(
+        proto.code, proto.max_stack_size, proto.num_params, proto.constants, rate
+    )
     new_protos = [inject_junk(sub, rate) for sub in proto.protos]
 
     return Proto(
@@ -216,9 +438,9 @@ def inject_junk(proto: Proto, rate: float = 0.15) -> Proto:
         last_line_defined = proto.last_line_defined,
         num_params        = proto.num_params,
         is_vararg         = proto.is_vararg,
-        max_stack_size    = proto.max_stack_size,
+        max_stack_size    = new_max_stack,
         code              = new_code,
-        constants         = proto.constants,
+        constants         = new_constants,
         upvalues          = proto.upvalues,
         protos            = new_protos,
         lineinfo          = proto.lineinfo,
