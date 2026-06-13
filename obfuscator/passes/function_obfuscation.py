@@ -528,7 +528,7 @@ def _stmt_has_goto_or_label(stmt) -> bool:
     return False
 
 
-def _stmt_text(script: str, stmt) -> str | None:
+def _stmt_text(script: str, stmt, body_min_start: int = 0) -> str | None:
     if stmt.start_char is None or stmt.stop_char is None:
         return None
 
@@ -539,8 +539,13 @@ def _stmt_text(script: str, stmt) -> str | None:
     # (`.func`/`.source` 노드의 start_char도 None이라 직접 보정 불가).
     # vm.lua는 statement당 한 줄 스타일이므로, 같은 줄의 시작까지
     # 거슬러 올라가 호출 대상 표현식을 포함시킨다.
+    # body_min_start: 함수 본문의 시작 위치. Call/Invoke 보정 시 이 위치보다
+    # 앞으로 line_start를 올릴 수 없다. 예를 들어 `local mmm = function() print(...) end`
+    # 같은 코드에서 AnonymousFunction 내부 Call의 start_char가 `(`를 가리킬 때,
+    # 보정이 줄 시작(`local mmm = ...`)까지 올라가면 `function()...end`의 `end`가
+    # stop_char 범위에 포함되지 않아 잘린 텍스트가 생성되는 버그를 막는다.
     if isinstance(stmt, (astnodes.Call, astnodes.Invoke)):
-        line_start = script.rfind('\n', 0, start) + 1
+        line_start = max(script.rfind('\n', 0, start) + 1, body_min_start)
         candidate = script[line_start:start]
         if candidate.strip():
             start = line_start
@@ -590,7 +595,7 @@ def _build_stmt_chunks(stmt_lines: list[list[str]], stmt_is_return: list[bool]) 
     return chunks, ends_with_return
 
 
-def _transform_body(script: str, stmts: list, params: list[str]) -> str | None:
+def _transform_body(script: str, stmts: list, params: list[str], body_min_start: int = 0) -> str | None:
     """함수 본문(직계 statement 목록)을 변환. 변환 불가능하면 None.
 
     AST에서 얻은 직계 statement들의 `start_char`/`stop_char`로 텍스트를
@@ -598,6 +603,9 @@ def _transform_body(script: str, stmts: list, params: list[str]) -> str | None:
     발생할 수 있는 chunk 경계 오인식 문제가 없다. nested function의
     본문은 해당 statement의 텍스트에 그대로 포함되어 한 chunk 단위로만
     다뤄지므로 내부가 쪼개질 일이 없다.
+
+    body_min_start: body.start_char. Call/Invoke stmt 텍스트 보정 시
+    이 위치보다 앞으로 line_start를 올리지 않도록 _stmt_text에 전달한다.
     """
     if not stmts:
         return None
@@ -611,7 +619,7 @@ def _transform_body(script: str, stmts: list, params: list[str]) -> str | None:
     extra_hoist_names: list[str] = []
 
     for stmt in stmts:
-        text = _stmt_text(script, stmt)
+        text = _stmt_text(script, stmt, body_min_start=body_min_start)
         if text is None:
             return None
         name, text = _prelift_local_function_stmt(stmt, text)
@@ -704,7 +712,7 @@ class FunctionObfuscationPass(BasePass):
             if any(cs <= body.start_char and body.stop_char <= ce for cs, ce in claimed_ranges):
                 continue
 
-            new_body = _transform_body(script, body.body, params)
+            new_body = _transform_body(script, body.body, params, body_min_start=body.start_char)
             if new_body is None:
                 continue
 
