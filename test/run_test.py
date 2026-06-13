@@ -1,5 +1,6 @@
 from pathlib import Path
 import subprocess
+import sys
 
 BASE_DIR = Path(__file__).parent
 
@@ -20,10 +21,15 @@ def run_test():
     output_dir = BASE_DIR / "output"
     output_dir.mkdir(exist_ok=True)
 
+    filters = sys.argv[1:]
+
     total = 0
     passed = 0
 
-    for script in scripts_dir.glob("*.lua"):
+    for script in sorted(scripts_dir.glob("*.lua")):
+        if filters and not any(f in script.name for f in filters):
+            continue
+
         print(f"test: {script.name}")
         total += 1
 
@@ -31,7 +37,7 @@ def run_test():
 
         obf_path = output_dir / f"{script.stem}_obfuscated.lua"
         subprocess.run(
-            ["python", BASE_DIR.parent / "main.py", str(script), "-o", str(obf_path)]
+            ["python", str(BASE_DIR.parent / "main.py"), str(script), "-o", str(obf_path)]
         )
 
         rc2, out2, err2 = run_lua(obf_path)
@@ -43,6 +49,10 @@ def run_test():
         else:
             print("test: ok")
             passed += 1
+
+    if total == 0:
+        print(f"{RED}No tests matched the given filters: {filters}{RESET}")
+        return
 
     print(f"\ntotal result: {passed}/{total} passed.")
 
