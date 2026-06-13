@@ -24,6 +24,7 @@ MAIN_PASS_ORDER = [
     "boolean_obf",
     "number_obf",
     "table_obf",
+    "function_obf",
     "rename_obf",
     "minify",
     "vm",
@@ -36,6 +37,7 @@ VM_OUTPUT_PASS_ORDER = [
     "boolean_obf",
     "number_obf",
     "table_obf",
+    "function_obf",
     "rename_obf",
     "minify",
 ]

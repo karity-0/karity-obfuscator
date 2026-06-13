@@ -5,10 +5,11 @@ from .passes import (
     StringObfuscationPass,
     NumberObfuscationPass,
     BooleanObfuscationPass,
+    TableObfuscationPass,
+    FunctionObfuscationPass,
     RenameObfuscationPass,
     RemoveCommentPass,
     MinifyPass,
     VMPass,
     AntiDebugPass,
-    TableObfuscationPass, 
 )

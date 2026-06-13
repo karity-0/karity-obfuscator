@@ -34,6 +34,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const optBoolean = document.getElementById('opt-boolean');
     const optNumber = document.getElementById('opt-number');
     const optTable  = document.getElementById('opt-table');
+    const optFunction  = document.getElementById('opt-function');
     const optAntiDebug = document.getElementById('opt-anti-debug');
     const allCheckboxes = document.querySelectorAll('.opt-checkbox');
 
@@ -95,6 +96,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (optBoolean.checked) nodes.push('Boolean Obf');
         if (optNumber.checked) nodes.push('Number Obf');
         if (optTable.checked) nodes.push("Table Obf");
+        if (optFunction.checked) nodes.push("Function Obf");
         nodes.push('Rename & Minify'); 
         
         pipelineStrip.innerHTML = nodes
@@ -144,6 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
         optBoolean.checked = vmPasses.includes('boolean_obf');
         optNumber.checked = vmPasses.includes('number_obf');
         optTable.checked = vmPasses.includes("table_obf");
+        optFunction.checked = vmPasses.includes("function_obf");       
 
         const vmOptions = savedConfig.vm_options || {};
         vmoptFakeHandlers.checked = vmOptions.fake_handlers !== false;
@@ -161,7 +164,7 @@ document.addEventListener('DOMContentLoaded', () => {
             passes.push("anti_debug");
         }
         if (optBytecode.checked) {
-            passes.push("string_obf", "boolean_obf", "number_obf");
+            passes.push("string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf");
         }
         passes.push("vm"); 
 
@@ -177,6 +180,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
         if (optTable.checked) {
             vm_output_passes.push("table_obf");
+        }
+        if (optFunction.checked) {
+            vm_output_passes.push("function_obf");
         }
         
         vm_output_passes.push("rename_obf", "minify");
