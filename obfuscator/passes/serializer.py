@@ -29,11 +29,11 @@ class Writer:
     def f64(self, v: float):
         self._buf += struct.pack('<d', v)
 
-    def string(self, s: str | None):
+    def string(self, s: str | bytes | None):
         if s is None:
             self.u32(0)
             return
-        encoded = s.encode('utf-8')
+        encoded = s.encode('utf-8') if isinstance(s, str) else s
         self.u32(len(encoded))
         self._buf += encoded
 
@@ -159,7 +159,7 @@ def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None =
         elif isinstance(c, float):
             w.u8(CTAG_FLOAT)
             w.f64(c)
-        elif isinstance(c, str):
+        elif isinstance(c, (str, bytes)):
             w.u8(CTAG_STR)
             w.string(c)
         else:

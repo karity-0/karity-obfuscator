@@ -259,8 +259,11 @@ exec = function(proto, upvals, args, va_in)
                 new_uv[i]=upvals[uv.idx+1]
             end
         end
+        -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
+        -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         return function(...)
-            return exec(sub, new_uv, {...})
+            local w=exec(sub, new_uv, {...})
+            return _tu(w.r, 1, w.n)
         end
     end
 
@@ -311,13 +314,13 @@ exec = function(proto, upvals, args, va_in)
             if (not not regs[B])==(C~=0) then rset(A,regs[B]) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=regs[A]; local ca={}
+            local fn=regs[A]; local ca={}; local ca_n=0
             if B==0 then
-                for i=A+1,top do ca[#ca+1]=regs[i] end
+                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             elseif B>1 then
-                for i=A+1,A+B-1 do ca[#ca+1]=regs[i] end
+                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             end
-            local res=_tp(fn(_tu(ca)))
+            local res=_tp(fn(_tu(ca,1,ca_n)))
             if C==0 then
                 for i=1,res.n do rset(A+i-1,res[i]) end; top=A+res.n-1
             elseif C>1 then
@@ -325,18 +328,24 @@ exec = function(proto, upvals, args, va_in)
             end
 
         elseif op==37 then
-            local fn=regs[A]; local ca={}
-            if B>1 then for i=A+1,A+B-1 do ca[#ca+1]=regs[i] end end
-            return fn(_tu(ca))
+            local fn=regs[A]; local ca={}; local ca_n=0
+            if B>1 then
+                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=regs[i] end
+            elseif B==0 then
+                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
+            end
+            return fn(_tu(ca,1,ca_n))
 
         elseif op==38 then
-            if B==1 then return
+            if B==1 then return {r={},n=0}
             elseif B==0 then
-                local ret={}; for i=A,top do ret[#ret+1]=regs[i] end
-                return _tu(ret)
+                local r={}; local n=0
+                for i=A,top do n=n+1; r[n]=regs[i] end
+                return {r=r,n=n}
             else
-                local ret={}; for i=A,A+B-2 do ret[#ret+1]=regs[i] end
-                return _tu(ret)
+                local n=B-1; local r={}
+                for i=A,A+n-1 do r[i-A+1]=regs[i] end
+                return {r=r,n=n}
             end
 
         elseif op==39 then
@@ -376,6 +385,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==46 then _err("unexpected EXTRAARG")
         else _err("unknown op "..op) end
     end
+    return {r={},n=0}
 end
 
 local function run(blob,rand_tail,self_func)
