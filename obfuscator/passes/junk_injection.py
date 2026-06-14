@@ -58,11 +58,13 @@ _A_IS_INPUT_OPS = {
     29,           # CONCAT
 }
 
-# 결과 레지스터 A가 반드시 숫자인 opcode들
+# 결과 레지스터 A가 반드시 정수(integer)인 opcode들
+# ADD/SUB/MUL/DIV/MOD/POW/UNM/IDIV 제외: float 결과 가능
+# BAND/BOR/BXOR/SHL/SHR/BNOT: Lua 5.3 bitwise → integer 보장
+# LEN: integer 보장
 _NUMERIC_DEST_OPS = {
-    13, 14, 15, 16, 17, 18, 19,   # ADD, SUB, MUL, MOD, POW, DIV, IDIV
     20, 21, 22, 23, 24,            # BAND, BOR, BXOR, SHL, SHR
-    25, 26,                        # UNM, BNOT
+    26,                            # BNOT
     28,                            # LEN
 }
 
@@ -120,7 +122,8 @@ def _set_sbx(ins: int, new_sbx: int) -> int:
 
 
 def _is_numeric_const(c) -> bool:
-    return isinstance(c, (int, float)) and not isinstance(c, bool)
+    # float 제외: bitwise ops(BNOT/BXOR/BAND/BOR)는 Lua 5.3에서 integer only
+    return isinstance(c, int) and not isinstance(c, bool)
 
 
 # ---------------------------------------------------------------------------
@@ -268,8 +271,9 @@ def _numeric_dest_from_prev(prev_ins: int, constants: list) -> int | None:
         if bx < len(constants) and _is_numeric_const(constants[bx]):
             return a
 
-    if op in _FORLOOP_OPS:
-        return a
+    # FORLOOP: 루프 카운터가 float일 수 있으므로 제외
+    # if op in _FORLOOP_OPS:
+    #     return a
 
     return None
 

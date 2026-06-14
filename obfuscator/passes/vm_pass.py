@@ -165,9 +165,16 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
     """VM 출력물에 passes 재적용."""
     from ..pipeline import Pipeline
     from ..registry import PASS_REGISTRY
- 
+
+    # function_obf는 vm.lua의 exec 내부 클로저(make_closure, get_box 등)에
+    # CFF를 적용하면서 _T0 등의 pooling 변수가 exec upvalue로 잘못 capture됨.
+    # vm output에는 적용하지 않는다.
+    _VM_BLOCKED = {"function_obf"}
+
     pipeline = Pipeline()
     for name in pass_names:
+        if name in _VM_BLOCKED:
+            continue
         info = PASS_REGISTRY.get(name)
         if info is None:
             continue
@@ -178,7 +185,7 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
             continue
 
         pipeline.add(cls())
- 
+
     return pipeline.run(script)
 
 
