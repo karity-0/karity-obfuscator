@@ -412,6 +412,16 @@ local function run(blob,rand_tail,self_func)
     local r=make_reader(blob)
     local seed=r.u16()
     local acc_state={seed,0}
+    -- 가짜 상수 풀 스킵
+    local _fn=r.u32()
+    for _=1,_fn do
+        local _ft=r.u8()
+        if     _ft==1 then r.u8()
+        elseif _ft==2 then r.i64()
+        elseif _ft==3 then r.f64()
+        elseif _ft==4 then r.str()
+        end
+    end
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
     exec(proto,{env_box},{})

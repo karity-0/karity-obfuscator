@@ -126,6 +126,58 @@ CTAG_FLOAT = 3
 CTAG_STR   = 4
 
 
+
+# ---------------------------------------------------------------------------
+# 가짜 상수 풀
+# ---------------------------------------------------------------------------
+_FAKE_STRINGS = [
+    "print", "tostring", "tonumber", "require", "load", "pcall", "xpcall",
+    "io", "os", "math", "string", "table", "package", "debug",
+    "open", "read", "write", "close", "format", "find", "match", "gsub",
+    "insert", "remove", "concat", "sort", "exit", "time", "clock",
+    "loadfile", "dofile", "type", "pairs", "ipairs", "next", "select",
+    "rawget", "rawset", "rawlen", "rawequal", "setmetatable", "getmetatable",
+]
+_FAKE_NUMBERS_INT   = [0, 1, -1, 2, 10, 16, 32, 64, 100, 255, 256, 1000, 0xFF, 0x7F, 0x100]
+_FAKE_NUMBERS_FLOAT = [0.0, 1.0, -1.0, 3.14, 2.718, 0.5, 100.0]
+
+
+def _write_fake_pool(w: Writer) -> None:
+    """가짜 상수 풀을 blob에 직렬화. 태그 구조는 진짜 풀과 동일."""
+    entries = []
+    # 문자열 랜덤 샘플
+    n_str = random.randint(8, 20)
+    for s in random.sample(_FAKE_STRINGS, min(n_str, len(_FAKE_STRINGS))):
+        entries.append((CTAG_STR, s))
+    # 정수 랜덤 샘플
+    n_int = random.randint(3, 8)
+    for v in random.sample(_FAKE_NUMBERS_INT, min(n_int, len(_FAKE_NUMBERS_INT))):
+        entries.append((CTAG_INT, v))
+    # 실수 랜덤 샘플
+    n_flt = random.randint(1, 4)
+    for v in random.sample(_FAKE_NUMBERS_FLOAT, min(n_flt, len(_FAKE_NUMBERS_FLOAT))):
+        entries.append((CTAG_FLOAT, v))
+    # bool/nil 약간
+    for _ in range(random.randint(1, 3)):
+        entries.append((CTAG_BOOL, random.choice([True, False])))
+    entries.append((CTAG_NIL, None))
+
+    random.shuffle(entries)
+    w.u32(len(entries))
+    for tag, val in entries:
+        w.u8(tag)
+        if tag == CTAG_NIL:
+            pass
+        elif tag == CTAG_BOOL:
+            w.u8(1 if val else 0)
+        elif tag == CTAG_INT:
+            w.i64(val)
+        elif tag == CTAG_FLOAT:
+            w.f64(val)
+        elif tag == CTAG_STR:
+            w.string(val)
+
+
 # ---------------------------------------------------------------------------
 # 직렬화
 # ---------------------------------------------------------------------------
@@ -133,6 +185,7 @@ def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None) -> byte
     w = Writer()
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
+    _write_fake_pool(w)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
     _write_proto(w, proto, vop_map, acc_state)
