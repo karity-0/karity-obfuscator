@@ -106,14 +106,14 @@ class Reader:
         return struct.unpack_from('<d', self.read_bytes(8))[0]
 
     # -- Lua 가변길이 문자열 ---
-    def read_string(self) -> str | None:
+    def read_string(self) -> bytes | None:
         size = self.read_byte()
         if size == 0:
             return None
         if size == 0xFF:
             size = self.read_size_t()
         raw = self.read_bytes(size - 1)   # 끝 \0 미포함
-        return raw.decode('utf-8', errors='replace')
+        return raw
 
 
 class Lua53Parser:

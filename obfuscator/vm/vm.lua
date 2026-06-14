@@ -14,10 +14,12 @@ local _ti  = _t["insert"]
 local _tu  = _t["unpack"]
 local _tp  = _t["pack"]
 local _tc  = _t["concat"]
-local _ip  = ipairs
-local _sm  = setmetatable
-local _ts  = tostring
-local _err = error
+local _ip  = _ENV["ipairs"]
+local _sm  = _ENV["setmetatable"]
+local _ts  = _ENV["tostring"]
+local _err = _ENV["error"]
+local _load = _ENV["load"]
+local _loads = _ENV["loadstring"]
 
 local _KAE_PRIMES={0x07,0x0B,0x0D,0x11,0x13,0x17,0x1D,0x1F}
 
@@ -143,6 +145,10 @@ end
 local function make_reader(blob)
     local pos=1; local r={}
     function r.u8() local v=_sbyte(blob,pos); pos=pos+1; return v end
+    function r.u16()
+        local a,b=_sbyte(blob,pos,pos+1); pos=pos+2
+        return a|(b<<8)
+    end
     function r.u32()
         local a,b,c,d=_sbyte(blob,pos,pos+3); pos=pos+4
         return a|(b<<8)|(c<<16)|(d<<24)
@@ -170,32 +176,44 @@ end
 
 local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4
 
-local function read_proto(r)
+local function read_proto(r, acc_state)
     local p={}
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
     local n=r.u32(); p.code={}
-    for i=1,n do p.code[i]=r.u64() end
+    for i=1,n do
+        local raw64=r.u64()
+        local enc_op      = raw64 & 0x7F
+        local enc_variant = (raw64>>40) & 0xFF
+        local acc=acc_state[1]; local idx=acc_state[2]
+        local actual_op      = enc_op      ~ (acc & 0x7F)
+        local actual_variant = enc_variant ~ ((acc>>7) & 0xFF)
+        local actual_vop     = actual_op | (actual_variant<<7)
+        acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
+        acc_state[2] = idx + 1
+        raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant<<40)
+        p.code[i]=raw64
+    end
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
-        if     tag==CTAG_NIL   then p.constants[i]={tag='nil'}
-        elseif tag==CTAG_BOOL  then p.constants[i]={tag='bool',v=(r.u8()~=0)}
-        elseif tag==CTAG_INT   then p.constants[i]={tag='int', v=r.i64()}
-        elseif tag==CTAG_FLOAT then p.constants[i]={tag='flt', v=r.f64()}
-        elseif tag==CTAG_STR   then p.constants[i]={tag='str', v=r.str()}
+        if     tag==CTAG_NIL   then p.constants[i]={0}
+        elseif tag==CTAG_BOOL  then p.constants[i]={1,r.u8()~=0}
+        elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
+        elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
+        elseif tag==CTAG_STR   then p.constants[i]={4,r.str()}
         else _err("bad const tag ".._ts(tag)) end
     end
     n=r.u32(); p.upvalues={}
     for i=1,n do p.upvalues[i]={instack=r.u8(),idx=r.u8()} end
     n=r.u32(); p.protos={}
-    for i=1,n do p.protos[i]=read_proto(r) end
+    for i=1,n do p.protos[i]=read_proto(r,acc_state) end
     return p
 end
 
 local function kval(k)
     if not k then return nil end
-    if k.tag=='nil' then return nil end
-    return k.v
+    if k[1]==0 then return nil end
+    return k[2]
 end
 
 local function decode(ins)
@@ -259,8 +277,11 @@ exec = function(proto, upvals, args, va_in)
                 new_uv[i]=upvals[uv.idx+1]
             end
         end
+        -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
+        -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         return function(...)
-            return exec(sub, new_uv, {...})
+            local w=exec(sub, new_uv, {...})
+            return _tu(w.r, 1, w.n)
         end
     end
 
@@ -311,13 +332,13 @@ exec = function(proto, upvals, args, va_in)
             if (not not regs[B])==(C~=0) then rset(A,regs[B]) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=regs[A]; local ca={}
+            local fn=regs[A]; local ca={}; local ca_n=0
             if B==0 then
-                for i=A+1,top do ca[#ca+1]=regs[i] end
+                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             elseif B>1 then
-                for i=A+1,A+B-1 do ca[#ca+1]=regs[i] end
+                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             end
-            local res=_tp(fn(_tu(ca)))
+            local res=_tp(fn(_tu(ca,1,ca_n)))
             if C==0 then
                 for i=1,res.n do rset(A+i-1,res[i]) end; top=A+res.n-1
             elseif C>1 then
@@ -325,18 +346,24 @@ exec = function(proto, upvals, args, va_in)
             end
 
         elseif op==37 then
-            local fn=regs[A]; local ca={}
-            if B>1 then for i=A+1,A+B-1 do ca[#ca+1]=regs[i] end end
-            return fn(_tu(ca))
+            local fn=regs[A]; local ca={}; local ca_n=0
+            if B>1 then
+                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=regs[i] end
+            elseif B==0 then
+                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
+            end
+            return fn(_tu(ca,1,ca_n))
 
         elseif op==38 then
-            if B==1 then return
+            if B==1 then return {r={},n=0}
             elseif B==0 then
-                local ret={}; for i=A,top do ret[#ret+1]=regs[i] end
-                return _tu(ret)
+                local r={}; local n=0
+                for i=A,top do n=n+1; r[n]=regs[i] end
+                return {r=r,n=n}
             else
-                local ret={}; for i=A,A+B-2 do ret[#ret+1]=regs[i] end
-                return _tu(ret)
+                local n=B-1; local r={}
+                for i=A,A+n-1 do r[i-A+1]=regs[i] end
+                return {r=r,n=n}
             end
 
         elseif op==39 then
@@ -376,6 +403,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==46 then _err("unexpected EXTRAARG")
         else _err("unknown op "..op) end
     end
+    return {r={},n=0}
 end
 
 local function run(blob,rand_tail,self_func)
@@ -384,7 +412,19 @@ local function run(blob,rand_tail,self_func)
     local key="karityObfuscator/".._sformat("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
-    local proto=read_proto(r)
+    local seed=r.u16()
+    local acc_state={seed,0}
+    -- 가짜 상수 풀 스킵
+    local _fn=r.u32()
+    for _=1,_fn do
+        local _ft=r.u8()
+        if     _ft==1 then r.u8()
+        elseif _ft==2 then r.i64()
+        elseif _ft==3 then r.f64()
+        elseif _ft==4 then r.str()
+        end
+    end
+    local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
     exec(proto,{env_box},{})
 end

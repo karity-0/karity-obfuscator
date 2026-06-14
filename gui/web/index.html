@@ -67,6 +67,30 @@
             </div>
           </label>
         </li>
+        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 테이블을 난독화합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-table">
+            <div class="pass-info">
+              <span class="pass-name">Table Obfuscation</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 함수를 난독화합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-function">
+            <div class="pass-info">
+              <span class="pass-name">Function Obfuscation (X)</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="디버거를 감지하는 보호 코드를 추가합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-anti-debug">
+            <div class="pass-info">
+              <span class="pass-name">Anti-Debug Wrapper</span>
+            </div>
+          </label>
+        </li>
       </ol>
     </section>
 
@@ -93,7 +117,7 @@
             </div>
           </label>
         </li>
-        <li class="pass-item" data-hint="실행에 영향을 주지 않는 더미 instruction을 바이트코드 사이에 삽입합니다.">
+        <li class="pass-item" data-hint="실행에 영향을 주지 않는 더미 명령어를 바이트코드 사이에 삽입합니다.">
           <label class="pass-label">
             <input type="checkbox" class="vmopt-checkbox" id="vmopt-junk-instructions" checked>
             <div class="pass-info">
@@ -103,7 +127,7 @@
         </li>
       </ol>
 
-      <div class="slider-row" data-hint="instruction 사이마다 junk가 삽입될 확률입니다. 높이면 분석이 어려워지지만 코드 크기가 커집니다.">
+      <div class="slider-row" data-hint="명령어 사이마다 더미 명령어가 삽입될 확률입니다. 높이면 분석이 어려워지지만 코드 크기가 커집니다.">
         <div class="slider-head">
           <span class="slider-label">Junk Rate</span>
           <span id="vmopt-junk-rate-value" class="slider-value">0.15</span>

@@ -1,4 +1,5 @@
 import re
+import bisect
 from luaparser import astnodes, ast
 from .base import BasePass, Replacement
 
@@ -36,7 +37,11 @@ _KEYWORDS = {
 
 
 def _in_ranges(pos: int, ranges: list[tuple[int, int]]) -> bool:
-    return any(start <= pos <= end for start, end in ranges)
+    # ranges는 start 기준 정렬된 상태여야 함
+    idx = bisect.bisect_right(ranges, (pos, float('inf'))) - 1
+    if idx >= 0 and ranges[idx][0] <= pos <= ranges[idx][1]:
+        return True
+    return False
 
 
 def _field_key_ranges(script: str, tree) -> list[tuple[int, int]]:
@@ -101,7 +106,7 @@ def _get_scope_range(s, tree, script: str) -> tuple[int, int]:
 class RenameObfuscationPass(BasePass):
     def run(self, script: str, tree) -> list[Replacement]:
         counter = [0]
-        skip_ranges = _field_key_ranges(script, tree)
+        skip_ranges = sorted(_field_key_ranges(script, tree))
 
         scopes = [tree]
         for node in ast.walk(tree):

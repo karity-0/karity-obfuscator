@@ -10,8 +10,8 @@ import shutil
 import os
 from pathlib import Path
 
-from .base import PostPass
-from .parser import Lua53Parser
+from ..passes.base import PostPass
+from ..parser import Lua53Parser
 from .serializer import serialize
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers, apply_vop_to_vm
@@ -160,14 +160,45 @@ def _load_vm() -> str:
         src = src[:cutoff]
     return src
 
+_VM_RENAME_KEYS = [
+    # proto 테이블 키
+    "num_params", "is_vararg", "max_stack_size",
+    "constants", "code", "upvalues", "protos",
+    "instack", "idx",
+    # reader 메서드명
+    "u8", "u16", "u32", "u64", "i64", "f64", "str",
+]
+
+_NAME_CHARS = string.ascii_lowercase + string.digits
+
+def _rand_name(length: int = 6) -> str:
+    return '_' + ''.join(random.choices(_NAME_CHARS, k=length))
+
+def _rename_vm_keys(src: str) -> str:
+    """vm.lua 내의 테이블 키 및 reader 메서드명을 랜덤 이름으로 치환."""
+    import re
+    rename_map = {k: _rand_name() for k in _VM_RENAME_KEYS}
+    for orig, new in rename_map.items():
+        src = re.sub(rf'\b{re.escape(orig)}\b', new, src)
+        src = src.replace(f'["{orig}"]', f'["{new}"]')
+        src = src.replace(f"['{orig}']", f"['{new}']")
+    return src
+
 
 def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
     """VM 출력물에 passes 재적용."""
     from ..pipeline import Pipeline
     from ..registry import PASS_REGISTRY
- 
+
+    # function_obf는 vm.lua의 exec 내부 클로저(make_closure, get_box 등)에
+    # CFF를 적용하면서 _T0 등의 pooling 변수가 exec upvalue로 잘못 capture됨.
+    # vm output에는 적용하지 않는다.
+    _VM_BLOCKED = {"function_obf"}
+
     pipeline = Pipeline()
     for name in pass_names:
+        if name in _VM_BLOCKED:
+            continue
         info = PASS_REGISTRY.get(name)
         if info is None:
             continue
@@ -178,7 +209,7 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
             continue
 
         pipeline.add(cls())
- 
+
     return pipeline.run(script)
 
 
@@ -197,8 +228,12 @@ class VMPass(PostPass):
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
 
     def run(self, script: str) -> str:
+        import time
+        t = time.perf_counter()
+
         # 1. luac 컴파일
         luac_bytes = _compile(script)
+        #print(f"  [VM] compile: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 2. 파싱 → junk instruction 삽입 → 커스텀 직렬화
         vop_map = _make_vop_map()
@@ -206,16 +241,18 @@ class VMPass(PostPass):
         if self.vm_options.get("junk_instructions", True):
             proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
         blob  = serialize(proto, vop_map)
+        #print(f"  [VM] parse+junk+serialize: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
         used_ops = collect_used_ops(proto, vop_map)
-        vm_code = apply_vop_to_vm(_load_vm(), vop_map)
+        vm_code = apply_vop_to_vm(_rename_vm_keys(_load_vm()), vop_map)
         vm_code = prune_and_inject_handlers(
             vm_code,
             used_ops,
             fake_handlers=self.vm_options["fake_handlers"],
             mutate=self.vm_options["mutate_handlers"],
         )
+        #print(f"  [VM] vm_code mutation: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (
@@ -224,7 +261,8 @@ class VMPass(PostPass):
             f'{vm_code} return run end'
         )
         vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
-
+        #print(f"  [VM] re-obfuscate: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
+    
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
         header = ""
@@ -234,6 +272,7 @@ class VMPass(PostPass):
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         dump_bytes = _dump_function_stripped(vm_func_src, header)
+        #print(f"  [VM] dump_function: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
 
         alphabet  = string.ascii_letters + string.digits

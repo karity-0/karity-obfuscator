@@ -41,8 +41,8 @@ class Pipeline:
                 info_message("PRE", pre, f"{elapsed:.3f}s")
 
         for pass_ in self._passes:
-            tree = ast.parse(script)
             start = time.perf_counter()
+            tree = ast.parse(script)
             replacements = pass_.run(script, tree)
             elapsed = time.perf_counter() - start
             if verbose >= Verbosity.NORMAL:

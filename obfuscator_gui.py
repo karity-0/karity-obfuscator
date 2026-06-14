@@ -18,10 +18,13 @@ CONFIG_PATH = ROOT_DIR / "obf_gui_config.json"
 # GUI에 표시할 메인 파이프라인 패스 순서
 MAIN_PASS_ORDER = [
     "remove_comment",
+    "anti_debug",
     "string_encode",
     "string_obf",
     "boolean_obf",
     "number_obf",
+    "table_obf",
+    "function_obf",
     "rename_obf",
     "minify",
     "vm",
@@ -33,6 +36,8 @@ VM_OUTPUT_PASS_ORDER = [
     "string_obf",
     "boolean_obf",
     "number_obf",
+    "table_obf",
+    "function_obf",
     "rename_obf",
     "minify",
 ]

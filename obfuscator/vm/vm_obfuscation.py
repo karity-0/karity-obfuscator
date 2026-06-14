@@ -8,7 +8,7 @@ from __future__ import annotations
 import random
 import re
 
-from .parser import Proto
+from ..parser import Proto
 from .vm_mutation import mutate_handlers
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46

@@ -12,15 +12,18 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 """
 from __future__ import annotations
 
+from .vm import VMPass
+
 from .passes import (
     StringEncodePass,
     StringObfuscationPass,
     NumberObfuscationPass,
     BooleanObfuscationPass,
+    TableObfuscationPass,
+    FunctionObfuscationPass,
     RenameObfuscationPass,
     RemoveCommentPass,
     MinifyPass,
-    VMPass,
     AntiDebugPass,
 )
 
@@ -49,6 +52,16 @@ PASS_REGISTRY: dict[str, dict] = {
     "number_obf": {
         "cls": NumberObfuscationPass,
         "label": "Number Obfuscation",
+        "group": "base",
+    },
+    "table_obf": {
+        "cls": TableObfuscationPass,
+        "label": "Table Obfuscation",
+        "group": "base",
+    },
+    "function_obf": {
+        "cls": FunctionObfuscationPass,
+        "label": "Function Obfuscation",
         "group": "base",
     },
     "rename_obf": {
