@@ -16,7 +16,7 @@ import re
 
 from luaparser import astnodes, ast
 from .base import BasePass, Replacement
-from .vm_mutation import _zv, _new_state
+from ..vm.vm_mutation import _zv, _new_state
 
 # CFF로 hoisting된 local 변수 + 내부 생성 zv 개수가 이 값을 넘으면,
 # 개별 local 슬롯이 아니라 테이블 필드(`_T1.name`)로 몰아넣는다.

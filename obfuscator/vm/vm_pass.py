@@ -10,8 +10,8 @@ import shutil
 import os
 from pathlib import Path
 
-from .base import PostPass
-from .parser import Lua53Parser
+from ..passes.base import PostPass
+from ..parser import Lua53Parser
 from .serializer import serialize
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers, apply_vop_to_vm

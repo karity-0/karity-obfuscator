@@ -12,6 +12,8 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 """
 from __future__ import annotations
 
+from .vm import VMPass
+
 from .passes import (
     StringEncodePass,
     StringObfuscationPass,
@@ -22,7 +24,6 @@ from .passes import (
     RenameObfuscationPass,
     RemoveCommentPass,
     MinifyPass,
-    VMPass,
     AntiDebugPass,
 )
 

@@ -1,7 +1,7 @@
 from __future__ import annotations
 import random
 import struct
-from .parser import Proto, Upvalue, ConstTag
+from ..parser import Proto, Upvalue, ConstTag
 
 
 # ---------------------------------------------------------------------------

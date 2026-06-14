@@ -14,10 +14,12 @@ local _ti  = _t["insert"]
 local _tu  = _t["unpack"]
 local _tp  = _t["pack"]
 local _tc  = _t["concat"]
-local _ip  = ipairs
-local _sm  = setmetatable
-local _ts  = tostring
-local _err = error
+local _ip  = _ENV["ipairs"]
+local _sm  = _ENV["setmetatable"]
+local _ts  = _ENV["tostring"]
+local _err = _ENV["error"]
+local _load = _ENV["load"]
+local _loads = _ENV["loadstring"]
 
 local _KAE_PRIMES={0x07,0x0B,0x0D,0x11,0x13,0x17,0x1D,0x1F}
 

@@ -8,5 +8,4 @@ from .function_obfuscation import FunctionObfuscationPass
 from .rename_obfuscation import RenameObfuscationPass
 from .remove_comment import RemoveCommentPass
 from .minify import MinifyPass
-from .vm_pass import VMPass
 from .anti_debug import AntiDebugPass

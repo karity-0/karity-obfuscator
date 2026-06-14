@@ -37,7 +37,7 @@ junk 다양성 전략
 """
 from __future__ import annotations
 import random
-from .parser import Proto
+from ..parser import Proto
 
 SBX_OFFSET = 0x3FFFF >> 1  # 131071
 

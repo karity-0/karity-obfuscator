@@ -1,5 +1,6 @@
 from .pipeline import Pipeline
 from .registry import build_pipeline_from_config
+from .vm import VMPass
 from .passes import (
     StringEncodePass,
     StringObfuscationPass,
@@ -10,6 +11,5 @@ from .passes import (
     RenameObfuscationPass,
     RemoveCommentPass,
     MinifyPass,
-    VMPass,
     AntiDebugPass,
 )
