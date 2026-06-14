@@ -352,7 +352,8 @@ exec = function(proto, upvals, args, va_in)
             elseif B==0 then
                 for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             end
-            return fn(_tu(ca,1,ca_n))
+            local res = _tp(fn(_tu(ca,1,ca_n)))
+            return {r=res, n=res.n}
 
         elseif op==38 then
             if B==1 then return {r={},n=0}
@@ -389,7 +390,7 @@ exec = function(proto, upvals, args, va_in)
             for i=1,cnt do tbl[base+i]=regs[A+i] end
 
         elseif op==44 then
-            if not boxes[A] then boxes[A]={v=nil} end
+            boxes[A] = {v=nil}
             local fn=make_closure(proto.protos[Bx+1])
             regs[A]=fn; boxes[A].v=fn
 
