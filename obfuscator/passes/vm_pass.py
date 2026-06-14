@@ -186,7 +186,7 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
         pipeline.add(cls())
 
-    return pipeline.run(script)
+    return pipeline.run(script, verbose=1)
 
 
 
@@ -204,8 +204,12 @@ class VMPass(PostPass):
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
 
     def run(self, script: str) -> str:
+        import time
+        t = time.perf_counter()
+
         # 1. luac 컴파일
         luac_bytes = _compile(script)
+        #print(f"  [VM] compile: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 2. 파싱 → junk instruction 삽입 → 커스텀 직렬화
         vop_map = _make_vop_map()
@@ -213,6 +217,7 @@ class VMPass(PostPass):
         if self.vm_options.get("junk_instructions", True):
             proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
         blob  = serialize(proto, vop_map)
+        #print(f"  [VM] parse+junk+serialize: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
         used_ops = collect_used_ops(proto, vop_map)
@@ -223,6 +228,7 @@ class VMPass(PostPass):
             fake_handlers=self.vm_options["fake_handlers"],
             mutate=self.vm_options["mutate_handlers"],
         )
+        #print(f"  [VM] vm_code mutation: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (
@@ -231,7 +237,8 @@ class VMPass(PostPass):
             f'{vm_code} return run end'
         )
         vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
-
+        #print(f"  [VM] re-obfuscate: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
+    
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
         header = ""
@@ -241,6 +248,7 @@ class VMPass(PostPass):
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         dump_bytes = _dump_function_stripped(vm_func_src, header)
+        #print(f"  [VM] dump_function: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
 
         alphabet  = string.ascii_letters + string.digits
