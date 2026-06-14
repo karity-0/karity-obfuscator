@@ -160,6 +160,30 @@ def _load_vm() -> str:
         src = src[:cutoff]
     return src
 
+_VM_RENAME_KEYS = [
+    # proto 테이블 키
+    "num_params", "is_vararg", "max_stack_size",
+    "constants", "code", "upvalues", "protos",
+    "instack", "idx",
+    # reader 메서드명
+    "u8", "u16", "u32", "u64", "i64", "f64", "str",
+]
+
+_NAME_CHARS = string.ascii_lowercase + string.digits
+
+def _rand_name(length: int = 6) -> str:
+    return '_' + ''.join(random.choices(_NAME_CHARS, k=length))
+
+def _rename_vm_keys(src: str) -> str:
+    """vm.lua 내의 테이블 키 및 reader 메서드명을 랜덤 이름으로 치환."""
+    import re
+    rename_map = {k: _rand_name() for k in _VM_RENAME_KEYS}
+    for orig, new in rename_map.items():
+        src = re.sub(rf'\b{re.escape(orig)}\b', new, src)
+        src = src.replace(f'["{orig}"]', f'["{new}"]')
+        src = src.replace(f"['{orig}']", f"['{new}']")
+    return src
+
 
 def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
     """VM 출력물에 passes 재적용."""
@@ -221,7 +245,7 @@ class VMPass(PostPass):
 
         # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
         used_ops = collect_used_ops(proto, vop_map)
-        vm_code = apply_vop_to_vm(_load_vm(), vop_map)
+        vm_code = apply_vop_to_vm(_rename_vm_keys(_load_vm()), vop_map)
         vm_code = prune_and_inject_handlers(
             vm_code,
             used_ops,
