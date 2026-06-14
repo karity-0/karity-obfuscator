@@ -188,18 +188,17 @@ local function read_proto(r, acc_state)
         local actual_vop     = actual_op | (actual_variant<<7)
         acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
         acc_state[2] = idx + 1
-        -- op, variant 필드를 디코딩된 값으로 교체
         raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant<<40)
         p.code[i]=raw64
     end
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
-        if     tag==CTAG_NIL   then p.constants[i]={tag='nil'}
-        elseif tag==CTAG_BOOL  then p.constants[i]={tag='bool',v=(r.u8()~=0)}
-        elseif tag==CTAG_INT   then p.constants[i]={tag='int', v=r.i64()}
-        elseif tag==CTAG_FLOAT then p.constants[i]={tag='flt', v=r.f64()}
-        elseif tag==CTAG_STR   then p.constants[i]={tag='str', v=r.str()}
+        if     tag==CTAG_NIL   then p.constants[i]={0}
+        elseif tag==CTAG_BOOL  then p.constants[i]={1,r.u8()~=0}
+        elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
+        elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
+        elseif tag==CTAG_STR   then p.constants[i]={4,r.str()}
         else _err("bad const tag ".._ts(tag)) end
     end
     n=r.u32(); p.upvalues={}
@@ -211,8 +210,8 @@ end
 
 local function kval(k)
     if not k then return nil end
-    if k.tag=='nil' then return nil end
-    return k.v
+    if k[1]==0 then return nil end
+    return k[2]
 end
 
 local function decode(ins)
