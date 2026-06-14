@@ -143,6 +143,10 @@ end
 local function make_reader(blob)
     local pos=1; local r={}
     function r.u8() local v=_sbyte(blob,pos); pos=pos+1; return v end
+    function r.u16()
+        local a,b=_sbyte(blob,pos,pos+1); pos=pos+2
+        return a|(b<<8)
+    end
     function r.u32()
         local a,b,c,d=_sbyte(blob,pos,pos+3); pos=pos+4
         return a|(b<<8)|(c<<16)|(d<<24)
@@ -170,11 +174,24 @@ end
 
 local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4
 
-local function read_proto(r)
+local function read_proto(r, acc_state)
     local p={}
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
     local n=r.u32(); p.code={}
-    for i=1,n do p.code[i]=r.u64() end
+    for i=1,n do
+        local raw64=r.u64()
+        local enc_op      = raw64 & 0x7F
+        local enc_variant = (raw64>>40) & 0xFF
+        local acc=acc_state[1]; local idx=acc_state[2]
+        local actual_op      = enc_op      ~ (acc & 0x7F)
+        local actual_variant = enc_variant ~ ((acc>>7) & 0xFF)
+        local actual_vop     = actual_op | (actual_variant<<7)
+        acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
+        acc_state[2] = idx + 1
+        -- op, variant 필드를 디코딩된 값으로 교체
+        raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant<<40)
+        p.code[i]=raw64
+    end
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
@@ -188,7 +205,7 @@ local function read_proto(r)
     n=r.u32(); p.upvalues={}
     for i=1,n do p.upvalues[i]={instack=r.u8(),idx=r.u8()} end
     n=r.u32(); p.protos={}
-    for i=1,n do p.protos[i]=read_proto(r) end
+    for i=1,n do p.protos[i]=read_proto(r,acc_state) end
     return p
 end
 
@@ -394,7 +411,9 @@ local function run(blob,rand_tail,self_func)
     local key="karityObfuscator/".._sformat("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
-    local proto=read_proto(r)
+    local seed=r.u16()
+    local acc_state={seed,0}
+    local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
     exec(proto,{env_box},{})
 end

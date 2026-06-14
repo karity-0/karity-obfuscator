@@ -186,7 +186,7 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
         pipeline.add(cls())
 
-    return pipeline.run(script, verbose=1)
+    return pipeline.run(script)
 
 
 
