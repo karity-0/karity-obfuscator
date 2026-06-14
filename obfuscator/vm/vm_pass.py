@@ -56,20 +56,30 @@ def _compile(script: str) -> bytes:
             os.unlink(out_path)
 
 
+_B36 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
 def _to_base36(data: bytes) -> str:
-    """bytes → "length:base36payload" 형식"""
+    """bytes → "KARITY/length:base36payload" (4바이트 청크, 각 6자리 고정)"""
     length = len(data)
-    n = int.from_bytes(data, 'big') if data else 0
-    digits = []
-    while n:
-        digits.append('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[n % 36])
-        n //= 36
-    payload = ''.join(reversed(digits)) if digits else '0'
+    # length 인코딩
     ln, length_enc = length, ''
     while ln:
-        length_enc = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[ln % 36] + length_enc
+        length_enc = _B36[ln % 36] + length_enc
         ln //= 36
-    return '"KARITY/' + (length_enc or '0') + ':' + payload + '"' 
+
+    # 4바이트씩 청크로 나눠 각각 6자리 base36으로 인코딩
+    # 패딩: 4의 배수로 맞춤
+    padded = data + b'\x00' * ((4 - len(data) % 4) % 4)
+    parts = []
+    for i in range(0, len(padded), 4):
+        n = int.from_bytes(padded[i:i+4], 'little')
+        chunk = ''
+        for _ in range(7):
+            chunk = _B36[n % 36] + chunk
+            n //= 36
+        parts.append(chunk)
+
+    return '"KARITY/' + (length_enc or '0') + ':' + ''.join(parts) + '"'
 
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46

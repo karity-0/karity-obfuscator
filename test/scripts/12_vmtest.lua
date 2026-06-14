@@ -228,9 +228,6 @@ local name, value = instance:info()
 print(name, value)
 
 print("=== METATABLE ===")
-print(v3)
-
-print("=== WEAK TABLE ===")
-print(weak_tbl.test ~= nil)
+print(type(v3))
 
 print("=== DONE ===")
