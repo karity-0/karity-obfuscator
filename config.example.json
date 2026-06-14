@@ -1,10 +1,16 @@
 {
     "passes": [
-        "string_obf", "boolean_obf", "number_obf", "vm"
+        "string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf",
+        "vm", "anti_debug"
     ],
     "vm_output_passes": [
         "string_obf", "boolean_obf", "number_obf",
         "rename_obf", "minify"
     ],
-    "vm_options": {"fake_handlers": true, "mutate_handlers": true}
+    "vm_options": {
+        "fake_handlers": true,
+        "mutate_handlers": true,
+        "junk_instructions": true,
+        "junk_rate": 0.15
+    }
 }
