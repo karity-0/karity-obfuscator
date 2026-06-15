@@ -233,6 +233,7 @@ exec = function(proto, upvals, args, va_in)
     local top    = -1
     local _st    = 0
     local _va    = va_in or {}
+    local _split_tmp
 
     args = args or {}
     for i=1,proto.num_params do regs[i-1]=args[i] end

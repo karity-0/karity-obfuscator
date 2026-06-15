@@ -13,6 +13,83 @@ from .vm_mutation import mutate_handlers
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
 
+# ---------------------------------------------------------------------------
+# Split opcode catalog
+# ---------------------------------------------------------------------------
+_BINARY_SPLIT_OPS = {13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
+_UNARY_SPLIT_OPS  = {25, 26, 27, 28}
+_LOAD_SPLIT_OPS   = {0, 1}
+ALL_SPLIT_OPS     = _BINARY_SPLIT_OPS | _UNARY_SPLIT_OPS | _LOAD_SPLIT_OPS
+
+_BINARY_OP_LUA = {
+    13: "+", 14: "-", 15: "*", 16: "%", 17: "^",
+    18: "/", 19: "//", 20: "&", 21: "|", 22: "~",
+    23: "<<", 24: ">>",
+}
+_UNARY_PREFIX = {
+    25: "-",    # UNM
+    26: "~",    # BNOT
+    27: "not ", # NOT
+    28: "#",    # LEN
+}
+
+_SPLIT_PAD = "\n        "
+
+
+def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
+    """Return handler body strings for each part of a split instruction."""
+    if orig_op in _BINARY_OP_LUA:
+        lua_op = _BINARY_OP_LUA[orig_op]
+        if parts == 2:
+            return [
+                f" _split_tmp=rk(B){lua_op}rk(C){_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+        else:
+            return [
+                f" _split_tmp=rk(B){_SPLIT_PAD}",
+                f" _split_tmp=_split_tmp{lua_op}rk(C){_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+    elif orig_op in _UNARY_PREFIX:
+        pfx = _UNARY_PREFIX[orig_op]
+        if parts == 2:
+            return [
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" rset(A,{pfx}_split_tmp){_SPLIT_PAD}",
+            ]
+        else:
+            return [
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" _split_tmp={pfx}_split_tmp{_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+    elif orig_op == 0:  # MOVE
+        if parts == 2:
+            return [
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+        else:
+            return [
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" _split_tmp=_split_tmp{_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+    elif orig_op == 1:  # LOADK
+        if parts == 2:
+            return [
+                f" _split_tmp=kval(consts[Bx+1]){_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+        else:
+            return [
+                f" _split_tmp=kval(consts[Bx+1]){_SPLIT_PAD}",
+                f" _split_tmp=_split_tmp{_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+    return [f" {_SPLIT_PAD}"] * parts
+
 # state 전이 패턴 — alias마다 다른 조합
 _ST_TRANSITIONS = [
     "_st=(_st~A)&0xFF",
@@ -60,6 +137,7 @@ def collect_used_ops(proto: Proto, vop_map: dict[int, list[int]]) -> set[int]:
 
     OP_LOADKX(원본 op==2)의 다음 명령어(EXTRAARG)는 디스패처가 직접 decode하지
     않고 건너뛰므로 used set에 포함시키지 않는다.
+    split vop는 apply_split_to_vm에서 mutation 없이 별도 추가되므로 여기선 제외.
     """
     used: set[int] = set()
     _collect(proto, vop_map, used)
@@ -84,6 +162,24 @@ def _collect(proto: Proto, vop_map: dict[int, list[int]], used: set[int]):
 
     for sub in proto.protos:
         _collect(sub, vop_map, used)
+
+
+def collect_used_orig_ops(proto: Proto) -> set[int]:
+    """proto 트리에서 실제로 등장하는 원본 opcode(0~46) 집합을 반환.
+
+    split_map을 실제 사용되는 splittable op으로만 한정하기 위해 쓰인다.
+    (사용되지 않는 op의 split 핸들러까지 CFF로 만들면 체인이 폭증한다.)
+    """
+    ops: set[int] = set()
+    _collect_orig(proto, ops)
+    return ops
+
+
+def _collect_orig(proto: Proto, ops: set[int]):
+    for instr in proto.code:
+        ops.add(instr & 0x3F)
+    for sub in proto.protos:
+        _collect_orig(sub, ops)
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +224,41 @@ def _rebuild_chain(blocks: dict[int, str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 3. alias 핸들러 생성 + vop 치환
+# 3. split 핸들러 삽입
+# ---------------------------------------------------------------------------
+def apply_split_to_vm(vm_code: str,
+                      split_map: dict[int, dict[str, tuple[int, ...]]],
+                      mutate: bool = True) -> str:
+    """split_map의 각 (orig_op, parts) 조합에 대해 분할 핸들러를 체인에 추가.
+
+    split 핸들러는 실제로 실행되는 진짜 로직이므로, real/fake 핸들러와
+    동일하게 CFF/junk(mutate)를 적용해 구조적으로 구별되지 않게 한다.
+    (CFF가 없으면 `_split_tmp=rk(B)+rk(C)` 같은 본문이 그대로 노출되어
+    분할 메커니즘이 쉽게 역추적된다.)
+    """
+    if not split_map:
+        return vm_code
+    chain_start, chain_end = _find_chain(vm_code)
+    chain = vm_code[chain_start:chain_end]
+    blocks = _parse_handler_blocks(chain)
+
+    split_blocks: dict[int, str] = {}
+    for orig_op, parts_map in split_map.items():
+        for parts_str, vops in parts_map.items():
+            bodies = split_handler_bodies(orig_op, int(parts_str))
+            for vop, body in zip(vops, bodies):
+                split_blocks[vop] = body
+
+    if mutate:
+        split_blocks = mutate_handlers(split_blocks)
+
+    blocks.update(split_blocks)
+    new_chain = _rebuild_chain(blocks)
+    return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
+
+
+# ---------------------------------------------------------------------------
+# 5. alias 핸들러 생성 + vop 치환
 # ---------------------------------------------------------------------------
 def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]]) -> str:
     """
@@ -156,7 +286,7 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]]) -> str:
 
 
 # ---------------------------------------------------------------------------
-# 4. 가짜 핸들러 생성
+# 6. 가짜 핸들러 생성
 # ---------------------------------------------------------------------------
 # 절대 참이 될 수 없는 가드 조건들 (정수 op 코드 자체를 활용해 매번 다르게)
 _FAKE_BODIES = [
@@ -176,7 +306,7 @@ def _make_fake_block() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 5. 메인 진입점
+# 7. 메인 진입점
 # ---------------------------------------------------------------------------
 def prune_and_inject_handlers(
     vm_code: str,
@@ -212,6 +342,8 @@ def prune_and_inject_handlers(
             if fake_vop not in blocks:
                 blocks[fake_vop] = _make_fake_block()
 
+    # CFF/junk는 real + fake 모든 핸들러에 균일하게 적용: CFF 유무가
+    # real/fake를 구별하는 oracle이 되지 않도록 구조적 대칭을 유지한다.
     if mutate:
         blocks = mutate_handlers(blocks)
 

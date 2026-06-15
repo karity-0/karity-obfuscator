@@ -179,41 +179,108 @@ def _write_fake_pool(w: Writer) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Split + jump offset 유틸리티
+# ---------------------------------------------------------------------------
+
+# sBx 필드를 가진 opcodes (Lua 5.3 원본 번호): JMP, FORLOOP, FORPREP, TFORLOOP
+_SBXOPS: set[int] = {30, 39, 40, 42}
+
+
+def _decide_parts(code: list[int],
+                  split_map: dict[int, dict[str, tuple[int, ...]]] | None) -> list[int]:
+    """명령어마다 몇 부분으로 쪼갤지 결정 (1=normal, 2 or 3=split)."""
+    if not split_map:
+        return [1] * len(code)
+    return [
+        random.choice([1, 2, 3]) if (raw & 0x3F) in split_map else 1
+        for raw in code
+    ]
+
+
+def _compute_new_pos(decisions: list[int]) -> list[int]:
+    """new_pos[i] = 새 배열에서 원본 명령어 i의 시작 위치 (0-based)."""
+    new_pos: list[int] = []
+    pos = 0
+    for parts in decisions:
+        new_pos.append(pos)
+        pos += parts
+    return new_pos
+
+
+def _adjust_jumps(code: list[int], decisions: list[int],
+                  new_pos: list[int]) -> list[int]:
+    """JMP/FORLOOP/FORPREP/TFORLOOP의 sBx를 split로 인한 새 위치에 맞게 수정."""
+    total = sum(decisions)
+    result = list(code)
+    for i, raw in enumerate(code):
+        orig_op = raw & 0x3F
+        if orig_op not in _SBXOPS:
+            continue
+        old_bx  = (raw >> 14) & 0x3FFFF
+        old_sbx = old_bx - 131071
+        # 원본 0-based 점프 목적지: pc는 실행 전 i+1로 올라가므로 target = i+1+sBx
+        target = i + 1 + old_sbx
+        new_src = new_pos[i]
+        new_tgt = new_pos[target] if 0 <= target < len(code) else total
+        new_sbx = new_tgt - new_src - 1
+        new_bx  = (new_sbx + 131071) & 0x3FFFF
+        result[i] = (raw & ~(0x3FFFF << 14)) | (new_bx << 14)
+    return result
+
+
+def _emit_instr(w: Writer, raw: int, vop: int, acc_state: list[int]) -> None:
+    acc, idx = acc_state
+    enc_op      = (vop & 0x7F)  ^ (acc & 0x7F)
+    enc_variant = (vop >> 7)    ^ ((acc >> 7) & 0xFF)
+    acc_state[0] = (acc + vop + idx) & 0xFFFF
+    acc_state[1] = idx + 1
+    w.instr(raw, enc_op, enc_variant)
+
+
+# ---------------------------------------------------------------------------
 # 직렬화
 # ---------------------------------------------------------------------------
-def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None) -> bytes:
+def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None,
+              split_map: dict[int, dict[str, tuple[int, ...]]] | None = None) -> bytes:
     w = Writer()
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
     _write_fake_pool(w)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
-    _write_proto(w, proto, vop_map, acc_state)
+    _write_proto(w, proto, vop_map, acc_state, split_map)
     return w.data()
 
 
 def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None,
-                 acc_state: list[int]):
+                 acc_state: list[int],
+                 split_map: dict[int, dict[str, tuple[int, ...]]] | None = None):
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
 
+    # --- split 결정 + jump offset 보정 ---
+    decisions = _decide_parts(proto.code, split_map)
+    new_pos   = _compute_new_pos(decisions)
+    code      = _adjust_jumps(proto.code, decisions, new_pos)
+
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
-    w.u32(len(proto.code))
-    for raw in proto.code:
+    w.u32(sum(decisions))
+    for raw, parts in zip(code, decisions):
         orig_op = raw & 0x3F
-        if vop_map:
-            aliases = vop_map[orig_op]
-            vop = aliases[random.randint(0, len(aliases) - 1)]
+        if parts == 1:
+            # 정상 emit: alias 중 랜덤 선택
+            if vop_map:
+                aliases = vop_map[orig_op]
+                vop = aliases[random.randint(0, len(aliases) - 1)]
+            else:
+                vop = orig_op
+            _emit_instr(w, raw, vop, acc_state)
         else:
-            vop = orig_op
-        acc, idx = acc_state
-        # op(7비트)와 variant(8비트) 각각 acc로 인코딩
-        enc_op      = (vop & 0x7F)  ^ (acc & 0x7F)
-        enc_variant = (vop >> 7)    ^ ((acc >> 7) & 0xFF)
-        acc_state[0] = (acc + vop + idx) & 0xFFFF
-        acc_state[1] = idx + 1
-        w.instr(raw, enc_op, enc_variant)
+            # split emit: 같은 raw 명령어를 각 part vop으로 반복 방출
+            vops = split_map[orig_op][str(parts)]  # type: ignore[index]
+            for vop in vops:
+                _emit_instr(w, raw, vop, acc_state)
 
     # 상수
     w.u32(len(proto.constants))
@@ -244,7 +311,7 @@ def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None,
     # 중첩 proto (acc_state 전역 공유)
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub, vop_map, acc_state)
+        _write_proto(w, sub, vop_map, acc_state, split_map)
 
 
 # ---------------------------------------------------------------------------
