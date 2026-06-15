@@ -60,6 +60,22 @@ def _always_false() -> str:
 # 코드 조각 생성
 # ---------------------------------------------------------------------------
 
+def _arith_expr() -> str:
+    """순수 표현식. rset 인자 등에 사용 (statement 아님)."""
+    k    = random.randint(1, 0xFFFF)
+    slot = random.randint(0, 3)
+    return random.choice([
+        f"(A or 0)~{k}~{k}",
+        f"(Bx or 0)&0xFFFF",
+        f"(pc+(A|0))&0xFFFF",
+        f"(C*B+A)&0xFF",
+        f"((sBx~A)+0)&0x7FFFF",
+        f"(B~C)&0xFF",
+        f"(A~B~C)&0xFF",
+        f"regs[{slot}] and 0 or (A*0)",
+    ])
+
+
 def _junk_ref(var: str, c: list[int]) -> str:
     zv = _zv(c)
     k  = random.randint(1, 0xFFFF)
@@ -101,6 +117,36 @@ def _live_read_lines(c: list[int]) -> list[str]:
         f"local {zv}=regs[{slot}]",
         f"if {_always_true()} then {zv}={zv} end",
     ]
+
+
+def _fake_rset_lines(c: list[int]) -> list[str]:
+    """always_false 가드로 보호된 fake rset() 블록.
+    real handler와 시각적으로 유사한 패턴을 사용해 혼동을 유도한다.
+    """
+    lines = [f"if {_always_false()} then"]
+    for _ in range(random.randint(1, 2)):
+        choice = random.randint(0, 4)
+        if choice == 0:
+            lines.append(f"  rset(A,{_arith_expr()})")
+        elif choice == 1:
+            zv   = _zv(c)
+            slot = random.randint(0, 3)
+            lines.append(f"  local {zv}=regs[{slot}]")
+            lines.append(f"  rset({slot},{zv})")
+        elif choice == 2:
+            zv      = _zv(c)
+            s1, s2  = random.randint(0, 3), random.randint(0, 3)
+            lines.append(f"  local {zv}=regs[{s1}]")
+            lines.append(f"  rset({s2},{_arith_expr()})")
+            lines.append(f"  rset(A,{zv})")
+        elif choice == 3:
+            lines.append(f"  rset(B,regs[C])")
+        else:
+            zv = _zv(c)
+            lines.append(f"  local {zv}={_arith_expr()}")
+            lines.append(f"  if {_always_true()} then rset(A,{zv}) end")
+    lines.append("end")
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -149,12 +195,6 @@ def _split_safe_chunks(lines: list[str]) -> list[list[str]]:
 # ---------------------------------------------------------------------------
 
 def _hoist_locals(lines: list[str]) -> tuple[list[str], list[str]]:
-    """
-    local 선언을 hoisting.
-    반환: (hoist_decls, transformed_lines)
-      hoist_decls: ["local fn", "local ca", ...]  (while 앞에 배치)
-      transformed_lines: local 제거 후 할당만 남은 라인들
-    """
     hoist_decls: list[str] = []
     hoisted: set[str] = set()
     transformed: list[str] = []
@@ -182,48 +222,111 @@ def _new_state(used: set[int]) -> int:
             used.add(s); return s
 
 
+def _make_dead_body(c: list[int]) -> list[str]:
+    """dead state body — rset 호출 포함 4가지 패턴 중 랜덤 선택."""
+    lines: list[str] = []
+    r = random.random()
+    if r < 0.25:
+        # live arith + fake rset
+        lines.append(_live_arith(c))
+        lines.extend(_fake_rset_lines(c))
+    elif r < 0.50:
+        # 기존 dead_lines (rset under always_false 포함)
+        lines.extend(_dead_lines(c))
+    elif r < 0.75:
+        # live read + fake rset
+        lines.extend(_live_read_lines(c))
+        lines.extend(_fake_rset_lines(c))
+    else:
+        # 혼합
+        lines.append(_live_arith(c))
+        lines.extend(_dead_lines(c))
+        if random.random() < 0.5:
+            lines.extend(_live_read_lines(c))
+    # 20% 확률로 fake rset 블록 하나 추가
+    if random.random() < 0.2:
+        lines.extend(_fake_rset_lines(c))
+    return lines
+
+
 def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
     """
     real_chunks를 state machine으로 분산.
-    local 변수를 hoisting해서 chunk 간 스코프 문제를 해결.
+
+    개선 사항:
+    - XOR 키로 state 값 인코딩 (static analysis 방해)
+    - dead state 체인 (dead→dead→…→exit): dead가 항상 즉시 종료하지 않음
+    - dead state에 fake rset() 호출 삽입: 실제 핵심 코드 식별 방해
+    - always_false 하에 fake back-edge: dead state가 이전 state로 분기하는 것처럼 보임
     """
-    # 모든 real 라인에서 local 변수 hoisting
     all_real_lines = [ln for chunk in real_chunks for ln in chunk]
     hoist_decls, _ = _hoist_locals(all_real_lines)
-    # 각 chunk도 hoisting 적용
     hoisted_chunks = [_hoist_locals(chunk)[1] for chunk in real_chunks]
 
+    # state 변수 이름 + XOR 인코딩 키
+    sv  = _zv(c)
+    key = random.randint(0x100, 0x7FFF)
+
+    def enc(s: int) -> int:
+        return s ^ key
+
+    # real states
     used: set[int] = {0}
     real_states = [(_new_state(used), chunk) for chunk in hoisted_chunks]
     real_order  = [st for st, _ in real_states]
-    real_next   = {st: (real_order[i+1] if i+1 < len(real_order) else 0)
+    real_next   = {st: (real_order[i + 1] if i + 1 < len(real_order) else 0)
                    for i, st in enumerate(real_order)}
 
-    n_dead = random.randint(len(real_states), len(real_states) * 2 + 1)
-    dead_states = []
-    for _ in range(n_dead):
-        lines = _dead_lines(c) if random.random() < 0.5 else \
-                [_live_arith(c)] + _live_read_lines(c)
-        dead_states.append((_new_state(used), lines))
+    # dead state 생성 후 랜덤 체인으로 연결
+    n_dead   = random.randint(len(real_states), len(real_states) * 2 + 2)
+    dead_ids = [_new_state(used) for _ in range(n_dead)]
+    random.shuffle(dead_ids)
 
-    all_entries = [(st, ls, True)  for st, ls in real_states] + \
-                  [(st, ls, False) for st, ls in dead_states]
+    dead_entries: list[tuple[int, list[str], int]] = []
+    i = 0
+    while i < len(dead_ids):
+        chain_len = min(random.randint(1, 3), len(dead_ids) - i)
+        chain     = dead_ids[i:i + chain_len]
+        for j, sid in enumerate(chain):
+            body     = _make_dead_body(c)
+            next_sid = chain[j + 1] if j + 1 < chain_len else 0
+            dead_entries.append((sid, body, next_sid))
+        i += chain_len
+
+    dead_next_map = {sid: nxt for sid, _, nxt in dead_entries}
+    # fake back-edge 대상 후보: 모든 real + dead state id
+    all_ids = real_order + [sid for sid, _, _ in dead_entries]
+
+    all_entries: list[tuple[int, list[str], bool]] = (
+        [(st, chunk, True)  for st, chunk in real_states] +
+        [(sid, body, False) for sid, body, _ in dead_entries]
+    )
     random.shuffle(all_entries)
 
-    sv = _zv(c)
-    parts = []
-    # hoisted decls를 while 앞에 배치
+    parts: list[str] = []
     for d in hoist_decls:
         parts.append(d)
-    parts.append(f"local {sv}={real_order[0]}")
-    parts.append(f"while {sv}~=0 do")
+
+    parts.append(f"local {sv}={enc(real_order[0])}")
+    parts.append(f"while {sv}~={enc(0)} do")
 
     for idx, (st, lines, is_real) in enumerate(all_entries):
         kw = "if" if idx == 0 else "elseif"
-        parts.append(f"  {kw} {sv}=={st} then")
+        parts.append(f"  {kw} {sv}=={enc(st)} then")
         for ln in lines:
             parts.append(f"    {ln}")
-        parts.append(f"    {sv}={real_next[st] if is_real else 0}")
+
+        if is_real:
+            parts.append(f"    {sv}={enc(real_next[st])}")
+        else:
+            # 35% 확률로 always_false 하에 fake back-edge 삽입
+            # → dead state가 이전 state로 돌아가는 것처럼 보여 CFG 분석 방해
+            if random.random() < 0.35 and all_ids:
+                fake_tgt = random.choice(all_ids)
+                parts.append(
+                    f"    if {_always_false()} then {sv}={enc(fake_tgt)} end"
+                )
+            parts.append(f"    {sv}={enc(dead_next_map[st])}")
 
     parts.append("  end")
     parts.append("end")
