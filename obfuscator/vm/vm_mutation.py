@@ -2,8 +2,9 @@ from __future__ import annotations
 import random
 import re
 
-_RETURN_RE  = re.compile(r'\breturn\b')
-_LOCAL_RE   = re.compile(r'\blocal\s+(\w+)\s*=')
+_RETURN_RE      = re.compile(r'\breturn\b')
+_TOP_RETURN_RE  = re.compile(r'^\s*return\b')   # 라인 시작이 return (블록 최상위)
+_LOCAL_RE       = re.compile(r'\blocal\s+(\w+)\s*=')
 _IND        = "        "
 
 
@@ -57,7 +58,7 @@ def _always_false() -> str:
 
 
 # ---------------------------------------------------------------------------
-# 코드 조각 생성
+# 코드 조각 생성 — 기본 패턴
 # ---------------------------------------------------------------------------
 
 def _arith_expr() -> str:
@@ -120,9 +121,7 @@ def _live_read_lines(c: list[int]) -> list[str]:
 
 
 def _fake_rset_lines(c: list[int]) -> list[str]:
-    """always_false 가드로 보호된 fake rset() 블록.
-    real handler와 시각적으로 유사한 패턴을 사용해 혼동을 유도한다.
-    """
+    """always_false 가드로 보호된 fake rset() 블록."""
     lines = [f"if {_always_false()} then"]
     for _ in range(random.randint(1, 2)):
         choice = random.randint(0, 4)
@@ -150,6 +149,83 @@ def _fake_rset_lines(c: list[int]) -> list[str]:
 
 
 # ---------------------------------------------------------------------------
+# 코드 조각 생성 — 확장 junk 패턴
+# ---------------------------------------------------------------------------
+
+def _table_junk_lines(c: list[int]) -> list[str]:
+    """테이블 생성·참조 junk."""
+    zv = _zv(c)
+    choice = random.randint(0, 2)
+    if choice == 0:
+        return [f"local {zv}={{(A or 0)&0xFF}}; {zv}=nil"]
+    elif choice == 1:
+        return [
+            f"local {zv}={{}}",
+            f"if {_always_false()} then {zv}[pc]=(Bx or 0) end",
+            f"{zv}=nil",
+        ]
+    else:
+        zv2 = _zv(c)
+        return [
+            f"local {zv}={{A,B,C}}",
+            f"local {zv2}=#{zv}*0",
+            f"{zv}=nil",
+        ]
+
+
+def _math_junk(c: list[int]) -> str:
+    """math 라이브러리 호출 junk (결과는 항상 0)."""
+    zv = _zv(c)
+    return random.choice([
+        f"local {zv}=math.max(A or 0,B or 0)*0",
+        f"local {zv}=math.abs((sBx or 0)*0)",
+        f"local {zv}=math.floor((pc or 0)*0)",
+    ])
+
+
+def _string_junk(c: list[int]) -> list[str]:
+    """string 관련 junk."""
+    zv = _zv(c)
+    if random.randint(0, 1) == 0:
+        return [
+            f"local {zv}=tostring(pc or 0)",
+            f"if {_always_false()} then {zv}=nil end",
+        ]
+    else:
+        s = "0" * random.randint(1, 8)
+        return [f'local {zv}=#"{s}"*(A or 0)*0']
+
+
+def _type_junk(c: list[int]) -> str:
+    """type() 호출 junk (결과는 항상 0)."""
+    zv   = _zv(c)
+    slot = random.randint(0, 3)
+    return random.choice([
+        f'local {zv}=(type(regs[{slot}])=="number") and 0 or 0',
+        f'local {zv}=(type(B)=="number") and 0 or 0',
+    ])
+
+
+def _any_junk_lines(c: list[int]) -> list[str]:
+    """모든 junk 패턴 중 랜덤 선택."""
+    choice = random.randint(0, 6)
+    if choice == 0:
+        return [_live_arith(c)]
+    elif choice == 1:
+        return _dead_lines(c)
+    elif choice == 2:
+        return _live_read_lines(c)
+    elif choice == 3:
+        return _table_junk_lines(c)
+    elif choice == 4:
+        return [_math_junk(c)]
+    elif choice == 5:
+        return _string_junk(c)
+    else:
+        return [_type_junk(c)]
+
+
+# ---------------------------------------------------------------------------
 # Lua block depth
 # ---------------------------------------------------------------------------
 
@@ -165,6 +241,18 @@ def _lua_depth_delta(line: str) -> int:
     opens  += len(re.findall(r'\brepeat\b', s_no_elseif))
     closes += len(re.findall(r'\buntil\b', s_no_elseif))
     return opens - closes
+
+
+def _interleave_junk(lines: list[str], c: list[int], rate: float = 0.4) -> list[str]:
+    """실코드 라인 사이에 junk를 끼워넣는다. depth=0 경계에서만 삽입."""
+    result: list[str] = []
+    depth  = 0
+    for ln in lines:
+        result.append(ln)
+        depth += _lua_depth_delta(ln)
+        if depth <= 0 and not _TOP_RETURN_RE.match(ln) and random.random() < rate:
+            result.extend(_any_junk_lines(c))
+    return result
 
 
 def _split_safe_chunks(lines: list[str]) -> list[list[str]]:
@@ -223,27 +311,22 @@ def _new_state(used: set[int]) -> int:
 
 
 def _make_dead_body(c: list[int]) -> list[str]:
-    """dead state body — rset 호출 포함 4가지 패턴 중 랜덤 선택."""
+    """dead state body — 확장된 junk 패턴 포함."""
     lines: list[str] = []
     r = random.random()
     if r < 0.25:
-        # live arith + fake rset
-        lines.append(_live_arith(c))
+        lines.extend(_any_junk_lines(c))
         lines.extend(_fake_rset_lines(c))
     elif r < 0.50:
-        # 기존 dead_lines (rset under always_false 포함)
         lines.extend(_dead_lines(c))
     elif r < 0.75:
-        # live read + fake rset
         lines.extend(_live_read_lines(c))
         lines.extend(_fake_rset_lines(c))
     else:
-        # 혼합
-        lines.append(_live_arith(c))
+        lines.extend(_any_junk_lines(c))
         lines.extend(_dead_lines(c))
         if random.random() < 0.5:
             lines.extend(_live_read_lines(c))
-    # 20% 확률로 fake rset 블록 하나 추가
     if random.random() < 0.2:
         lines.extend(_fake_rset_lines(c))
     return lines
@@ -253,31 +336,27 @@ def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
     """
     real_chunks를 state machine으로 분산.
 
-    개선 사항:
     - XOR 키로 state 값 인코딩 (static analysis 방해)
-    - dead state 체인 (dead→dead→…→exit): dead가 항상 즉시 종료하지 않음
-    - dead state에 fake rset() 호출 삽입: 실제 핵심 코드 식별 방해
-    - always_false 하에 fake back-edge: dead state가 이전 state로 분기하는 것처럼 보임
+    - dead state 체인 (dead→dead→…→exit)
+    - dead state에 fake rset() 호출 삽입
+    - always_false 하에 fake back-edge
     """
     all_real_lines = [ln for chunk in real_chunks for ln in chunk]
     hoist_decls, _ = _hoist_locals(all_real_lines)
     hoisted_chunks = [_hoist_locals(chunk)[1] for chunk in real_chunks]
 
-    # state 변수 이름 + XOR 인코딩 키
     sv  = _zv(c)
     key = random.randint(0x100, 0x7FFF)
 
     def enc(s: int) -> int:
         return s ^ key
 
-    # real states
     used: set[int] = {0}
     real_states = [(_new_state(used), chunk) for chunk in hoisted_chunks]
     real_order  = [st for st, _ in real_states]
     real_next   = {st: (real_order[i + 1] if i + 1 < len(real_order) else 0)
                    for i, st in enumerate(real_order)}
 
-    # dead state 생성 후 랜덤 체인으로 연결
     n_dead   = random.randint(len(real_states), len(real_states) * 2 + 2)
     dead_ids = [_new_state(used) for _ in range(n_dead)]
     random.shuffle(dead_ids)
@@ -294,8 +373,7 @@ def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
         i += chain_len
 
     dead_next_map = {sid: nxt for sid, _, nxt in dead_entries}
-    # fake back-edge 대상 후보: 모든 real + dead state id
-    all_ids = real_order + [sid for sid, _, _ in dead_entries]
+    all_ids       = real_order + [sid for sid, _, _ in dead_entries]
 
     all_entries: list[tuple[int, list[str], bool]] = (
         [(st, chunk, True)  for st, chunk in real_states] +
@@ -317,10 +395,11 @@ def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
             parts.append(f"    {ln}")
 
         if is_real:
-            parts.append(f"    {sv}={enc(real_next[st])}")
+            # return으로 끝나는 chunk는 sv 할당 불필요 (return이 함수 자체를 종료)
+            # + return 뒤에 같은 블록에 코드가 있으면 Lua syntax error
+            if not (lines and _TOP_RETURN_RE.match(lines[-1])):
+                parts.append(f"    {sv}={enc(real_next[st])}")
         else:
-            # 35% 확률로 always_false 하에 fake back-edge 삽입
-            # → dead state가 이전 state로 돌아가는 것처럼 보여 CFG 분석 방해
             if random.random() < 0.35 and all_ids:
                 fake_tgt = random.choice(all_ids)
                 parts.append(
@@ -349,7 +428,7 @@ def mutate_handler_body(body: str, c: list[int]) -> str:
     if not real_lines:
         return body
 
-    # junk_ref: return 없는 핸들러에만 삽입
+    # junk_ref: return 없는 핸들러에만 (변수 참조 junk)
     local_vars = re.findall(r'\blocal\s+(\w+)\s*=', body)
     if local_vars and not has_return:
         pos = random.randint(0, len(real_lines))
@@ -357,25 +436,12 @@ def mutate_handler_body(body: str, c: list[int]) -> str:
                      [_junk_ref(random.choice(local_vars), c)] + \
                      real_lines[pos:]
 
-    if has_return:
-        prefix = [_live_arith(c)]
-        if random.random() < 0.5:
-            prefix.extend(_dead_lines(c))
-        if random.random() < 0.5:
-            prefix.extend(_live_read_lines(c))
-        return " " + ("\n" + _IND).join(prefix + real_lines) + "\n" + _IND
+    # 실코드 사이에 junk 삽입 (depth=0 경계에서만)
+    real_lines = _interleave_junk(real_lines, c, rate=0.4)
 
+    # 모든 핸들러를 CFF로 처리 (single-chunk, has_return 포함)
     chunks = _split_safe_chunks(real_lines)
-
-    if len(chunks) <= 1:
-        prefix = [_live_arith(c)]
-        if random.random() < 0.5:
-            prefix.extend(_dead_lines(c))
-        if random.random() < 0.5:
-            prefix.extend(_live_read_lines(c))
-        return " " + ("\n" + _IND).join(prefix + real_lines) + "\n" + _IND
-
-    cff = _build_cff(chunks, c)
+    cff    = _build_cff(chunks, c)
     return " " + cff + "\n" + _IND
 
 
