@@ -110,35 +110,29 @@ end
 ----------------------------------------
 
 local function from_base36(s)
-    if _sub(s,1,7) ~= "KARITY/" then
-        _err("invalid blob")
-    end
+    if _sub(s,1,7) ~= "KARITY/" then _err("invalid blob") end
     s = _sub(s,8)
-    local sep=_sfind(s,':',1,true)
-    local length=0
+    local sep = _sfind(s,':',1,true)
+    local length = 0
     for i=1,sep-1 do
-        local c=_sbyte(_sub(s,i,i),1)
+        local c=_sbyte(s,i)
         length=length*36+(c>=48 and c<=57 and c-48 or c-55)
     end
-    local d={}
-    for i=sep+1,#s do
-        local c=_sbyte(_sub(s,i,i),1)
-        d[#d+1]=c>=48 and c<=57 and c-48 or c-55
-    end
     local bytes={}
-    local function is_zero()
-        for _,v in _ip(d) do if v~=0 then return false end end
-        return true
-    end
-    while not is_zero() do
-        local rem=0
-        for i=1,#d do
-            local val=rem*36+d[i]
-            d[i]=val//256; rem=val%256
+    local i=sep+1
+    while i+6<=#s do
+        local n=0
+        for j=i,i+6 do
+            local c=_sbyte(s,j)
+            n=n*36+(c>=48 and c<=57 and c-48 or c-55)
         end
-        _ti(bytes,1,rem)
+        bytes[#bytes+1]= n     &0xFF
+        bytes[#bytes+1]=(n>> 8)&0xFF
+        bytes[#bytes+1]=(n>>16)&0xFF
+        bytes[#bytes+1]=(n>>24)&0xFF
+        i=i+7
     end
-    while #bytes<length do _ti(bytes,1,0) end
+    while #bytes>length do bytes[#bytes]=nil end
     return _sc(_tu(bytes))
 end
 
@@ -235,10 +229,12 @@ exec = function(proto, upvals, args, va_in)
     local boxes  = {}
     local consts = proto["constants"]
     local code   = proto["code"]
+    local _cd    = code   -- rename되지 않는 code 별칭 (fused 핸들러가 다음 슬롯을 읽을 때 사용)
     local pc     = 1
     local top    = -1
     local _st    = 0
     local _va    = va_in or {}
+    local _split_tmp
 
     args = args or {}
     for i=1,proto.num_params do regs[i-1]=args[i] end
@@ -352,7 +348,8 @@ exec = function(proto, upvals, args, va_in)
             elseif B==0 then
                 for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             end
-            return fn(_tu(ca,1,ca_n))
+            local res = _tp(fn(_tu(ca,1,ca_n)))
+            return {r=res, n=res.n}
 
         elseif op==38 then
             if B==1 then return {r={},n=0}
@@ -389,7 +386,7 @@ exec = function(proto, upvals, args, va_in)
             for i=1,cnt do tbl[base+i]=regs[A+i] end
 
         elseif op==44 then
-            if not boxes[A] then boxes[A]={v=nil} end
+            boxes[A] = {v=nil}
             local fn=make_closure(proto.protos[Bx+1])
             regs[A]=fn; boxes[A].v=fn
 

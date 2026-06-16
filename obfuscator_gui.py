@@ -165,7 +165,8 @@ class Api:
             return {"ok": False, "error": "선택된 패스가 없습니다."}
 
         try:
-            pipeline = build_pipeline_from_config(config, Pipeline, show_header=False)
+            has_vm = "vm" in config["passes"]
+            pipeline = build_pipeline_from_config(config, Pipeline, show_header=not has_vm)
 
             start = time.perf_counter()
             output = pipeline.run(script, verbose=0)

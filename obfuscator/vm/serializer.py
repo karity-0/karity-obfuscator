@@ -179,41 +179,198 @@ def _write_fake_pool(w: Writer) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Split / Fusion + jump offset 유틸리티
+# ---------------------------------------------------------------------------
+from .vm_obfuscation import FUSE_OPS
+
+# sBx 필드를 가진 opcodes (Lua 5.3 원본 번호): JMP, FORLOOP, FORPREP, TFORLOOP
+_SBXOPS: set[int] = {30, 39, 40, 42}
+# 조건부로 다음 명령어를 건너뛰는 opcodes: EQ/LT/LE/TEST/TESTSET
+_TESTOPS: set[int] = {31, 32, 33, 34, 35}
+
+
+def _compute_protected(code: list[int]) -> set[int]:
+    """독립적으로 dispatch 진입해야 하는(=fuse의 operand 슬롯이 되면 안 되는)
+    명령어 인덱스 집합.
+
+    - JMP/FORLOOP/FORPREP/TFORLOOP의 점프 목적지
+    - test 명령(skip)의 착지 위치 i+2
+    - LOADBOOL(op==3, C!=0)의 skip 착지 위치 i+2
+    """
+    n = len(code)
+    protected: set[int] = set()
+    for i, raw in enumerate(code):
+        op = raw & 0x3F
+        if op in _SBXOPS:
+            sbx = ((raw >> 14) & 0x3FFFF) - 131071
+            tgt = i + 1 + sbx
+            if 0 <= tgt < n:
+                protected.add(tgt)
+        elif op in _TESTOPS:
+            if i + 2 < n:
+                protected.add(i + 2)
+        elif op == 3:  # LOADBOOL
+            C = (raw >> 14) & 0x1FF
+            if C != 0 and i + 2 < n:
+                protected.add(i + 2)
+    return protected
+
+
+def collect_fuseable_pairs(proto: Proto) -> set[tuple[int, int]]:
+    """proto 트리에서 fuse 가능한 인접 (op1, op2) 쌍 집합을 반환."""
+    pairs: set[tuple[int, int]] = set()
+    _collect_pairs(proto, pairs)
+    return pairs
+
+
+def _collect_pairs(proto: Proto, pairs: set[tuple[int, int]]) -> None:
+    code = proto.code
+    protected = _compute_protected(code)
+    for i in range(len(code) - 1):
+        op1 = code[i]     & 0x3F
+        op2 = code[i + 1] & 0x3F
+        if op1 in FUSE_OPS and op2 in FUSE_OPS and (i + 1) not in protected:
+            pairs.add((op1, op2))
+    for sub in proto.protos:
+        _collect_pairs(sub, pairs)
+
+
+# plan unit 형식:
+#   ("normal", i)         — 1 슬롯
+#   ("split",  i, parts)  — parts 슬롯 (parts in {2,3})
+#   ("fuse",   i, i+1)    — 2 슬롯 (fused vop + operand)
+def _build_plan(code: list[int],
+                split_map: dict[int, dict[str, tuple[int, ...]]] | None,
+                fuse_map: dict[tuple[int, int], int] | None,
+                protected: set[int]) -> list[tuple]:
+    n = len(code)
+    plan: list[tuple] = []
+    i = 0
+    while i < n:
+        op = code[i] & 0x3F
+        options: list[tuple] = [("normal", i)]
+
+        if split_map and op in split_map:
+            options.append(("split", i, 2))
+            options.append(("split", i, 3))
+
+        if (fuse_map and i + 1 < n and op in FUSE_OPS
+                and (code[i + 1] & 0x3F) in FUSE_OPS
+                and (i + 1) not in protected
+                and (op, code[i + 1] & 0x3F) in fuse_map):
+            options.append(("fuse", i, i + 1))
+
+        choice = random.choice(options) if len(options) > 1 else options[0]
+        plan.append(choice)
+        i += 2 if choice[0] == "fuse" else 1
+    return plan
+
+
+def _plan_slots(unit: tuple) -> int:
+    if unit[0] == "split":
+        return unit[2]
+    if unit[0] == "fuse":
+        return 2
+    return 1
+
+
+def _plan_new_pos(plan: list[tuple], n: int) -> tuple[list[int], int]:
+    """new_pos[원본 인덱스] = 새 배열에서의 시작 슬롯. (목록, 총 슬롯수) 반환."""
+    new_pos = [0] * n
+    slot = 0
+    for unit in plan:
+        i = unit[1]
+        new_pos[i] = slot
+        if unit[0] == "fuse":
+            new_pos[unit[2]] = slot + 1  # operand 슬롯 (점프 타겟 아님, 안전용)
+        slot += _plan_slots(unit)
+    return new_pos, slot
+
+
+def _adjust_jumps(code: list[int], new_pos: list[int], total: int) -> list[int]:
+    """JMP/FORLOOP/FORPREP/TFORLOOP의 sBx를 split로 밀린 새 위치에 맞게 수정.
+
+    (fusion은 2→2 슬롯이라 위치를 바꾸지 않지만, split이 섞이면 위치가
+    밀리므로 new_pos 기준으로 일괄 재계산한다.)
+    """
+    result = list(code)
+    for i, raw in enumerate(code):
+        if (raw & 0x3F) not in _SBXOPS:
+            continue
+        old_sbx = ((raw >> 14) & 0x3FFFF) - 131071
+        target  = i + 1 + old_sbx
+        new_tgt = new_pos[target] if 0 <= target < len(code) else total
+        new_sbx = new_tgt - new_pos[i] - 1
+        new_bx  = (new_sbx + 131071) & 0x3FFFF
+        result[i] = (raw & ~(0x3FFFF << 14)) | (new_bx << 14)
+    return result
+
+
+def _emit_instr(w: Writer, raw: int, vop: int, acc_state: list[int]) -> None:
+    acc, idx = acc_state
+    enc_op      = (vop & 0x7F)  ^ (acc & 0x7F)
+    enc_variant = (vop >> 7)    ^ ((acc >> 7) & 0xFF)
+    acc_state[0] = (acc + vop + idx) & 0xFFFF
+    acc_state[1] = idx + 1
+    w.instr(raw, enc_op, enc_variant)
+
+
+def _rand_alias(vop_map: dict[int, list[int]] | None, op: int) -> int:
+    if vop_map:
+        aliases = vop_map[op]
+        return aliases[random.randint(0, len(aliases) - 1)]
+    return op
+
+
+# ---------------------------------------------------------------------------
 # 직렬화
 # ---------------------------------------------------------------------------
-def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None) -> bytes:
+def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None,
+              split_map: dict[int, dict[str, tuple[int, ...]]] | None = None,
+              fuse_map: dict[tuple[int, int], int] | None = None) -> bytes:
     w = Writer()
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
     _write_fake_pool(w)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
-    _write_proto(w, proto, vop_map, acc_state)
+    _write_proto(w, proto, vop_map, acc_state, split_map, fuse_map)
     return w.data()
 
 
 def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None,
-                 acc_state: list[int]):
+                 acc_state: list[int],
+                 split_map: dict[int, dict[str, tuple[int, ...]]] | None = None,
+                 fuse_map: dict[tuple[int, int], int] | None = None):
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
 
+    # --- split/fuse 결정 + jump offset 보정 ---
+    protected     = _compute_protected(proto.code)
+    plan          = _build_plan(proto.code, split_map, fuse_map, protected)
+    new_pos, total = _plan_new_pos(plan, len(proto.code))
+    code          = _adjust_jumps(proto.code, new_pos, total)
+
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
-    w.u32(len(proto.code))
-    for raw in proto.code:
+    w.u32(total)
+    for unit in plan:
+        i = unit[1]
+        raw = code[i]
         orig_op = raw & 0x3F
-        if vop_map:
-            aliases = vop_map[orig_op]
-            vop = aliases[random.randint(0, len(aliases) - 1)]
-        else:
-            vop = orig_op
-        acc, idx = acc_state
-        # op(7비트)와 variant(8비트) 각각 acc로 인코딩
-        enc_op      = (vop & 0x7F)  ^ (acc & 0x7F)
-        enc_variant = (vop >> 7)    ^ ((acc >> 7) & 0xFF)
-        acc_state[0] = (acc + vop + idx) & 0xFFFF
-        acc_state[1] = idx + 1
-        w.instr(raw, enc_op, enc_variant)
+        if unit[0] == "normal":
+            _emit_instr(w, raw, _rand_alias(vop_map, orig_op), acc_state)
+        elif unit[0] == "split":
+            # 같은 raw 명령어를 각 part vop으로 반복 방출
+            vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
+            for vop in vops:
+                _emit_instr(w, raw, vop, acc_state)
+        else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
+            op2 = code[unit[2]] & 0x3F
+            fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
+            _emit_instr(w, raw, fuse_vop, acc_state)
+            # operand 슬롯: dispatch 안 되지만 acc 동기화 위해 정상 슬롯으로 방출
+            _emit_instr(w, code[unit[2]], _rand_alias(vop_map, op2), acc_state)
 
     # 상수
     w.u32(len(proto.constants))
@@ -244,7 +401,7 @@ def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None,
     # 중첩 proto (acc_state 전역 공유)
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub, vop_map, acc_state)
+        _write_proto(w, sub, vop_map, acc_state, split_map)
 
 
 # ---------------------------------------------------------------------------

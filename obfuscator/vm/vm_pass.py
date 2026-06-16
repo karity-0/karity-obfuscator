@@ -12,9 +12,11 @@ from pathlib import Path
 
 from ..passes.base import PostPass
 from ..parser import Lua53Parser
-from .serializer import serialize
+from .serializer import serialize, collect_fuseable_pairs
 from .kae_blob import encrypt_blob
-from .vm_obfuscation import collect_used_ops, prune_and_inject_handlers, apply_vop_to_vm
+from .vm_obfuscation import (collect_used_ops, collect_used_orig_ops,
+                             prune_and_inject_handlers, apply_vop_to_vm,
+                             apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS)
 from .junk_injection import inject_junk
 
 
@@ -56,20 +58,30 @@ def _compile(script: str) -> bytes:
             os.unlink(out_path)
 
 
+_B36 = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+
 def _to_base36(data: bytes) -> str:
-    """bytes → "length:base36payload" 형식"""
+    """bytes → "KARITY/length:base36payload" (4바이트 청크, 각 6자리 고정)"""
     length = len(data)
-    n = int.from_bytes(data, 'big') if data else 0
-    digits = []
-    while n:
-        digits.append('0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[n % 36])
-        n //= 36
-    payload = ''.join(reversed(digits)) if digits else '0'
+    # length 인코딩
     ln, length_enc = length, ''
     while ln:
-        length_enc = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'[ln % 36] + length_enc
+        length_enc = _B36[ln % 36] + length_enc
         ln //= 36
-    return '"KARITY/' + (length_enc or '0') + ':' + payload + '"' 
+
+    # 4바이트씩 청크로 나눠 각각 6자리 base36으로 인코딩
+    # 패딩: 4의 배수로 맞춤
+    padded = data + b'\x00' * ((4 - len(data) % 4) % 4)
+    parts = []
+    for i in range(0, len(padded), 4):
+        n = int.from_bytes(padded[i:i+4], 'little')
+        chunk = ''
+        for _ in range(7):
+            chunk = _B36[n % 36] + chunk
+            n //= 36
+        parts.append(chunk)
+
+    return '"KARITY/' + (length_enc or '0') + ':' + ''.join(parts) + '"'
 
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
@@ -100,6 +112,37 @@ def _make_vop_map() -> dict[int, list[int]]:
                     break
         vop_map[orig] = aliases
     return vop_map
+
+
+def _new_unique_vop(used: set[int]) -> int:
+    while True:
+        vop = random.randint(0, 0x7FFF)
+        if vop not in used:
+            used.add(vop)
+            return vop
+
+
+def _make_fuse_map(used_vops: set[int],
+                   pairs: set[tuple[int, int]]) -> dict[tuple[int, int], int]:
+    """fuse 가능한 각 (op1, op2) 쌍마다 고유 vop 1개 할당."""
+    return {pair: _new_unique_vop(used_vops) for pair in sorted(pairs)}
+
+
+def _make_split_map(used_vops: set[int],
+                    split_ops: set[int]) -> dict[int, dict[str, tuple[int, ...]]]:
+    """각 split 가능 op마다 2-part, 3-part 용 vop 튜플 할당.
+
+    split_ops: split 핸들러를 만들 op 집합 (실제 바이트코드에 등장하는
+    splittable op으로 한정 — 안 쓰는 op까지 CFF 핸들러를 만들면 체인 폭증).
+    """
+    split_map: dict[int, dict[str, tuple[int, ...]]] = {}
+    for op in sorted(split_ops):
+        split_map[op] = {
+            "2": (_new_unique_vop(used_vops), _new_unique_vop(used_vops)),
+            "3": (_new_unique_vop(used_vops), _new_unique_vop(used_vops),
+                  _new_unique_vop(used_vops)),
+        }
+    return split_map
 
 
 def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
@@ -228,22 +271,25 @@ class VMPass(PostPass):
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
 
     def run(self, script: str) -> str:
-        import time
-        t = time.perf_counter()
-
         # 1. luac 컴파일
         luac_bytes = _compile(script)
-        #print(f"  [VM] compile: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
         # 2. 파싱 → junk instruction 삽입 → 커스텀 직렬화
-        vop_map = _make_vop_map()
         proto = Lua53Parser(luac_bytes).parse()
         if self.vm_options.get("junk_instructions", True):
             proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
-        blob  = serialize(proto, vop_map)
-        #print(f"  [VM] parse+junk+serialize: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
 
-        # 3. VM 코드 로드 + vopmap 적용 + 핸들러 prune/가짜 핸들러 삽입
+        vop_map   = _make_vop_map()
+        used_vops = {v for aliases in vop_map.values() for v in aliases}
+        # split_map/fuse_map은 실제 등장하는 op·쌍으로만 한정한다.
+        # (안 쓰는 op의 핸들러까지 CFF로 만들면 체인이 폭증한다.)
+        split_ops  = ALL_SPLIT_OPS & collect_used_orig_ops(proto)
+        split_map  = _make_split_map(used_vops, split_ops)
+        fuse_pairs = collect_fuseable_pairs(proto)
+        fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
+        blob  = serialize(proto, vop_map, split_map, fuse_map)
+
+        # 3. VM 코드 로드 + vopmap 적용 + prune/가짜 핸들러 삽입 + split/fuse 핸들러 추가
         used_ops = collect_used_ops(proto, vop_map)
         vm_code = apply_vop_to_vm(_rename_vm_keys(_load_vm()), vop_map)
         vm_code = prune_and_inject_handlers(
@@ -252,7 +298,10 @@ class VMPass(PostPass):
             fake_handlers=self.vm_options["fake_handlers"],
             mutate=self.vm_options["mutate_handlers"],
         )
-        #print(f"  [VM] vm_code mutation: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
+        vm_code = apply_split_to_vm(vm_code, split_map,
+                                    mutate=self.vm_options["mutate_handlers"])
+        vm_code = apply_fuse_to_vm(vm_code, fuse_map,
+                                   mutate=self.vm_options["mutate_handlers"])
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (
@@ -261,7 +310,6 @@ class VMPass(PostPass):
             f'{vm_code} return run end'
         )
         vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
-        #print(f"  [VM] re-obfuscate: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
@@ -272,7 +320,6 @@ class VMPass(PostPass):
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         dump_bytes = _dump_function_stripped(vm_func_src, header)
-        #print(f"  [VM] dump_function: {time.perf_counter()-t:.3f}s"); t = time.perf_counter()
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
 
         alphabet  = string.ascii_letters + string.digits

@@ -1,91 +1,75 @@
-# lua-obfuscator
+# karity obfuscator
+a lua 5.3 obfuscator with a custom vm protection layer.
 
-simple lua obfuscator
+## features
 
-## structure
+**source-level passes**
+- string encoding / obfuscation
+- number obfuscation
+- boolean obfuscation
+- table obfuscation
+- function obfuscation (CFF + opaque predicates)
+- variable renaming
+- minification
+- anti debug
 
-```
-lua-obfuscator/
-├── main.py                        # cli entrypoint
-├── requirements.txt
-├── obfuscator/
-│   ├── pipeline.py                # pass pipeline
-│   └── passes/
-│       ├── base.py                # BasePass, Replacement
-│       ├── string_encode.py       # StringEncodePass
-│       └── number_obfuscation.py  # NumberObfuscationPass
-│       └── ...                    # additional passes
-└── test/
-    ├── run_test.py
-    ├── scripts/                   # test lua scripts
-    └── output/                    # output scripts (gitignored)
-```
+**vm protection**
+- lua 5.3 VM with custom 64bit virtual instruction format
+- opcode aliasing
+- opcode shuffling
+- unused opcode pruning
+- junk opcode
+- opcode mutation (CFF + opaque predicates + dummy code)
+- junk instruction
+- bytecode encryption + base36 encoding
+- anti tamper
+- fake constant pool
+- rolling opcode
+- re-obfuscate vm output with passes
+--------
 
 ## requirements
 ```bash
 pip install -r requirements.txt
 ```
 
-## usage
-
+## configuration
 ```bash
-# to input_obfuscated.lua
+cp config.example.json config.json
+```
+```json
+{
+    "passes": [
+        "string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf",
+        "vm", "anti_debug"
+    ],
+    "vm_output_passes": [
+        "string_obf", "boolean_obf", "number_obf",
+        "rename_obf", "minify"
+    ],
+    "vm_options": {
+        "fake_handlers": true,
+        "mutate_handlers": true,
+        "junk_instructions": true,
+        "junk_rate": 0.15
+    }
+}
+```
+
+## usage
+```bash
+# cli
 python main.py input.lua
-
-# to output.lua
 python main.py input.lua -o output.lua
-
-# print debug info
 python main.py input.lua -v
-```
 
-## features
-- string obfuscation
-- number obfuscation
-- minifier
-
-## passes
-
-**StringEncodePass** — encode all strings to ascii escape string
-
-```lua
--- before
-print("hello world")
-
--- after
-print("\104\101\108\108\111\32\119\111\114\108\100")
-```
-
-**NumberObfuscationPass** — obfuscate all numbers using xor
-
-```lua
--- before
-local a = 10
-
--- after
-local a = (203292562~203292568)
-```
-
-**MinifyPass** — remove comments and whitespace
-
-```lua
--- before
-a = 50
-b = 20
-
-a = a - -b
-print(a)
-
-
-a = a + -b
-print(a)
-
--- after
-a=50 b=20 a=a - -b print(a) a=a+-b print(a)
+# gui
+python obfuscator_gui.py
 ```
 
 ## testing
-
 ```bash
 python test/run_test.py
+python test/run_test.py 01 02
+python test/run_test.py func
 ```

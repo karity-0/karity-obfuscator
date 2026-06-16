@@ -1,5 +1,4 @@
 import random
-from luaparser import astnodes
 from .base import BasePass, Replacement
 
 
@@ -93,19 +92,19 @@ class StringObfuscationPass(BasePass):
         print(string.char((177718~177641),(834217~834166),(873852~873744),(186485~186449))..string.char((505048~505121)))
     """
 
+    parser = "treesitter"
+
     def run(self, script: str, tree) -> list[Replacement]:
         replacements: list[Replacement] = []
 
-        for node in self.walk(tree):
-            if not isinstance(node, astnodes.String):
-                continue
-            if node.start_char is None:
+        for node in tree.walk():
+            if node.type != "string":
                 continue
 
             replacements.append(Replacement(
-                start    = node.start_char,
-                end      = node.stop_char,
-                new_text = _encode(parse_lua_string(node.raw)),
+                start    = tree.cs(node),
+                end      = tree.ce(node),
+                new_text = _encode(parse_lua_string(tree.text(node))),
             ))
 
         return replacements

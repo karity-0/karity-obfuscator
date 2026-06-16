@@ -15,8 +15,10 @@ def load_config(path: str = "config.json") -> dict:
 
 
 def build_pipeline(config: dict) -> Pipeline:
-    # todo: vm 껏을때는 show_header True여야 함.
-    return build_pipeline_from_config(config, Pipeline, show_header=False)
+    # vm이 활성화된 경우 VMPass가 헤더를 직접 출력하므로 show_header=False
+    # vm이 없는 경우 pipeline이 헤더를 붙여야 하므로 show_header=True
+    has_vm = "vm" in config.get("passes", [])
+    return build_pipeline_from_config(config, Pipeline, show_header=not has_vm)
 
 
 def parse_args():
