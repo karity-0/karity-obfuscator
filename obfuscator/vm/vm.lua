@@ -229,6 +229,7 @@ exec = function(proto, upvals, args, va_in)
     local boxes  = {}
     local consts = proto["constants"]
     local code   = proto["code"]
+    local _cd    = code   -- rename되지 않는 code 별칭 (fused 핸들러가 다음 슬롯을 읽을 때 사용)
     local pc     = 1
     local top    = -1
     local _st    = 0

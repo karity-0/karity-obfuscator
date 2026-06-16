@@ -12,11 +12,11 @@ from pathlib import Path
 
 from ..passes.base import PostPass
 from ..parser import Lua53Parser
-from .serializer import serialize
+from .serializer import serialize, collect_fuseable_pairs
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (collect_used_ops, collect_used_orig_ops,
                              prune_and_inject_handlers, apply_vop_to_vm,
-                             apply_split_to_vm, ALL_SPLIT_OPS)
+                             apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS)
 from .junk_injection import inject_junk
 
 
@@ -120,6 +120,12 @@ def _new_unique_vop(used: set[int]) -> int:
         if vop not in used:
             used.add(vop)
             return vop
+
+
+def _make_fuse_map(used_vops: set[int],
+                   pairs: set[tuple[int, int]]) -> dict[tuple[int, int], int]:
+    """fuse 가능한 각 (op1, op2) 쌍마다 고유 vop 1개 할당."""
+    return {pair: _new_unique_vop(used_vops) for pair in sorted(pairs)}
 
 
 def _make_split_map(used_vops: set[int],
@@ -275,14 +281,15 @@ class VMPass(PostPass):
 
         vop_map   = _make_vop_map()
         used_vops = {v for aliases in vop_map.values() for v in aliases}
-        # split_map은 실제 등장하는 splittable op으로만 한정한다.
-        # (안 쓰는 op의 split 핸들러까지 CFF로 만들면 체인이 폭증한다.)
-        split_ops = ALL_SPLIT_OPS & collect_used_orig_ops(proto)
-        split_map = _make_split_map(used_vops, split_ops)
-        blob  = serialize(proto, vop_map, split_map)
+        # split_map/fuse_map은 실제 등장하는 op·쌍으로만 한정한다.
+        # (안 쓰는 op의 핸들러까지 CFF로 만들면 체인이 폭증한다.)
+        split_ops  = ALL_SPLIT_OPS & collect_used_orig_ops(proto)
+        split_map  = _make_split_map(used_vops, split_ops)
+        fuse_pairs = collect_fuseable_pairs(proto)
+        fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
+        blob  = serialize(proto, vop_map, split_map, fuse_map)
 
-        # 3. VM 코드 로드 + vopmap 적용 + prune/가짜 핸들러 삽입 + split 핸들러 추가
-        # split vop는 mutation 대상에서 제외: CFF 비용 없이 random vop ID만으로 난독화
+        # 3. VM 코드 로드 + vopmap 적용 + prune/가짜 핸들러 삽입 + split/fuse 핸들러 추가
         used_ops = collect_used_ops(proto, vop_map)
         vm_code = apply_vop_to_vm(_rename_vm_keys(_load_vm()), vop_map)
         vm_code = prune_and_inject_handlers(
@@ -293,6 +300,8 @@ class VMPass(PostPass):
         )
         vm_code = apply_split_to_vm(vm_code, split_map,
                                     mutate=self.vm_options["mutate_handlers"])
+        vm_code = apply_fuse_to_vm(vm_code, fuse_map,
+                                   mutate=self.vm_options["mutate_handlers"])
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (

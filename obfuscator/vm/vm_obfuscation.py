@@ -35,6 +35,14 @@ _UNARY_PREFIX = {
 
 _SPLIT_PAD = "\n        "
 
+# ---------------------------------------------------------------------------
+# Fusion (superopcode) catalog
+# ---------------------------------------------------------------------------
+# fuse 가능한 명령어: 항상 fall-through하는 단순 직선 명령만 (보수적 소규모).
+#   MOVE(0), LOADK(1), GETUPVAL(5), 이항 산술(13-24), 단항(25-28)
+# 제어흐름(JMP/test/CALL/RETURN/loop)은 instr2를 조건부로 건너뛸 수 있어 제외.
+FUSE_OPS = {0, 1, 5} | _BINARY_SPLIT_OPS | _UNARY_SPLIT_OPS
+
 
 def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
     """Return handler body strings for each part of a split instruction."""
@@ -253,6 +261,69 @@ def apply_split_to_vm(vm_code: str,
         split_blocks = mutate_handlers(split_blocks)
 
     blocks.update(split_blocks)
+    new_chain = _rebuild_chain(blocks)
+    return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
+
+
+# ---------------------------------------------------------------------------
+# 4. fusion(superopcode) 핸들러 삽입
+# ---------------------------------------------------------------------------
+def _op_body(op: int, a: str, b: str, c: str, bx: str) -> str:
+    """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
+    if op == 0:   # MOVE
+        return f"rset({a},regs[{b}])"
+    if op == 1:   # LOADK
+        return f"rset({a},kval(consts[{bx}+1]))"
+    if op == 5:   # GETUPVAL
+        return f"rset({a},get_uv({b}+1))"
+    if op in _BINARY_OP_LUA:
+        return f"rset({a},rk({b}){_BINARY_OP_LUA[op]}rk({c}))"
+    if op in _UNARY_PREFIX:
+        return f"rset({a},{_UNARY_PREFIX[op]}regs[{b}])"
+    raise ValueError(f"non-fuseable op: {op}")
+
+
+def fused_handler_body(op1: int, op2: int) -> str:
+    """(op1, op2) 쌍을 하나로 실행하는 fused 핸들러 본문.
+
+    슬롯 N(현재)은 instr1의 A/B/C를 갖고, 다음 슬롯 N+1을 직접 읽어
+    instr2의 A/B/C를 디코드한 뒤 pc를 1 증가시켜 operand 슬롯을 건너뛴다.
+    (LOADKX/EXTRAARG 처리와 동일한 2-슬롯 패턴.)
+    """
+    lines = [
+        "local _ei=_cd[pc]; pc=pc+1",
+        "local _fa=(_ei>>32)&0xFF",
+        "local _fb=(_ei>>23)&0x1FF",
+        "local _fc=(_ei>>14)&0x1FF",
+        "local _fbx=(_ei>>14)&0x3FFFF",
+        _op_body(op1, "A", "B", "C", "Bx"),
+        _op_body(op2, "_fa", "_fb", "_fc", "_fbx"),
+    ]
+    return " " + _SPLIT_PAD.join(lines) + _SPLIT_PAD
+
+
+def apply_fuse_to_vm(vm_code: str,
+                     fuse_map: dict[tuple[int, int], int],
+                     mutate: bool = True) -> str:
+    """fuse_map의 각 (op1, op2) 쌍에 대해 합쳐진 핸들러를 체인에 추가.
+
+    fused 핸들러도 실제로 실행되는 진짜 로직이므로 real/split/fake와
+    동일하게 CFF/junk(mutate)를 적용해 구조적으로 구별되지 않게 한다.
+    """
+    if not fuse_map:
+        return vm_code
+    chain_start, chain_end = _find_chain(vm_code)
+    chain = vm_code[chain_start:chain_end]
+    blocks = _parse_handler_blocks(chain)
+
+    fuse_blocks: dict[int, str] = {}
+    for (op1, op2), vop in fuse_map.items():
+        fuse_blocks[vop] = fused_handler_body(op1, op2)
+
+    if mutate:
+        fuse_blocks = mutate_handlers(fuse_blocks)
+
+    blocks.update(fuse_blocks)
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
 
