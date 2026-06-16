@@ -17,9 +17,10 @@ a lua 5.3 obfuscator with a custom vm protection layer.
 - lua 5.3 VM with custom 64bit virtual instruction format
 - opcode aliasing
 - opcode shuffling
+- opcode fusion & splitting (superopcodes)
 - unused opcode pruning
 - junk opcode
-- opcode mutation (CFF + opaque predicates + dummy code)
+- opcode mutation (CFF + opaque predicates)
 - junk instruction
 - bytecode encryption + base36 encoding
 - anti tamper
