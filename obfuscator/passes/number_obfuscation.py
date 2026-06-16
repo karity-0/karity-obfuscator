@@ -1,13 +1,21 @@
 import random
 
-from luaparser import astnodes
-
 from .base import BasePass, Replacement
 
 MAX_INT = 0x7FFFFFFF
 
 
+def _parse_int_token(token: str) -> int:
+    """정수 리터럴 토큰을 값으로. (Python int(t,0)의 0o 8진수 함정 회피)"""
+    t = token.lower()
+    if t.startswith("0x"):
+        return int(t, 16)
+    return int(t, 10)  # 선행 0 포함 10진수 그대로 (Lua 의미)
+
+
 class NumberObfuscationPass(BasePass):
+    parser = "treesitter"
+
 
     def _fmt_int(self, n: int) -> str:
         if random.random() < 0.5:
@@ -85,24 +93,24 @@ class NumberObfuscationPass(BasePass):
     def run(self, script: str, tree) -> list[Replacement]:
         replacements: list[Replacement] = []
 
-        for node in self.walk(tree):
-            if not isinstance(node, astnodes.Number):
+        for node in tree.walk():
+            if node.type != "number":
                 continue
 
-            token = node._first_token.text
+            token = tree.text(node)
 
             if self._is_float_literal(token):
                 expr = self._make_float_expr(token)
             else:
                 expr = self._gen_int_expr(
-                    int(node.n),
+                    _parse_int_token(token),
                     random.randint(2, 3),
                 )
 
             replacements.append(
                 Replacement(
-                    start=node.start_char,
-                    end=node.stop_char,
+                    start=tree.cs(node),
+                    end=tree.ce(node),
                     new_text=expr,
                 )
             )

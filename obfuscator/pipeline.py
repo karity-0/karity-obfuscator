@@ -42,7 +42,14 @@ class Pipeline:
 
         for pass_ in self._passes:
             start = time.perf_counter()
-            tree = ast.parse(script)
+            # 패스별 파서 선택: parser="treesitter"면 tree-sitter(빠름),
+            # 아니면 기존 luaparser. 큰 VM 출력을 다루는 패스는 tree-sitter로
+            # 파싱 비용(~90%)을 줄인다.
+            if getattr(pass_, "parser", "luaparser") == "treesitter":
+                from .passes.ts_utils import parse as _ts_parse
+                tree = _ts_parse(script)
+            else:
+                tree = ast.parse(script)
             replacements = pass_.run(script, tree)
             elapsed = time.perf_counter() - start
             if verbose >= Verbosity.NORMAL:

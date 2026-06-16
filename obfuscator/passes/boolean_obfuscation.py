@@ -1,6 +1,5 @@
 import random
 
-from luaparser import astnodes
 from .base import BasePass, Replacement
 
 
@@ -13,25 +12,24 @@ def generate_rand_xor():
 
 
 class BooleanObfuscationPass(BasePass):
+    parser = "treesitter"
+
     def run(self, script: str, tree) -> list[Replacement]:
         replacements: list[Replacement] = []
 
-        for node in self.walk(tree):
-            if isinstance(node, astnodes.TrueExpr):
+        for node in tree.walk():
+            if node.type == "true":
                 first, second, xor = generate_rand_xor()
-
                 replacements.append(Replacement(
-                    start    = node.start_char,
-                    end      = node.stop_char,
+                    start    = tree.cs(node),
+                    end      = tree.ce(node),
                     new_text = f"(({first}~{second})=={xor})"
                 ))
-
-            elif isinstance(node, astnodes.FalseExpr):
+            elif node.type == "false":
                 first, second, xor = generate_rand_xor()
-
                 replacements.append(Replacement(
-                    start    = node.start_char,
-                    end      = node.stop_char,
+                    start    = tree.cs(node),
+                    end      = tree.ce(node),
                     new_text = f"(({first}~{second})=={xor+1})"
                 ))
 

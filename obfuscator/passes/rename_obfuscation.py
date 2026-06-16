@@ -104,7 +104,16 @@ def _get_scope_range(s, tree, script: str) -> tuple[int, int]:
 
 
 class RenameObfuscationPass(BasePass):
+    # tree-sitter 기반 분석 (luaparser 대비 ~10x). 파이프라인이 제공한
+    # TSContext를 그대로 재사용해 이중 파싱을 피한다.
+    parser = "treesitter"
+
     def run(self, script: str, tree) -> list[Replacement]:
+        from .rename_ts import rename_with_ctx
+        return [Replacement(start=0, end=len(script) - 1,
+                            new_text=rename_with_ctx(tree))]
+
+    def _run_luaparser(self, script: str, tree) -> list[Replacement]:
         counter = [0]
         skip_ranges = sorted(_field_key_ranges(script, tree))
 
