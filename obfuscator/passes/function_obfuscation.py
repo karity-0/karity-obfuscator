@@ -14,7 +14,6 @@ from __future__ import annotations
 import random
 import re
 
-from luaparser import astnodes, ast
 from .base import BasePass, Replacement
 from ..vm.vm_mutation import _zv, _new_state
 
@@ -139,30 +138,6 @@ def _collect_and_strip_locals(text: str, only_names: set[str] | None = None) -> 
 
     new_text = _apply_outside_protected(text, lambda part: _LOCAL_DECL_RE.sub(_strip_match, part))
     return stripped_names, new_text
-
-
-def _find_param_span(script: str, node_start: int) -> tuple[int, int]:
-    """node_start부터 첫 '(' 위치(open)와 매칭되는 ')'위치(close)를 반환.
-
-    luaparser의 Name arg 노드는 start_char/stop_char 정보가 없으므로,
-    함수 정의 텍스트에서 직접 괄호를 찾아 파라미터 목록의 범위를 구한다.
-    'local function name(...)' / 'function obj.method(...)' /
-    'function(...)' 모두 식별자/점 표기에는 '('가 나올 수 없으므로 안전하다.
-    """
-    i = node_start
-    while script[i] != '(':
-        i += 1
-    open_idx = i
-    depth = 1
-    j = i + 1
-    while depth > 0:
-        if script[j] == '(':
-            depth += 1
-        elif script[j] == ')':
-            depth -= 1
-        j += 1
-    close_idx = j - 1
-    return open_idx, close_idx
 
 
 # ---------------------------------------------------------------------------
@@ -462,8 +437,8 @@ def _build_generic_cff(real_chunks: list[list[str]], c: list[int], extra_hoist_n
         for d in table_decls:
             parts.append(d)
     else:
-        for name in hoist_names:
-            parts.append(f"local {name}")
+        # 비-테이블 모드: hoist 선언(`local NAME`)은 strip 단계에서 declare-only로
+        # 같이 제거되므로 여기서 붙이지 않고, strip 이후에 본문 앞에 붙인다(아래).
         name_to_ref = {}
 
     # 3) sv 초기화: 비-테이블 모드에서는 `local {sv}=...`을 직접 적되,
@@ -506,12 +481,16 @@ def _build_generic_cff(real_chunks: list[list[str]], c: list[int], extra_hoist_n
         _, body = _collect_and_strip_locals(body, only_names=pooled_names)
         body = _replace_idents_outside_strings(body, name_to_ref)
     else:
-        # hoist_names는 위에서 이미 `local NAME`으로 while 앞에 선언했으므로,
-        # real chunk 본문 안의 `local NAME=...`/`local NAME`은 제거해야
-        # 한다 (제거하지 않으면 분기 내부에서 새로 shadow되어 다른 분기와
-        # 상태를 공유할 수 없게 됨). zv(`_zN`)는 원래부터 각 state 안에서만
-        # 쓰이는 지역 변수이므로 그대로 둔다.
+        # real chunk 본문 안의 `local NAME=...`(→`NAME=...`) / `local NAME`(→제거)을
+        # strip한다 (제거 안 하면 분기 내부에서 shadow되어 분기 간 상태 공유 불가).
+        # hoist 선언(`local NAME`)도 declare-only라 이 strip에 같이 지워지므로,
+        # strip을 먼저 끝낸 뒤 hoist 선언을 본문 앞에 붙인다. 이렇게 해야 hoist된
+        # local이 while 앞에 실제로 선언되어 분기 간 공유되고, 누락 시 전역으로
+        # 새지 않는다. zv(`_zN`)는 hoist 대상이 아니라 state-local로 그대로 둔다.
         _, body = _collect_and_strip_locals(body, only_names=set(hoist_names))
+        if hoist_names:
+            decls = ("\n" + _IND).join(f"local {n}" for n in hoist_names)
+            body = decls + "\n" + _IND + body
 
     return body
 
@@ -520,40 +499,38 @@ def _build_generic_cff(real_chunks: list[list[str]], c: list[int], extra_hoist_n
 # 본문 변환
 # ---------------------------------------------------------------------------
 
-def _stmt_has_goto_or_label(stmt) -> bool:
-    """statement 서브트리에 goto/label이 있는지 AST로 확인한다."""
-    for n in ast.walk(stmt):
-        if isinstance(n, (astnodes.Goto, astnodes.Label)):
+# tree-sitter-lua 함수 노드 타입: function_declaration = `[local] function NAME`,
+# function_definition = 익명 `function(...)`.
+_FUNC_NODE_TYPES = ("function_declaration", "function_definition")
+
+
+def _is_local_func(node) -> bool:
+    """`local function NAME(...)` 형태인지 (function_declaration + 첫 자식 local)."""
+    return (node.type == "function_declaration"
+            and bool(node.children) and node.children[0].type == "local")
+
+
+def _block_stmts(ctx, block) -> list:
+    """block의 직계 문장 노드들 (주석 제외).
+
+    tree-sitter는 주석(`comment`)도 named 노드로 block 자식에 넣으므로,
+    luaparser의 statement 목록(주석 미포함)과 동작을 맞추려면 걸러낸다.
+    """
+    return [c for c in block.children if c.is_named and c.type != "comment"]
+
+
+def _subtree_has_goto_or_label(node) -> bool:
+    """노드 서브트리에 goto/label이 있으면 True (중첩 함수 내부 포함, 보수적)."""
+    stack = [node]
+    while stack:
+        n = stack.pop()
+        if n.type in ("goto_statement", "label_statement"):
             return True
+        stack.extend(n.children)
     return False
 
 
-def _stmt_text(script: str, stmt, body_min_start: int = 0) -> str | None:
-    if stmt.start_char is None or stmt.stop_char is None:
-        return None
-
-    start = stmt.start_char
-
-    # luaparser는 `foo(...)`/`foo:bar(...)` 같은 함수 호출문(Call/Invoke)의
-    # start_char가 호출 대상(`foo`)이 아니라 `(`를 가리키는 버그가 있다
-    # (`.func`/`.source` 노드의 start_char도 None이라 직접 보정 불가).
-    # vm.lua는 statement당 한 줄 스타일이므로, 같은 줄의 시작까지
-    # 거슬러 올라가 호출 대상 표현식을 포함시킨다.
-    # body_min_start: 함수 본문의 시작 위치. Call/Invoke 보정 시 이 위치보다
-    # 앞으로 line_start를 올릴 수 없다. 예를 들어 `local mmm = function() print(...) end`
-    # 같은 코드에서 AnonymousFunction 내부 Call의 start_char가 `(`를 가리킬 때,
-    # 보정이 줄 시작(`local mmm = ...`)까지 올라가면 `function()...end`의 `end`가
-    # stop_char 범위에 포함되지 않아 잘린 텍스트가 생성되는 버그를 막는다.
-    if isinstance(stmt, (astnodes.Call, astnodes.Invoke)):
-        line_start = max(script.rfind('\n', 0, start) + 1, body_min_start)
-        candidate = script[line_start:start]
-        if candidate.strip():
-            start = line_start
-
-    return script[start: stmt.stop_char + 1].strip()
-
-
-def _prelift_local_function_stmt(stmt, text: str) -> tuple[str | None, str]:
+def _prelift_local_function_stmt(ctx, stmt, text: str) -> tuple[str | None, str]:
     """`local function NAME(...) ... end` statement를 `NAME=function(...) ... end`로
     재작성하고, NAME을 반환한다 (해당 타입이 아니면 (None, text) 그대로 반환).
 
@@ -562,11 +539,17 @@ def _prelift_local_function_stmt(stmt, text: str) -> tuple[str | None, str]:
     선언된 분기를 벗어나는 즉시 스코프 밖으로 사라진다. 이를 일반
     `local NAME` 선언으로 hoist 가능한 형태(`NAME=function...`)로 미리
     변환해두면 이후 local-pooling 단계가 처리할 수 있다.
+
+    `function r.u8()` / `function obj:method()`처럼 점/메서드 표기 이름은
+    local-function이 아니므로 prelift 대상이 아니다(불투명 chunk로 유지).
     """
-    if not isinstance(stmt, astnodes.LocalFunction):
+    if not _is_local_func(stmt):
         return None, text
 
-    name = stmt.name.id
+    name_node = ctx.first_child(stmt, "identifier")
+    if name_node is None:
+        return None, text
+    name = ctx.text(name_node)
     # text는 "local function NAME(...) ... end" 형태. 첫 '(' 위치부터
     # 그대로 이어 붙여 "NAME=function(...) ... end"로 재작성한다.
     paren_pos = text.index('(')
@@ -595,23 +578,20 @@ def _build_stmt_chunks(stmt_lines: list[list[str]], stmt_is_return: list[bool]) 
     return chunks, ends_with_return
 
 
-def _transform_body(script: str, stmts: list, params: list[str], body_min_start: int = 0) -> str | None:
-    """함수 본문(직계 statement 목록)을 변환. 변환 불가능하면 None.
+def _transform_body(ctx, block, params: list[str]) -> str | None:
+    """함수 본문(block 노드)을 변환. 변환 불가능하면 None.
 
-    AST에서 얻은 직계 statement들의 `start_char`/`stop_char`로 텍스트를
-    직접 잘라내므로, regex 기반 depth-tracking(`_split_safe_chunks`)에서
-    발생할 수 있는 chunk 경계 오인식 문제가 없다. nested function의
-    본문은 해당 statement의 텍스트에 그대로 포함되어 한 chunk 단위로만
-    다뤄지므로 내부가 쪼개질 일이 없다.
-
-    body_min_start: body.start_char. Call/Invoke stmt 텍스트 보정 시
-    이 위치보다 앞으로 line_start를 올리지 않도록 _stmt_text에 전달한다.
+    tree-sitter block의 직계 named 문장 노드들의 char span으로 텍스트를
+    직접 잘라낸다. 각 노드 span이 정확하므로 luaparser의 Call/Invoke
+    start_char 보정 같은 우회가 필요 없다. nested function의 본문은 해당
+    statement 텍스트에 그대로 포함되어 한 chunk 단위로만 다뤄진다.
     """
+    stmts = _block_stmts(ctx, block)
     if not stmts:
         return None
 
     for stmt in stmts:
-        if _stmt_has_goto_or_label(stmt):
+        if _subtree_has_goto_or_label(stmt):
             return None
 
     stmt_lines: list[list[str]] = []
@@ -619,14 +599,12 @@ def _transform_body(script: str, stmts: list, params: list[str], body_min_start:
     extra_hoist_names: list[str] = []
 
     for stmt in stmts:
-        text = _stmt_text(script, stmt, body_min_start=body_min_start)
-        if text is None:
-            return None
-        name, text = _prelift_local_function_stmt(stmt, text)
+        text = ctx.text(stmt).strip()
+        name, text = _prelift_local_function_stmt(ctx, stmt, text)
         if name is not None:
             extra_hoist_names.append(name)
         stmt_lines.append([ln.strip() for ln in text.splitlines() if ln.strip()])
-        stmt_is_return.append(isinstance(stmt, astnodes.Return))
+        stmt_is_return.append(stmt.type == "return_statement")
 
     c: list[int] = [0]
 
@@ -685,28 +663,29 @@ class FunctionObfuscationPass(BasePass):
       정상적으로 변환되게 한다.
     """
 
+    # 파싱은 tree-sitter(C, ~10x)로. 파이프라인이 tree 인자로 TSContext를 준다.
+    parser = "treesitter"
+
     def __init__(self, skip_vm_dispatcher: bool = False):
         self.skip_vm_dispatcher = skip_vm_dispatcher
 
-    def run(self, script: str, tree) -> list[Replacement]:
+    def run(self, script: str, ctx) -> list[Replacement]:
         replacements: list[Replacement] = []
-        # 이미 변환 대상으로 선택된 함수의 body 범위들.
-        # 이 범위에 완전히 포함되는 nested 함수는 건너뛴다 (outer의 본문 텍스트에
-        # nested 함수 정의가 그대로 한 chunk로 포함되어 처리되기 때문에,
-        # 이중으로 변환하면 겹치는 Replacement가 생겨 출력이 깨짐).
+        # 이미 변환 대상으로 선택된 함수의 body(block) 범위들. 이 범위에 완전히
+        # 포함되는 nested 함수는 건너뛴다 (outer 본문 텍스트에 nested 함수 정의가
+        # 한 chunk로 포함돼 처리되므로, 이중 변환하면 Replacement가 겹쳐 깨짐).
         claimed_ranges: list[tuple[int, int]] = []
 
-        # 바깥쪽 함수가 먼저 처리되도록 본문 크기(큰 것 우선) 순서로 순회
-        func_nodes = [
-            node for node in self.walk(tree)
-            if isinstance(node, (astnodes.Function, astnodes.LocalFunction, astnodes.AnonymousFunction, astnodes.Method))
-        ]
-        func_nodes.sort(
-            key=lambda n: (n.body.stop_char - n.body.start_char)
-            if (n.body and n.body.start_char is not None and n.body.stop_char is not None)
-            else -1,
-            reverse=True,
-        )
+        def _block_of(n):
+            return ctx.first_child(n, "block")
+
+        def _bsize(n) -> int:
+            b = _block_of(n)
+            return (ctx.ce(b) - ctx.cs(b)) if b is not None else -1
+
+        # 함수 노드 수집 + 본문 큰 것 우선(바깥 함수가 먼저 처리되도록)
+        func_nodes = [n for n in ctx.walk() if n.type in _FUNC_NODE_TYPES]
+        func_nodes.sort(key=_bsize, reverse=True)
 
         # VM 디스패처 스킵 준비: sentinel을 포함하는 함수(= exec 및 이를 감싸는
         # _vmf wrapper)를 찾는다. 그중 최소 범위 함수가 exec이며, 그 본문
@@ -717,72 +696,59 @@ class FunctionObfuscationPass(BasePass):
         if self.skip_vm_dispatcher:
             sentinel_nodes = []
             for node in func_nodes:
-                b = node.body
-                if b is None or b.start_char is None or b.stop_char is None:
+                b = _block_of(node)
+                if b is None:
                     continue
-                if _DISPATCH_SENTINEL.search(script[b.start_char:b.stop_char + 1]):
+                if _DISPATCH_SENTINEL.search(ctx.text(b)):
                     sentinel_nodes.append(node)
-                    skip_node_ids.add(id(node))
+                    skip_node_ids.add(node.id)
             if sentinel_nodes:
-                exec_node = min(sentinel_nodes,
-                                key=lambda n: n.body.stop_char - n.body.start_char)
-                exec_skip_ranges.append((exec_node.body.start_char, exec_node.body.stop_char))
+                exec_node = min(sentinel_nodes, key=_bsize)
+                eb = _block_of(exec_node)
+                exec_skip_ranges.append((ctx.cs(eb), ctx.ce(eb)))
 
         for node in func_nodes:
+            block = _block_of(node)
+            if block is None:
+                continue
+            bstart, bend = ctx.cs(block), ctx.ce(block)
+
             if self.skip_vm_dispatcher:
                 # sentinel 포함 함수(wrapper/exec) 자체는 변환하지 않는다.
-                if id(node) in skip_node_ids:
+                if node.id in skip_node_ids:
                     continue
                 # exec 내부에 중첩된 클로저(make_closure/get_box/rset 등)도 스킵.
-                nb = node.body
-                if nb is not None and nb.start_char is not None and nb.stop_char is not None:
-                    if any(rs <= nb.start_char and nb.stop_char <= re
-                           for rs, re in exec_skip_ranges):
-                        continue
+                if any(rs <= bstart and bend <= re for rs, re in exec_skip_ranges):
+                    continue
 
-            args = node.args
-            if any(isinstance(a, astnodes.Varargs) for a in args):
+            params_node = ctx.first_child(node, "parameters")
+            if params_node is None:
+                continue
+            if any(c.type == "vararg_expression" for c in params_node.children):
                 continue  # 이미 ... 사용 중
 
-            params = [a.id for a in args if isinstance(a, astnodes.Name)]
-            if len(params) != len(args):
-                continue  # 알 수 없는 arg 형태
-
-            # Method(`function obj:method(x)`)의 self는 Lua가 항상 첫
-            # 번째 고정 파라미터로 암묵 전달하며 `...`에는 포함되지 않는다
-            # (`function obj:method(...)`에서 `...`는 self 이후의 가변
-            # 인자만 가리킴). 따라서 self는 건드리지 않고, 명시적 파라미터
-            # (x 등)만 `...`로 풀어준다. params는 이미 self를 포함하지
-            # 않으므로 별도 처리 불필요.
-
-            body = node.body
-            if body is None or body.start_char is None or body.stop_char is None:
-                continue
+            # Method(`function obj:method(x)`)의 self는 method_index_expression에
+            # 있어 parameters 밖이므로 params에 들어오지 않는다. 명시적 파라미터만
+            # `...`로 풀어주고 self는 그대로 둔다.
+            params = [ctx.text(c) for c in params_node.children if c.type == "identifier"]
 
             # 이미 처리된 outer 함수의 본문에 완전히 포함되면 건너뛴다.
-            if any(cs <= body.start_char and body.stop_char <= ce for cs, ce in claimed_ranges):
+            if any(cs <= bstart and bend <= ce for cs, ce in claimed_ranges):
                 continue
 
-            new_body = _transform_body(script, body.body, params, body_min_start=body.start_char)
+            new_body = _transform_body(ctx, block, params)
             if new_body is None:
                 continue
 
-            claimed_ranges.append((body.start_char, body.stop_char))
+            claimed_ranges.append((bstart, bend))
+            replacements.append(Replacement(start=bstart, end=bend, new_text=new_body))
 
-            replacements.append(Replacement(
-                start=body.start_char,
-                end=body.stop_char,
-                new_text=new_body,
-            ))
-
-            # 파라미터 목록 -> "..."로 교체 (괄호 안 내용 전체를 "..."로 변경)
-            # Method의 self는 위에서 처리하지 않으므로, 명시적 params가
-            # 있을 때만 해당 괄호 내용을 "..."로 바꾼다 (self는 그대로 유지됨).
+            # 파라미터 목록 내부('(' 다음 ~ ')' 이전)를 "..."로 교체. params가
+            # 있을 때만(자기 self/빈 목록은 건드리지 않음).
             if params:
-                open_idx, close_idx = _find_param_span(script, node.start_char)
                 replacements.append(Replacement(
-                    start=open_idx + 1,
-                    end=close_idx - 1,
+                    start=ctx.cs(params_node) + 1,
+                    end=ctx.ce(params_node) - 1,
                     new_text="...",
                 ))
 
