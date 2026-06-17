@@ -104,7 +104,7 @@ class NumberObfuscationPass(BasePass):
             else:
                 expr = self._gen_int_expr(
                     _parse_int_token(token),
-                    random.randint(1, 1),
+                    random.randint(1, 3),
                 )
 
             replacements.append(
