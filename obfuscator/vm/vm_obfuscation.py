@@ -50,13 +50,13 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
         lua_op = _BINARY_OP_LUA[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=rk(B){lua_op}rk(C){_SPLIT_PAD}",
+                f" _split_tmp=regs[B]{lua_op}regs[C]{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=rk(B){_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{lua_op}rk(C){_SPLIT_PAD}",
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" _split_tmp=_split_tmp{lua_op}regs[C]{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op in _UNARY_PREFIX:
@@ -275,9 +275,9 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str) -> str:
     if op == 1:   # LOADK
         return f"rset({a},kval(consts[{bx}+1]))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},get_uv({b}+1))"
+        return f"rset({a},upvals[{b}+1].v)"
     if op in _BINARY_OP_LUA:
-        return f"rset({a},rk({b}){_BINARY_OP_LUA[op]}rk({c}))"
+        return f"rset({a},regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}])"
     if op in _UNARY_PREFIX:
         return f"rset({a},{_UNARY_PREFIX[op]}regs[{b}])"
     raise ValueError(f"non-fuseable op: {op}")

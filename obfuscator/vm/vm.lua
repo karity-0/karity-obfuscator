@@ -248,12 +248,14 @@ exec = function(proto, upvals, args, va_in)
         if boxes[i] then boxes[i].v=v end
     end
 
-    local function rk(x)
-        if x>=256 then return kval(consts[x-255]) else return regs[x] end
+    -- 상수 풀을 register 파일 상위(256+)에 미리 풀어 넣는다.
+    -- RK operand는 reg(0~255) / const(256~) 를 같은 인덱스 공간에서 가리키므로
+    -- 이후 모든 rk 접근이 분기 없는 단일 테이블 인덱스(regs[x])로 처리된다.
+    for _ci=1,256 do
+        local _c=consts[_ci]
+        if not _c then break end
+        if _c[1]~=0 then regs[255+_ci]=_c[2] end
     end
-
-    local function get_uv(i) return upvals[i].v end
-    local function set_uv(i,v) upvals[i].v=v end
 
     local function get_box(slot)
         if not boxes[slot] then
@@ -292,26 +294,26 @@ exec = function(proto, upvals, args, va_in)
             rset(A,kval(consts[ax+1]))
         elseif op==3  then rset(A,(B~=0)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end
-        elseif op==5  then rset(A,get_uv(B+1))
-        elseif op==6  then rset(A,get_uv(B+1)[rk(C)])
-        elseif op==7  then rset(A,regs[B][rk(C)])
-        elseif op==8  then get_uv(A+1)[rk(B)]=rk(C)
-        elseif op==9  then set_uv(B+1,regs[A])
-        elseif op==10 then regs[A][rk(B)]=rk(C)
+        elseif op==5  then rset(A,upvals[B+1].v)
+        elseif op==6  then rset(A,upvals[B+1].v[regs[C]])
+        elseif op==7  then rset(A,regs[B][regs[C]])
+        elseif op==8  then upvals[A+1].v[regs[B]]=regs[C]
+        elseif op==9  then upvals[B+1].v=regs[A]
+        elseif op==10 then regs[A][regs[B]]=regs[C]
         elseif op==11 then rset(A,{})
-        elseif op==12 then local t=regs[B]; rset(A+1,t); rset(A,t[rk(C)])
-        elseif op==13 then rset(A,rk(B)+rk(C))
-        elseif op==14 then rset(A,rk(B)-rk(C))
-        elseif op==15 then rset(A,rk(B)*rk(C))
-        elseif op==16 then rset(A,rk(B)%rk(C))
-        elseif op==17 then rset(A,rk(B)^rk(C))
-        elseif op==18 then rset(A,rk(B)/rk(C))
-        elseif op==19 then rset(A,rk(B)//rk(C))
-        elseif op==20 then rset(A,rk(B)&rk(C))
-        elseif op==21 then rset(A,rk(B)|rk(C))
-        elseif op==22 then rset(A,rk(B)~rk(C))
-        elseif op==23 then rset(A,rk(B)<<rk(C))
-        elseif op==24 then rset(A,rk(B)>>rk(C))
+        elseif op==12 then local t=regs[B]; rset(A+1,t); rset(A,t[regs[C]])
+        elseif op==13 then rset(A,regs[B]+regs[C])
+        elseif op==14 then rset(A,regs[B]-regs[C])
+        elseif op==15 then rset(A,regs[B]*regs[C])
+        elseif op==16 then rset(A,regs[B]%regs[C])
+        elseif op==17 then rset(A,regs[B]^regs[C])
+        elseif op==18 then rset(A,regs[B]/regs[C])
+        elseif op==19 then rset(A,regs[B]//regs[C])
+        elseif op==20 then rset(A,regs[B]&regs[C])
+        elseif op==21 then rset(A,regs[B]|regs[C])
+        elseif op==22 then rset(A,regs[B]~regs[C])
+        elseif op==23 then rset(A,regs[B]<<regs[C])
+        elseif op==24 then rset(A,regs[B]>>regs[C])
         elseif op==25 then rset(A,-regs[B])
         elseif op==26 then rset(A,~regs[B])
         elseif op==27 then rset(A,not regs[B])
@@ -320,9 +322,9 @@ exec = function(proto, upvals, args, va_in)
             local t={}; for i=B,C do t[#t+1]=_ts(regs[i]) end
             rset(A,_tc(t))
         elseif op==30 then pc=pc+sBx
-        elseif op==31 then if (rk(B)==rk(C))~=(A~=0) then pc=pc+1 end
-        elseif op==32 then if (rk(B)<rk(C))~=(A~=0) then pc=pc+1 end
-        elseif op==33 then if (rk(B)<=rk(C))~=(A~=0) then pc=pc+1 end
+        elseif op==31 then if (regs[B]==regs[C])~=(A~=0) then pc=pc+1 end
+        elseif op==32 then if (regs[B]<regs[C])~=(A~=0) then pc=pc+1 end
+        elseif op==33 then if (regs[B]<=regs[C])~=(A~=0) then pc=pc+1 end
         elseif op==34 then if (not not regs[A])~=(C~=0) then pc=pc+1 end
         elseif op==35 then
             if (not not regs[B])==(C~=0) then rset(A,regs[B]) else pc=pc+1 end

@@ -78,8 +78,9 @@ OP_BXOR  = 22
 OP_UNM   = 25
 OP_BNOT  = 26
 
-# rk(x) 에서 상수 참조: B/C 필드에 256+kidx 를 넣으면 consts[kidx] 를 읽음
-# (vm.lua: if x>=256 then return kval(consts[x-255]) end → kidx=0 이면 x=256)
+# RK 상수 참조: B/C 필드에 256+kidx 를 넣으면 consts[kidx+1] 을 읽는다.
+# (vm.lua는 상수 풀을 regs[256+] 에 미리 풀어두므로 regs[256]==consts[1].
+#  kidx=0 이면 operand=256 → 첫 상수.)
 _RK_CONST_OFFSET = 256
 
 
