@@ -28,6 +28,7 @@ MAIN_PASS_ORDER = [
     "rename_obf",
     "minify",
     "vm",
+    "pack",
 ]
 
 # VM output 재난독화에 의미 있는 패스 (vm 자체는 제외)
@@ -39,6 +40,7 @@ VM_OUTPUT_PASS_ORDER = [
     "table_obf",
     "function_obf",
     "rename_obf",
+    "localize_globals",
     "minify",
 ]
 

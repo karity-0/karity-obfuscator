@@ -83,11 +83,27 @@
             </div>
           </label>
         </li>
+        <li class="pass-item" data-hint="VM 출력의 string.char/math.max/type 등 전역 접근을 맨 마지막에 _ENV 체인 로컬로 모아 난독화합니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-localize">
+            <div class="pass-info">
+              <span class="pass-name">Localize Globals</span>
+            </div>
+          </label>
+        </li>
         <li class="pass-item" data-hint="디버거를 감지하는 보호 코드를 추가합니다.">
           <label class="pass-label">
             <input type="checkbox" class="opt-checkbox" id="opt-anti-debug">
             <div class="pass-info">
               <span class="pass-name">Anti-Debug Wrapper</span>
+            </div>
+          </label>
+        </li>
+        <li class="pass-item" data-hint="최종 출력을 deflate로 압축해 load 기반 스텁으로 감쌉니다(패커). 다른 모든 패스 이후 맨 마지막에 적용됩니다.">
+          <label class="pass-label">
+            <input type="checkbox" class="opt-checkbox" id="opt-pack">
+            <div class="pass-info">
+              <span class="pass-name">Packer (deflate + load)</span>
             </div>
           </label>
         </li>

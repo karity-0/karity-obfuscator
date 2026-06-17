@@ -10,3 +10,4 @@ from .localize_globals import LocalizeGlobalsPass
 from .remove_comment import RemoveCommentPass
 from .minify import MinifyPass
 from .anti_debug import AntiDebugPass
+from .packer import PackerPass

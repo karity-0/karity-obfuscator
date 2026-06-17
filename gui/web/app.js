@@ -35,7 +35,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const optNumber = document.getElementById('opt-number');
     const optTable  = document.getElementById('opt-table');
     const optFunction  = document.getElementById('opt-function');
+    const optLocalize  = document.getElementById('opt-localize');
     const optAntiDebug = document.getElementById('opt-anti-debug');
+    const optPack      = document.getElementById('opt-pack');
     const allCheckboxes = document.querySelectorAll('.opt-checkbox');
 
     const vmoptFakeHandlers = document.getElementById('vmopt-fake-handlers');
@@ -97,8 +99,10 @@ document.addEventListener('DOMContentLoaded', () => {
         if (optNumber.checked) nodes.push('Number Obf');
         if (optTable.checked) nodes.push("Table Obf");
         if (optFunction.checked) nodes.push("Function Obf");
-        nodes.push('Rename & Minify'); 
-        
+        if (optLocalize.checked) nodes.push("Localize");
+        nodes.push('Rename & Minify');
+        if (optPack.checked) nodes.push("Pack");
+
         pipelineStrip.innerHTML = nodes
             .map(name => `<div class="pipeline-node">${name}</div>`)
             .join('<div class="pipeline-arrow">→</div>');
@@ -140,13 +144,15 @@ document.addEventListener('DOMContentLoaded', () => {
         const mainPasses = savedConfig.passes || [];
         optBytecode.checked = mainPasses.includes('string_obf') || mainPasses.includes('number_obf');
         optAntiDebug.checked = mainPasses.includes('anti_debug');
+        optPack.checked = mainPasses.includes('pack');
 
         const vmPasses = savedConfig.vm_output_passes || [];
         optString.checked = vmPasses.includes('string_encode') || vmPasses.includes('string_obf');
         optBoolean.checked = vmPasses.includes('boolean_obf');
         optNumber.checked = vmPasses.includes('number_obf');
         optTable.checked = vmPasses.includes("table_obf");
-        optFunction.checked = vmPasses.includes("function_obf");       
+        optFunction.checked = vmPasses.includes("function_obf");
+        optLocalize.checked = vmPasses.includes("localize_globals");
 
         const vmOptions = savedConfig.vm_options || {};
         vmoptFakeHandlers.checked = vmOptions.fake_handlers !== false;
@@ -166,9 +172,18 @@ document.addEventListener('DOMContentLoaded', () => {
         if (optBytecode.checked) {
             passes.push("string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf");
         }
-        passes.push("vm"); 
+        passes.push("vm");
+        // 패커는 다른 모든 패스(특히 vm) 이후 맨 마지막에 적용되어야 한다.
+        if (optPack.checked) {
+            passes.push("pack");
+        }
 
         const vm_output_passes = [];
+        // function_obf는 string_obf/number_obf가 string.char(...)/XOR식을
+        // 주입하기 전(맨 먼저) 돌아야 텍스트 기반 CFF가 깨지지 않는다.
+        if (optFunction.checked) {
+            vm_output_passes.push("function_obf");
+        }
         if (optString.checked) {
             vm_output_passes.push("string_obf");
         }
@@ -181,11 +196,15 @@ document.addEventListener('DOMContentLoaded', () => {
         if (optTable.checked) {
             vm_output_passes.push("table_obf");
         }
-        if (optFunction.checked) {
-            vm_output_passes.push("function_obf");
+
+        vm_output_passes.push("rename_obf");
+        // localize_globals 는 rename 이후, minify 이전(마지막 base 패스)에 와야
+        // string_obf/junk가 만든 전역을 모두 잡고, emit한 _ENV 키가 다시
+        // 인코딩되지 않는다.
+        if (optLocalize.checked) {
+            vm_output_passes.push("localize_globals");
         }
-        
-        vm_output_passes.push("rename_obf", "minify");
+        vm_output_passes.push("minify");
 
         const vm_options = {
             fake_handlers: vmoptFakeHandlers.checked,

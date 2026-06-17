@@ -26,6 +26,7 @@ from .passes import (
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,
+    PackerPass,
 )
 
 
@@ -89,6 +90,11 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": AntiDebugPass,
         "label": "Anti-Debug Wrapper",
         "group": "pre",
+    },
+    "pack": {
+        "cls": PackerPass,
+        "label": "Packer (deflate + load)",
+        "group": "post",
     },
 }
 
