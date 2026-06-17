@@ -74,6 +74,16 @@ class Pipeline:
         return f"{self.HEADER}{script}" if self.show_header else script
     
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
-        for r in sorted(replacements, key=lambda r: r.start, reverse=True):
-            src = src[: r.start] + r.new_text + src[r.end + 1 :]
-        return src
+        # 치환들은 서로 겹치지 않으므로 한 번만 순회하며 세그먼트를 모아
+        # join한다 (치환마다 전체 문자열을 재생성하면 O(n²)이라, 큰 VM
+        # 출력에서 빌드 시간을 지배했다 — 여기서 O(n)으로 만든다).
+        if not replacements:
+            return src
+        parts: list[str] = []
+        pos = 0
+        for r in sorted(replacements, key=lambda r: r.start):
+            parts.append(src[pos:r.start])
+            parts.append(r.new_text)
+            pos = r.end + 1
+        parts.append(src[pos:])
+        return "".join(parts)
