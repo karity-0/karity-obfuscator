@@ -659,6 +659,15 @@ def _transform_body(script: str, stmts: list, params: list[str], body_min_start:
     return new_body
 
 
+# VM 디스패처(exec) 식별용 sentinel. exec의 dispatch 루프
+# `for i in _sm({},{__call=function(t)return t end}) do` 에만 등장하며,
+# `__call`은 VM 템플릿 전체에서 이 한 곳에서만 쓰이는 메타메서드 키다
+# (사용자 코드는 bytecode로 blob에 들어가므로 VM 텍스트에 나타나지 않는다).
+# rename/number/string 난독화에도 살아남는다(`__call`은 테이블 필드 키,
+# `function`은 키워드).
+_DISPATCH_SENTINEL = re.compile(r'__call\s*=\s*function')
+
+
 class FunctionObfuscationPass(BasePass):
     """함수 리터럴에 가변인자 래퍼 + 본문 CFF를 적용한다.
 
@@ -666,7 +675,18 @@ class FunctionObfuscationPass(BasePass):
       파라미터를 다시 풀어주므로 외부에서 보이는 시그니처/호출 규약은 동일).
     - 이미 `...`를 사용하는 함수, `goto`/label이 있는 함수, 본문이 비어있는
       함수는 건드리지 않는다.
+
+    skip_vm_dispatcher: VM 출력물 재난독화 시 켠다. VM 디스패처(exec)와 그
+      내부 클로저(make_closure/get_box/rset 등)는 (1) function_obf의 텍스트
+      기반 CFF가 안전하게 다룰 수 없고(거대 + 내부 클로저가 exec 로컬을
+      upvalue로 캡처해 깨짐), (2) runtime hot path라 변환에서 제외한다.
+      디스패처를 감싸는 _vmf wrapper 자체도 변환하지 않되, wrapper의 range는
+      막지 않아 exec를 제외한 cold 헬퍼들(kae_decrypt/read_proto/run 등)은
+      정상적으로 변환되게 한다.
     """
+
+    def __init__(self, skip_vm_dispatcher: bool = False):
+        self.skip_vm_dispatcher = skip_vm_dispatcher
 
     def run(self, script: str, tree) -> list[Replacement]:
         replacements: list[Replacement] = []
@@ -688,7 +708,38 @@ class FunctionObfuscationPass(BasePass):
             reverse=True,
         )
 
+        # VM 디스패처 스킵 준비: sentinel을 포함하는 함수(= exec 및 이를 감싸는
+        # _vmf wrapper)를 찾는다. 그중 최소 범위 함수가 exec이며, 그 본문
+        # range만 막아 exec 내부 클로저까지 함께 건너뛰게 한다. wrapper의
+        # range는 막지 않으므로 형제 cold 헬퍼들은 정상 변환된다.
+        skip_node_ids: set[int] = set()
+        exec_skip_ranges: list[tuple[int, int]] = []
+        if self.skip_vm_dispatcher:
+            sentinel_nodes = []
+            for node in func_nodes:
+                b = node.body
+                if b is None or b.start_char is None or b.stop_char is None:
+                    continue
+                if _DISPATCH_SENTINEL.search(script[b.start_char:b.stop_char + 1]):
+                    sentinel_nodes.append(node)
+                    skip_node_ids.add(id(node))
+            if sentinel_nodes:
+                exec_node = min(sentinel_nodes,
+                                key=lambda n: n.body.stop_char - n.body.start_char)
+                exec_skip_ranges.append((exec_node.body.start_char, exec_node.body.stop_char))
+
         for node in func_nodes:
+            if self.skip_vm_dispatcher:
+                # sentinel 포함 함수(wrapper/exec) 자체는 변환하지 않는다.
+                if id(node) in skip_node_ids:
+                    continue
+                # exec 내부에 중첩된 클로저(make_closure/get_box/rset 등)도 스킵.
+                nb = node.body
+                if nb is not None and nb.start_char is not None and nb.stop_char is not None:
+                    if any(rs <= nb.start_char and nb.stop_char <= re
+                           for rs, re in exec_skip_ranges):
+                        continue
+
             args = node.args
             if any(isinstance(a, astnodes.Varargs) for a in args):
                 continue  # 이미 ... 사용 중

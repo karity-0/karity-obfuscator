@@ -4,7 +4,7 @@
         "vm", "anti_debug"
     ],
     "vm_output_passes": [
-        "string_obf", "boolean_obf", "number_obf",
+        "string_obf", "boolean_obf", "number_obf", "function_obf", 
         "rename_obf", "minify"
     ],
     "vm_options": {
