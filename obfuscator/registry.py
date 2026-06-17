@@ -22,6 +22,7 @@ from .passes import (
     TableObfuscationPass,
     FunctionObfuscationPass,
     RenameObfuscationPass,
+    LocalizeGlobalsPass,
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,
@@ -67,6 +68,11 @@ PASS_REGISTRY: dict[str, dict] = {
     "rename_obf": {
         "cls": RenameObfuscationPass,
         "label": "Rename Obfuscation",
+        "group": "base",
+    },
+    "localize_globals": {
+        "cls": LocalizeGlobalsPass,
+        "label": "Localize Globals",
         "group": "base",
     },
     "minify": {

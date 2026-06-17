@@ -1,26 +1,6 @@
 -- Lua 5.3 VM (standalone)
 
 ----------------------------------------
-local _s   = string
-local _sc  = _s["char"]
-local _sub = _s["sub"]
-local _sbyte = _s["byte"]
-local _sfind = _s["find"]
-local _sunpack = _s["unpack"]
-local _sformat = _s["format"]
-local _sdump = _s["dump"]
-local _t   = table
-local _ti  = _t["insert"]
-local _tu  = _t["unpack"]
-local _tp  = _t["pack"]
-local _tc  = _t["concat"]
-local _ip  = _ENV["ipairs"]
-local _sm  = _ENV["setmetatable"]
-local _ts  = _ENV["tostring"]
-local _err = _ENV["error"]
-local _load = _ENV["load"]
-local _loads = _ENV["loadstring"]
-
 local _KAE_PRIMES={0x07,0x0B,0x0D,0x11,0x13,0x17,0x1D,0x1F}
 
 local function _gf_mul(a,b)
@@ -71,18 +51,18 @@ end
 
 local function kae_decrypt(blob, key)
     local nonce={}
-    for i=1,8 do nonce[i]=_sbyte(blob,i) end
+    for i=1,8 do nonce[i]=string.byte(blob,i) end
     local n=#blob-8
     local key_ints={}
-    for i=1,#key do key_ints[i]=_sbyte(key,i) end
+    for i=1,#key do key_ints[i]=string.byte(key,i) end
     local blended={}
     for i=0,n+7 do
         blended[i+1]=(key_ints[i%#key_ints+1]~nonce[i%8+1]~_KAE_SBOX[i&0xFF])&0xFF
     end
     local RK=_kae_derive(blended,n)
     local pt={}
-    for i=1,n do pt[i]=_sbyte(blob,8+i)~RK[i] end
-    return _sc(_tu(pt))
+    for i=1,n do pt[i]=string.byte(blob,8+i)~RK[i] end
+    return string.char(table.unpack(pt))
 end
 
 ----------------------------------------
@@ -101,7 +81,7 @@ local function _crc32(data)
     end
     local crc=0xFFFFFFFF
     for i=1,#data do
-        local b=_sbyte(data,i)
+        local b=string.byte(data,i)
         crc=_CRC_TABLE[(crc~b)&0xFF]~(crc>>8)
     end
     return crc~0xFFFFFFFF
@@ -110,12 +90,12 @@ end
 ----------------------------------------
 
 local function from_base36(s)
-    if _sub(s,1,7) ~= "KARITY/" then _err("invalid blob") end
-    s = _sub(s,8)
-    local sep = _sfind(s,':',1,true)
+    if string.sub(s,1,7) ~= "KARITY/" then error("invalid blob") end
+    s = string.sub(s,8)
+    local sep = string.find(s,':',1,true)
     local length = 0
     for i=1,sep-1 do
-        local c=_sbyte(s,i)
+        local c=string.byte(s,i)
         length=length*36+(c>=48 and c<=57 and c-48 or c-55)
     end
     local bytes={}
@@ -123,7 +103,7 @@ local function from_base36(s)
     while i+6<=#s do
         local n=0
         for j=i,i+6 do
-            local c=_sbyte(s,j)
+            local c=string.byte(s,j)
             n=n*36+(c>=48 and c<=57 and c-48 or c-55)
         end
         bytes[#bytes+1]= n     &0xFF
@@ -133,18 +113,18 @@ local function from_base36(s)
         i=i+7
     end
     while #bytes>length do bytes[#bytes]=nil end
-    return _sc(_tu(bytes))
+    return string.char(table.unpack(bytes))
 end
 
 local function make_reader(blob)
     local pos=1; local r={}
-    function r.u8() local v=_sbyte(blob,pos); pos=pos+1; return v end
+    function r.u8() local v=string.byte(blob,pos); pos=pos+1; return v end
     function r.u16()
-        local a,b=_sbyte(blob,pos,pos+1); pos=pos+2
+        local a,b=string.byte(blob,pos,pos+1); pos=pos+2
         return a|(b<<8)
     end
     function r.u32()
-        local a,b,c,d=_sbyte(blob,pos,pos+3); pos=pos+4
+        local a,b,c,d=string.byte(blob,pos,pos+3); pos=pos+4
         return a|(b<<8)|(c<<16)|(d<<24)
     end
     function r.u64()
@@ -160,10 +140,10 @@ local function make_reader(blob)
         end
         return hi*0x100000000+lo
     end
-    function r.f64() local v=_sunpack('<d',blob,pos); pos=pos+8; return v end
+    function r.f64() local v=string.unpack('<d',blob,pos); pos=pos+8; return v end
     function r.str()
         local len=r.u32(); if len==0 then return nil end
-        local sv=_sub(blob,pos,pos+len-1); pos=pos+len; return sv
+        local sv=string.sub(blob,pos,pos+len-1); pos=pos+len; return sv
     end
     return r
 end
@@ -195,7 +175,7 @@ local function read_proto(r, acc_state)
         elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
         elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
         elseif tag==CTAG_STR   then p.constants[i]={4,r.str()}
-        else _err("bad const tag ".._ts(tag)) end
+        else error("bad const tag "..tostring(tag)) end
     end
     n=r.u32(); p.upvalues={}
     for i=1,n do p.upvalues[i]={instack=r.u8(),idx=r.u8()} end
@@ -268,7 +248,7 @@ exec = function(proto, upvals, args, va_in)
 
     local function make_closure(sub)
         local new_uv={}
-        for i,uv in _ip(sub.upvalues) do
+        for i,uv in ipairs(sub.upvalues) do
             if uv.instack==1 then
                 new_uv[i]=get_box(uv.idx)
             else
@@ -279,11 +259,11 @@ exec = function(proto, upvals, args, va_in)
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         return function(...)
             local w=exec(sub, new_uv, {...})
-            return _tu(w.r, 1, w.n)
+            return table.unpack(w.r, 1, w.n)
         end
     end
 
-    for i in _sm({},{__call=function(t)return t end}) do
+    for i in setmetatable({},{__call=function(t)return t end}) do
         local ins=code[pc]; local op,A,B,C,Bx,sBx=decode(ins); pc=pc+1
 
         if     op==0  then rset(A,regs[B])
@@ -319,8 +299,8 @@ exec = function(proto, upvals, args, va_in)
         elseif op==27 then rset(A,not regs[B])
         elseif op==28 then rset(A,#regs[B])
         elseif op==29 then
-            local t={}; for i=B,C do t[#t+1]=_ts(regs[i]) end
-            rset(A,_tc(t))
+            local t={}; for i=B,C do t[#t+1]=tostring(regs[i]) end
+            rset(A,table.concat(t))
         elseif op==30 then pc=pc+sBx
         elseif op==31 then if (regs[B]==regs[C])~=(A~=0) then pc=pc+1 end
         elseif op==32 then if (regs[B]<regs[C])~=(A~=0) then pc=pc+1 end
@@ -336,7 +316,7 @@ exec = function(proto, upvals, args, va_in)
             elseif B>1 then
                 for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             end
-            local res=_tp(fn(_tu(ca,1,ca_n)))
+            local res=table.pack(fn(table.unpack(ca,1,ca_n)))
             if C==0 then
                 for i=1,res.n do rset(A+i-1,res[i]) end; top=A+res.n-1
             elseif C>1 then
@@ -350,7 +330,7 @@ exec = function(proto, upvals, args, va_in)
             elseif B==0 then
                 for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=regs[i] end
             end
-            local res = _tp(fn(_tu(ca,1,ca_n)))
+            local res = table.pack(fn(table.unpack(ca,1,ca_n)))
             return {r=res, n=res.n}
 
         elseif op==38 then
@@ -376,7 +356,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==40 then rset(A,regs[A]-regs[A+2]); pc=pc+sBx
 
         elseif op==41 then
-            local res=_tp(regs[A](regs[A+1],regs[A+2]))
+            local res=table.pack(regs[A](regs[A+1],regs[A+2]))
             for i=1,C do rset(A+2+i,res[i]) end
 
         elseif op==42 then
@@ -399,16 +379,16 @@ exec = function(proto, upvals, args, va_in)
                 for i=1,B-1 do rset(A+i-1,_va[i]) end
             end
 
-        elseif op==46 then _err("unexpected EXTRAARG")
-        else _err("unknown op "..op) end
+        elseif op==46 then error("unexpected EXTRAARG")
+        else error("unknown op "..op) end
     end
     return {r={},n=0}
 end
 
 local function run(blob,rand_tail,self_func)
-    local dump=_sdump(self_func,true)
+    local dump=string.dump(self_func,true)
     local crc=_crc32(dump)
-    local key="karityObfuscator/".._sformat("%08x",crc).."/"..rand_tail
+    local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
     local seed=r.u16()

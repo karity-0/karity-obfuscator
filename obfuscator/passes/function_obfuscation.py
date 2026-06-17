@@ -638,7 +638,7 @@ def _transform_body(ctx, block, params: list[str]) -> str | None:
 
 
 # VM 디스패처(exec) 식별용 sentinel. exec의 dispatch 루프
-# `for i in _sm({},{__call=function(t)return t end}) do` 에만 등장하며,
+# `for i in setmetatable({},{__call=function(t)return t end}) do` 에만 등장하며,
 # `__call`은 VM 템플릿 전체에서 이 한 곳에서만 쓰이는 메타메서드 키다
 # (사용자 코드는 bytecode로 blob에 들어가므로 VM 텍스트에 나타나지 않는다).
 # rename/number/string 난독화에도 살아남는다(`__call`은 테이블 필드 키,
@@ -654,13 +654,15 @@ class FunctionObfuscationPass(BasePass):
     - 이미 `...`를 사용하는 함수, `goto`/label이 있는 함수, 본문이 비어있는
       함수는 건드리지 않는다.
 
-    skip_vm_dispatcher: VM 출력물 재난독화 시 켠다. VM 디스패처(exec)와 그
-      내부 클로저(make_closure/get_box/rset 등)는 (1) function_obf의 텍스트
-      기반 CFF가 안전하게 다룰 수 없고(거대 + 내부 클로저가 exec 로컬을
-      upvalue로 캡처해 깨짐), (2) runtime hot path라 변환에서 제외한다.
-      디스패처를 감싸는 _vmf wrapper 자체도 변환하지 않되, wrapper의 range는
-      막지 않아 exec를 제외한 cold 헬퍼들(kae_decrypt/read_proto/run 등)은
-      정상적으로 변환되게 한다.
+    skip_vm_dispatcher: VM 출력물 재난독화 시 켠다. dispatch sentinel
+      (`__call=function`)을 직접 포함하는 함수, 즉 VM 디스패처(exec)와 이를
+      감싸는 _vmf wrapper만 변환에서 제외한다. exec 본문은 거대한 dispatch
+      state machine이라 텍스트 기반 CFF로 평탄화하면 분기마다 흩어진 local
+      function 정의가 스코프 밖으로 사라져 깨지고, hot path라 비용도 크다.
+      반면 exec *내부*의 작은 헬퍼 클로저(rget/rset/get_box/make_closure 등)와
+      형제 cold 헬퍼들(kae_decrypt/read_proto/run 등)은 정상적으로 변환된다
+      (헬퍼가 참조하는 exec 로컬은 변환 후에도 upvalue로 남아 접근 가능하고,
+      exec 자체는 평탄화되지 않아 헬퍼 정의 순서/스코프가 유지된다).
     """
 
     # 파싱은 tree-sitter(C, ~10x)로. 파이프라인이 tree 인자로 TSContext를 준다.
@@ -687,25 +689,26 @@ class FunctionObfuscationPass(BasePass):
         func_nodes = [n for n in ctx.walk() if n.type in _FUNC_NODE_TYPES]
         func_nodes.sort(key=_bsize, reverse=True)
 
-        # VM 디스패처 스킵 준비: sentinel을 포함하는 함수(= exec 및 이를 감싸는
-        # _vmf wrapper)를 찾는다. 그중 최소 범위 함수가 exec이며, 그 본문
-        # range만 막아 exec 내부 클로저까지 함께 건너뛰게 한다. wrapper의
-        # range는 막지 않으므로 형제 cold 헬퍼들은 정상 변환된다.
+        # VM 디스패처 스킵 준비: sentinel을 *직접* 포함하는 함수(= exec 및 이를
+        # 감싸는 _vmf wrapper)만 변환에서 제외한다. exec 본문은 거대한
+        # dispatch state machine이라 텍스트 기반 CFF로 평탄화하면 분기마다
+        # 흩어진 local function 정의가 스코프 밖으로 사라져 깨지고, 매
+        # instruction마다 도는 hot path라 평탄화 비용도 크다.
+        #
+        # 단, exec *내부*의 작은 헬퍼 클로저(rget/rset/get_box/make_closure 등)는
+        # 각자 독립적으로 CFF/vararg 변환해도 안전하다: 그들이 참조하는 exec
+        # 로컬(regs/boxes/upvals 등)은 변환 후에도 그대로 upvalue로 남아
+        # 접근 가능하고, exec 자체는 평탄화되지 않으므로 헬퍼 정의 순서/스코프가
+        # 유지된다. 따라서 이전처럼 exec 본문 range 전체를 막지 않고, sentinel을
+        # 직접 포함하는 함수 노드만 건너뛴다.
         skip_node_ids: set[int] = set()
-        exec_skip_ranges: list[tuple[int, int]] = []
         if self.skip_vm_dispatcher:
-            sentinel_nodes = []
             for node in func_nodes:
                 b = _block_of(node)
                 if b is None:
                     continue
                 if _DISPATCH_SENTINEL.search(ctx.text(b)):
-                    sentinel_nodes.append(node)
                     skip_node_ids.add(node.id)
-            if sentinel_nodes:
-                exec_node = min(sentinel_nodes, key=_bsize)
-                eb = _block_of(exec_node)
-                exec_skip_ranges.append((ctx.cs(eb), ctx.ce(eb)))
 
         for node in func_nodes:
             block = _block_of(node)
@@ -713,13 +716,10 @@ class FunctionObfuscationPass(BasePass):
                 continue
             bstart, bend = ctx.cs(block), ctx.ce(block)
 
-            if self.skip_vm_dispatcher:
-                # sentinel 포함 함수(wrapper/exec) 자체는 변환하지 않는다.
-                if node.id in skip_node_ids:
-                    continue
-                # exec 내부에 중첩된 클로저(make_closure/get_box/rset 등)도 스킵.
-                if any(rs <= bstart and bend <= re for rs, re in exec_skip_ranges):
-                    continue
+            if self.skip_vm_dispatcher and node.id in skip_node_ids:
+                # sentinel을 직접 포함하는 함수(wrapper/exec) 자체만 스킵.
+                # exec 내부의 헬퍼 클로저는 아래에서 정상 변환된다.
+                continue
 
             params_node = ctx.first_child(node, "parameters")
             if params_node is None:

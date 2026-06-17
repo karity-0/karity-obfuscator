@@ -133,7 +133,7 @@ def _make_alias_body(body: str, transition: str, pre: bool) -> str:
         return f" {stripped}; {transition}{pad}"
 
 _HANDLER_PATTERN = re.compile(r'(if|elseif)\s+op==(\d+)\s*then')
-_CHAIN_END_MARKER = 'else _err("unknown op "..op) end'
+_CHAIN_END_MARKER = 'else error("unknown op "..op) end'
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ _CHAIN_START_PATTERN = re.compile(r'if\s+op==\d+\s*then')
 
 def _find_chain(vm_code: str) -> tuple[int, int]:
     """exec 함수 내 if/elseif op==N 체인의 (start, end) 인덱스를 반환."""
-    anchor = vm_code.find("for i in _sm(")
+    anchor = vm_code.find("for i in setmetatable(")
     if anchor == -1:
         anchor = 0
     m = _CHAIN_START_PATTERN.search(vm_code, anchor)
