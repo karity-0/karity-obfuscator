@@ -388,6 +388,28 @@ end
 local function run(blob,rand_tail,self_func)
     local dump=string.dump(self_func,true)
     local crc=_crc32(dump)
+    -- anti-tamper: 변조 신호를 키에 섞는다. clean이면 _t==0 -> crc 불변
+    -- -> 팩 타임 키와 일치. 변조 시 _t~=0 -> 키 교란 -> garbage(분기 없음, 패치 불가).
+    -- (1) debug hook(single-step/덤프 후킹) 감지
+    local _hk,_hm,_hc=debug.gethook()
+    local _t=0
+    if _hk~=nil          then _t=_t+1 end
+    if _hm and #_hm>0    then _t=_t+2 end
+    if _hc and _hc~=0    then _t=_t+4 end
+    -- (2) 보안 핵심 내장함수가 진짜 C 함수인지 검사(Lua 함수로 바꿔치기 감지).
+    -- getinfo 자신도 포함(체커 자기보호). 하나라도 비-C면 해당 비트 set.
+    local function _isC(f)
+        local ok,info=pcall(debug.getinfo,f,"S")
+        return ok and info~=nil and info.what=="C"
+    end
+    if not _isC(debug.getinfo) then _t=_t+8 end
+    if not _isC(string.dump)   then _t=_t+16 end
+    if not _isC(debug.gethook) then _t=_t+32 end
+    if not _isC(string.byte)   then _t=_t+64 end
+    if not _isC(string.char)   then _t=_t+128 end
+    if not _isC(string.format) then _t=_t+256 end
+    if not _isC(table.unpack)  then _t=_t+512 end
+    crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
