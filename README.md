@@ -4,6 +4,7 @@ a lua 5.3 obfuscator with a custom vm protection layer.
 ## features
 
 **source-level passes**
+- global localization
 - string encoding / obfuscation
 - number obfuscation
 - boolean obfuscation
@@ -22,11 +23,17 @@ a lua 5.3 obfuscator with a custom vm protection layer.
 - junk opcode
 - opcode mutation (CFF + opaque predicates)
 - junk instruction
+- in-memory instruction masking
+- in-memory constant pool masking
 - bytecode encryption + base36 encoding
 - anti tamper
 - fake constant pool
 - rolling opcode
 - re-obfuscate vm output with passes
+
+**packing**
+- load-based packer (raw deflate + base64, pure lua stub)
+- re-obfuscated packer stub with passes
 --------
 
 ## requirements
