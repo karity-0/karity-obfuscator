@@ -9,6 +9,7 @@ from .passes import (
     TableObfuscationPass,
     FunctionObfuscationPass,
     RenameObfuscationPass,
+    LocalizeGlobalsPass,
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,

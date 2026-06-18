@@ -22,9 +22,11 @@ from .passes import (
     TableObfuscationPass,
     FunctionObfuscationPass,
     RenameObfuscationPass,
+    LocalizeGlobalsPass,
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,
+    PackerPass,
 )
 
 
@@ -69,6 +71,11 @@ PASS_REGISTRY: dict[str, dict] = {
         "label": "Rename Obfuscation",
         "group": "base",
     },
+    "localize_globals": {
+        "cls": LocalizeGlobalsPass,
+        "label": "Localize Globals",
+        "group": "base",
+    },
     "minify": {
         "cls": MinifyPass,
         "label": "Minify",
@@ -83,6 +90,11 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": AntiDebugPass,
         "label": "Anti-Debug Wrapper",
         "group": "pre",
+    },
+    "pack": {
+        "cls": PackerPass,
+        "label": "Packer (deflate + load)",
+        "group": "post",
     },
 }
 
@@ -100,12 +112,14 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
         {
             "passes": ["string_obf", "boolean_obf", "number_obf", "vm"],
             "vm_output_passes": ["string_obf", "minify"],  # 선택, VMPass에 전달됨
+            "packer_output_passes": [],
             "vm_options": {"fake_handlers": true, "mutate_handlers": true}  # 선택
         }
     """
-    pipeline = pipeline_cls(show_header=show_header)
-    vm_output_passes = config.get("vm_output_passes", [])
-    vm_options = config.get("vm_options", {})
+    pipeline                = pipeline_cls(show_header=show_header)
+    vm_output_passes        = config.get("vm_output_passes", [])
+    packer_output_passes    = config.get("packer_output_passes", []) 
+    vm_options              = config.get("vm_options", {})
 
     for name in config.get("passes", []):
         info = PASS_REGISTRY.get(name)
@@ -115,6 +129,8 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
         cls = info["cls"]
         if cls is VMPass:
             pipeline.add(cls(vm_output_passes=vm_output_passes, vm_options=vm_options))
+        elif cls is PackerPass:
+            pipeline.add(cls(packer_output_passes=packer_output_passes))
         else:
             pipeline.add(cls())
 

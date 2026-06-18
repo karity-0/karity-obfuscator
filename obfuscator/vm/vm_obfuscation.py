@@ -50,13 +50,13 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
         lua_op = _BINARY_OP_LUA[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=rk(B){lua_op}rk(C){_SPLIT_PAD}",
+                f" _split_tmp=regs[B]{lua_op}regs[C]{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=rk(B){_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{lua_op}rk(C){_SPLIT_PAD}",
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" _split_tmp=_split_tmp{lua_op}regs[C]{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op in _UNARY_PREFIX:
@@ -133,7 +133,7 @@ def _make_alias_body(body: str, transition: str, pre: bool) -> str:
         return f" {stripped}; {transition}{pad}"
 
 _HANDLER_PATTERN = re.compile(r'(if|elseif)\s+op==(\d+)\s*then')
-_CHAIN_END_MARKER = 'else _err("unknown op "..op) end'
+_CHAIN_END_MARKER = 'else error("unknown op "..op) end'
 
 
 # ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ _CHAIN_START_PATTERN = re.compile(r'if\s+op==\d+\s*then')
 
 def _find_chain(vm_code: str) -> tuple[int, int]:
     """exec 함수 내 if/elseif op==N 체인의 (start, end) 인덱스를 반환."""
-    anchor = vm_code.find("for i in _sm(")
+    anchor = vm_code.find("for i in setmetatable(")
     if anchor == -1:
         anchor = 0
     m = _CHAIN_START_PATTERN.search(vm_code, anchor)
@@ -275,9 +275,9 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str) -> str:
     if op == 1:   # LOADK
         return f"rset({a},kval(consts[{bx}+1]))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},get_uv({b}+1))"
+        return f"rset({a},upvals[{b}+1].v)"
     if op in _BINARY_OP_LUA:
-        return f"rset({a},rk({b}){_BINARY_OP_LUA[op]}rk({c}))"
+        return f"rset({a},regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}])"
     if op in _UNARY_PREFIX:
         return f"rset({a},{_UNARY_PREFIX[op]}regs[{b}])"
     raise ValueError(f"non-fuseable op: {op}")
@@ -291,7 +291,7 @@ def fused_handler_body(op1: int, op2: int) -> str:
     (LOADKX/EXTRAARG 처리와 동일한 2-슬롯 패턴.)
     """
     lines = [
-        "local _ei=_cd[pc]; pc=pc+1",
+        "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
         "local _fa=(_ei>>32)&0xFF",
         "local _fb=(_ei>>23)&0x1FF",
         "local _fc=(_ei>>14)&0x1FF",

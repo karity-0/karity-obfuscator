@@ -13,3 +13,4 @@ test_out.lua
 vm_plain.lua
 
 config.json
+obf_gui_config.json

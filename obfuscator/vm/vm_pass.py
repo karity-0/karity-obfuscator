@@ -233,15 +233,8 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
     from ..pipeline import Pipeline
     from ..registry import PASS_REGISTRY
 
-    # function_obf는 vm.lua의 exec 내부 클로저(make_closure, get_box 등)에
-    # CFF를 적용하면서 _T0 등의 pooling 변수가 exec upvalue로 잘못 capture됨.
-    # vm output에는 적용하지 않는다.
-    _VM_BLOCKED = {"function_obf"}
-
     pipeline = Pipeline()
     for name in pass_names:
-        if name in _VM_BLOCKED:
-            continue
         info = PASS_REGISTRY.get(name)
         if info is None:
             continue
@@ -251,7 +244,14 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
         if cls.__name__ == "VMPass":
             continue
 
-        pipeline.add(cls())
+        # function_obf는 디스패처(exec)와 그 내부 클로저를 변환에서 제외해야
+        # 한다(거대 + 내부 클로저가 exec 로컬을 upvalue로 캡처해 깨지고, hot
+        # path라 runtime도 망가짐). skip_vm_dispatcher로 exec/wrapper만 빼고
+        # cold 헬퍼들(kae_decrypt/read_proto/run 등)에는 정상 적용한다.
+        if cls.__name__ == "FunctionObfuscationPass":
+            pipeline.add(cls(skip_vm_dispatcher=True))
+        else:
+            pipeline.add(cls())
 
     return pipeline.run(script)
 
