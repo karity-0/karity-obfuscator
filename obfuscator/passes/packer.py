@@ -21,13 +21,33 @@ from pathlib import Path
 
 from .base import PostPass
 
+
 _STUB_PATH = Path(__file__).parent / "pack_stub.lua"
-_HEADER = "-- obfuscated using karity obfuscator!\n"
 _ACTION = "return load(_inf(_b64(_D)))()"
 
 
+def _obfuscate_packer_output(script: str, pass_names: list[str]) -> str:
+    """Packer 출력물에 passes 재적용."""
+    from ..pipeline import Pipeline
+    from ..registry import PASS_REGISTRY
+
+    pipeline = Pipeline()
+    for name in pass_names:
+        info = PASS_REGISTRY.get(name)
+        if info is None:
+            continue
+        
+        cls = info["cls"]
+        pipeline.add(cls())
+
+    return pipeline.run(script)
+    
+
 class PackerPass(PostPass):
     """최종 출력을 압축/임베드해 load 스텁으로 감싼다."""
+
+    def __init__(self, packer_output_passes: list[str] | None = None):
+        self.packer_output_passes = packer_output_passes or []
 
     def run(self, script: str) -> str:
         raw = script.encode("utf-8")
@@ -37,4 +57,7 @@ class PackerPass(PostPass):
 
         stub = _STUB_PATH.read_text(encoding="utf-8")
         packed = stub.replace("__DATA__", payload).replace("__ACTION__", _ACTION)
-        return _HEADER + packed
+
+        obfuscated = _obfuscate_packer_output(packed, self.packer_output_passes)
+
+        return obfuscated
