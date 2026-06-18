@@ -121,23 +121,6 @@ def _is_numeric_const(c) -> bool:
 # 전략 D: 정수 보장 레지스터 combination junk
 # ---------------------------------------------------------------------------
 
-def _add_junk_const(constants: list, value: int | float) -> int:
-    """
-    junk용 상수를 constants 리스트에 추가하고 0-based 인덱스를 반환.
-    같은 값이 이미 있으면 재사용.
-    """
-    for i, c in enumerate(constants):
-        if type(c) is type(value) and c == value:
-            return i
-    constants.append(value)
-    return len(constants) - 1
-
-
-def _rk(kidx: int) -> int:
-    """상수 인덱스(0-based) → B/C 필드 인코딩 값."""
-    return _RK_CONST_OFFSET + kidx
-
-
 def _gen_numeric_combination(reg: int, constants: list) -> list[int]:
     """
     reg가 정수임이 보장될 때, net-zero combination 연산 시퀀스를 반환.
@@ -168,29 +151,13 @@ def _gen_numeric_combination(reg: int, constants: list) -> list[int]:
     """
     r = reg
 
-    def bxor_k(k_val: int):
-        ki = _rk(_add_junk_const(constants, k_val))
-        return _encode(OP_BXOR, r, r, ki)
-
-    def add_k(k_val: int):
-        ki = _rk(_add_junk_const(constants, k_val))
-        return _encode(OP_ADD, r, r, ki)
-
-    def sub_k(k_val: int):
-        ki = _rk(_add_junk_const(constants, k_val))
-        return _encode(OP_SUB, r, r, ki)
-
     bnot = _encode(OP_BNOT, r, r, 0)
     unm  = _encode(OP_UNM,  r, r, 0)
     bor  = _encode(OP_BOR,  r, r, r)
     band = _encode(OP_BAND, r, r, r)
 
-    # 난수 K 생성
-    K  = random.randint(1, 0x7FFFFFFF)
-    K2 = random.randint(1, 0x7FFFFFFF)
-
+    # P0~P9: K 없는 패턴 (항상 안전 — register operand만 사용)
     patterns = [
-        # P0~P9: K 없는 패턴
         [bnot, bnot],
         [unm,  unm],
         [bor,  band],
@@ -201,19 +168,40 @@ def _gen_numeric_combination(reg: int, constants: list) -> list[int]:
         [unm,  unm,  unm,  unm],
         [bor,  bnot, bnot, band],
         [band, bnot, bnot, bor],
-        # P10: BXOR r,K x2
-        [bxor_k(K), bxor_k(K)],
-        # P11: ADD K → SUB K
-        [add_k(K),  sub_k(K)],
-        # P12: BNOT → BXOR K×2 → BNOT
-        [bnot, bxor_k(K), bxor_k(K), bnot],
-        # P13: UNM → ADD K → SUB K → UNM
-        [unm,  add_k(K),  sub_k(K),  unm],
-        # P14: BXOR K1×2 → BNOT×2
-        [bxor_k(K), bxor_k(K), bnot, bnot],
-        # P15: ADD K → BXOR K2×2 → SUB K
-        [add_k(K), bxor_k(K2), bxor_k(K2), sub_k(K)],
     ]
+
+    # K 기반 패턴: RK operand(256+kidx)는 B/C 필드가 9비트(<=511)라서
+    # kidx<=255 여야 한다. 또 VM은 상수 풀의 앞 256개만 regs[256..511]에
+    # 미리 풀어두므로 kidx>=256인 상수는 RK로 주소지정 자체가 불가능하다.
+    # 상수가 이미 256개 이상이면(=새 K를 256번 슬롯 이상에 넣어야 하면)
+    # RK가 operand 필드를 오버플로해 엉뚱한 레지스터를 가리키게 되므로
+    # (예: 256+257=513 → 513&0x1FF=1 → regs[1]) K 패턴을 생략한다.
+    def _krk(k_val: int) -> int | None:
+        for i, c in enumerate(constants):
+            if type(c) is type(k_val) and c == k_val:
+                return _RK_CONST_OFFSET + i if i <= 255 else None
+        if len(constants) > 255:
+            return None
+        constants.append(k_val)
+        return _RK_CONST_OFFSET + (len(constants) - 1)
+
+    K  = random.randint(1, 0x7FFFFFFF)
+    K2 = random.randint(1, 0x7FFFFFFF)
+    rkK, rkK2 = _krk(K), _krk(K2)
+
+    if rkK is not None:
+        bxk = _encode(OP_BXOR, r, r, rkK)
+        adk = _encode(OP_ADD,  r, r, rkK)
+        sbk = _encode(OP_SUB,  r, r, rkK)
+        patterns.append([bxk, bxk])                  # P10
+        patterns.append([adk, sbk])                  # P11
+        patterns.append([bnot, bxk, bxk, bnot])      # P12
+        patterns.append([unm,  adk, sbk, unm])       # P13
+        patterns.append([bxk, bxk, bnot, bnot])      # P14
+        if rkK2 is not None:
+            bxk2 = _encode(OP_BXOR, r, r, rkK2)
+            patterns.append([adk, bxk2, bxk2, sbk])  # P15
+
     return random.choice(patterns)
 
 
