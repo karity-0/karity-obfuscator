@@ -150,6 +150,31 @@ end
 
 local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4
 
+-- 런타임 내부 keystream: read_proto가 디코드 직후 code[i]를 메모리에서 한 번 더
+-- 마스킹하고, exec가 fetch 시점에 동일 마스크로 푼다. 따라서 메모리에 상주하는
+-- p.code[]는 항상 마스킹된 상태(평문 명령어가 통째로 상주하지 않음).
+-- _ksd는 run()에서 crc로 세팅 -> 리터럴이 아니고 tamper에 엮임. read_proto와
+-- exec가 같은 _ksd를 쓰므로 한 run 안에서 항상 round-trip(실행 정확성 보장).
+local _ksd=0
+local function _ksm(i)
+    local x=(i*0x9E3779B1)&0xFFFFFFFFFFFF
+    x=(x~((_ksd*0x85EBCA6B)&0xFFFFFFFFFFFF))&0xFFFFFFFFFFFF
+    x=(x~(x>>17)~((i<<13)&0xFFFFFFFFFFFF))&0xFFFFFFFFFFFF
+    return x
+end
+
+-- 문자열 상수용 keystream(대칭 XOR). read_proto가 상수풀에 마스킹 저장하고,
+-- kval/상수 pre-unpack 시점에 풀어 쓴다. -> p.constants(상수 풀)는 메모리에서
+-- 마스킹된 상태로 상주(연속된 평문 상수 덤프 타깃 제거). regs로 풀린 값은 평문.
+local function _kss(s)
+    local out={}
+    for i=1,#s do
+        local m=((i*0x6D)~_ksd~(i>>3))&0xFF
+        out[i]=(string.byte(s,i)~m)&0xFF
+    end
+    return string.char(table.unpack(out))
+end
+
 local function read_proto(r, acc_state)
     local p={}
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
@@ -165,7 +190,7 @@ local function read_proto(r, acc_state)
         acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
         acc_state[2] = idx + 1
         raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant<<40)
-        p.code[i]=raw64
+        p.code[i]=raw64 ~ _ksm(i)
     end
     n=r.u32(); p.constants={}
     for i=1,n do
@@ -174,7 +199,7 @@ local function read_proto(r, acc_state)
         elseif tag==CTAG_BOOL  then p.constants[i]={1,r.u8()~=0}
         elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
         elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
-        elseif tag==CTAG_STR   then p.constants[i]={4,r.str()}
+        elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={4,_s and _kss(_s) or nil}
         else error("bad const tag "..tostring(tag)) end
     end
     n=r.u32(); p.upvalues={}
@@ -187,6 +212,7 @@ end
 local function kval(k)
     if not k then return nil end
     if k[1]==0 then return nil end
+    if k[1]==4 and k[2] then return _kss(k[2]) end
     return k[2]
 end
 
@@ -234,7 +260,11 @@ exec = function(proto, upvals, args, va_in)
     for _ci=1,256 do
         local _c=consts[_ci]
         if not _c then break end
-        if _c[1]~=0 then regs[255+_ci]=_c[2] end
+        if _c[1]==4 then
+            if _c[2] then regs[255+_ci]=_kss(_c[2]) end
+        elseif _c[1]~=0 then
+            regs[255+_ci]=_c[2]
+        end
     end
 
     local function get_box(slot)
@@ -264,12 +294,12 @@ exec = function(proto, upvals, args, va_in)
     end
 
     for i in setmetatable({},{__call=function(t)return t end}) do
-        local ins=code[pc]; local op,A,B,C,Bx,sBx=decode(ins); pc=pc+1
+        local ins=code[pc]~_ksm(pc); local op,A,B,C,Bx,sBx=decode(ins); pc=pc+1
 
         if     op==0  then rset(A,regs[B])
         elseif op==1  then rset(A,kval(consts[Bx+1]))
         elseif op==2  then
-            local ei=code[pc]; pc=pc+1
+            local ei=code[pc]~_ksm(pc); pc=pc+1
             local ax=(((ei>>32)&0xFF)<<18)|(((ei>>23)&0x1FF)<<9)|((ei>>14)&0x1FF)
             rset(A,kval(consts[ax+1]))
         elseif op==3  then rset(A,(B~=0)); if C~=0 then pc=pc+1 end
@@ -410,6 +440,7 @@ local function run(blob,rand_tail,self_func)
     if not _isC(string.format) then _t=_t+256 end
     if not _isC(table.unpack)  then _t=_t+512 end
     crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
+    _ksd=crc
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)

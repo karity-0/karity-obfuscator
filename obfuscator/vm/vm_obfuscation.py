@@ -291,7 +291,7 @@ def fused_handler_body(op1: int, op2: int) -> str:
     (LOADKX/EXTRAARG 처리와 동일한 2-슬롯 패턴.)
     """
     lines = [
-        "local _ei=_cd[pc]; pc=pc+1",
+        "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
         "local _fa=(_ei>>32)&0xFF",
         "local _fb=(_ei>>23)&0x1FF",
         "local _fc=(_ei>>14)&0x1FF",
