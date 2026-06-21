@@ -8,6 +8,8 @@ temp*
 test/output
 *_obfuscated.lua
 test_out.lua
+*envproxy.lua
+*sethook.lua
 
 // vm
 vm_plain.lua

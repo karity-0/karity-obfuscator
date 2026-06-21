@@ -223,7 +223,18 @@ def collect_fuseable_pairs(proto: Proto) -> set[tuple[int, int]]:
     return pairs
 
 
-def _collect_pairs(proto: Proto, pairs: set[tuple[int, int]]) -> None:
+def collect_fuseable_pairs_for_vm(proto: Proto, vm_assign: dict[int, int],
+                                  vm_id: int) -> set[tuple[int, int]]:
+    """vm_id로 배정된 proto들만의 fuse 가능 쌍."""
+    pairs: set[tuple[int, int]] = set()
+    for p in iter_protos(proto):
+        if vm_assign.get(id(p), 0) == vm_id:
+            _collect_pairs_single(p, pairs)
+    return pairs
+
+
+def _collect_pairs_single(proto: Proto, pairs: set[tuple[int, int]]) -> None:
+    """단일 proto의 fuse 가능 쌍만 수집(재귀 안 함)."""
     code = proto.code
     protected = _compute_protected(code)
     for i in range(len(code) - 1):
@@ -231,6 +242,10 @@ def _collect_pairs(proto: Proto, pairs: set[tuple[int, int]]) -> None:
         op2 = code[i + 1] & 0x3F
         if op1 in FUSE_OPS and op2 in FUSE_OPS and (i + 1) not in protected:
             pairs.add((op1, op2))
+
+
+def _collect_pairs(proto: Proto, pairs: set[tuple[int, int]]) -> None:
+    _collect_pairs_single(proto, pairs)
     for sub in proto.protos:
         _collect_pairs(sub, pairs)
 
@@ -325,26 +340,56 @@ def _rand_alias(vop_map: dict[int, list[int]] | None, op: int) -> int:
 # ---------------------------------------------------------------------------
 # 직렬화
 # ---------------------------------------------------------------------------
-def serialize(proto: Proto, vop_map: dict[int, list[int]] | None = None,
-              split_map: dict[int, dict[str, tuple[int, ...]]] | None = None,
-              fuse_map: dict[tuple[int, int], int] | None = None) -> bytes:
+VMMaps = tuple  # (vop_map, split_map, fuse_map)
+
+
+def iter_protos(proto: Proto):
+    """proto 트리를 pre-order로 순회(직렬화 순서와 동일)."""
+    yield proto
+    for sub in proto.protos:
+        yield from iter_protos(sub)
+
+
+def assign_vm_ids(proto: Proto, n: int) -> tuple[dict[int, int], int]:
+    """각 proto에 vm_id 배정. (assign, effective_n) 반환.
+
+    n을 proto 수로 clamp하고, 0..n-1이 모두 최소 1회 등장하도록 보장해
+    죽은(빈) 인터프리터가 생기지 않게 한다. key=id(proto)."""
+    protos = list(iter_protos(proto))
+    n = max(1, min(n, len(protos)))
+    ids = list(range(n)) + [random.randint(0, n - 1) for _ in range(len(protos) - n)]
+    random.shuffle(ids)
+    return {id(p): ids[i] for i, p in enumerate(protos)}, n
+
+
+def serialize(proto: Proto,
+              vm_assign: dict[int, int] | None = None,
+              vm_maps: list | None = None) -> bytes:
+    """vm_maps[vm_id] = (vop_map, split_map, fuse_map). vm_assign = {id(proto): vm_id}.
+    기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작."""
+    if vm_maps is None:
+        vm_maps = [(None, None, None)]
+    if vm_assign is None:
+        vm_assign = {}
     w = Writer()
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
     _write_fake_pool(w)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
-    _write_proto(w, proto, vop_map, acc_state, split_map, fuse_map)
+    _write_proto(w, proto, vm_assign, vm_maps, acc_state)
     return w.data()
 
 
-def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None,
-                 acc_state: list[int],
-                 split_map: dict[int, dict[str, tuple[int, ...]]] | None = None,
-                 fuse_map: dict[tuple[int, int], int] | None = None):
+def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
+                 vm_maps: list, acc_state: list[int]):
+    vm_id = vm_assign.get(id(proto), 0)
+    vop_map, split_map, fuse_map = vm_maps[vm_id]
+
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
+    w.u8(vm_id)
 
     # --- split/fuse 결정 + jump offset 보정 ---
     protected     = _compute_protected(proto.code)
@@ -398,10 +443,10 @@ def _write_proto(w: Writer, proto: Proto, vop_map: dict[int, list[int]] | None,
         w.u8(uv.instack)
         w.u8(uv.idx)
 
-    # 중첩 proto (acc_state 전역 공유)
+    # 중첩 proto (acc_state 전역 공유, vm_id별 맵은 sub마다 재선택)
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub, vop_map, acc_state, split_map)
+        _write_proto(w, sub, vm_assign, vm_maps, acc_state)
 
 
 # ---------------------------------------------------------------------------
@@ -418,6 +463,7 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
     num_params     = r.u8()
     is_vararg      = r.u8()
     max_stack_size = r.u8()
+    _vm_id         = r.u8()  # 직렬화 포맷 정렬용(Proto에는 보관 안 함)
 
     code_count = r.u32()
     code = []

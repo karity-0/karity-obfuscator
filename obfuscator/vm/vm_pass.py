@@ -12,11 +12,12 @@ from pathlib import Path
 
 from ..passes.base import PostPass
 from ..parser import Lua53Parser
-from .serializer import serialize, collect_fuseable_pairs
+from .serializer import (serialize, assign_vm_ids, collect_fuseable_pairs_for_vm)
 from .kae_blob import encrypt_blob
-from .vm_obfuscation import (collect_used_ops, collect_used_orig_ops,
-                             prune_and_inject_handlers, apply_vop_to_vm,
-                             apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS)
+from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
+                             apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS,
+                             convert_dispatch_to_ruby, build_exec_variants,
+                             collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .junk_injection import inject_junk
 
 
@@ -88,14 +89,18 @@ _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
 _VOP_SPACE    = 128  # 7비트 op × 256 variant = 32768, 실용 범위는 128*256
 
 
-def _make_vop_map() -> dict[int, list[int]]:
+def _make_vop_map(used_vops: set[int] | None = None) -> dict[int, list[int]]:
     """원본op(0~46) → alias vop 목록 매핑.
 
     각 원본 op당 2~3개의 alias vop를 생성.
     serialize 시 alias 중 랜덤 선택해서 emit → 같은 op라도 매번 다른 vop.
     vop = op(7비트) | (variant(8비트) << 7)
+
+    used_vops를 넘기면 그 집합에 누적 — 멀티VM에서 VM 간 vop 공간을 disjoint로
+    유지하기 위해 공유 집합을 전달한다.
     """
-    used_vops: set[int] = set()
+    if used_vops is None:
+        used_vops = set()
     vop_map: dict[int, list[int]] = {}
 
     for orig in range(_LUA_OP_COUNT):
@@ -205,7 +210,7 @@ def _load_vm() -> str:
 
 _VM_RENAME_KEYS = [
     # proto 테이블 키
-    "num_params", "is_vararg", "max_stack_size",
+    "num_params", "is_vararg", "max_stack_size", "vm_id",
     "constants", "code", "upvalues", "protos",
     "instack", "idx",
     # reader 메서드명
@@ -258,6 +263,8 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
 
 _DEFAULT_VM_OPTIONS = {
+    "vm": "karity",   # 디스패치 구조 선택: "karity"(if-elseif 루프) | "ruby"(테이블+꼬리호출)
+    "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
     "fake_handlers": True,
     "mutate_handlers": True,
     "junk_instructions": True,
@@ -274,34 +281,48 @@ class VMPass(PostPass):
         # 1. luac 컴파일
         luac_bytes = _compile(script)
 
-        # 2. 파싱 → junk instruction 삽입 → 커스텀 직렬화
+        # 2. 파싱 → junk instruction 삽입
         proto = Lua53Parser(luac_bytes).parse()
         if self.vm_options.get("junk_instructions", True):
             proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
 
-        vop_map   = _make_vop_map()
-        used_vops = {v for aliases in vop_map.values() for v in aliases}
-        # split_map/fuse_map은 실제 등장하는 op·쌍으로만 한정한다.
-        # (안 쓰는 op의 핸들러까지 CFF로 만들면 체인이 폭증한다.)
-        split_ops  = ALL_SPLIT_OPS & collect_used_orig_ops(proto)
-        split_map  = _make_split_map(used_vops, split_ops)
-        fuse_pairs = collect_fuseable_pairs(proto)
-        fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
-        blob  = serialize(proto, vop_map, split_map, fuse_map)
+        fake = self.vm_options["fake_handlers"]
+        mut  = self.vm_options["mutate_handlers"]
 
-        # 3. VM 코드 로드 + vopmap 적용 + prune/가짜 핸들러 삽입 + split/fuse 핸들러 추가
-        used_ops = collect_used_ops(proto, vop_map)
-        vm_code = apply_vop_to_vm(_rename_vm_keys(_load_vm()), vop_map)
-        vm_code = prune_and_inject_handlers(
-            vm_code,
-            used_ops,
-            fake_handlers=self.vm_options["fake_handlers"],
-            mutate=self.vm_options["mutate_handlers"],
-        )
-        vm_code = apply_split_to_vm(vm_code, split_map,
-                                    mutate=self.vm_options["mutate_handlers"])
-        vm_code = apply_fuse_to_vm(vm_code, fuse_map,
-                                   mutate=self.vm_options["mutate_handlers"])
+        # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
+        #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
+        vm_count = max(1, int(self.vm_options.get("vm_count", 1)))
+        vm_assign, n = assign_vm_ids(proto, vm_count)
+
+        used_vops: set[int] = set()
+        vm_maps: list = []
+        used_ops_list: list[set[int]] = []
+        for k in range(n):
+            vop_map    = _make_vop_map(used_vops)
+            split_ops  = ALL_SPLIT_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+            split_map  = _make_split_map(used_vops, split_ops)
+            fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
+            fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
+            vm_maps.append((vop_map, split_map, fuse_map))
+            used_ops_list.append(collect_used_ops_for_vm(proto, vm_assign, k, vop_map))
+
+        blob = serialize(proto, vm_assign, vm_maps)
+
+        # 3. VM 코드 로드 + (단일/멀티) exec 생성
+        vm_code = _rename_vm_keys(_load_vm())
+        if n == 1:
+            vop_map, split_map, fuse_map = vm_maps[0]
+            vm_code = apply_vop_to_vm(vm_code, vop_map)
+            vm_code = prune_and_inject_handlers(vm_code, used_ops_list[0],
+                                                fake_handlers=fake, mutate=mut)
+            vm_code = apply_split_to_vm(vm_code, split_map, mutate=mut)
+            vm_code = apply_fuse_to_vm(vm_code, fuse_map, mutate=mut)
+            # ruby 모드(단일 VM 한정): 디스패치를 테이블+꼬리호출로 변환
+            if self.vm_options.get("vm") == "ruby":
+                vm_code = convert_dispatch_to_ruby(vm_code)
+        else:
+            vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
+                                          fake_handlers=fake, mutate=mut)
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (
