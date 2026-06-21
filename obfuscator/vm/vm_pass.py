@@ -16,7 +16,7 @@ from .serializer import (serialize, assign_vm_ids, collect_fuseable_pairs_for_vm
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS,
-                             convert_dispatch_to_ruby, build_exec_variants,
+                             convert_dispatch_to_ruby, build_exec_variants, _want_ruby,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .junk_injection import inject_junk
 
@@ -263,7 +263,7 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
 
 _DEFAULT_VM_OPTIONS = {
-    "vm": "karity",   # 디스패치 구조 선택: "karity"(if-elseif 루프) | "ruby"(테이블+꼬리호출)
+    "vm": "karity",   # 디스패치: "karity"(if-elseif) | "ruby"(테이블+꼬리호출) | "mixed"(VM마다 랜덤)
     "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
     "fake_handlers": True,
     "mutate_handlers": True,
@@ -309,6 +309,7 @@ class VMPass(PostPass):
         blob = serialize(proto, vm_assign, vm_maps)
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
+        dispatch = self.vm_options.get("vm", "karity")  # karity | ruby | mixed
         vm_code = _rename_vm_keys(_load_vm())
         if n == 1:
             vop_map, split_map, fuse_map = vm_maps[0]
@@ -317,12 +318,13 @@ class VMPass(PostPass):
                                                 fake_handlers=fake, mutate=mut)
             vm_code = apply_split_to_vm(vm_code, split_map, mutate=mut)
             vm_code = apply_fuse_to_vm(vm_code, fuse_map, mutate=mut)
-            # ruby 모드(단일 VM 한정): 디스패치를 테이블+꼬리호출로 변환
-            if self.vm_options.get("vm") == "ruby":
+            # 단일 VM의 디스패치 모양: ruby, 또는 mixed에서 동전던지기로 ruby 선택 시 변환
+            if _want_ruby(dispatch):
                 vm_code = convert_dispatch_to_ruby(vm_code)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
-                                          fake_handlers=fake, mutate=mut)
+                                          fake_handlers=fake, mutate=mut,
+                                          dispatch=dispatch)
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (

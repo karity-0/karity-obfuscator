@@ -539,10 +539,21 @@ _EXEC_MARK_START = "--<<EXEC>>"
 _EXEC_MARK_END   = "--<<ENDEXEC>>"
 
 
+def _want_ruby(dispatch: str) -> bool:
+    """이 VM(exec)에 ruby 디스패치를 쓸지. mixed면 VM마다 동전던지기."""
+    return dispatch == "ruby" or (dispatch == "mixed" and random.random() < 0.5)
+
+
 def build_exec_variants(vm_code: str, n: int, vm_maps: list,
                         used_ops_list: list[set[int]],
-                        fake_handlers: bool = True, mutate: bool = True) -> str:
-    """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립."""
+                        fake_handlers: bool = True, mutate: bool = True,
+                        dispatch: str = "karity") -> str:
+    """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립.
+
+    dispatch: "karity"(전부 if-elseif) | "ruby"(전부 테이블+꼬리호출) |
+              "mixed"(VM마다 랜덤). 각 _ex{k}는 별도 함수 스코프라 ruby가 쓰는
+              local _H/_step이 서로 충돌하지 않는다.
+    """
     s = vm_code.index(_EXEC_MARK_START)
     e = vm_code.index(_EXEC_MARK_END)
     template = vm_code[s + len(_EXEC_MARK_START):e]
@@ -557,6 +568,9 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
         c = apply_fuse_to_vm(c, fuse_map, mutate=mutate)
         # exec 정의 head 이름만 _ex{k}로 변경 (make_closure는 이미 _EX로 라우팅)
         c = c.replace("exec = function", f"_ex{k} = function", 1)
+        # VM별 디스패치 모양 선택: ruby면 이 exec의 if-elseif를 테이블+꼬리호출로
+        if _want_ruby(dispatch):
+            c = convert_dispatch_to_ruby(c)
         defs.append(c)
 
     # 마커 영역 → N벌 정의로 치환
