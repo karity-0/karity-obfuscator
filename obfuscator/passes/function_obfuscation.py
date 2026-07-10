@@ -175,33 +175,181 @@ def _generic_always_false() -> str:
     ])
 
 
-def _generic_dead_lines(c: list[int]) -> list[str]:
-    """항상 false인 분기 안에서만 동작하는 dead-code 라인들."""
-    zv1, zv2 = _zv(c), _zv(c)
-    val = random.randint(0, 0xFFFF)
+def _nested_always_true(depth: int) -> str:
+    """항상 참인 opaque predicate를 depth만큼 논리 결합해 중첩한다.
+
+    `true and true == true`, `true or false == true` 항등식만 사용하므로
+    depth와 무관하게 결과는 언제나 참이다. 파서/디컴파일러가 상수 폴딩으로
+    소거하기 어렵도록 매 층 서로 다른 상수쌍의 predicate를 섞는다.
+    """
+    expr = _generic_always_true()
+    for _ in range(max(0, depth - 1)):
+        if random.random() < 0.5:
+            expr = f"(({expr}) and ({_generic_always_true()}))"
+        else:
+            expr = f"(({expr}) or ({_generic_always_false()}))"
+    return f"({expr})"
+
+
+def _nested_always_false(depth: int) -> str:
+    """항상 거짓인 opaque predicate를 depth만큼 논리 결합해 중첩한다.
+
+    `false or false == false`, `false and true == false` 항등식만 사용하므로
+    depth와 무관하게 결과는 언제나 거짓이다. 가짜(dead) 분기 가드에 쓴다.
+    """
+    expr = _generic_always_false()
+    for _ in range(max(0, depth - 1)):
+        if random.random() < 0.5:
+            expr = f"(({expr}) or ({_generic_always_false()}))"
+        else:
+            expr = f"(({expr}) and ({_generic_always_true()}))"
+    return f"({expr})"
+
+
+# ---------------------------------------------------------------------------
+# 그럴듯한 가짜 흐름(fake flow) 생성기.
+#
+# dead state는 real 흐름이 절대 그 상태쌍으로 sv를 설정하지 않으므로 런타임에
+# 도달하지 않는다 → 본문에 로컬 함수 호출/루프까지 넣어도 실행 안전하다.
+# 제약: (1) 문법 유효성, (2) pooling/strip 정합성, (3) 전역 미참조.
+#   * 로컬은 `_zv(c)`(→ `_zN`)로 만들어 pooled 되게 한다.
+#   * for 루프 변수는 `local` 없이 선언되고 `_zN` 패턴도 아닌 이름(`_fv<rand>`)을
+#     써서 pooling/치환 대상에서 자동 제외되게 한다(테이블 모드에서 `for _Tn._z=`
+#     같은 문법 오류 방지).
+#   * 전역(math/string/table 등)은 참조하지 않는다: VM처럼 제한된 _ENV에서
+#     재난독화될 때 localize_globals와 충돌해 깨질 수 있기 때문. rich junk은
+#     일반(비-VM) 경로 전용이고, VM 재난독화는 _junk_simple(보수적)만 쓴다.
+# ---------------------------------------------------------------------------
+
+
+def _obf_int(n: int) -> str:
+    """항상 n과 같은 정수 표현식. 상수 폴딩을 방해해 state 상수를 감춘다.
+
+    (실행되는 real 전이에도 사용되므로 모든 변형은 정확히 n과 같아야 한다:
+    n~k~k==n, n+k-k==n, n|0==n(n>=0), (n<<0)~0==n.)
+    """
+    if random.random() < 0.45:
+        return str(n)
+    k = random.randint(1, 0xFFFF)
+    return random.choice([
+        f"({n}~{k}~{k})",
+        f"({n}+{k}-{k})",
+        f"({n}|0)",
+        f"(({n}<<0)~0)",
+    ])
+
+
+def _junk_expr(c: list[int]) -> str:
+    """부수효과 없어 보이는 그럴듯한 값 표현식 (dead 전용, 실행 안 됨).
+
+    전역(math/string/table 등)은 절대 참조하지 않는다: VM처럼 제한된 _ENV에서
+    재난독화될 때 localize_globals가 존재하지 않는 전역을 nil 로컬로 만들어
+    깨질 수 있기 때문(dead여도 안전 마진 확보). 순수 산술 + 로컬만 쓴다.
+    """
+    a, b = _generic_const_pair()
+    return random.choice([
+        f"({a}~{b})",
+        f"({a}+{b})",
+        f"({a}*{(b % 997) + 1})",
+        f"({a}//{(b % 999) + 1})",
+        f"({a}%{(b % 9973) + 1})",
+        f"(({a}|{b})&0xFFFFFF)",
+        f"(({a}<<3)~{b})",
+        f"({a}>>{(b % 13) + 1})",
+    ])
+
+
+def _junk_seg_assign(c: list[int]) -> list[str]:
+    return [f"local {_zv(c)}={_junk_expr(c)}"]
+
+
+def _junk_seg_chain(c: list[int]) -> list[str]:
+    n = random.randint(2, 4)
+    zvs = [_zv(c) for _ in range(n)]
+    lines = [f"local {zvs[0]}={_junk_expr(c)}"]
+    for i in range(1, n):
+        op = random.choice(["+", "-", "~", "*", "%", "|", "&"])
+        k = random.randint(1, 9999)
+        lines.append(f"local {zvs[i]}={zvs[i - 1]}{op}{k}")
+    return lines
+
+
+def _junk_seg_call(c: list[int]) -> list[str]:
+    """로컬 클로저 정의 + 호출로 "함수 호출" 느낌을 낸다 (전역 미참조).
+
+    클로저 파라미터는 `local`이 아니라 함수 파라미터라 pooling 스캔 대상이
+    아니고, `_z\\d+` 패턴도 아닌 이름(`_pa<rand>`)을 써서 테이블-치환에서도
+    자동 제외되게 한다(파라미터 decl/use 불일치 방지).
+    """
+    fn = _zv(c)
+    p = f"_pa{random.randint(0, 2 ** 31)}"
+    a, b = _generic_const_pair()
+    body_op = random.choice([f"{p}*{(b % 97) + 1}", f"{p}+{a % 100000}", f"{p}~{b % 65536}"])
     return [
-        f"local {zv1}={val}",
-        f"if {_generic_always_false()} then",
-        f"  local {zv2}={zv1}~{val}",
-        f"  {zv1}={zv2}",
+        f"local {fn}=function({p}) return {body_op} end",
+        f"local {_zv(c)}={fn}({_junk_expr(c)})",
+    ]
+
+
+def _junk_seg_loop(c: list[int]) -> list[str]:
+    fv = f"_fv{random.randint(0, 2 ** 31)}"   # local 없는 for 변수 → pooling 제외
+    z = _zv(c)
+    return [
+        f"local {z}={random.randint(0, 999)}",
+        f"for {fv}=1,{random.randint(2, 6)} do",
+        f"  {z}={z}+{fv}*{random.randint(1, 9)}",
         f"end",
     ]
 
 
-def _generic_live_lines(c: list[int]) -> list[str]:
-    """항상 실행되지만 부수효과 없는 무의미한 연산."""
+def _junk_seg_cond(c: list[int]) -> list[str]:
+    z = _zv(c)
+    a, b = _generic_const_pair()
+    return [
+        f"local {z}={a}",
+        f"if {_nested_always_false(2)} then",
+        f"  {z}={b}",
+        f"elseif {_generic_always_false()} then",
+        f"  {z}={z}~{random.randint(1, 9999)}",
+        f"end",
+    ]
+
+
+_JUNK_SEGS = (_junk_seg_assign, _junk_seg_chain, _junk_seg_call,
+              _junk_seg_loop, _junk_seg_cond)
+
+
+def _junk_simple(c: list[int]) -> list[str]:
+    """VM 재난독화(제한된 _ENV)용 보수적 가짜 흐름.
+
+    rich junk의 함수 정의/루프/다양한 연산자는 VM 템플릿을 이후 패스
+    (localize_globals 등)와 함께 재난독화할 때 깨질 수 있으므로, 여기서는
+    검증된 순수 산술(`~`/`+`/`-`/`|`/`&`)만 쓰는 짧은 흐름을 낸다.
+    """
     zv = _zv(c)
     a, b = _generic_const_pair()
-    body = random.choice([
+    lines = [random.choice([
         f"local {zv}=({a}~{b})~({a}~{b})",
         f"local {zv}=({a}+{b})-({a}+{b})",
         f"local {zv}=({a}|{b})&0",
-    ])
-    lines = [body]
+    ])]
     if random.random() < 0.5:
         v2 = _zv(c)
-        lines.append(f"if {_generic_always_true()} then local {v2}={zv} {zv}={v2} end")
+        lines.append(f"if {_generic_always_false()} then local {v2}={zv}~{b} {zv}={v2} end")
     return lines
+
+
+def _junk_flow(c: list[int], rich: bool = True) -> list[str]:
+    """가변 길이(1~4 세그먼트)의 그럴듯한 가짜 흐름 (dead state 본문 전용).
+
+    rich=False면 VM 재난독화용 보수적 흐름(_junk_simple)만 낸다.
+    """
+    if not rich:
+        return _junk_simple(c)
+    out: list[str] = []
+    for _ in range(random.randint(1, 4)):
+        out += random.choice(_JUNK_SEGS)(c)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -367,17 +515,25 @@ def _build_var_tables(names: list[str]) -> tuple[list[str], dict[str, str]]:
     return table_decls, name_to_ref
 
 
-def _build_generic_cff(real_chunks: list[list[str]], c: list[int], extra_hoist_names: list[str] | None = None,
-                        chunk_ends_with_return: list[bool] | None = None) -> str:
-    """real_chunks를 generic dead-state와 함께 state machine으로 분산.
+def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
+                       extra_hoist_names: list[str] | None = None,
+                       rich_junk: bool = True) -> str:
+    """블록 전이 그래프를 generic dead-state와 함께 state machine으로 분산.
+
+    blocks: `_compile_stmts_to_blocks`가 만든 블록 리스트. 각 블록은 dict:
+      {"id", "lines", "kind"} + kind별 전이 정보
+        - kind=="goto"   : "succ"(다음 블록 id, 0=종료)
+        - kind=="branch" : "cond"(조건식 텍스트), "t"(참 시 id), "e"(거짓 시 id)
+        - kind=="return" : 전이 없음 (lines의 return이 함수를 빠져나감)
+    entry_id: 실행이 시작될 블록 id.
+
+    branch 블록은 원본 `if cond then ... else ... end`을 상태 머신으로 흡수한
+    것으로, state 갱신을 `if cond then sv=then else sv=else end` 형태로 emit해
+    조건 분기 자체를 평탄화한다.
 
     extra_hoist_names: `local function NAME(...)`에서 미리 추출한 이름들.
     `local NAME` 형태로 while 루프 앞에 선언해, 어느 분기에서 `NAME=function...`
     형태로 할당해도 다른 분기에서 NAME을 참조할 수 있게 한다.
-
-    chunk_ends_with_return: real_chunks와 같은 길이의 리스트로, 각 chunk의
-    마지막 statement가 Return인지를 AST로부터 미리 판별한 값. None이면
-    전부 False로 취급한다.
 
     hoist되는 local 변수 + CFF 자체가 생성하는 내부 변수(zv)의 총 개수가
     `_TABLE_THRESHOLD`를 넘으면, 개별 `local` 슬롯 대신 테이블 필드
@@ -385,18 +541,15 @@ def _build_generic_cff(real_chunks: list[list[str]], c: list[int], extra_hoist_n
     한도를 회피한다. 이 변환은 거대한 VM dispatcher처럼 hoist 대상이
     매우 많은 경우에만 활성화되며, 일반적인 작은 함수는 영향이 없다.
     """
-    if chunk_ends_with_return is None:
-        chunk_ends_with_return = [False] * len(real_chunks)
-    all_real_lines = [ln for chunk in real_chunks for ln in chunk]
-
-    # 1) 각 chunk에 등장하는 local 선언 이름들을 모은다 (텍스트는 아직 그대로 둠).
-    #    `then local x=...`처럼 줄 중간에 등장하는 선언도 잡기 위해
-    #    chunk를 한 텍스트로 합쳐 위치 무관하게 스캔한다.
+    # 1) 각 블록 body에 등장하는 local 선언 이름들을 모은다 (텍스트는 아직 그대로).
+    #    `then local x=...`처럼 줄 중간에 등장하는 선언도 잡기 위해 블록 lines를
+    #    한 텍스트로 합쳐 위치 무관하게 스캔한다. branch 블록의 조건식은 새 local을
+    #    만들지 않으므로(기존 hoist/param 참조) lines만 스캔하면 충분하다.
     #    `function(...)` 파라미터 목록 내부의 이름은 _scan_local_names가
     #    보호 구간으로 처리해 자동으로 제외된다(파라미터는 local 선언이 아님).
     real_names: set[str] = set()
-    for chunk in real_chunks:
-        real_names |= _scan_local_names("\n".join(chunk))
+    for blk in blocks:
+        real_names |= _scan_local_names("\n".join(blk["lines"]))
 
     hoist_names = list(real_names)
     for name in (extra_hoist_names or []):
@@ -404,65 +557,195 @@ def _build_generic_cff(real_chunks: list[list[str]], c: list[int], extra_hoist_n
             hoist_names.append(name)
             real_names.add(name)
 
-    used: set[int] = {0}
-    real_states = [(_new_state(used), chunk, ends_ret)
-                    for chunk, ends_ret in zip(real_chunks, chunk_ends_with_return)]
-    real_order  = [st for st, _, _ in real_states]
-    real_next   = {st: (real_order[i + 1] if i + 1 < len(real_order) else 0)
-                   for i, st in enumerate(real_order)}
-
     zv_start = c[0]
 
-    n_dead = random.randint(len(real_states), len(real_states) * 2 + 1)
-    dead_states = []
+    # ------------------------------------------------------------------
+    # 다차원 상태 + 계층형(hierarchical) 디스패치.
+    #
+    # 평면 `while sv~=0 do if sv==S1 ... elseif ... end end` 대신,
+    # 상태를 2차원 쌍 (sv1, sv2)로 쪼갠다.
+    #   - sv1: "그룹" 좌표 (바깥 elseif 체인)
+    #   - sv2: 그룹 내부 "리프" 좌표 (안쪽 elseif 체인)
+    # 종료쌍은 (0,0)으로 예약한다. 각 real state에는 전역 유일한 정수쌍을
+    # 배정하므로 `sv1==g and sv2==b` 가 상태를 유일하게 식별한다.
+    #
+    # 정확성 규칙(반드시 유지):
+    #   * 디스패치는 그룹/리프 모두 elseif 체인 → 한 iteration에 정확히 하나만
+    #     실행 (별도 `if`로 풀면 leaf가 sv2를 같은 그룹의 다른 리프로 바꾸는
+    #     순간 cascade 실행되는 버그가 생김).
+    #   * 중첩(들여쓰기 지옥)은 (a) 그룹 레벨, (b) 항상-참 opaque 래퍼 층,
+    #     (c) leaf body 안쪽 항상-참 중첩 에만 둔다 — 셋 다 상호배타이거나
+    #     항상 참이라 안전.
+    #   * state 갱신(`sv1=..; sv2=..`)은 항상-참 래퍼의 *가장 안쪽*에 두어
+    #     무조건 정확히 한 번 실행되게 한다.
+    #   * 가짜(dead) 형제 분기는 항상-거짓 opaque predicate로 가드하여
+    #     절대 실행되지 않는다.
+    # ------------------------------------------------------------------
+    used: set[int] = {0}
+    sv1 = _zv(c)
+    sv2 = _zv(c)
+
+    n_groups = random.randint(2, 4)
+    group_ids = [_new_state(used) for _ in range(n_groups)]
+
+    def _alloc_leaf() -> int:
+        return _new_state(used)  # 전역 유일 → 쌍 (g,b)도 유일
+
+    # 1) 각 블록에 (group, leaf) 상태쌍 배정. 0=종료쌍 (0,0).
+    pair: dict[int, tuple[int, int]] = {0: (0, 0)}
+    for blk in blocks:
+        blk["g"] = random.choice(group_ids)
+        blk["b"] = _alloc_leaf()
+        pair[blk["id"]] = (blk["g"], blk["b"])
+    entry_g, entry_b = pair[entry_id]
+
+    # 2) 블록 종류별 state 갱신 코드 생성 → real_meta (updates: 방출할 라인 리스트).
+    #    - return: 갱신 없음 (lines의 return이 함수를 종료)
+    #    - goto  : `sv1=<ng> sv2=<nb>` (상수는 _obf_int로 위장 가능)
+    #    - branch: `if(cond) then ... else ... end`을 없애고 and/or 산술 대입으로
+    #      흡수한다. 원래 조건 흐름이 if 구조로 드러나지 않게 한다:
+    #          local is_match=(cond)
+    #          sv1 = is_match and <tg> or <eg>
+    #          sv2 = is_match and <tb> or <eb>
+    #      Lua에서 상태값은 항상 정수(>=100) 또는 0이고 0도 truthy이므로
+    #      `cond and A or B` 단축평가가 모든 경우 정확하다(then=cond truthy).
+    #      조건은 로컬에 한 번만 담아 side-effect도 정확히 1회 평가된다.
+    #      `(cond\n)`로 감싸 조건 끝의 줄-주석/여러 줄도 안전하게 처리한다.
+    real_meta: list[dict] = []
+    for blk in blocks:
+        kind = blk["kind"]
+        if kind == "return":
+            updates = []
+        elif kind == "goto":
+            ng, nb = pair[blk["succ"]]
+            updates = [f"{sv1}={_obf_int(ng)} {sv2}={_obf_int(nb)}"]
+        else:  # branch → and/or 흡수
+            tg, tb = pair[blk["t"]]
+            eg, eb = pair[blk["e"]]
+            ism = _zv(c)
+            updates = [
+                f"local {ism}=({blk['cond']}\n)",
+                f"{sv1}={ism} and {_obf_int(tg)} or {_obf_int(eg)}",
+                f"{sv2}={ism} and {_obf_int(tb)} or {_obf_int(eb)}",
+            ]
+        real_meta.append({"g": blk["g"], "b": blk["b"], "lines": blk["lines"], "updates": updates})
+
+    # 3) dead state: 그럴듯한 가변 길이 가짜 흐름 + 다양한 전이로 위장.
+    #    도달 불가하므로 전이 대상은 무관하지만, real처럼 다른 상태로 점프하거나
+    #    임의 상수로 가게 해 정적 분석 시 "종료(0,0) 고정"으로 보이지 않게 한다.
+    n_dead = random.randint(len(real_meta), len(real_meta) * 2 + 1)
+    dead_meta: list[dict] = []
     for _ in range(n_dead):
-        lines = _generic_dead_lines(c) if random.random() < 0.5 else _generic_live_lines(c)
-        dead_states.append((_new_state(used), lines))
+        dead_meta.append({
+            "g": random.choice(group_ids), "b": _alloc_leaf(),
+            "lines": _junk_flow(c, rich_junk), "updates": None,   # 전이는 all_pairs 확정 후 채움
+        })
 
-    all_entries = [(st, ls, True, ends_ret) for st, ls, ends_ret in real_states] + \
-                  [(st, ls, False, False) for st, ls in dead_states]
-    random.shuffle(all_entries)
+    # 모든 상태쌍을 모아 dead 전이 대상 후보로 쓴다(자기 자신 포함 무해 - 도달 불가).
+    all_pairs = [(m["g"], m["b"]) for m in real_meta + dead_meta]
 
-    sv = _zv(c)
+    def _dead_updates() -> list[str]:
+        r = random.random()
+        if r < 0.5:
+            g2, b2 = random.choice(all_pairs)       # 실제 존재하는 상태로 점프하는 척
+        elif r < 0.8:
+            g2, b2 = random.randint(100, 9999), random.randint(100, 9999)
+        else:
+            g2, b2 = 0, 0                            # 가끔은 종료
+        return [f"{sv1}={_obf_int(g2)} {sv2}={_obf_int(b2)}"]
+
+    for m in dead_meta:
+        m["updates"] = _dead_updates()
+
+    groups: dict[int, list[dict]] = {g: [] for g in group_ids}
+    for m in real_meta + dead_meta:
+        groups[m["g"]].append(m)
+    for g in groups:
+        random.shuffle(groups[g])
+    ordered_groups = [g for g in group_ids if groups[g]]
+    random.shuffle(ordered_groups)
+
+    # 3) 디스패치 코드 방출 (relative 들여쓰기; 최종 join이 base indent 추가).
+    _PRED_DEPTH = 2          # opaque predicate 논리 결합 깊이
+    lines: list[str] = []
+
+    def emit(level: int, s: str) -> None:
+        lines.append("  " * level + s)
+
+    emit(0, f"local {sv1}={entry_g}")
+    emit(0, f"local {sv2}={entry_b}")
+    emit(0, f"while {sv1}~=0 or {sv2}~=0 do")
+
+    for gi, g in enumerate(ordered_groups):
+        gkw = "if" if gi == 0 else "elseif"
+        emit(1, f"{gkw} {sv1}=={g} then")
+
+        # (b) 그룹 내부 디스패치를 항상-참 래퍼 층으로 감싼다.
+        n_wrap = random.randint(1, 2)
+        for w in range(n_wrap):
+            emit(2 + w, f"if {_nested_always_true(_PRED_DEPTH)} then")
+        base = 2 + n_wrap
+
+        leaves = groups[g]
+        for li, m in enumerate(leaves):
+            lkw = "if" if li == 0 else "elseif"
+            emit(base, f"{lkw} {sv2}=={m['b']} then")
+
+            # (c) leaf body 안쪽 항상-참 중첩 (들여쓰기 지옥).
+            n_inner = random.randint(0, 2)
+            for x in range(n_inner):
+                emit(base + 1 + x, f"if {_nested_always_true(_PRED_DEPTH)} then")
+            bb = base + 1 + n_inner
+            for ln in m["lines"]:
+                emit(bb, ln)
+            # state 갱신은 가장 안쪽에 → 항상-참 층을 통과해 무조건 실행.
+            # (goto=1줄, branch=and/or 3줄, return=빈 리스트 → 갱신 없음)
+            for u in m["updates"]:
+                emit(bb, u)
+            for x in reversed(range(n_inner)):
+                emit(base + 1 + x, "end")
+        emit(base, "end")  # 리프 elseif 체인 닫기
+
+        for w in reversed(range(n_wrap)):
+            emit(2 + w, "end")  # 래퍼 층 닫기
+
+        # 그룹 내부 가짜 dead 형제 (항상-거짓 가드 → 실행 안 됨).
+        emit(2, f"if {_nested_always_false(_PRED_DEPTH)} then")
+        for jl in _junk_flow(c, rich_junk):
+            emit(3, jl)
+        emit(2, "end")
+
+    emit(1, "end")  # 그룹 elseif 체인 닫기
+
+    # top-level 가짜 dead (항상-거짓).
+    emit(1, f"if {_nested_always_false(_PRED_DEPTH)} then")
+    for jl in _junk_flow(c, rich_junk):
+        emit(2, jl)
+    emit(1, "end")
+
+    emit(0, "end")  # while 닫기
+
     zv_names = [f"_z{i}" for i in range(zv_start, c[0])]
 
-    # 2) hoist 대상(real_names ∪ extra_hoist_names) + CFF가 생성한 zv(sv 포함)
-    #    총 개수로 테이블화 여부를 결정한다.
+    # 4) hoist 대상(real_names ∪ extra_hoist_names) + CFF가 생성한 zv
+    #    (sv1/sv2/junk 전부) 총 개수로 테이블화 여부를 결정한다.
     pooled_names = set(hoist_names) | set(zv_names)
     use_tables = len(pooled_names) > _TABLE_THRESHOLD
 
-    parts = []
+    prologue: list[str] = []
     if use_tables:
         table_decls, name_to_ref = _build_var_tables(list(pooled_names))
-        for d in table_decls:
-            parts.append(d)
+        prologue.extend(table_decls)
     else:
         # 비-테이블 모드: hoist 선언(`local NAME`)은 strip 단계에서 declare-only로
         # 같이 제거되므로 여기서 붙이지 않고, strip 이후에 본문 앞에 붙인다(아래).
         name_to_ref = {}
 
-    # 3) sv 초기화: 비-테이블 모드에서는 `local {sv}=...`을 직접 적되,
-    #    테이블 모드에서는 sv도 pooled_names에 포함되어 있으므로 `local`
-    #    없이 적어두면 아래 strip+substitute 단계에서 `_Tn.sv=...`로
-    #    일괄 변환된다.
-    if use_tables:
-        parts.append(f"local {sv}={real_order[0]}")
-    else:
-        parts.append(f"local {sv}={real_order[0]}")
-    parts.append(f"while {sv}~=0 do")
-
-    for idx, (st, lines, is_real, ends_ret) in enumerate(all_entries):
-        kw = "if" if idx == 0 else "elseif"
-        parts.append(f"  {kw} {sv}=={st} then")
-        for ln in lines:
-            parts.append(f"    {ln}")
-        if not (is_real and ends_ret):
-            parts.append(f"    {sv}={real_next[st] if is_real else 0}")
-
-    parts.append("  end")
-    parts.append("end")
-
-    body = ("\n" + _IND).join(parts)
+    # sv1/sv2 초기화 `local {sv}=...`는 위 emit에 이미 포함돼 있다. 테이블
+    # 모드에서는 sv1/sv2도 pooled_names에 속하므로 아래 strip+substitute가
+    # `_Tn.sv1=...`로 일괄 변환하고, 비-테이블 모드에서는 hoist 대상이 아니라
+    # state-local(`local sv1`)로 그대로 남는다.
+    body = ("\n" + _IND).join(prologue + lines)
 
     if use_tables:
         # pooled_names에 해당하는 모든 `local` 선언(real chunk 내부의
@@ -556,35 +839,106 @@ def _prelift_local_function_stmt(ctx, stmt, text: str) -> tuple[str | None, str]
     return name, f"{name}=function{text[paren_pos:]}"
 
 
-def _build_stmt_chunks(stmt_lines: list[list[str]], stmt_is_return: list[bool]) -> tuple[list[list[str]], list[bool]]:
-    """statement 단위 line-list들을 chunk로 묶는다.
+def _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names: list[str]) -> tuple[list[dict], int]:
+    """문장열을 상태 머신 블록 전이 그래프로 컴파일한다.
 
-    각 statement는 이미 완결된 단위이므로 depth-tracking이 필요 없다.
-    `_split_safe_chunks`와 동일한 0.3 확률의 인접 statement 병합만 적용한다.
+    `if_statement`을 만나면 조건을 평가하는 branch 블록 + then/else 본문을 각각
+    sub-블록열로 재귀 컴파일해, `if/else` 구조 자체를 상태 머신에 흡수한다
+    (합류점 = if 다음 문장의 블록). `elseif`는 else 자리의 if로 재귀한다.
 
-    반환: (chunks, chunk_ends_with_return)
-      chunk_ends_with_return[i] == chunks[i]에 합쳐진 마지막 statement가
-      Return statement인지 여부.
+    while/for/repeat/do 등 다른 복합문은 통째로 불투명 goto 블록으로 둔다:
+    루프 내부의 `break`가 CFF 디스패치 while로 새면 안 되고, 루프는 한 chunk로
+    유지하는 편이 안전하다. (직선 흐름의 if는 그 안에 break가 문법상 올 수 없어
+    흡수해도 안전하고, goto/label 있는 함수는 호출부에서 이미 통째로 skip한다.)
+
+    각 문장(모든 중첩 레벨)에 `local function NAME` prelift를 적용해, 여러
+    상태로 흩어져도 NAME이 함수 스코프 hoist 대상으로 남게 한다.
+
+    반환: (blocks, entry_id). 각 블록 dict는 `_build_generic_cff` 참고.
+    entry_id는 실행 시작 블록 id (0=종료).
     """
-    chunks: list[list[str]] = []
-    ends_with_return: list[bool] = []
-    for lines, is_ret in zip(stmt_lines, stmt_is_return):
-        if chunks and random.random() < 0.3:
-            chunks[-1].extend(lines)
-            ends_with_return[-1] = is_ret
+    blocks: list[dict] = []
+    counter = [0]
+
+    def _new_id() -> int:
+        counter[0] += 1
+        return counter[0]
+
+    def _stmts_of(block_node) -> list:
+        # 본문이 비어 있는 `if c then end`/`elseif c then end`/`else end`는
+        # tree-sitter가 consequence/body 필드를 주지 않아 None이 온다 → 빈 블록.
+        return _block_stmts(ctx, block_node) if block_node is not None else []
+
+    def _stmt_lines(stmt) -> list[str]:
+        text = ctx.text(stmt).strip()
+        name, text = _prelift_local_function_stmt(ctx, stmt, text)
+        if name is not None:
+            extra_hoist_names.append(name)
+        return [ln.strip() for ln in text.splitlines() if ln.strip()]
+
+    def _branch(cond: str, then_entry: int, else_entry: int) -> int:
+        # 조건식은 원문 그대로(줄바꿈 포함) 유지한다 — 조건 끝의 줄-주석이나
+        # 여러 줄 조건은 update emit 시 `(cond\n)` 로 감싸 안전하게 처리한다.
+        bid = _new_id()
+        blocks.append({"id": bid, "lines": [], "kind": "branch",
+                       "cond": cond, "t": then_entry, "e": else_entry})
+        return bid
+
+    def _compile_if(node, after_id: int) -> int:
+        # tree-sitter-lua는 elseif를 중첩이 아니라 if_statement의 형제
+        # `alternative` 필드로 평탄하게 나열한다: [elseif_statement...] + [else_statement?].
+        # 따라서 alternative 자식을 순서대로 모두 수집해 직접 체인을 만든다.
+        alts = [ch for i, ch in enumerate(node.children)
+                if node.field_name_for_child(i) == "alternative"]
+        elseifs = [a for a in alts if a.type == "elseif_statement"]
+        else_node = next((a for a in alts if a.type == "else_statement"), None)
+
+        # 체인의 최종 else 진입점 (else 없으면 if 다음 문장으로 합류).
+        if else_node is not None:
+            chain = _compile_seq(_stmts_of(else_node.child_by_field_name("body")), after_id)
         else:
-            chunks.append(list(lines))
-            ends_with_return.append(is_ret)
-    return chunks, ends_with_return
+            chain = after_id
+
+        # elseif들을 뒤에서 앞으로 감싸 else 체인을 구성.
+        for ei in reversed(elseifs):
+            ei_cond = ctx.text(ei.child_by_field_name("condition")).strip()
+            ei_then = _compile_seq(_stmts_of(ei.child_by_field_name("consequence")), after_id)
+            chain = _branch(ei_cond, ei_then, chain)
+
+        # 최상위 if.
+        cond = ctx.text(node.child_by_field_name("condition")).strip()
+        then_entry = _compile_seq(_stmts_of(node.child_by_field_name("consequence")), after_id)
+        return _branch(cond, then_entry, chain)
+
+    def _compile_seq(stmt_list, after_id: int) -> int:
+        # 뒤에서 앞으로 컴파일 → 각 블록의 후속 id를 바로 알 수 있다.
+        next_id = after_id
+        for stmt in reversed(stmt_list):
+            if stmt.type == "if_statement":
+                next_id = _compile_if(stmt, next_id)
+            else:
+                bid = _new_id()
+                blk = {"id": bid, "lines": _stmt_lines(stmt)}
+                if stmt.type == "return_statement":
+                    blk["kind"] = "return"
+                else:
+                    blk["kind"] = "goto"
+                    blk["succ"] = next_id
+                blocks.append(blk)
+                next_id = bid
+        return next_id
+
+    entry = _compile_seq(stmts, 0)
+    return blocks, entry
 
 
-def _transform_body(ctx, block, params: list[str]) -> str | None:
+def _transform_body(ctx, block, params: list[str], rich_junk: bool = True) -> str | None:
     """함수 본문(block 노드)을 변환. 변환 불가능하면 None.
 
-    tree-sitter block의 직계 named 문장 노드들의 char span으로 텍스트를
-    직접 잘라낸다. 각 노드 span이 정확하므로 luaparser의 Call/Invoke
-    start_char 보정 같은 우회가 필요 없다. nested function의 본문은 해당
-    statement 텍스트에 그대로 포함되어 한 chunk 단위로만 다뤄진다.
+    top-level 문장열을 블록 전이 그래프로 컴파일(`_compile_stmts_to_blocks`)한 뒤
+    state machine으로 평탄화한다. `if/else`는 조건 branch 블록으로 흡수되어
+    분기 구조 자체가 평탄화되고, 루프/nested function 본문은 불투명 블록으로
+    한 단위로만 다뤄진다.
     """
     stmts = _block_stmts(ctx, block)
     if not stmts:
@@ -594,17 +948,8 @@ def _transform_body(ctx, block, params: list[str]) -> str | None:
         if _subtree_has_goto_or_label(stmt):
             return None
 
-    stmt_lines: list[list[str]] = []
-    stmt_is_return: list[bool] = []
     extra_hoist_names: list[str] = []
-
-    for stmt in stmts:
-        text = ctx.text(stmt).strip()
-        name, text = _prelift_local_function_stmt(ctx, stmt, text)
-        if name is not None:
-            extra_hoist_names.append(name)
-        stmt_lines.append([ln.strip() for ln in text.splitlines() if ln.strip()])
-        stmt_is_return.append(stmt.type == "return_statement")
+    blocks, entry = _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names)
 
     c: list[int] = [0]
 
@@ -612,14 +957,11 @@ def _transform_body(ctx, block, params: list[str]) -> str | None:
     if params:
         prefix_lines.append(f"local {','.join(params)}=...")
 
-    chunks, chunk_ends_with_return = _build_stmt_chunks(stmt_lines, stmt_is_return)
-
-    if len(chunks) <= 1:
-        # 너무 단순한 본문: CFF는 의미 없으니 vararg 언팩만 적용
-        # (단, prelift로 rewrite된 statement가 있으면 되돌릴 필요 없음 -
-        #  NAME=function(...)도 NAME이 이미 local로 선언되어 있었다면
-        #  유효하지만, 여기선 hoist가 없으므로 local로 복원해야 함)
-        lines = [ln for chunk in chunks for ln in chunk]
+    # 너무 단순한 본문(단일 simple/return 문, 분기 없음)은 CFF가 무의미하니
+    # vararg 언팩만 적용한다. branch 블록이 하나라도 있으면(조건 흡수 대상)
+    # side-effect 있는 조건이 사라지지 않도록 CFF 경로로 보낸다.
+    if len(blocks) == 1 and blocks[0]["kind"] != "branch":
+        lines = blocks[0]["lines"]
         if extra_hoist_names:
             restored = []
             for ln in lines:
@@ -629,12 +971,10 @@ def _transform_body(ctx, block, params: list[str]) -> str | None:
                 else:
                     restored.append(ln)
             lines = restored
-        new_body = "\n".join(prefix_lines + lines)
-        return new_body
+        return "\n".join(prefix_lines + lines)
 
-    cff = _build_generic_cff(chunks, c, extra_hoist_names, chunk_ends_with_return)
-    new_body = "\n".join(prefix_lines + [cff])
-    return new_body
+    cff = _build_generic_cff(blocks, entry, c, extra_hoist_names, rich_junk=rich_junk)
+    return "\n".join(prefix_lines + [cff])
 
 
 # VM 디스패처(exec) 식별용 sentinel. exec의 dispatch 루프
@@ -736,7 +1076,10 @@ class FunctionObfuscationPass(BasePass):
             if any(cs <= bstart and bend <= ce for cs, ce in claimed_ranges):
                 continue
 
-            new_body = _transform_body(ctx, block, params)
+            # VM 재난독화(skip_vm_dispatcher)에서는 rich junk을 끈다: 함수 정의/
+            # 루프/다양한 연산자가 든 가짜 흐름이 VM 템플릿을 이후 패스와 함께
+            # 재난독화할 때(localize_globals 등) 깨질 수 있어, 보수적 흐름만 쓴다.
+            new_body = _transform_body(ctx, block, params, rich_junk=not self.skip_vm_dispatcher)
             if new_body is None:
                 continue
 

@@ -7,7 +7,7 @@ temp*
 // test
 test/output
 *_obfuscated.lua
-test_out.lua
+test_out*.lua
 *envproxy.lua
 *sethook.lua
 

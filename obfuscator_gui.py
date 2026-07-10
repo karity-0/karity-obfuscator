@@ -19,6 +19,7 @@ CONFIG_PATH = ROOT_DIR / "obf_gui_config.json"
 MAIN_PASS_ORDER = [
     "remove_comment",
     "anti_debug",
+    "anti_decompile",
     "string_encode",
     "string_obf",
     "boolean_obf",
