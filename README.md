@@ -50,18 +50,26 @@ cp config.example.json config.json
 ```json
 {
     "passes": [
-        "string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf",
-        "vm", "anti_debug"
+        "anti_debug", "anti_decompile",
+        "function_obf", "boolean_obf", "string_obf", "number_obf", "rename_obf", "localize_globals", "string_obf", "minify"
     ],
     "vm_output_passes": [
-        "string_obf", "boolean_obf", "number_obf",
-        "rename_obf", "minify"
+        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
+        "rename_obf", "localize_globals", "string_obf",
+         "minify"
+    ],
+    "packer_output_passes": [
+        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
+        "rename_obf", "localize_globals", "string_obf",
+        "minify"
     ],
     "vm_options": {
+        "vm": "mixed",
+        "vm_count": 3,
         "fake_handlers": true,
         "mutate_handlers": true,
         "junk_instructions": true,
-        "junk_rate": 0.15
+        "junk_rate": 0.30
     }
 }
 ```
