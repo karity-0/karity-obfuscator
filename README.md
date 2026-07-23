@@ -4,6 +4,7 @@ a lua 5.3 obfuscator with a custom vm protection layer.
 ## features
 
 **source-level passes**
+- global localization
 - string encoding / obfuscation
 - number obfuscation
 - boolean obfuscation
@@ -14,19 +15,27 @@ a lua 5.3 obfuscator with a custom vm protection layer.
 - anti debug
 
 **vm protection**
-- lua 5.3 VM with custom 64bit virtual instruction format
-- opcode aliasing
-- opcode shuffling
+
+*opcode & architecture*
+- lua 5.3 VM with custom 64-bit virtual instruction format
+- opcode aliasing / shuffling / rolling
 - opcode fusion & splitting (superopcodes)
 - unused opcode pruning
-- junk opcode
-- opcode mutation (CFF + opaque predicates)
-- junk instruction
-- bytecode encryption + base36 encoding
-- anti tamper
-- fake constant pool
-- rolling opcode
+- handler mutation (control flow flattening + opaque predicates + junk)
+
+*encryption*
+- bytecode encryption + base36 encoding (at rest)
+- in-memory bytecode encryption (runtime)
+- constant pool encryption (in-memory)
+- fake constant pool (decoys)
+
+*integrity*
+- anti-tamper (self-crc keyed) — also anti-dump via in-memory-only decryption
 - re-obfuscate vm output with passes
+
+**packing**
+- load-based packer (raw deflate + base64)
+- re-obfuscate packer stub with passes
 --------
 
 ## requirements
@@ -41,18 +50,26 @@ cp config.example.json config.json
 ```json
 {
     "passes": [
-        "string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf",
-        "vm", "anti_debug"
+        "anti_debug", "anti_decompile",
+        "function_obf", "boolean_obf", "string_obf", "number_obf", "rename_obf", "localize_globals", "string_obf", "minify"
     ],
     "vm_output_passes": [
-        "string_obf", "boolean_obf", "number_obf",
-        "rename_obf", "minify"
+        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
+        "rename_obf", "localize_globals", "string_obf",
+         "minify"
+    ],
+    "packer_output_passes": [
+        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
+        "rename_obf", "localize_globals", "string_obf",
+        "minify"
     ],
     "vm_options": {
+        "vm": "mixed",
+        "vm_count": 3,
         "fake_handlers": true,
         "mutate_handlers": true,
         "junk_instructions": true,
-        "junk_rate": 0.15
+        "junk_rate": 0.30
     }
 }
 ```

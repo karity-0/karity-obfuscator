@@ -26,6 +26,7 @@ from .passes import (
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,
+    AntiDecompilePass,
     PackerPass,
 )
 
@@ -90,6 +91,11 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": AntiDebugPass,
         "label": "Anti-Debug Wrapper",
         "group": "pre",
+    },
+    "anti_decompile": {
+        "cls": AntiDecompilePass,
+        "label": "Anti-Decompile (unluac trap)",
+        "group": "base",
     },
     "pack": {
         "cls": PackerPass,

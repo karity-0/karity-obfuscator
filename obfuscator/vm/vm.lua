@@ -178,6 +178,7 @@ end
 local function read_proto(r, acc_state)
     local p={}
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
+    p.vm_id=r.u8()
     local n=r.u32(); p.code={}
     for i=1,n do
         local raw64=r.u64()
@@ -228,8 +229,9 @@ local function decode(ins)
     return vop,A,B,C,Bx,sBx
 end
 
-local exec
+local exec, _EX
 
+--<<EXEC>>
 exec = function(proto, upvals, args, va_in)
     local regs   = {}
     local boxes  = {}
@@ -288,7 +290,7 @@ exec = function(proto, upvals, args, va_in)
         -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         return function(...)
-            local w=exec(sub, new_uv, {...})
+            local w=_EX[sub.vm_id+1](sub, new_uv, {...})
             return table.unpack(w.r, 1, w.n)
         end
     end
@@ -414,6 +416,8 @@ exec = function(proto, upvals, args, va_in)
     end
     return {r={},n=0}
 end
+--<<ENDEXEC>>
+_EX={exec}
 
 local function run(blob,rand_tail,self_func)
     local dump=string.dump(self_func,true)
@@ -458,7 +462,7 @@ local function run(blob,rand_tail,self_func)
     end
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
-    exec(proto,{env_box},{})
+    _EX[proto.vm_id+1](proto,{env_box},{})
 end
 
 if arg and arg[0] and arg[0]:match("vm") then
