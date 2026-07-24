@@ -1,7 +1,7 @@
 {
     "passes": [
-        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
-        "anti_debug", "vm", "pack"
+        "anti_debug", "anti_decompile",
+        "function_obf", "boolean_obf", "string_obf", "number_obf", "rename_obf", "localize_globals", "string_obf", "minify", "vm"
     ],
     "vm_output_passes": [
         "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
@@ -9,13 +9,13 @@
          "minify"
     ],
     "packer_output_passes": [
-        "function_obf", "table_obf", "number_obf",
-        "rename_obf", "localize_globals",
+        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
+        "rename_obf", "localize_globals", "string_obf",
         "minify"
     ],
     "vm_options": {
-        "vm": "karity",
-        "vm_count": 1,
+        "vm": "mixed",
+        "vm_count": 3,
         "fake_handlers": true,
         "mutate_handlers": true,
         "junk_instructions": true,

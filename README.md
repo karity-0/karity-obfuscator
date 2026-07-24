@@ -1,78 +1,42 @@
 # karity obfuscator
 a lua 5.3 obfuscator with a custom vm protection layer.
+![beforeAfter](images/1.png)
 
-## features
-
-**source-level passes**
-- global localization
-- string encoding / obfuscation
-- number obfuscation
-- boolean obfuscation
-- table obfuscation
-- function obfuscation (CFF + opaque predicates)
-- variable renaming
-- minification
-- anti debug
-
-**vm protection**
-
-*opcode & architecture*
-- lua 5.3 VM with custom 64-bit virtual instruction format
-- opcode aliasing / shuffling / rolling
-- opcode fusion & splitting (superopcodes)
-- unused opcode pruning
-- handler mutation (control flow flattening + opaque predicates + junk)
-
-*encryption*
-- bytecode encryption + base36 encoding (at rest)
-- in-memory bytecode encryption (runtime)
-- constant pool encryption (in-memory)
-- fake constant pool (decoys)
-
-*integrity*
-- anti-tamper (self-crc keyed) — also anti-dump via in-memory-only decryption
-- re-obfuscate vm output with passes
-
-**packing**
-- load-based packer (raw deflate + base64)
-- re-obfuscate packer stub with passes
---------
-
-## requirements
+## quick start
 ```bash
 pip install -r requirements.txt
+cp config.example.json config.json
+python main.py hello.lua
 ```
 
-## configuration
-```bash
-cp config.example.json config.json
-```
-```json
-{
-    "passes": [
-        "anti_debug", "anti_decompile",
-        "function_obf", "boolean_obf", "string_obf", "number_obf", "rename_obf", "localize_globals", "string_obf", "minify"
-    ],
-    "vm_output_passes": [
-        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
-        "rename_obf", "localize_globals", "string_obf",
-         "minify"
-    ],
-    "packer_output_passes": [
-        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
-        "rename_obf", "localize_globals", "string_obf",
-        "minify"
-    ],
-    "vm_options": {
-        "vm": "mixed",
-        "vm_count": 3,
-        "fake_handlers": true,
-        "mutate_handlers": true,
-        "junk_instructions": true,
-        "junk_rate": 0.30
-    }
-}
-```
+## features
+**source protection**
+- type-specific obfuscation
+- control flow flattening and opaque predicates
+- identifier obfuscation
+- anti-debug and anti-decompile
+
+**VM protection**
+- custom Lua 5.3 virtual machine
+- opcode virtualization and randomization
+- handler mutation
+- multi-VM support
+
+**encryption & integrity**
+- bytecode and constant encryption
+- anti-tamper and anti-dump
+- runtime protection
+- code packer
+
+For a complete list of passes and configuration options, see
+[`docs/configuration.md`](docs/configuration.md).
+
+--------
+
+## preview
+![after1](images/2.png)
+![after2](images/3.png)
+![gui](images/4.png)
 
 ## usage
 ```bash
