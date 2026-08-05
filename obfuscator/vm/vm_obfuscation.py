@@ -327,12 +327,14 @@ def fused_handler_body(op1: int, op2: int) -> str:
     instr2의 A/B/C를 디코드한 뒤 pc를 1 증가시켜 operand 슬롯을 건너뛴다.
     (LOADKX/EXTRAARG 처리와 동일한 2-슬롯 패턴.)
     """
+    # 시프트는 _SH_* 토큰으로 두고 apply_instr_layout이 per-run 리터럴로 인라인한다
+    # (decode/read_proto와 동일 레이아웃 공유). 반드시 레이아웃 인라인 전에 emit됨.
     lines = [
         "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
-        "local _fa=(_ei>>32)&0xFF",
-        "local _fb=(_ei>>23)&0x1FF",
-        "local _fc=(_ei>>14)&0x1FF",
-        "local _fbx=(_ei>>14)&0x3FFFF",
+        "local _fa=(_ei>>_SH_A)&0xFF",
+        "local _fb=(_ei>>_SH_B)&0x1FF",
+        "local _fc=(_ei>>_SH_C)&0x1FF",
+        "local _fbx=(_ei>>_SH_C)&0x3FFFF",
         _op_body(op1, "A", "B", "C", "Bx"),
         _op_body(op2, "_fa", "_fb", "_fc", "_fbx"),
     ]
@@ -460,22 +462,48 @@ def prune_and_inject_handlers(
 
 
 # ---------------------------------------------------------------------------
-# 8. ruby 디스패치 변환 (선택형 vm 모드)
+# 8. 디스패치 모양 변환 (선택형 dispatcher_type)
 # ---------------------------------------------------------------------------
-# 기존 4개 transform(vop/prune/split/fuse)이 완성한 if-elseif 체인을 핸들러별
-# function + 꼬리호출(_step) 테이블 디스패치로 변환한다. 모든 transform 이후
-# 최종 렌더링 단계로만 호출되므로 transform/serializer/vm.lua는 무변경이다.
+# 기존 4개 transform(vop/prune/split/fuse)이 완성한 if-elseif 체인을 다른 디스패치
+# 모양으로 바꾼다. 모든 transform 이후 최종 렌더링 단계로만 호출되므로
+# transform/serializer/vm.lua는 무변경이다.
+#   - ifelseif : 원본 if-elseif 체인 그대로 (변환 없음)
+#   - tailcall : 핸들러별 function + 꼬리호출(_step) 테이블 디스패치
+#   - bsearch  : op 값 기준 중첩 이진 탐색(if/else) 트리 (for-loop 안 인라인 유지)
 #
 # fetch 라인(local ins=...decode(ins); pc=pc+1)은 _rename_vm_keys가 이미 치환한
 # code 변수명을 그대로 재사용해야 하므로 템플릿에서 추출해 _step 본문에 넣는다.
-_RUBY_FOR_ANCHOR  = "for i in setmetatable("
-_RUBY_TAIL_RE     = re.compile(r'\s*end\s*return\s*\{r=\{\},n=0\}')
+_TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
+_TAILCALL_TAIL_RE     = re.compile(r'\s*end\s*return\s*\{r=\{\},n=0\}')
+
+DISPATCH_KINDS = ("ifelseif", "tailcall", "bsearch")
+
+
+def _resolve_dispatch(dispatch: str) -> str:
+    """단일 exec에 적용할 구체 디스패치 종류. 'mixed'면 종류 랜덤."""
+    if dispatch == "mixed":
+        return random.choice(DISPATCH_KINDS)
+    return dispatch
+
+
+def _apply_dispatch(vm_code: str, kind: str) -> str:
+    """이미 해석된 구체 디스패치 종류(kind)를 exec 템플릿에 적용."""
+    if kind == "tailcall":
+        return convert_dispatch_to_tailcall(vm_code)
+    if kind == "bsearch":
+        return convert_dispatch_to_bsearch(vm_code)
+    return vm_code  # ifelseif: 원본 체인 유지
+
+
+def apply_dispatch(vm_code: str, dispatch: str) -> str:
+    """단일 exec에 dispatcher_type을 해석·적용(mixed면 랜덤). 단일 VM 경로용."""
+    return _apply_dispatch(vm_code, _resolve_dispatch(dispatch))
 
 
 def _ends_with_top_return(body: str) -> bool:
     """body의 마지막 *최상위(depth 0)* 문장이 return으로 시작하는지.
 
-    True면 ruby 핸들러에 `return _step()`를 붙이면 안 된다(Lua는 최상위 return
+    True면 tailcall 핸들러에 `return _step()`를 붙이면 안 된다(Lua는 최상위 return
     뒤 문장을 금지). op 37(TAILCALL) 같이 본문이 top-level return으로 끝나는
     핸들러만 해당. CFF로 감싼(while...end) 본문은 False라 trampoline 연결됨.
     """
@@ -489,9 +517,9 @@ def _ends_with_top_return(body: str) -> bool:
     return last_top.startswith("return")
 
 
-def convert_dispatch_to_ruby(vm_code: str) -> str:
+def convert_dispatch_to_tailcall(vm_code: str) -> str:
     """exec의 for-loop if-elseif 디스패치를 _H 테이블 + 꼬리호출 형태로 변환."""
-    for_anchor = vm_code.find(_RUBY_FOR_ANCHOR)
+    for_anchor = vm_code.find(_TAILCALL_FOR_ANCHOR)
     if for_anchor == -1:
         return vm_code  # 디스패치 루프가 없으면(이미 변환됨 등) 그대로 둔다
 
@@ -503,9 +531,9 @@ def convert_dispatch_to_ruby(vm_code: str) -> str:
     do_pos    = vm_code.index(" do", for_anchor) + len(" do")
     fetch_src = vm_code[do_pos:chain_start].strip()
 
-    tail_m = _RUBY_TAIL_RE.match(vm_code, chain_end)
+    tail_m = _TAILCALL_TAIL_RE.match(vm_code, chain_end)
     if tail_m is None:
-        raise RuntimeError("ruby convert: dispatch loop tail not found")
+        raise RuntimeError("tailcall convert: dispatch loop tail not found")
     region_end = tail_m.end()
 
     # _step과 핸들러는 vararg 함수로 emit한다. function_obf는 이미 vararg인
@@ -529,6 +557,37 @@ def convert_dispatch_to_ruby(vm_code: str) -> str:
     return vm_code[:for_anchor] + scaffold + vm_code[region_end:]
 
 
+def convert_dispatch_to_bsearch(vm_code: str) -> str:
+    """exec의 if-elseif op 체인을 op 값 기준 중첩 이진 탐색(if/else) 트리로 변환.
+
+    핸들러는 for-loop 안에 인라인으로 유지되므로 exec 로컬(regs/rset/kval/consts/
+    pc/upvals/...)에 그대로 직접 접근한다(tailcall과 달리 클로저·upvalue 불필요).
+    정렬된 vop들을 반씩 갈라 `if op<pivot then ... else ... end`로 내려가고,
+    리프에서 `op==vop`를 확인해 어떤 vop에도 없으면 error로 떨어진다.
+    """
+    chain_start, chain_end = _find_chain(vm_code)
+    chain  = vm_code[chain_start:chain_end]
+    blocks = _parse_handler_blocks(chain)
+    if not blocks:
+        return vm_code
+
+    vops = sorted(blocks.keys())
+    err  = 'error("unknown op "..op)'
+
+    def build(lo: int, hi: int) -> str:
+        if lo == hi:
+            vop = vops[lo]
+            return f"if op=={vop} then{blocks[vop]}else {err} end"
+        mid   = (lo + hi + 1) // 2
+        pivot = vops[mid]
+        left  = build(lo, mid - 1)
+        right = build(mid, hi)
+        return f"if op<{pivot} then {left} else {right} end"
+
+    tree = build(0, len(vops) - 1)
+    return vm_code[:chain_start] + tree + vm_code[chain_end:]
+
+
 # ---------------------------------------------------------------------------
 # 9. 멀티VM: 함수(proto)마다 독립 VM 인터프리터 N벌 emit
 # ---------------------------------------------------------------------------
@@ -539,20 +598,16 @@ _EXEC_MARK_START = "--<<EXEC>>"
 _EXEC_MARK_END   = "--<<ENDEXEC>>"
 
 
-def _want_ruby(dispatch: str) -> bool:
-    """이 VM(exec)에 ruby 디스패치를 쓸지. mixed면 VM마다 동전던지기."""
-    return dispatch == "ruby" or (dispatch == "mixed" and random.random() < 0.5)
-
-
 def build_exec_variants(vm_code: str, n: int, vm_maps: list,
                         used_ops_list: list[set[int]],
                         fake_handlers: bool = True, mutate: bool = True,
-                        dispatch: str = "karity") -> str:
+                        dispatch: str = "ifelseif") -> str:
     """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립.
 
-    dispatch: "karity"(전부 if-elseif) | "ruby"(전부 테이블+꼬리호출) |
-              "mixed"(VM마다 랜덤). 각 _ex{k}는 별도 함수 스코프라 ruby가 쓰는
-              local _H/_step이 서로 충돌하지 않는다.
+    dispatch: "ifelseif"(전부 if-elseif) | "tailcall"(전부 테이블+꼬리호출) |
+              "bsearch"(전부 op 이진탐색) | "mixed"(VM마다 랜덤). 각 _ex{k}는
+              별도 함수 스코프라 tailcall이 쓰는 local _H/_step이 서로 충돌하지
+              않는다.
     """
     s = vm_code.index(_EXEC_MARK_START)
     e = vm_code.index(_EXEC_MARK_END)
@@ -568,9 +623,8 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
         c = apply_fuse_to_vm(c, fuse_map, mutate=mutate)
         # exec 정의 head 이름만 _ex{k}로 변경 (make_closure는 이미 _EX로 라우팅)
         c = c.replace("exec = function", f"_ex{k} = function", 1)
-        # VM별 디스패치 모양 선택: ruby면 이 exec의 if-elseif를 테이블+꼬리호출로
-        if _want_ruby(dispatch):
-            c = convert_dispatch_to_ruby(c)
+        # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)
+        c = _apply_dispatch(c, _resolve_dispatch(dispatch))
         defs.append(c)
 
     # 마커 영역 → N벌 정의로 치환

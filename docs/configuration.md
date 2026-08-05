@@ -21,7 +21,8 @@ generate this document automatically from PASS_REGISTRY. (registry.py)
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
-   - [vm](#vm-1)
+   - [dispatcher_type](#dispatcher_type)
+   - [blob_form](#blob_form)
    - [vm_count](#vm_count)
    - [fake_handlers](#fake_handlers)
    - [mutate_handlers](#mutate_handlers)
@@ -131,15 +132,33 @@ compresses and packs the obfuscated script into a self-extracting loader.
 
 ## vm_options
 
-### vm
+### dispatcher_type
 
-VM dispatcher mode.
+VM dispatcher shape. per obfuscation run the emitted VM uses one of these.
 
 | Value | Description |
 |--------|-------------|
-| karity | classic if/elseif dispatcher |
-| ruby | function table + tail-call dispatcher |
+| ifelseif | classic if/elseif dispatcher |
+| tailcall | function table + tail-call dispatcher |
+| bsearch | nested binary-search (if/else) tree over the opcode |
 | mixed | randomly choose per VM |
+
+default: `ifelseif`
+
+---
+
+### blob_form
+
+how the encrypted bytecode blob is stored in the output.
+
+| Value | Description |
+|--------|-------------|
+| string | single base36 string literal |
+| table | base36 blob split into chunks, stored as a key-scrambled string table (reassembled via table.concat) |
+| numeric | blob stored as a key-scrambled table of 32-bit integers `{[n]=…,…}` (base36 skipped, bytes rebuilt at runtime) |
+| random | randomly choose per obfuscation run |
+
+default: `random`
 
 ---
 

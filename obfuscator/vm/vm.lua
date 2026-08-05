@@ -156,6 +156,7 @@ local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTA
 -- _ksd는 run()에서 crc로 세팅 -> 리터럴이 아니고 tamper에 엮임. read_proto와
 -- exec가 같은 _ksd를 쓰므로 한 run 안에서 항상 round-trip(실행 정확성 보장).
 local _ksd=0
+--<<KSTREAM>>
 local function _ksm(i)
     local x=(i*0x9E3779B1)&0xFFFFFFFFFFFF
     x=(x~((_ksd*0x85EBCA6B)&0xFFFFFFFFFFFF))&0xFFFFFFFFFFFF
@@ -174,6 +175,13 @@ local function _kss(s)
     end
     return string.char(table.unpack(out))
 end
+--<<ENDKSTREAM>>
+
+-- instruction 워드 필드 시프트. 파이프라인이 per-run 랜덤 레이아웃으로 인라인한다
+-- (serializer의 packing과 동일 레이아웃 공유). 아래 def는 standalone 실행용 기본값.
+-- op은 비트 0 고정(7비트), B=C+9 연속(Bx=B|C), 모든 필드는 _ksm 48비트 마스크 범위 안.
+local _SH_A,_SH_B,_SH_C,_SH_V=32,23,14,40
+local _MASK_OV=0xFF000000007F
 
 local function read_proto(r, acc_state)
     local p={}
@@ -183,14 +191,14 @@ local function read_proto(r, acc_state)
     for i=1,n do
         local raw64=r.u64()
         local enc_op      = raw64 & 0x7F
-        local enc_variant = (raw64>>40) & 0xFF
+        local enc_variant = (raw64>>_SH_V) & 0xFF
         local acc=acc_state[1]; local idx=acc_state[2]
         local actual_op      = enc_op      ~ (acc & 0x7F)
         local actual_variant = enc_variant ~ ((acc>>7) & 0xFF)
         local actual_vop     = actual_op | (actual_variant<<7)
         acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
         acc_state[2] = idx + 1
-        raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant<<40)
+        raw64 = (raw64 & ~_MASK_OV) | actual_op | (actual_variant<<_SH_V)
         p.code[i]=raw64 ~ _ksm(i)
     end
     n=r.u32(); p.constants={}
@@ -218,12 +226,12 @@ local function kval(k)
 end
 
 local function decode(ins)
-    local op     =  ins        & 0x7F
-    local A      = (ins >> 32) & 0xFF
-    local B      = (ins >> 23) & 0x1FF
-    local C      = (ins >> 14) & 0x1FF
-    local variant= (ins >> 40) & 0xFF
-    local Bx     = (ins >> 14) & 0x3FFFF
+    local op     =  ins         & 0x7F
+    local A      = (ins >> _SH_A) & 0xFF
+    local B      = (ins >> _SH_B) & 0x1FF
+    local C      = (ins >> _SH_C) & 0x1FF
+    local variant= (ins >> _SH_V) & 0xFF
+    local Bx     = (ins >> _SH_C) & 0x3FFFF
     local sBx    = Bx - 131071
     local vop    = op | (variant << 7)
     return vop,A,B,C,Bx,sBx
@@ -302,7 +310,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==1  then rset(A,kval(consts[Bx+1]))
         elseif op==2  then
             local ei=code[pc]~_ksm(pc); pc=pc+1
-            local ax=(((ei>>32)&0xFF)<<18)|(((ei>>23)&0x1FF)<<9)|((ei>>14)&0x1FF)
+            local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
             rset(A,kval(consts[ax+1]))
         elseif op==3  then rset(A,(B~=0)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end
@@ -424,6 +432,9 @@ local function run(blob,rand_tail,self_func)
     local crc=_crc32(dump)
     -- anti-tamper: 변조 신호를 키에 섞는다. clean이면 _t==0 -> crc 불변
     -- -> 팩 타임 키와 일치. 변조 시 _t~=0 -> 키 교란 -> garbage(분기 없음, 패치 불가).
+    -- 아래 블록(마커 사이)은 파이프라인이 per-run 랜덤화한다(검사 항목/순서/가중치/
+    -- 혼합식). clean일 때 _t==0 -> crc 항등을 항상 보존한다. def는 standalone 기본값.
+    --<<TAMPER>>
     -- (1) debug hook(single-step/덤프 후킹) 감지
     local _hk,_hm,_hc=debug.gethook()
     local _t=0
@@ -444,6 +455,7 @@ local function run(blob,rand_tail,self_func)
     if not _isC(string.format) then _t=_t+256 end
     if not _isC(table.unpack)  then _t=_t+512 end
     crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
+    --<<ENDTAMPER>>
     _ksd=crc
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)

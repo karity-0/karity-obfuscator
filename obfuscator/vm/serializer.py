@@ -4,12 +4,19 @@ import struct
 from ..parser import Proto, Upvalue, ConstTag
 
 
+# instruction 워드 필드 시프트(기본 레이아웃). vm.lua의 _SH_A/_SH_B/_SH_C/_SH_V
+# 기본값과 일치해야 한다. 파이프라인은 per-run 랜덤 레이아웃을 주입한다.
+# 제약: op은 비트 0(7비트) 고정, B=C+9(연속, Bx=B|C), 모든 필드 ≤ 비트47(_ksm 48비트 마스크).
+DEFAULT_INSTR_LAYOUT = {"A": 32, "B": 23, "C": 14, "V": 40}
+
+
 # ---------------------------------------------------------------------------
 # Writer
 # ---------------------------------------------------------------------------
 class Writer:
-    def __init__(self):
+    def __init__(self, layout: dict | None = None):
         self._buf = bytearray()
+        self.layout = layout or DEFAULT_INSTR_LAYOUT
 
     def data(self) -> bytes:
         return bytes(self._buf)
@@ -42,31 +49,30 @@ class Writer:
 
     def instr(self, raw: int, enc_op: int, enc_variant: int):
         """
-        커스텀 64비트 instruction 레이아웃:
-          [63:48] reserved  (16비트, 랜덤 쓰레기)
-          [47:40] variant   (8비트,  acc-인코딩된 vop >> 7)
-          [39:32] A         (8비트)
-          [31:23] B         (9비트)
-          [22:14] C         (9비트)
-          [13:7]  pad       (7비트, 랜덤 쓰레기)
-          [6:0]   op        (7비트, acc-인코딩된 vop & 0x7F)
+        커스텀 64비트 instruction 레이아웃. op은 [6:0] 고정, A/B/C/variant 위치는
+        self.layout(per-run 랜덤)에 따른다. B=C+9(연속) → Bx=B|C. 나머지 비트는 랜덤.
+          op       (7비트, [6:0], acc-인코딩된 vop & 0x7F)
+          C        (9비트, <<L["C"])
+          B        (9비트, <<L["B"] = L["C"]+9)
+          A        (8비트, <<L["A"])
+          variant  (8비트, <<L["V"], acc-인코딩된 vop >> 7)
         """
-        A        = (raw >> 6)  & 0xFF
-        B        = (raw >> 23) & 0x1FF
-        C        = (raw >> 14) & 0x1FF
-        pad      = random.randint(0, 0x7F)
-        reserved = random.randint(0, 0xFFFF)
+        A = (raw >> 6)  & 0xFF
+        B = (raw >> 23) & 0x1FF
+        C = (raw >> 14) & 0x1FF
+        L = self.layout
 
         val = (
             (enc_op & 0x7F)
-            | (pad              << 7)
-            | (C                << 14)
-            | (B                << 23)
-            | (A                << 32)
-            | ((enc_variant & 0xFF) << 40)
-            | (reserved         << 48)
+            | (C                    << L["C"])
+            | (B                    << L["B"])   # B=C+9 이므로 B|C가 연속된 Bx 필드
+            | (A                    << L["A"])
+            | ((enc_variant & 0xFF) << L["V"])
         )
-        self.u64(val)
+        # 사용된 필드 비트를 제외한 나머지 전 비트에 랜덤 쓰레기(pad/reserved 대체)
+        used = 0x7F | (0x1FF << L["C"]) | (0x1FF << L["B"]) | (0xFF << L["A"]) | (0xFF << L["V"])
+        garbage = random.getrandbits(64) & ~used
+        self.u64((val | garbage) & 0xFFFFFFFFFFFFFFFF)
 
 
 # ---------------------------------------------------------------------------
@@ -364,14 +370,17 @@ def assign_vm_ids(proto: Proto, n: int) -> tuple[dict[int, int], int]:
 
 def serialize(proto: Proto,
               vm_assign: dict[int, int] | None = None,
-              vm_maps: list | None = None) -> bytes:
+              vm_maps: list | None = None,
+              layout: dict | None = None) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map). vm_assign = {id(proto): vm_id}.
-    기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작."""
+    기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작.
+    layout: instruction 워드 필드 시프트(None이면 DEFAULT_INSTR_LAYOUT). vm.lua의
+    _SH_*와 반드시 동일해야 한다(deserialize는 기본 레이아웃만 지원)."""
     if vm_maps is None:
         vm_maps = [(None, None, None)]
     if vm_assign is None:
         vm_assign = {}
-    w = Writer()
+    w = Writer(layout)
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
     _write_fake_pool(w)

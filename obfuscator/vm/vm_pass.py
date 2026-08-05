@@ -16,8 +16,10 @@ from .serializer import (serialize, assign_vm_ids, collect_fuseable_pairs_for_vm
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS,
-                             convert_dispatch_to_ruby, build_exec_variants, _want_ruby,
+                             apply_dispatch, build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
+from .vm_variants import (make_instr_layout, apply_instr_layout,
+                          apply_keystream, apply_tamper)
 from .junk_injection import inject_junk
 
 
@@ -83,6 +85,65 @@ def _to_base36(data: bytes) -> str:
         parts.append(chunk)
 
     return '"KARITY/' + (length_enc or '0') + ':' + ''.join(parts) + '"'
+
+
+def _to_table_blob(data: bytes, n_chunks: int) -> str:
+    """bytes → 스크램블된 base36 청크 테이블 리터럴 (blob_form="table").
+
+    _to_base36의 "KARITY/..." 문자열을 N조각으로 잘라 {[k]="chunk",...} 형태로
+    emit하되, 소스상 순서는 셔플하고 키(k)는 원래 위치(1..N)를 유지한다.
+    런타임은 table.concat(t)로 재조립 — concat은 키 1..N을 순서대로 읽으므로
+    _to_base36가 만들었을 문자열과 바이트 단위로 동일하다. (run 쪽은 type 분기
+    없이 이 형태로 고정 emit되므로 table.concat 프롤로그만 주입하면 된다.)
+    """
+    s = _to_base36(data)
+    assert s[0] == '"' and s[-1] == '"'
+    s = s[1:-1]                       # 양끝 따옴표 제거 → 순수 base36 문자열
+
+    L = len(s)
+    n_chunks = max(1, min(n_chunks, L))
+    size = L // n_chunks
+    chunks = []
+    for i in range(n_chunks):
+        start = i * size
+        end   = L if i == n_chunks - 1 else (i + 1) * size
+        chunks.append(s[start:end])
+
+    indexed = list(enumerate(chunks, start=1))   # (key, chunk)
+    random.shuffle(indexed)                        # 소스 순서만 섞고 키는 유지
+    parts = [f'[{k}]="{c}"' for k, c in indexed]
+    return "{" + ",".join(parts) + "}"
+
+
+def _to_numeric_blob(data: bytes) -> str:
+    """bytes → 32비트 정수 테이블 리터럴 (blob_form="numeric").
+
+    4바이트 리틀엔디언 청크를 base36 인코딩 없이 그대로 정수로 저장한다:
+    {[0]=len,[k]=int,...}. 키(1..N)는 위치를 유지하고 소스 순서만 셔플한다.
+    [0]에 원본 바이트 길이를 담아 런타임이 4바이트 정렬 패딩을 잘라낸다.
+    ({[n]=10314814,...} 형태 — 문자열/청크와 완전히 다른 컨테이너 모양.)
+    """
+    L = len(data)
+    padded = data + b'\x00' * ((4 - L % 4) % 4)
+    parts = [f"[0]={L}"]
+    for i in range(0, len(padded), 4):
+        n = int.from_bytes(padded[i:i + 4], 'little')
+        parts.append(f"[{i // 4 + 1}]={n}")
+    random.shuffle(parts)                            # [0] 포함 전체 순서 셔플
+    return "{" + ",".join(parts) + "}"
+
+
+# numeric 형태 재조립 프롤로그: 정수 테이블 blob([0]=len, [1..N]=int32)에서
+# 원본 암호문 바이트 문자열을 직접 복원한다(from_base36 우회). 재난독화 전에
+# 주입되므로 string.char/table.unpack도 함께 localize된다.
+_NUMERIC_DECODE = (
+    "(function(_t)local _L=_t[0];local _b={};local _p=0;"
+    "for _i=1,#_t do local _n=_t[_i];"
+    "_b[_p+1]=_n&0xFF;_b[_p+2]=(_n>>8)&0xFF;"
+    "_b[_p+3]=(_n>>16)&0xFF;_b[_p+4]=(_n>>24)&0xFF;_p=_p+4 end;"
+    "while #_b>_L do _b[#_b]=nil end;"
+    "return string.char(table.unpack(_b))end)(blob)"
+)
 
 
 _LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
@@ -263,7 +324,11 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
 
 _DEFAULT_VM_OPTIONS = {
-    "vm": "karity",   # 디스패치: "karity"(if-elseif) | "ruby"(테이블+꼬리호출) | "mixed"(VM마다 랜덤)
+    # 디스패치 모양: "ifelseif" | "tailcall"(테이블+꼬리호출) | "bsearch"(op 이진탐색)
+    #             | "mixed"(VM마다 랜덤)
+    "dispatcher_type": "ifelseif",
+    # 블롭 저장 형태: "string"(단일 문자열) | "table"(스크램블 청크 테이블) | "random"
+    "blob_form": "random",
     "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
     "fake_handlers": True,
     "mutate_handlers": True,
@@ -306,10 +371,13 @@ class VMPass(PostPass):
             vm_maps.append((vop_map, split_map, fuse_map))
             used_ops_list.append(collect_used_ops_for_vm(proto, vm_assign, k, vop_map))
 
-        blob = serialize(proto, vm_assign, vm_maps)
+        # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
+        # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
+        instr_layout = make_instr_layout()
+        blob = serialize(proto, vm_assign, vm_maps, layout=instr_layout)
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
-        dispatch = self.vm_options.get("vm", "karity")  # karity | ruby | mixed
+        dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(_load_vm())
         if n == 1:
             vop_map, split_map, fuse_map = vm_maps[0]
@@ -318,13 +386,38 @@ class VMPass(PostPass):
                                                 fake_handlers=fake, mutate=mut)
             vm_code = apply_split_to_vm(vm_code, split_map, mutate=mut)
             vm_code = apply_fuse_to_vm(vm_code, fuse_map, mutate=mut)
-            # 단일 VM의 디스패치 모양: ruby, 또는 mixed에서 동전던지기로 ruby 선택 시 변환
-            if _want_ruby(dispatch):
-                vm_code = convert_dispatch_to_ruby(vm_code)
+            # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
+            # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
+            vm_code = apply_dispatch(vm_code, dispatch)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
                                           fake_handlers=fake, mutate=mut,
                                           dispatch=dispatch)
+
+        # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
+        # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.
+        # 레이아웃 인라인은 fused 핸들러가 주입한 _SH_* 토큰까지 잡아야 하므로
+        # 모든 핸들러/디스패치 transform 이후에 마지막으로 적용한다.
+        vm_code = apply_keystream(vm_code)
+        vm_code = apply_tamper(vm_code)
+        vm_code = apply_instr_layout(vm_code, instr_layout)
+
+        # 3b. 블롭 저장 형태 결정. run은 type 분기 없이 스크립트마다 한 형태로
+        # 고정 emit되므로, 형태별 재조립 프롤로그를 from_base36(blob) 자리에 주입한다.
+        #   - string : 단일 base36 문자열 (주입 없음)
+        #   - table  : 스크램블 청크 테이블 → table.concat 후 from_base36
+        #   - numeric: 32비트 정수 테이블 → base36 우회, 바이트 직접 복원
+        # 주입은 _obfuscate_vm_output(재난독화) 전에 해야 주입한 전역(table.concat/
+        # string.char 등)도 함께 localize/rename 된다. 블롭 리터럴 자체는 _vmf
+        # 인자라 dump/crc와 무관(컨테이너 형태를 바꿔도 anti-tamper 영향 없음).
+        blob_form = self.vm_options.get("blob_form", "random")
+        if blob_form == "random":
+            blob_form = random.choice(("string", "table", "numeric"))
+        if blob_form == "table":
+            vm_code = vm_code.replace("from_base36(blob)",
+                                      "from_base36(table.concat(blob))", 1)
+        elif blob_form == "numeric":
+            vm_code = vm_code.replace("from_base36(blob)", _NUMERIC_DECODE, 1)
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         vm_func_src = (
@@ -352,7 +445,12 @@ class VMPass(PostPass):
         # 6. blob 암호화: nonce(8B) + ciphertext
         nonce, ct = encrypt_blob(blob, _KEY)
         encrypted_blob = nonce + ct
-        lua_blob = _to_base36(encrypted_blob)
+        if blob_form == "table":
+            lua_blob = _to_table_blob(encrypted_blob, random.randint(16, 48))
+        elif blob_form == "numeric":
+            lua_blob = _to_numeric_blob(encrypted_blob)
+        else:
+            lua_blob = _to_base36(encrypted_blob)
 
         # 7. 최종 출력 조합 — vm_func_src(_vmf 본문)는 더 이상 재가공하지 않음
         # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용
