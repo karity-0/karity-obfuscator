@@ -49,13 +49,13 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
     if orig_op == 13:  # ADD
         if parts == 2:
             return [
-                f" _split_tmp=_add(regs[B],regs[C]){_SPLIT_PAD}",
+                f" _split_tmp=_add(regs[B],regs[C],_av){_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
         else:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp=_add(_split_tmp,regs[C]){_SPLIT_PAD}",
+                f" _split_tmp=_add(_split_tmp,regs[C],_av){_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     if orig_op in _BINARY_OP_LUA:
@@ -317,7 +317,8 @@ def apply_split_to_vm(vm_code: str,
 # ---------------------------------------------------------------------------
 # 4. fusion(superopcode) 핸들러 삽입
 # ---------------------------------------------------------------------------
-def _op_body(op: int, a: str, b: str, c: str, bx: str) -> str:
+def _op_body(op: int, a: str, b: str, c: str, bx: str,
+             av: str = "_av") -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
         return f"rset({a},regs[{b}])"
@@ -326,7 +327,7 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str) -> str:
     if op == 5:   # GETUPVAL
         return f"rset({a},upvals[{b}+1].v)"
     if op == 13:  # ADD
-        return f"rset({a},_add(regs[{b}],regs[{c}]))"
+        return f"rset({a},_add(regs[{b}],regs[{c}],{av}))"
     if op in _BINARY_OP_LUA:
         return f"rset({a},regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}])"
     if op in _UNARY_PREFIX:
@@ -344,13 +345,15 @@ def fused_handler_body(op1: int, op2: int) -> str:
     # 시프트는 _SH_* 토큰으로 두고 apply_instr_layout이 per-run 리터럴로 인라인한다
     # (decode/read_proto와 동일 레이아웃 공유). 반드시 레이아웃 인라인 전에 emit됨.
     lines = [
+        "local _fav=_avd[pc]",
         "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
         "local _fa=(_ei>>_SH_A)&0xFF",
         "local _fb=(_ei>>_SH_B)&0x1FF",
         "local _fc=(_ei>>_SH_C)&0x1FF",
         "local _fbx=(_ei>>_SH_C)&0x3FFFF",
-        _op_body(op1, "A", "B", "C", "Bx"),
-        _op_body(op2, "_fa", "_fb", "_fc", "_fbx"),
+        _op_body(op1, "A", "B", "C", "Bx", "_av"),
+        "_av_read()",
+        _op_body(op2, "_fa", "_fb", "_fc", "_fbx", "_fav"),
     ]
     return " " + _SPLIT_PAD.join(lines) + _SPLIT_PAD
 
@@ -490,7 +493,7 @@ def prune_and_inject_handlers(
 _TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
 _TAILCALL_TAIL_RE     = re.compile(r'\s*end\s*return\s*\{r=\{\},n=0\}')
 
-DISPATCH_KINDS = ("ifelseif", "tailcall", "bsearch")
+DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
 
 
 def _resolve_dispatch(dispatch: str) -> str:
@@ -510,7 +513,7 @@ def _apply_dispatch(vm_code: str, kind: str) -> str:
       · split{k}  : k 그룹 분할, 그룹 내부 ifelseif  (예: split2)
       · bsplit{k} : k 그룹 분할, 그룹 내부 bsearch    (예: bsplit4)
     """
-    if kind == "tailcall":
+    if kind in {"tailcall", "table"}:
         return convert_dispatch_to_tailcall(vm_code)
     if kind == "bsearch":
         return convert_dispatch_to_bsearch(vm_code)

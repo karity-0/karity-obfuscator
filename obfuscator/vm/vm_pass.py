@@ -269,10 +269,194 @@ def _load_vm() -> str:
         src = src[:cutoff]
     return src
 
+
+def _hex64() -> str:
+    return f"0x{random.getrandbits(64):016X}"
+
+
+def _rand_lua_name(length: int = 7) -> str:
+    return "_" + "".join(random.choices(_NAME_CHARS, k=length))
+
+
+def _opaque_zero(x: str, y: str) -> str:
+    forms = [
+        f"({x}&(~{x}))",
+        f"({x}~{x})",
+        f"({y}&(~{y}))",
+        f"({y}~{y})",
+        f"(({x}|(~{x}))+1)",
+        f"(({y}|(~{y}))+1)",
+        f"(({x}~{x})&{_hex64()})",
+        f"(({y}&(~{y}))<<{random.randint(1, 31)})",
+    ]
+    return random.choice(forms)
+
+
+def _add_base_expr(x: str, y: str) -> str:
+    and_xy = f"({x}&{y})"
+    xor_xy = f"({x}~{y})"
+    or_xy = random.choice([
+        f"({x}|{y})",
+        f"(~((~{x})&(~{y})))",
+        f"(({x}~{y})|({x}&{y}))",
+    ])
+    forms = [
+        f"({xor_xy}+({and_xy}<<1))",
+        f"({or_xy}+{and_xy})",
+        f"(({or_xy}<<1)-{xor_xy})",
+        f"(({or_xy}-{xor_xy})+{xor_xy}+{and_xy})",
+        f"(({or_xy}+({and_xy}&{or_xy}))+{_opaque_zero(x, y)})",
+    ]
+    return random.choice(forms)
+
+
+def _wrap_identity(expr: str, x: str, y: str, allow_rot: bool = True) -> tuple[str, bool]:
+    kinds = ["add", "sub", "xor", "zero_l", "zero_r"]
+    if allow_rot and len(expr) < 360:
+        kinds.append("rot")
+    kind = random.choice(kinds)
+    if kind == "add":
+        k = _hex64()
+        return f"(({expr}+{k})-{k})", False
+    if kind == "sub":
+        k = _hex64()
+        return f"(({expr}-{k})+{k})", False
+    if kind == "xor":
+        k = _hex64()
+        return f"(({expr}~{k})~{k})", False
+    if kind == "rot":
+        s = random.randint(1, 63)
+        rs = 64 - s
+        r = f"(({expr}<<{s})|({expr}>>{rs}))"
+        return f"(({r}<<{rs})|({r}>>{s}))", True
+    if kind == "zero_l":
+        return f"({expr}+{_opaque_zero(x, y)})", False
+    return f"({_opaque_zero(x, y)}+{expr})", False
+
+
+def _make_add_int_expr(x: str = "x", y: str = "y") -> str:
+    expr = _add_base_expr(x, y)
+    used_rot = False
+    for _ in range(random.randint(4, 8)):
+        nxt, was_rot = _wrap_identity(expr, x, y, allow_rot=not used_rot)
+        if len(nxt) > 3600:
+            break
+        expr = nxt
+        used_rot = used_rot or was_rot
+    return expr
+
+
+def _make_add_int_func() -> str:
+    a, b, state, slots, regs, active = [_rand_lua_name() for _ in range(6)]
+    cache, st = _rand_lua_name(), _rand_lua_name()
+    state_key = random.randint(700, 1200)
+    carry_key = 611
+
+    # IR nodes are semantic classes plus dependency edges. IDs carry no execution
+    # order; a randomized Kahn schedule below decides the emitted topological order.
+    nodes: dict[int, dict] = {}
+    next_id = 0
+
+    def add_node(kind: str, deps: list[int]) -> int:
+        nonlocal next_id
+        node_id = next_id
+        next_id += 1
+        nodes[node_id] = {"kind": kind, "deps": tuple(dict.fromkeys(deps))}
+        return node_id
+
+    core = add_node("core", [])
+    zero_nodes: list[int] = []
+    for _ in range(random.randint(8, 12)):
+        deps = random.sample(zero_nodes, k=min(len(zero_nodes), random.randint(0, 2)))
+        zero_nodes.append(add_node("zero", deps))
+
+    value = core
+    for i in range(random.randint(max(12, len(zero_nodes)), 18)):
+        deps = [value, zero_nodes[i % len(zero_nodes)]]
+        if random.random() < 0.45:
+            deps.append(random.choice(zero_nodes))
+        value = add_node("identity", deps)
+    sink_zeros = random.sample(zero_nodes, 2)
+    sink = add_node("sink", [value, *sink_zeros])
+
+    indegree = {node_id: len(node["deps"]) for node_id, node in nodes.items()}
+    children = {node_id: [] for node_id in nodes}
+    for node_id, node in nodes.items():
+        for dep in node["deps"]:
+            children[dep].append(node_id)
+    ready = [node_id for node_id, degree in indegree.items() if degree == 0]
+    topo: list[int] = []
+    while ready:
+        node_id = ready.pop(random.randrange(len(ready)))
+        topo.append(node_id)
+        for child in children[node_id]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    if len(topo) != len(nodes):
+        raise RuntimeError("generated ADD graph contains a cycle")
+
+    names = {node_id: _rand_lua_name() for node_id in nodes}
+    lines = [
+        f"(function({a},{b},{state},{slots},{regs},{active})",
+        f"{state}={state} or {{}};{active}={active} or {{}};",
+        f"local {cache}={{}};local {st}=(({a}~{b})~{_hex64()}~({state}[{carry_key}] or 0));",
+        "local " + ",".join(names.values()) + ";",
+    ]
+
+    for node_id in topo:
+        node = nodes[node_id]
+        name = names[node_id]
+        deps = [f"{names[d]}()" for d in node["deps"]]
+        cached = f"local q={cache}[{node_id + 1}];if q~=nil then return q end;"
+        kind = node["kind"]
+        if kind == "core":
+            body = f"local r={_make_add_int_expr(a, b)};{st}=({st}~(r|(~r)));"
+        elif kind == "zero":
+            terms = deps or [a, b]
+            joined = "~".join(f"(({term})~({term}))" for term in terms)
+            body = (f"local r=({joined});{st}=(({st}~r)~(({state}[{state_key}] or 0)&r));"
+                    f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{st}~r);")
+        elif kind == "identity":
+            source = deps[0]
+            zeros = "+".join(deps[1:])
+            mode = random.randrange(3)
+            if mode == 0:
+                mask = _hex64()
+                expr = f"((({source}~{mask})~{mask})+({zeros}))"
+            elif mode == 1:
+                key = _hex64()
+                expr = f"((({source}+{key})-{key})+({zeros}))"
+            else:
+                expr = f"(({source})+({zeros})+(({st}~{st})))"
+            body = f"local r={expr};{st}=({st}~(r&r)~({zeros}));"
+        else:
+            body = f"local r=({deps[0]})+({deps[1]})+({deps[2]});{st}=({st}~r~(r<<1));"
+        lines.append(f"{name}=function(){cached}{body}{cache}[{node_id + 1}]=r;return r end;")
+
+    out = _rand_lua_name()
+    slot = _rand_lua_name()
+    index = _rand_lua_name()
+    lines.extend([
+        f"local {out}={names[sink]}();",
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
+        f"local q=({out}~{st}~(({index}*{_hex64()})&-1));{regs}[{slot}]=q;",
+        f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~q~{slot}) end end;",
+        f"return {out} end)",
+    ])
+    return "".join(lines)
+
+
+def _apply_add_exprs(vm_code: str) -> str:
+    token = "__ADD_INT_FUNC__"
+    while token in vm_code:
+        vm_code = vm_code.replace(token, _make_add_int_func(), 1)
+    return vm_code
+
 _VM_RENAME_KEYS = [
     # proto 테이블 키
     "num_params", "is_vararg", "max_stack_size", "vm_id",
-    "constants", "code", "upvalues", "protos",
+    "constants", "code", "avalanche", "upvalues", "protos",
     "instack", "idx",
     # reader 메서드명
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
@@ -426,6 +610,7 @@ class VMPass(PostPass):
             f'{vm_code} return run end'
         )
         vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
+        vm_func_src = _apply_add_exprs(vm_func_src)
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline

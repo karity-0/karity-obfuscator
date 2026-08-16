@@ -195,6 +195,156 @@ _SBXOPS: set[int] = {30, 39, 40, 42}
 _TESTOPS: set[int] = {31, 32, 33, 34, 35}
 
 
+def _abc(raw: int) -> tuple[int, int, int, int]:
+    a = (raw >> 6) & 0xFF
+    b = (raw >> 23) & 0x1FF
+    c = (raw >> 14) & 0x1FF
+    return a, b, c, (raw >> 14) & 0x3FFFF
+
+
+def _reg(value: int, max_stack: int) -> set[int]:
+    return {value} if value < max_stack else set()
+
+
+def _reg_range(lo: int, hi: int, max_stack: int) -> set[int]:
+    if hi < lo:
+        return set()
+    return set(range(max(0, lo), min(max_stack - 1, hi) + 1))
+
+
+def _instruction_rw(proto: Proto, index: int) -> tuple[set[int], set[int]]:
+    """Conservative Lua 5.3 register read/write sets for one instruction."""
+    raw = proto.code[index]
+    op = raw & 0x3F
+    a, b, c, _ = _abc(raw)
+    m = proto.max_stack_size
+    reads: set[int] = set()
+    writes: set[int] = set()
+
+    if op == 0:
+        reads |= _reg(b, m); writes |= _reg(a, m)
+    elif op in {1, 2, 3, 5, 11}:
+        writes |= _reg(a, m)
+    elif op == 4:
+        writes |= _reg_range(a, a + b, m)
+    elif op == 6:
+        reads |= _reg(c, m); writes |= _reg(a, m)
+    elif op == 7:
+        reads |= _reg(b, m) | _reg(c, m); writes |= _reg(a, m)
+    elif op == 8:
+        reads |= _reg(b, m) | _reg(c, m)
+    elif op == 9:
+        reads |= _reg(a, m)
+    elif op == 10:
+        reads |= _reg(a, m) | _reg(b, m) | _reg(c, m)
+    elif op == 12:
+        reads |= _reg(b, m) | _reg(c, m)
+        writes |= _reg(a, m) | _reg(a + 1, m)
+    elif 13 <= op <= 24:
+        reads |= _reg(b, m) | _reg(c, m); writes |= _reg(a, m)
+    elif 25 <= op <= 28:
+        reads |= _reg(b, m); writes |= _reg(a, m)
+    elif op == 29:
+        reads |= _reg_range(b, c, m); writes |= _reg(a, m)
+    elif 31 <= op <= 33:
+        reads |= _reg(b, m) | _reg(c, m)
+    elif op == 34:
+        reads |= _reg(a, m)
+    elif op == 35:
+        reads |= _reg(a, m) | _reg(b, m); writes |= _reg(a, m)
+    elif op == 36:
+        reads |= _reg(a, m)
+        reads |= _reg_range(a + 1, m - 1 if b == 0 else a + b - 1, m)
+        writes |= _reg_range(a, m - 1 if c == 0 else a + c - 2, m)
+    elif op == 37:
+        reads |= _reg_range(a, m - 1 if b == 0 else a + b - 1, m)
+    elif op == 38:
+        reads |= _reg_range(a, m - 1 if b == 0 else a + b - 2, m)
+    elif op == 39:
+        reads |= _reg_range(a, a + 3, m)
+        writes |= _reg(a, m) | _reg(a + 3, m)
+    elif op == 40:
+        reads |= _reg(a, m) | _reg(a + 2, m); writes |= _reg(a, m)
+    elif op == 41:
+        reads |= _reg_range(a, a + 2, m)
+        writes |= _reg_range(a + 3, a + 2 + c, m)
+    elif op == 42:
+        reads |= _reg(a, m) | _reg(a + 1, m); writes |= _reg(a, m)
+    elif op == 43:
+        reads |= _reg_range(a, m - 1 if b == 0 else a + b, m)
+    elif op == 44:
+        writes |= _reg(a, m)
+        bx = (raw >> 14) & 0x3FFFF
+        if bx < len(proto.protos):
+            reads |= {uv.idx for uv in proto.protos[bx].upvalues
+                      if uv.instack == 1 and uv.idx < m}
+    elif op == 45:
+        writes |= _reg_range(a, m - 1 if b == 0 else a + b - 2, m)
+    return reads, writes
+
+
+def _successors(code: list[int], index: int) -> set[int]:
+    raw = code[index]
+    op = raw & 0x3F
+    n = len(code)
+    nxt = index + 1
+    if op in {37, 38}:
+        return set()
+    if op in _SBXOPS:
+        sbx = ((raw >> 14) & 0x3FFFF) - 131071
+        target = nxt + sbx
+        if op in {30, 40}:
+            return {target} if 0 <= target < n else set()
+        result = {target} if 0 <= target < n else set()
+        if op in {39, 42} and nxt < n:
+            result.add(nxt)
+        return result
+    if op in _TESTOPS:
+        return {i for i in (nxt, index + 2) if i < n}
+    if op == 3 and ((raw >> 14) & 0x1FF) != 0:
+        return {index + 2} if index + 2 < n else set()
+    return {nxt} if nxt < n else set()
+
+
+def _live_out_sets(proto: Proto) -> list[set[int]]:
+    """Compute backward liveness to a fixed point over the bytecode CFG."""
+    n = len(proto.code)
+    rw = [_instruction_rw(proto, i) for i in range(n)]
+    succ = [_successors(proto.code, i) for i in range(n)]
+    live_in = [set() for _ in range(n)]
+    live_out = [set() for _ in range(n)]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(n - 1, -1, -1):
+            out = set().union(*(live_in[j] for j in succ[i])) if succ[i] else set()
+            reads, writes = rw[i]
+            incoming = reads | (out - writes)
+            if out != live_out[i] or incoming != live_in[i]:
+                live_out[i] = out
+                live_in[i] = incoming
+                changed = True
+    return live_out
+
+
+def _add_avalanche_slots(proto: Proto) -> dict[int, tuple[int, ...]]:
+    """Pick only registers proven dead after ADD, excluding its operands/result."""
+    result: dict[int, tuple[int, ...]] = {}
+    live_out = _live_out_sets(proto)
+    all_regs = set(range(proto.max_stack_size))
+    for i, raw in enumerate(proto.code):
+        if (raw & 0x3F) != 13:
+            continue
+        a, b, c, _ = _abc(raw)
+        blocked = live_out[i] | _reg(a, proto.max_stack_size)
+        blocked |= _reg(b, proto.max_stack_size) | _reg(c, proto.max_stack_size)
+        candidates = list(all_regs - blocked)
+        random.shuffle(candidates)
+        if candidates:
+            result[i] = tuple(candidates[:random.randint(1, min(3, len(candidates)))])
+    return result
+
+
 def _compute_protected(code: list[int]) -> set[int]:
     """독립적으로 dispatch 진입해야 하는(=fuse의 operand 슬롯이 되면 안 되는)
     명령어 인덱스 집합.
@@ -405,6 +555,8 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     plan          = _build_plan(proto.code, split_map, fuse_map, protected)
     new_pos, total = _plan_new_pos(plan, len(proto.code))
     code          = _adjust_jumps(proto.code, new_pos, total)
+    add_slots     = _add_avalanche_slots(proto)
+    emitted_av: list[tuple[int, ...]] = []
 
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
     w.u32(total)
@@ -414,17 +566,26 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         orig_op = raw & 0x3F
         if unit[0] == "normal":
             _emit_instr(w, raw, _rand_alias(vop_map, orig_op), acc_state)
+            emitted_av.append(add_slots.get(i, ()))
         elif unit[0] == "split":
             # 같은 raw 명령어를 각 part vop으로 반복 방출
             vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
             for vop in vops:
                 _emit_instr(w, raw, vop, acc_state)
+                emitted_av.append(add_slots.get(i, ()))
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]] & 0x3F
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
             _emit_instr(w, raw, fuse_vop, acc_state)
+            emitted_av.append(add_slots.get(i, ()))
             # operand 슬롯: dispatch 안 되지만 acc 동기화 위해 정상 슬롯으로 방출
             _emit_instr(w, code[unit[2]], _rand_alias(vop_map, op2), acc_state)
+            emitted_av.append(add_slots.get(unit[2], ()))
+
+    for slots in emitted_av:
+        w.u8(len(slots))
+        for slot in slots:
+            w.u8(slot)
 
     # 상수
     w.u32(len(proto.constants))
@@ -489,6 +650,10 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
         # vop를 다시 raw64에 반영 (op, variant 필드 교체)
         raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant << 40)
         code.append(raw64)
+
+    for _ in range(code_count):
+        for _ in range(r.u8()):
+            r.u8()
 
     const_count = r.u32()
     constants = []

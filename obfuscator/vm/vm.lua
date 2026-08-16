@@ -201,6 +201,15 @@ local function read_proto(r, acc_state)
         raw64 = (raw64 & ~_MASK_OV) | actual_op | (actual_variant<<_SH_V)
         p.code[i]=raw64 ~ _ksm(i)
     end
+    p.avalanche={}
+    for i=1,n do
+        local an=r.u8()
+        if an>0 then
+            local slots={}
+            for j=1,an do slots[j]=r.u8() end
+            p.avalanche[i]=slots
+        end
+    end
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
@@ -245,6 +254,7 @@ exec = function(proto, upvals, args, va_in)
     local boxes  = {}
     local consts = proto["constants"]
     local code   = proto["code"]
+    local _avd   = proto["avalanche"]
     local _cd    = code   -- rename되지 않는 code 별칭 (fused 핸들러가 다음 슬롯을 읽을 때 사용)
     local pc     = 1
     local top    = -1
@@ -252,6 +262,7 @@ exec = function(proto, upvals, args, va_in)
     local _va    = va_in or {}
     local _split_tmp
     local _S     = {}
+    local _AA    = {}
 
     args = args or {}
     for i=1,proto.num_params do regs[i-1]=args[i] end
@@ -263,6 +274,14 @@ exec = function(proto, upvals, args, va_in)
     local function rset(i,v)
         regs[i]=v
         if boxes[i] then boxes[i].v=v end
+    end
+
+    local function _av_read()
+        for slot in pairs(_AA) do
+            local v=regs[slot]
+            _S[611]=((_S[611] or 0)~v~slot)
+            _AA[slot]=nil
+        end
     end
 
     -- 상수 풀을 register 파일 상위(256+)에 미리 풀어 넣는다.
@@ -305,7 +324,7 @@ exec = function(proto, upvals, args, va_in)
     end
 
     -- todo: generate it
-    local function _add(a, b)
+    local function _add(a, b, av)
         local _t0=type(a)
         local _t1=type(b)
         local _mt=math.type
@@ -325,14 +344,14 @@ exec = function(proto, upvals, args, va_in)
                 return (z==0 and r) or r
             end,
             function(x,y)
-                return (((((((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))<<41)|(((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))>>23)))<<23)|((((((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))<<41)|(((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))>>23)))>>41))~0xDEADBEEFCAFEBABE
+                return __ADD_INT_FUNC__(x,y,_S,av,regs,_AA)
             end
         }
-        return _q[_p](a,b)
+        return _q[_p](a,b,av)
     end
 
     for i in setmetatable({},{__call=function(t)return t end}) do
-        local ins=code[pc]~_ksm(pc); local op,A,B,C,Bx,sBx=decode(ins); pc=pc+1
+        _av_read(); local _ip=pc; local ins=code[pc]~_ksm(pc); local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins); pc=pc+1
 
         if     op==0  then rset(A,regs[B])
         elseif op==1  then rset(A,kval(consts[Bx+1]))
@@ -350,7 +369,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==10 then regs[A][regs[B]]=regs[C]
         elseif op==11 then rset(A,{})
         elseif op==12 then local t=regs[B]; rset(A+1,t); rset(A,t[regs[C]])
-        elseif op==13 then rset(A,_add(regs[B], regs[C]))
+        elseif op==13 then rset(A,_add(regs[B], regs[C],_av))
         elseif op==14 then rset(A,regs[B]-regs[C])
         elseif op==15 then rset(A,regs[B]*regs[C])
         elseif op==16 then rset(A,regs[B]%regs[C])

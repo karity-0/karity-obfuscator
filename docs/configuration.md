@@ -107,6 +107,12 @@ reduces script size by removing unnecessary whitespace.
 
 virtualizes Lua bytecode using a custom virtual machine.
 
+Integer ADD handlers are generated as build-specific function DAGs with randomized
+topological layouts and equivalent mixed boolean-arithmetic expressions. The VM also
+performs bytecode control-flow liveness analysis and may diffuse intermediate state
+through registers proven dead after an ADD. Diffusion is skipped when no safe dead
+register is available.
+
 
 ## anti_debug
 **group:** pre pass  
@@ -140,8 +146,11 @@ VM dispatcher shape. per obfuscation run the emitted VM uses one of these.
 |--------|-------------|
 | ifelseif | classic if/elseif dispatcher |
 | tailcall | function table + tail-call dispatcher |
+| table | alias for the function-table tail-call dispatcher |
 | bsearch | nested binary-search (if/else) tree over the opcode |
-| mixed | randomly choose per VM |
+| splitN | split handlers across N smaller if/elseif dispatcher functions, for example `split4` |
+| bsplitN | split handlers across N smaller binary-search dispatcher functions, for example `bsplit6` |
+| mixed | randomly choose per VM from `split4`, `split6`, `bsplit4`, `bsplit6`, `tailcall`, and `table` |
 
 default: `ifelseif`
 
