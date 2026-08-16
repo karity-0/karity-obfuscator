@@ -251,6 +251,7 @@ exec = function(proto, upvals, args, va_in)
     local _st    = 0
     local _va    = va_in or {}
     local _split_tmp
+    local _S     = {}
 
     args = args or {}
     for i=1,proto.num_params do regs[i-1]=args[i] end
@@ -303,6 +304,33 @@ exec = function(proto, upvals, args, va_in)
         end
     end
 
+    -- todo: generate it
+    local function _add(a, b)
+        local _t0=type(a)
+        local _t1=type(b)
+        local _mt=math.type
+        local _m0=(_t0=="number" and 0x35) or 0x12
+        local _m1=(_t1=="number" and 0x6A) or 0x27
+        local _m2=(_mt and 0x4D) or 0x09
+        local _m3=(_mt and _mt(a)=="integer" and 0x71) or 0x18
+        local _m4=(_mt and _mt(b)=="integer" and 0x2E) or 0x63
+        local _r0=(_m0~0x35)|(_m1~0x6A)
+        local _r1=(_m2~0x4D)|(_m3~0x71)
+        local _r2=(_m4~0x2E)|((_r0|_r1)&0xFF)
+        local _p=(((_r2~((_r2<<3)&0xFF))==0) and 2) or 1
+        local _q={
+            function(x,y)
+                local z=(#""~#"")
+                local r=x+y
+                return (z==0 and r) or r
+            end,
+            function(x,y)
+                return (((((((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))<<41)|(((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))>>23)))<<23)|((((((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))<<41)|(((((((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))<<47)|((((((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)<<17)|(((((~((~x)&(~y)))-((~((~x)&(~y)))-(x~y)))+(((~((~x)&(~y)))-(x~y))<<1)+(17*(x&(~x)))+(9*((x|(~x))+1))+((x~x)&(y|(~y))))+0x9E3779B97F4A7C15)>>47)))>>17))-0x9E3779B97F4A7C15)~0xDEADBEEFCAFEBABE))>>23)))>>41))~0xDEADBEEFCAFEBABE
+            end
+        }
+        return _q[_p](a,b)
+    end
+
     for i in setmetatable({},{__call=function(t)return t end}) do
         local ins=code[pc]~_ksm(pc); local op,A,B,C,Bx,sBx=decode(ins); pc=pc+1
 
@@ -322,7 +350,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==10 then regs[A][regs[B]]=regs[C]
         elseif op==11 then rset(A,{})
         elseif op==12 then local t=regs[B]; rset(A+1,t); rset(A,t[regs[C]])
-        elseif op==13 then rset(A,regs[B]+regs[C])
+        elseif op==13 then rset(A,_add(regs[B], regs[C]))
         elseif op==14 then rset(A,regs[B]-regs[C])
         elseif op==15 then rset(A,regs[B]*regs[C])
         elseif op==16 then rset(A,regs[B]%regs[C])
