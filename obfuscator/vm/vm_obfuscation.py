@@ -33,6 +33,15 @@ _UNARY_PREFIX = {
     28: "#",    # LEN
 }
 
+_GRAPH_BINARY_SLOTS = {
+    13: "__VM_SLOT_ADD__", 14: "__VM_SLOT_SUB__", 15: "__VM_SLOT_MUL__",
+    20: "__VM_SLOT_BAND__", 21: "__VM_SLOT_BOR__", 22: "__VM_SLOT_BXOR__",
+    23: "__VM_SLOT_SHL__", 24: "__VM_SLOT_SHR__",
+}
+_GRAPH_UNARY_SLOTS = {25: "__VM_SLOT_UNM__", 26: "__VM_SLOT_BNOT__"}
+_VALUE_UNARY_TAGS = {27, 28}
+_VALUE_BINARY_TAGS = {16, 17, 18, 19}
+
 _SPLIT_PAD = "\n        "
 
 # ---------------------------------------------------------------------------
@@ -46,67 +55,86 @@ FUSE_OPS = {0, 1, 5} | _BINARY_SPLIT_OPS | _UNARY_SPLIT_OPS
 
 def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
     """Return handler body strings for each part of a split instruction."""
-    if orig_op == 13:  # ADD
+    if orig_op in _GRAPH_BINARY_SLOTS:
+        slot = _GRAPH_BINARY_SLOTS[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=_add(regs[B],regs[C],_av){_SPLIT_PAD}",
+                f" _split_tmp=_arith2(regs[B],regs[C],_av,{slot}){_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp=_add(_split_tmp,regs[C],_av){_SPLIT_PAD}",
+                f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+                f" _split_tmp=_arith2(_split_tmp,regs[C],_av,{slot}){_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
+    if orig_op in _GRAPH_UNARY_SLOTS:
+        slot = _GRAPH_UNARY_SLOTS[orig_op]
+        if parts == 2:
+            return [
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" rset(A,_arith1(_split_tmp,_av,{slot})){_SPLIT_PAD}",
+            ]
+        return [
+            f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+            f" _split_tmp=_arith1(_split_tmp,_av,{slot}){_SPLIT_PAD}",
+            f" rset(A,_split_tmp){_SPLIT_PAD}",
+        ]
     if orig_op in _BINARY_OP_LUA:
         lua_op = _BINARY_OP_LUA[orig_op]
+        def binary_expr(left: str, right: str) -> str:
+            expr = f"{left}{lua_op}{right}"
+            if orig_op in _VALUE_BINARY_TAGS:
+                return f"_carry({expr},_av,{orig_op})"
+            return expr
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{lua_op}regs[C]{_SPLIT_PAD}",
+                f" _split_tmp={binary_expr('regs[B]', 'regs[C]')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
         else:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{lua_op}regs[C]{_SPLIT_PAD}",
+                f" _split_tmp={binary_expr('_split_tmp', 'regs[C]')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op in _UNARY_PREFIX:
         pfx = _UNARY_PREFIX[orig_op]
+        wrap = (lambda expr: f"_carry({expr},_av,{orig_op})") if orig_op in _VALUE_UNARY_TAGS else (lambda expr: expr)
         if parts == 2:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,{pfx}_split_tmp){_SPLIT_PAD}",
+                f" rset(A,{wrap(f'{pfx}_split_tmp')}){_SPLIT_PAD}",
             ]
         else:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={pfx}_split_tmp{_SPLIT_PAD}",
+                f" _split_tmp={wrap(f'{pfx}_split_tmp')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op == 0:  # MOVE
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
             ]
     elif orig_op == 1:  # LOADK
         if parts == 2:
             return [
-                f" _split_tmp=kval(consts[Bx+1]){_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_tmp=_DG[__VM_DATA_VALUE__](kval(consts[Bx+1]),nil,nil,_S){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=kval(consts[Bx+1]){_SPLIT_PAD}",
+                f" _split_tmp=_DG[__VM_DATA_VALUE__](kval(consts[Bx+1]),nil,nil,_S){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
     return [f" {_SPLIT_PAD}"] * parts
 
@@ -321,17 +349,25 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
              av: str = "_av") -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
-        return f"rset({a},regs[{b}])"
+        return f"rset({a},_carry(_DG[__VM_DATA_VALUE__](regs[{b}],nil,nil,_S),{av},0))"
     if op == 1:   # LOADK
-        return f"rset({a},kval(consts[{bx}+1]))"
+        return f"rset({a},_carry(_DG[__VM_DATA_VALUE__](kval(consts[{bx}+1]),nil,nil,_S),{av},1))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},upvals[{b}+1].v)"
-    if op == 13:  # ADD
-        return f"rset({a},_add(regs[{b}],regs[{c}],{av}))"
+        return f"rset({a},_carry(_DG[__VM_DATA_VALUE__](upvals[{b}+1].v,nil,nil,_S),{av},5))"
+    if op in _GRAPH_BINARY_SLOTS:
+        return f"rset({a},_arith2(regs[{b}],regs[{c}],{av},{_GRAPH_BINARY_SLOTS[op]}))"
+    if op in _GRAPH_UNARY_SLOTS:
+        return f"rset({a},_arith1(regs[{b}],{av},{_GRAPH_UNARY_SLOTS[op]}))"
     if op in _BINARY_OP_LUA:
-        return f"rset({a},regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}])"
+        expr = f"regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}]"
+        if op in _VALUE_BINARY_TAGS:
+            expr = f"_carry({expr},{av},{op})"
+        return f"rset({a},{expr})"
     if op in _UNARY_PREFIX:
-        return f"rset({a},{_UNARY_PREFIX[op]}regs[{b}])"
+        expr = f"{_UNARY_PREFIX[op]}regs[{b}]"
+        if op in _VALUE_UNARY_TAGS:
+            expr = f"_carry({expr},{av},{op})"
+        return f"rset({a},{expr})"
     raise ValueError(f"non-fuseable op: {op}")
 
 
@@ -491,7 +527,9 @@ def prune_and_inject_handlers(
 # fetch 라인(local ins=...decode(ins); pc=pc+1)은 _rename_vm_keys가 이미 치환한
 # code 변수명을 그대로 재사용해야 하므로 템플릿에서 추출해 _step 본문에 넣는다.
 _TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
-_TAILCALL_TAIL_RE     = re.compile(r'\s*end\s*return\s*\{r=\{\},n=0\}')
+_TAILCALL_TAIL_RE     = re.compile(
+    r'\s*end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
+)
 
 DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
 

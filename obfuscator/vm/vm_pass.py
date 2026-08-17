@@ -8,6 +8,7 @@ import random
 import zlib
 import shutil
 import os
+import re
 from pathlib import Path
 
 from ..passes.base import PostPass
@@ -242,7 +243,9 @@ def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
     helper = (
         f'local fh=io.open("{src_path_lua}","rb")\n'
         f'local content=fh:read("a") fh:close()\n'
-        f'local f=load(content)()\n'
+        f'local chunk,err=load(content)\n'
+        f'if not chunk then error(err) end\n'
+        f'local f=chunk()\n'
         f'local out=io.open("{dump_path_lua}","wb")\n'
         f'out:write(string.dump(f,true)) out:close()\n'
     )
@@ -252,7 +255,18 @@ def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
     try:
         result = subprocess.run([str(_LUA), helper_path], capture_output=True)
         if result.returncode != 0:
-            raise RuntimeError(f"lua dump failed: {result.stderr.decode()}")
+            error = result.stderr.decode(errors="replace")
+            matches = re.findall(r':(\d+):', error)
+            excerpt = ""
+            if matches:
+                line_no = max(map(int, matches))
+                lines = wrapped.splitlines()
+                lo = max(0, line_no - 24)
+                hi = min(len(lines), line_no + 3)
+                excerpt = "\n" + "\n".join(
+                    f"{i + 1}: {lines[i]}" for i in range(lo, hi)
+                )
+            raise RuntimeError(f"lua dump failed: {error}{excerpt}")
 
         with open(dump_path, "rb") as f:
             return f.read()
@@ -292,7 +306,7 @@ def _opaque_zero(x: str, y: str) -> str:
     return random.choice(forms)
 
 
-def _add_base_expr(x: str, y: str) -> str:
+def _integer_base_expr(kind: str, x: str, y: str) -> str:
     and_xy = f"({x}&{y})"
     xor_xy = f"({x}~{y})"
     or_xy = random.choice([
@@ -300,13 +314,31 @@ def _add_base_expr(x: str, y: str) -> str:
         f"(~((~{x})&(~{y})))",
         f"(({x}~{y})|({x}&{y}))",
     ])
-    forms = [
-        f"({xor_xy}+({and_xy}<<1))",
-        f"({or_xy}+{and_xy})",
-        f"(({or_xy}<<1)-{xor_xy})",
-        f"(({or_xy}-{xor_xy})+{xor_xy}+{and_xy})",
-        f"(({or_xy}+({and_xy}&{or_xy}))+{_opaque_zero(x, y)})",
-    ]
+    forms_by_kind = {
+        "ADD": [
+            f"({xor_xy}+({and_xy}<<1))",
+            f"({or_xy}+{and_xy})",
+            f"(({or_xy}<<1)-{xor_xy})",
+            f"(({or_xy}+({and_xy}&{or_xy}))+{_opaque_zero(x, y)})",
+        ],
+        "SUB": [
+            f"({x}+(~{y})+1)",
+            f"(({x}~{y})-(((~{x})&{y})<<1))",
+            f"(({x}+((~{y})|0))+1+{_opaque_zero(x, y)})",
+        ],
+        "MUL": [
+            f"(({x}*{y})+{_opaque_zero(x, y)})",
+            f"((({x}+{_opaque_zero(x, y)})*({y}+{_opaque_zero(x, y)})))",
+        ],
+        "BAND": [f"(~((~{x})|(~{y})))", f"({or_xy}-{xor_xy})"],
+        "BOR": [f"(~((~{x})&(~{y})))", f"({xor_xy}+{and_xy})"],
+        "BXOR": [f"({or_xy}-{and_xy})", f"(({x}|{y})&(~({x}&{y})))"],
+        "SHL": [f"({x}<<({y}+{_opaque_zero(x, y)}))"],
+        "SHR": [f"({x}>>({y}+{_opaque_zero(x, y)}))"],
+        "UNM": [f"((~{x})+1)", f"(0-{x}+{_opaque_zero(x, y)})"],
+        "BNOT": [f"(-{x}-1)", f"({x}~(-1))"],
+    }
+    forms = forms_by_kind[kind]
     return random.choice(forms)
 
 
@@ -334,8 +366,8 @@ def _wrap_identity(expr: str, x: str, y: str, allow_rot: bool = True) -> tuple[s
     return f"({_opaque_zero(x, y)}+{expr})", False
 
 
-def _make_add_int_expr(x: str = "x", y: str = "y") -> str:
-    expr = _add_base_expr(x, y)
+def _make_integer_expr(kind: str, x: str = "x", y: str = "y") -> str:
+    expr = _integer_base_expr(kind, x, y)
     used_rot = False
     for _ in range(random.randint(4, 8)):
         nxt, was_rot = _wrap_identity(expr, x, y, allow_rot=not used_rot)
@@ -346,9 +378,9 @@ def _make_add_int_expr(x: str = "x", y: str = "y") -> str:
     return expr
 
 
-def _make_add_int_func() -> str:
-    a, b, state, slots, regs, active = [_rand_lua_name() for _ in range(6)]
-    cache, st = _rand_lua_name(), _rand_lua_name()
+def _make_integer_graph_func(op_kind: str) -> str:
+    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
+    ctx = _rand_lua_name()
     state_key = random.randint(700, 1200)
     carry_key = 611
 
@@ -394,29 +426,24 @@ def _make_add_int_func() -> str:
             if indegree[child] == 0:
                 ready.append(child)
     if len(topo) != len(nodes):
-        raise RuntimeError("generated ADD graph contains a cycle")
+        raise RuntimeError(f"generated {op_kind} graph contains a cycle")
 
     names = {node_id: _rand_lua_name() for node_id in nodes}
-    lines = [
-        f"(function({a},{b},{state},{slots},{regs},{active})",
-        f"{state}={state} or {{}};{active}={active} or {{}};",
-        f"local {cache}={{}};local {st}=(({a}~{b})~{_hex64()}~({state}[{carry_key}] or 0));",
-        "local " + ",".join(names.values()) + ";",
-    ]
+    lines = ["(function()local " + ",".join(names.values()) + ";"]
 
     for node_id in topo:
         node = nodes[node_id]
         name = names[node_id]
-        deps = [f"{names[d]}()" for d in node["deps"]]
-        cached = f"local q={cache}[{node_id + 1}];if q~=nil then return q end;"
+        deps = [f"{names[d]}({ctx})" for d in node["deps"]]
+        cached = f"local q={ctx}.k[{node_id + 1}];if q~=nil then return q end;"
         kind = node["kind"]
         if kind == "core":
-            body = f"local r={_make_add_int_expr(a, b)};{st}=({st}~(r|(~r)));"
+            body = f"local r={_make_integer_expr(op_kind, f'{ctx}.a', f'{ctx}.b')};{ctx}.t=({ctx}.t~(r|(~r)));"
         elif kind == "zero":
-            terms = deps or [a, b]
+            terms = deps or [f"{ctx}.a", f"{ctx}.b"]
             joined = "~".join(f"(({term})~({term}))" for term in terms)
-            body = (f"local r=({joined});{st}=(({st}~r)~(({state}[{state_key}] or 0)&r));"
-                    f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{st}~r);")
+            body = (f"local r=({joined});{ctx}.t=(({ctx}.t~r)~(({ctx}.s[{state_key}] or 0)&r));"
+                    f"{ctx}.s[{state_key}]=(({ctx}.s[{state_key}] or 0)~{ctx}.t~r);")
         elif kind == "identity":
             source = deps[0]
             zeros = "+".join(deps[1:])
@@ -428,35 +455,465 @@ def _make_add_int_func() -> str:
                 key = _hex64()
                 expr = f"((({source}+{key})-{key})+({zeros}))"
             else:
-                expr = f"(({source})+({zeros})+(({st}~{st})))"
-            body = f"local r={expr};{st}=({st}~(r&r)~({zeros}));"
+                expr = f"(({source})+({zeros})+(({ctx}.t~{ctx}.t)))"
+            body = f"local r={expr};{ctx}.t=({ctx}.t~(r&r)~({zeros}));"
         else:
-            body = f"local r=({deps[0]})+({deps[1]})+({deps[2]});{st}=({st}~r~(r<<1));"
-        lines.append(f"{name}=function(){cached}{body}{cache}[{node_id + 1}]=r;return r end;")
+            body = f"local r=({deps[0]})+({deps[1]})+({deps[2]});{ctx}.t=({ctx}.t~r~(r<<1));"
+        lines.append(f"{name}=function({ctx}){cached}{body}{ctx}.k[{node_id + 1}]=r;return r end;")
 
     out = _rand_lua_name()
     slot = _rand_lua_name()
     index = _rand_lua_name()
     lines.extend([
-        f"local {out}={names[sink]}();",
-        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
-        f"local q=({out}~{st}~(({index}*{_hex64()})&-1));{regs}[{slot}]=q;",
-        f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~q~{slot}) end end;",
-        f"return {out} end)",
+        f"return function({a},{b},{state},{slots},{regs},{active},{boxes})",
+        f"{state}={state} or {{}};{active}={active} or {{}};local {ctx}={{a={a},b={b},s={state},k={{}},t=(({a}~{b})~{_hex64()}~({state}[{carry_key}] or 0))}};",
+        f"local {out}={names[sink]}({ctx});",
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];if not {boxes}[{slot}] then ",
+        f"local q=({out}~{ctx}.t~(({index}*{_hex64()})&-1));{regs}[{slot}]=q;",
+        f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~q~{slot}) end end end;",
+        f"return {out} end end)()",
     ])
     return "".join(lines)
 
 
-def _apply_add_exprs(vm_code: str) -> str:
-    token = "__ADD_INT_FUNC__"
-    while token in vm_code:
-        vm_code = vm_code.replace(token, _make_add_int_func(), 1)
+def _make_value_graph_func() -> str:
+    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
+    ctx = _rand_lua_name()
+    nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
+    zeros: list[int] = []
+    next_id = 1
+    for _ in range(random.randint(7, 11)):
+        deps = random.sample(zeros, min(len(zeros), random.randint(0, 2)))
+        nodes[next_id] = {"kind": "zero", "deps": tuple(deps)}
+        zeros.append(next_id)
+        next_id += 1
+    current = 0
+    for i in range(random.randint(10, 16)):
+        deps = [current, zeros[i % len(zeros)]]
+        if random.random() < 0.4:
+            deps.append(random.choice(zeros))
+        nodes[next_id] = {"kind": "identity", "deps": tuple(dict.fromkeys(deps))}
+        current = next_id
+        next_id += 1
+    nodes[next_id] = {"kind": "sink", "deps": (current, *random.sample(zeros, 2))}
+    sink = next_id
+
+    indegree = {i: len(node["deps"]) for i, node in nodes.items()}
+    children = {i: [] for i in nodes}
+    for i, node in nodes.items():
+        for dep in node["deps"]:
+            children[dep].append(i)
+    ready = [i for i, degree in indegree.items() if degree == 0]
+    topo: list[int] = []
+    while ready:
+        i = ready.pop(random.randrange(len(ready)))
+        topo.append(i)
+        for child in children[i]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+
+    names = {i: _rand_lua_name() for i in nodes}
+    state_key = random.randint(1201, 1700)
+    lines = ["(function()local " + ",".join(names.values()) + ";"]
+    for i in topo:
+        node = nodes[i]
+        name = names[i]
+        deps = [f"{names[d]}({ctx})" for d in node["deps"]]
+        cached = f"if {ctx}.n[{i + 1}] then return {ctx}.k[{i + 1}] end;"
+        if node["kind"] == "source":
+            body = f"local r={ctx}.v;"
+        elif node["kind"] == "zero":
+            calls = "+".join(deps) if deps else f"({ctx}.g~{ctx}.g)"
+            body = f"local r=({calls});r=(r~r);{ctx}.t=({ctx}.t~r~({ctx}.g&0xFF));"
+        else:
+            source = deps[0]
+            zeros_expr = "+".join(deps[1:])
+            body = f"local z=({zeros_expr});local r={source};{ctx}.t=({ctx}.t~z~({ctx}.g&0xFF));"
+        lines.append(
+            f"{name}=function({ctx}){cached}{body}{ctx}.n[{i + 1}]=true;"
+            f"{ctx}.k[{i + 1}]=r;return r end;"
+        )
+    out, index, slot = _rand_lua_name(), _rand_lua_name(), _rand_lua_name()
+    lines.extend([
+        f"return function({value},{state},{slots},{regs},{active},{boxes},{tag})",
+        f"local {ctx}={{v={value},s={state},k={{}},n={{}},g={tag},t=(({state}[611] or 0)~{tag}~{_hex64()})}};",
+        f"local {out}={names[sink]}({ctx});{state}[{state_key}]=(({state}[{state_key}] or 0)~{ctx}.t~{tag});",
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];if not {boxes}[{slot}] then ",
+        f"local q=({ctx}.t~{tag}~(({index}*{_hex64()})&-1));{regs}[{slot}]=q;",
+        f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~q~{slot}) end end end;",
+        f"return {out} end end)()",
+    ])
+    return "".join(lines)
+
+
+def _make_call_route_func() -> str:
+    """Build an acyclic tail-call router whose only observable result is next(q)."""
+    terminal, query, ctx = [_rand_lua_name() for _ in range(3)]
+    count = random.randint(14, 22)
+    names = [_rand_lua_name() for _ in range(count)]
+    order = list(range(count))
+    random.shuffle(order)
+    lines = ["(function()local " + ",".join(names) + ";"]
+
+    for i in order:
+        name = names[i]
+        if i == count - 1:
+            body = (
+                f"{ctx}.q[__VM_Q_FLOW__]=({ctx}.q[__VM_Q_TRACE__]~"
+                f"({ctx}.q[__VM_Q_FLOW__] or 0));"
+                f"local d={ctx}.q[__VM_Q_LEDGER__];if d then "
+                f"d[1]=((d[1] or 0)~{ctx}.q[__VM_Q_TRACE__])&-1 end;"
+                f"return {ctx}.f({ctx}.q)"
+            )
+        elif i == 0:
+            salt = _hex64()
+            body = (
+                f"{ctx}.q[__VM_Q_TRACE__]=({ctx}.q[__VM_Q_TRACE__]~{salt})&-1;"
+                f"return {names[1]}({ctx})"
+            )
+        elif i == 1:
+            salt = _hex64()
+            body = (
+                f"{ctx}.q[__VM_Q_TRACE__]=(({ctx}.q[__VM_Q_TRACE__]+{salt})~"
+                f"{ctx}.q[__VM_Q_KIND__])&-1;"
+                f"if {ctx}.q[__VM_Q_BUDGET__]>0 then "
+                f"{ctx}.q[__VM_Q_BUDGET__]={ctx}.q[__VM_Q_BUDGET__]-1;"
+                f"return {names[0]}({ctx}) end;return {names[2]}({ctx})"
+            )
+        else:
+            primary = i + 1
+            maximum_skip = min(count - 1, i + random.randint(2, 5))
+            alternate = random.randint(primary, maximum_skip)
+            salt = _hex64()
+            body = (
+                f"{ctx}.q[__VM_Q_TRACE__]=(({ctx}.q[__VM_Q_TRACE__]~{salt})+{i + 1})&-1;"
+                f"if (({ctx}.q[__VM_Q_TRACE__]~{ctx}.q[__VM_Q_KIND__]~{salt})&1)==0 then "
+                f"return {names[primary]}({ctx}) end;"
+                f"return {names[alternate]}({ctx})"
+            )
+        lines.append(f"{name}=function({ctx}){body} end;")
+
+    seed = _hex64()
+    lines.append(
+        f"return function({terminal},{query})"
+        f"{query}[__VM_Q_TRACE__]=({query}[__VM_Q_TRACE__] or "
+        f"({query}[__VM_Q_KIND__]~{seed}));"
+        f"{query}[__VM_Q_BUDGET__]=({query}[__VM_Q_BUDGET__] or "
+        f"((({query}[__VM_Q_KIND__]~{seed})&3)+1));"
+        f"return {names[0]}({{f={terminal},q={query}}}) end end)()"
+    )
+    return "".join(lines)
+
+
+def _make_control_graph_func() -> str:
+    packet, state, ctx = [_rand_lua_name() for _ in range(3)]
+    count = random.randint(12, 18)
+    names = [_rand_lua_name() for _ in range(count)]
+    order = list(range(count))
+    random.shuffle(order)
+    state_key = random.randint(1701, 2200)
+    lines = ["(function()local " + ",".join(names) + ";"]
+
+    for i in order:
+        name = names[i]
+        if i == count - 1:
+            body = f"return {ctx}.q"
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + 4))
+            salt = _hex64()
+            loop_salt = _hex64()
+            body = (
+                f"local o={ctx}.q[__VM_CF_KEY__];local n=(o~{salt}~"
+                f"({ctx}.s[{state_key}] or 0))&-1;"
+                f"for j=1,(({ctx}.q[__VM_CF_TRACE__]&3)+1) do "
+                f"n=(n~((j*{loop_salt})&-1))&-1 end;"
+                f"for _,f in ipairs({ctx}.q[__VM_CF_FIELDS__]) do "
+                f"{ctx}.q[f]=({ctx}.q[f]~o)~n end;"
+                f"{ctx}.q[__VM_CF_KEY__]=n;"
+                f"{ctx}.q[__VM_CF_TRACE__]=({ctx}.q[__VM_CF_TRACE__]~n~{salt})&-1;"
+                f"{ctx}.s[{state_key}]=(({ctx}.s[{state_key}] or 0)~n~{i + 1});"
+                f"if ((n~{ctx}.q[__VM_CF_TRACE__])&1)==0 then "
+                f"return {names[primary]}({ctx}) end;"
+                f"return {names[alternate]}({ctx})"
+            )
+        lines.append(f"{name}=function({ctx}){body} end;")
+
+    seed = _hex64()
+    lines.append(
+        f"return function({packet},{state})"
+        f"{packet}[__VM_CF_TRACE__]=({packet}[__VM_CF_TRACE__] or "
+        f"({packet}[__VM_CF_KEY__]~{seed}));"
+        f"return {names[0]}({{q={packet},s={state}}}) end end)()"
+    )
+    return "".join(lines)
+
+
+def _make_occurrence_graph_func(site: int) -> str:
+    bank, pick, a, b, state, slots, regs, active, boxes, ctx = [
+        _rand_lua_name() for _ in range(10)
+    ]
+    count = random.randint(7, 11)
+    names = [_rand_lua_name() for _ in range(count)]
+    order = list(range(count))
+    random.shuffle(order)
+    state_key = random.randint(2201, 2800)
+    lines = ["(function()local " + ",".join(names) + ";"]
+    for i in order:
+        if i == count - 1:
+            body = (
+                f"local k=(({ctx}.p~{ctx}.t)&1)+1;"
+                f"return {ctx}.g[k]({ctx}.a,{ctx}.b,{ctx}.s,{ctx}.l,"
+                f"{ctx}.r,{ctx}.x,{ctx}.o)"
+            )
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + 3))
+            salt = _hex64()
+            body = (
+                f"{ctx}.t=(({ctx}.t~{salt})+{i + 1}+"
+                f"({ctx}.s[{state_key}] or 0))&-1;"
+                f"{ctx}.s[{state_key}]=(({ctx}.s[{state_key}] or 0)~{ctx}.t~{site});"
+                f"if (({ctx}.t~{site})&1)==0 then return {names[primary]}({ctx}) end;"
+                f"return {names[alternate]}({ctx})"
+            )
+        lines.append(f"{names[i]}=function({ctx}){body} end;")
+    seed = _hex64()
+    lines.append(
+        f"return function({bank},{pick},{a},{b},{state},{slots},{regs},{active},{boxes})"
+        f"return {names[0]}({{g={bank},p={pick},a={a},b={b},s={state},l={slots},"
+        f"r={regs},x={active},o={boxes},t=({site}~{seed}~({state}[611] or 0))}})"
+        f"end end)()"
+    )
+    return "".join(lines)
+
+
+def _make_loop_ir_func(kind: str) -> str:
+    packet, state, ctx = [_rand_lua_name() for _ in range(3)]
+    semantic_count = 2 if kind == "FORLOOP" else 1
+    wrapper_count = random.randint(7, 11)
+    total = semantic_count + wrapper_count + 1
+    names = [_rand_lua_name() for _ in range(total)]
+    state_key = random.randint(2801, 3300)
+    definitions: list[str] = []
+
+    if kind == "FORLOOP":
+        definitions.append(
+            f"{names[0]}=function({ctx})local q={ctx}.q;"
+            f"q[__VM_CF_VALUE__]=q[__VM_CF_VALUE__]+q[__VM_CF_STEP__];"
+            f"{ctx}.s[{state_key}]=(({ctx}.s[{state_key}] or 0)~{ctx}.g);return q end;"
+        )
+        definitions.append(
+            f"{names[1]}=function({ctx})local q={names[0]}({ctx});local v=q[__VM_CF_VALUE__];"
+            f"local d=q[__VM_CF_STEP__];local l=q[__VM_CF_LIMIT__];"
+            f"q[__VM_CF_TAKE__]=(d>0 and v<=l) or (d<=0 and v>=l);return q end;"
+        )
+        previous = 1
+    elif kind == "FORPREP":
+        definitions.append(
+            f"{names[0]}=function({ctx})local q={ctx}.q;"
+            f"q[__VM_CF_VALUE__]=q[__VM_CF_VALUE__]-q[__VM_CF_STEP__];return q end;"
+        )
+        previous = 0
+    else:
+        definitions.append(
+            f"{names[0]}=function({ctx})local q={ctx}.q;"
+            f"q[__VM_CF_TAKE__]=(q[__VM_CF_VALUE__]~=nil);return q end;"
+        )
+        previous = 0
+
+    for i in range(semantic_count, total - 1):
+        dep = previous
+        salt = _hex64()
+        definitions.append(
+            f"{names[i]}=function({ctx})local q={names[dep]}({ctx});"
+            f"{ctx}.g=(({ctx}.g~{salt})+{i + 1})&-1;"
+            f"{ctx}.s[{state_key}]=(({ctx}.s[{state_key}] or 0)~{ctx}.g);return q end;"
+        )
+        previous = i
+    definitions.append(
+        f"{names[-1]}=function({ctx})return {names[previous]}({ctx}) end;"
+    )
+    random.shuffle(definitions)
+    seed = _hex64()
+    return (
+        "(function()local " + ",".join(names) + ";"
+        + "".join(definitions)
+        + f"return function({packet},{state})return {names[-1]}({{q={packet},s={state},"
+          f"g=({seed}~({state}[611] or 0))}}) end end)()"
+    )
+
+
+def _make_semantic_ir_func(kind: str) -> str:
+    x, y, z, state, ctx = [_rand_lua_name() for _ in range(5)]
+    count = random.randint(7, 11)
+    names = [_rand_lua_name() for _ in range(count)]
+    state_key = random.randint(3301, 3900)
+    if kind == "GET":
+        semantic = f"local r={ctx}.x[{ctx}.y];"
+    elif kind == "SET":
+        semantic = f"{ctx}.x[{ctx}.y]={ctx}.z;local r={ctx}.z;"
+    elif kind == "EQ":
+        semantic = f"local r=({ctx}.x=={ctx}.y);"
+    elif kind == "LT":
+        semantic = f"local r=({ctx}.x<{ctx}.y);"
+    elif kind == "LE":
+        semantic = f"local r=({ctx}.x<={ctx}.y);"
+    elif kind == "TRUTH":
+        semantic = f"local r=(not not {ctx}.x);"
+    else:
+        semantic = f"local r={ctx}.x;"
+
+    definitions = [
+        f"{names[0]}=function({ctx}){semantic}{ctx}.v=r;return r end;"
+    ]
+    previous = 0
+    for i in range(1, count - 1):
+        salt = _hex64()
+        definitions.append(
+            f"{names[i]}=function({ctx})local r={names[previous]}({ctx});"
+            f"{ctx}.g=(({ctx}.g~{salt})+{i})&-1;"
+            f"{ctx}.s[{state_key}]=(({ctx}.s[{state_key}] or 0)~{ctx}.g);return r end;"
+        )
+        previous = i
+    definitions.append(
+        f"{names[-1]}=function({ctx})return {names[previous]}({ctx}) end;"
+    )
+    random.shuffle(definitions)
+    seed = _hex64()
+    return (
+        "(function()local " + ",".join(names) + ";" + "".join(definitions)
+        + f"return function({x},{y},{z},{state})return {names[-1]}({{x={x},y={y},z={z},"
+          f"s={state},g=({seed}~({state}[611] or 0))}}) end end)()"
+    )
+
+
+_ARITH_SPECS = {
+    "ADD": ("__VM_SLOT_ADD__", "+", 2),
+    "SUB": ("__VM_SLOT_SUB__", "-", 2),
+    "MUL": ("__VM_SLOT_MUL__", "*", 2),
+    "BAND": ("__VM_SLOT_BAND__", "&", 2),
+    "BOR": ("__VM_SLOT_BOR__", "|", 2),
+    "BXOR": ("__VM_SLOT_BXOR__", "~", 2),
+    "SHL": ("__VM_SLOT_SHL__", "<<", 2),
+    "SHR": ("__VM_SLOT_SHR__", ">>", 2),
+    "UNM": ("__VM_SLOT_UNM__", "-", 1),
+    "BNOT": ("__VM_SLOT_BNOT__", "~", 1),
+}
+
+
+def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> str:
+    slots: dict[str, int] = {}
+    used_slots: set[int] = set()
+    for kind, (token, _, _) in _ARITH_SPECS.items():
+        while True:
+            slot = random.randint(0x1000, 0xFFFFF)
+            if slot not in used_slots:
+                used_slots.add(slot)
+                slots[kind] = slot
+                break
+
+    native_entries: list[str] = []
+    graph_entries: list[str] = []
+    kinds = list(_ARITH_SPECS)
+    random.shuffle(kinds)
+    for kind in kinds:
+        _, operator, arity = _ARITH_SPECS[kind]
+        slot = slots[kind]
+        x, y = _rand_lua_name(), _rand_lua_name()
+        if arity == 1:
+            native = f"function({x})return {operator}{x} end"
+        else:
+            native = f"function({x},{y})return {x}{operator}{y} end"
+        native_entries.append(f"[{slot}]={{{native},{native}}}")
+        graph_entries.append(
+            f"[{slot}]={{{_make_integer_graph_func(kind)},"
+            f"{_make_integer_graph_func(kind)}}}"
+        )
+
+    bundle = "{{" + ",".join(native_entries) + "},{" + ",".join(graph_entries) + "}}"
+    vm_code = vm_code.replace("__VM_ARITH_BUNDLE__", bundle)
+    for kind, (token, _, _) in _ARITH_SPECS.items():
+        vm_code = vm_code.replace(token, str(slots[kind]))
+    value_token = "__VM_VALUE_GRAPHS__"
+    while value_token in vm_code:
+        variants = ",".join(_make_value_graph_func() for _ in range(2))
+        vm_code = vm_code.replace(value_token, "{" + variants + "}", 1)
+
+    call_tags = random.sample(range(0x10000, 0x7FFFFFFF), 4)
+    call_replacements = {
+        "__VM_CALL_ENTER__": call_tags[0],
+        "__VM_CALL_LEAVE__": call_tags[1],
+        "__VM_ROUTE_ENTER__": call_tags[2],
+        "__VM_ROUTE_LEAVE__": call_tags[3],
+    }
+    call_graph = (
+        "{[" + str(call_tags[2]) + "]=" + _make_call_route_func()
+        + ",[" + str(call_tags[3]) + "]=" + _make_call_route_func() + "}"
+    )
+    vm_code = vm_code.replace("__VM_CALL_GRAPHS__", call_graph)
+    control_graphs = "{" + ",".join(
+        _make_control_graph_func() for _ in range(2)
+    ) + "}"
+    vm_code = vm_code.replace("__VM_CONTROL_GRAPHS__", control_graphs)
+    loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
+    loop_graphs = (
+        "{[" + str(loop_tags[0]) + "]=" + _make_loop_ir_func("FORLOOP")
+        + ",[" + str(loop_tags[1]) + "]=" + _make_loop_ir_func("FORPREP")
+        + ",[" + str(loop_tags[2]) + "]=" + _make_loop_ir_func("TFORLOOP") + "}"
+    )
+    vm_code = vm_code.replace("__VM_LOOP_GRAPHS__", loop_graphs)
+    vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
+    vm_code = vm_code.replace("__VM_LOOP_FORPREP__", str(loop_tags[1]))
+    vm_code = vm_code.replace("__VM_LOOP_TFORLOOP__", str(loop_tags[2]))
+    data_tags = random.sample(range(0x10000, 0x7FFFFFFF), 7)
+    semantic_kinds = ("VALUE", "GET", "SET", "EQ", "LT", "LE", "TRUTH")
+    semantic_graphs = "{" + ",".join(
+        f"[{tag}]={_make_semantic_ir_func(kind)}"
+        for kind, tag in zip(semantic_kinds, data_tags)
+    ) + "}"
+    vm_code = vm_code.replace("__VM_SEMANTIC_GRAPHS__", semantic_graphs)
+    for token, tag in zip((
+        "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
+        "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
+        "__VM_CMP_TRUTH__",
+    ), data_tags):
+        vm_code = vm_code.replace(token, str(tag))
+    occurrence_graphs = "{" + ",".join(
+        f"[{site}]={_make_occurrence_graph_func(site)}"
+        for site in sorted(graph_sites or ())
+    ) + "}"
+    vm_code = vm_code.replace("__VM_OCCURRENCE_GRAPHS__", occurrence_graphs)
+
+    field_tokens = [
+        "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
+        "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
+        "__VM_FR_SPLIT__", "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
+        "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
+        "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
+        "__VM_Q_FLOW__", "__VM_Q_BUDGET__", "__VM_Q_LEDGER__",
+        "__VM_RES_VALUES__", "__VM_RES_COUNT__",
+        "__VM_META_PROTO__", "__VM_META_UPVALS__",
+        "__VM_CF_KEY__", "__VM_CF_TRACE__", "__VM_CF_FIELDS__",
+        "__VM_CF_TARGET__", "__VM_CF_A__", "__VM_CF_B__",
+        "__VM_CF_C__", "__VM_CF_COUNT__",
+        "__VM_CF_VALUE__", "__VM_CF_STEP__", "__VM_CF_LIMIT__",
+        "__VM_CF_TAKE__",
+    ]
+    field_slots = random.sample(range(3, 241), len(field_tokens))
+    for token, slot in zip(field_tokens, field_slots):
+        vm_code = vm_code.replace(token, str(slot))
+    for token, value in call_replacements.items():
+        vm_code = vm_code.replace(token, str(value))
     return vm_code
 
 _VM_RENAME_KEYS = [
     # proto 테이블 키
     "num_params", "is_vararg", "max_stack_size", "vm_id",
-    "constants", "code", "avalanche", "upvalues", "protos",
+    "constants", "code", "avalanche", "graph_sites", "upvalues", "protos",
     "instack", "idx",
     # reader 메서드명
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
@@ -558,7 +1015,9 @@ class VMPass(PostPass):
         # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
         # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
         instr_layout = make_instr_layout()
-        blob = serialize(proto, vm_assign, vm_maps, layout=instr_layout)
+        graph_sites: set[int] = set()
+        blob = serialize(proto, vm_assign, vm_maps, layout=instr_layout,
+                         graph_sites=graph_sites)
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
@@ -610,7 +1069,7 @@ class VMPass(PostPass):
             f'{vm_code} return run end'
         )
         vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
-        vm_func_src = _apply_add_exprs(vm_func_src)
+        vm_func_src = _apply_handler_graphs(vm_func_src, graph_sites)
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline

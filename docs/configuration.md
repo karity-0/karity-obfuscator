@@ -107,11 +107,33 @@ reduces script size by removing unnecessary whitespace.
 
 virtualizes Lua bytecode using a custom virtual machine.
 
-Integer ADD handlers are generated as build-specific function DAGs with randomized
-topological layouts and equivalent mixed boolean-arithmetic expressions. The VM also
-performs bytecode control-flow liveness analysis and may diffuse intermediate state
-through registers proven dead after an ADD. Diffusion is skipped when no safe dead
-register is available.
+Integer arithmetic, bitwise, shift, and unary handlers use build-specific function
+DAG banks with randomized topological layouts, sparse selectors, and equivalent
+mixed boolean-arithmetic expressions. The active graph is selected from the VM id,
+instruction position, and accumulated diffusion state. Every emitted arithmetic
+instruction also receives an encrypted, globally unique site id and a separately
+generated wrapper graph; fused instructions preserve one site id per internal
+operation. The VM performs bytecode control-flow liveness analysis and diffuses
+selected handler state through reserved scratch registers; straight-line prototypes
+may also use proven-dead stack registers. Diffused values key the next instruction
+decode and encode suspended continuation fields, so later VM execution consumes the
+generated state.
+
+VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
+instead of recursively returning through the host Lua stack. Calls and returns pass
+through build-specific bounded cyclic tail-call graphs. Callee state updates rekey
+the suspended parent's encoded program counter, stack top, result range, and state
+fields through a shared cross-frame ledger. Native functions and callable values
+retain a direct Lua call boundary for compatible metamethod, vararg, and multi-return
+behavior.
+
+Selected jump, loop, iterator, and vararg instruction sites encode their control
+operands into build-specific packets. A bounded control DAG rekeys those operands
+before the handler can consume them; repeated hot-loop visits use a per-frame site
+cache after the full path has executed once. Numeric and generic loop updates and
+predicates are evaluated by separate generated IR nodes. Load, table access, table
+assignment, and comparison semantics likewise execute inside generated semantic
+graphs so metamethod-bearing operations remain single-evaluation boundaries.
 
 
 ## anti_debug

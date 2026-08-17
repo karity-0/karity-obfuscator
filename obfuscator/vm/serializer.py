@@ -327,18 +327,51 @@ def _live_out_sets(proto: Proto) -> list[set[int]]:
     return live_out
 
 
-def _add_avalanche_slots(proto: Proto) -> dict[int, tuple[int, ...]]:
-    """Pick only registers proven dead after ADD, excluding its operands/result."""
+_AVALANCHE_OPS = (
+    set(range(0, 30))
+    | {30, 31, 32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45}
+)
+_AVALANCHE_RATE = {
+    **{op: 0.12 for op in range(0, 13)},
+    **{op: 1.0 for op in range(13, 27)},
+    **{op: 0.25 for op in range(27, 30)},
+    **{op: 0.45 for op in range(31, 36)},
+    30: 0.12,
+    36: 0.25,
+    39: 0.12,
+    40: 0.12,
+    41: 0.12,
+    42: 0.12,
+    43: 0.35,
+    44: 0.35,
+    45: 0.12,
+}
+
+
+def _instruction_avalanche_slots(proto: Proto) -> dict[int, tuple[int, ...]]:
+    """Pick owned scratch registers, using dead stack slots only for straight-line code."""
     result: dict[int, tuple[int, ...]] = {}
     live_out = _live_out_sets(proto)
     all_regs = set(range(proto.max_stack_size))
+    reserved_regs = set(range(proto.max_stack_size, min(255, proto.max_stack_size + 12)))
+    straight_line = not proto.protos and all(
+        (raw & 0x3F) < 30 for raw in proto.code
+    )
+    captured = {
+        uv.idx for child in proto.protos for uv in child.upvalues
+        if uv.instack == 1 and uv.idx < proto.max_stack_size
+    }
     for i, raw in enumerate(proto.code):
-        if (raw & 0x3F) != 13:
+        if (raw & 0x3F) not in _AVALANCHE_OPS:
             continue
-        a, b, c, _ = _abc(raw)
-        blocked = live_out[i] | _reg(a, proto.max_stack_size)
-        blocked |= _reg(b, proto.max_stack_size) | _reg(c, proto.max_stack_size)
-        candidates = list(all_regs - blocked)
+        op = raw & 0x3F
+        if random.random() >= _AVALANCHE_RATE.get(op, 0.25):
+            continue
+        reads, writes = _instruction_rw(proto, i)
+        blocked = live_out[i] | reads | writes | captured
+        candidates = list(reserved_regs)
+        if straight_line:
+            candidates.extend(all_regs - blocked)
         random.shuffle(candidates)
         if candidates:
             result[i] = tuple(candidates[:random.randint(1, min(3, len(candidates)))])
@@ -497,6 +530,15 @@ def _rand_alias(vop_map: dict[int, list[int]] | None, op: int) -> int:
 # 직렬화
 # ---------------------------------------------------------------------------
 VMMaps = tuple  # (vop_map, split_map, fuse_map)
+_GRAPH_SITE_OPS = {13, 14, 15, 20, 21, 22, 23, 24, 25, 26}
+
+
+def _new_graph_site(site_registry: set[int]) -> int:
+    while True:
+        site = random.randint(0x10000, 0x7FFFFFFF)
+        if site not in site_registry:
+            site_registry.add(site)
+            return site
 
 
 def iter_protos(proto: Proto):
@@ -521,7 +563,8 @@ def assign_vm_ids(proto: Proto, n: int) -> tuple[dict[int, int], int]:
 def serialize(proto: Proto,
               vm_assign: dict[int, int] | None = None,
               vm_maps: list | None = None,
-              layout: dict | None = None) -> bytes:
+              layout: dict | None = None,
+              graph_sites: set[int] | None = None) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map). vm_assign = {id(proto): vm_id}.
     기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작.
     layout: instruction 워드 필드 시프트(None이면 DEFAULT_INSTR_LAYOUT). vm.lua의
@@ -536,12 +579,14 @@ def serialize(proto: Proto,
     _write_fake_pool(w)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
-    _write_proto(w, proto, vm_assign, vm_maps, acc_state)
+    _write_proto(w, proto, vm_assign, vm_maps, acc_state,
+                 graph_sites if graph_sites is not None else set())
     return w.data()
 
 
 def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
-                 vm_maps: list, acc_state: list[int]):
+                 vm_maps: list, acc_state: list[int],
+                 graph_sites: set[int]):
     vm_id = vm_assign.get(id(proto), 0)
     vop_map, split_map, fuse_map = vm_maps[vm_id]
 
@@ -555,8 +600,9 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     plan          = _build_plan(proto.code, split_map, fuse_map, protected)
     new_pos, total = _plan_new_pos(plan, len(proto.code))
     code          = _adjust_jumps(proto.code, new_pos, total)
-    add_slots     = _add_avalanche_slots(proto)
+    add_slots     = _instruction_avalanche_slots(proto)
     emitted_av: list[tuple[int, ...]] = []
+    emitted_sites: list[tuple[int, ...]] = []
 
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
     w.u32(total)
@@ -567,25 +613,43 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         if unit[0] == "normal":
             _emit_instr(w, raw, _rand_alias(vop_map, orig_op), acc_state)
             emitted_av.append(add_slots.get(i, ()))
+            emitted_sites.append(
+                (_new_graph_site(graph_sites),) if orig_op in _GRAPH_SITE_OPS else ()
+            )
         elif unit[0] == "split":
             # 같은 raw 명령어를 각 part vop으로 반복 방출
             vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
             for vop in vops:
                 _emit_instr(w, raw, vop, acc_state)
                 emitted_av.append(add_slots.get(i, ()))
+                emitted_sites.append(
+                    (_new_graph_site(graph_sites),) if orig_op in _GRAPH_SITE_OPS else ()
+                )
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]] & 0x3F
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
             _emit_instr(w, raw, fuse_vop, acc_state)
             emitted_av.append(add_slots.get(i, ()))
+            sites = []
+            if orig_op in _GRAPH_SITE_OPS:
+                sites.append(_new_graph_site(graph_sites))
+            if op2 in _GRAPH_SITE_OPS:
+                sites.append(_new_graph_site(graph_sites))
+            emitted_sites.append(tuple(sites))
             # operand 슬롯: dispatch 안 되지만 acc 동기화 위해 정상 슬롯으로 방출
             _emit_instr(w, code[unit[2]], _rand_alias(vop_map, op2), acc_state)
             emitted_av.append(add_slots.get(unit[2], ()))
+            emitted_sites.append(())
 
     for slots in emitted_av:
         w.u8(len(slots))
         for slot in slots:
             w.u8(slot)
+
+    for sites in emitted_sites:
+        w.u8(len(sites))
+        for site in sites:
+            w.u32(site)
 
     # 상수
     w.u32(len(proto.constants))
@@ -616,7 +680,7 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     # 중첩 proto (acc_state 전역 공유, vm_id별 맵은 sub마다 재선택)
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub, vm_assign, vm_maps, acc_state)
+        _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites)
 
 
 # ---------------------------------------------------------------------------
@@ -654,6 +718,10 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
     for _ in range(code_count):
         for _ in range(r.u8()):
             r.u8()
+
+    for _ in range(code_count):
+        for _ in range(r.u8()):
+            r.u32()
 
     const_count = r.u32()
     constants = []
