@@ -33,6 +33,20 @@ _UNARY_PREFIX = {
     28: "#",    # LEN
 }
 
+_GRAPH_BINARY_SLOTS = {
+    13: "__VM_SLOT_ADD__", 14: "__VM_SLOT_SUB__", 15: "__VM_SLOT_MUL__",
+    20: "__VM_SLOT_BAND__", 21: "__VM_SLOT_BOR__", 22: "__VM_SLOT_BXOR__",
+    23: "__VM_SLOT_SHL__", 24: "__VM_SLOT_SHR__",
+}
+_GRAPH_UNARY_SLOTS = {25: "__VM_SLOT_UNM__", 26: "__VM_SLOT_BNOT__"}
+_VALUE_UNARY_TAGS = {27, 28}
+_VALUE_BINARY_TAGS = {16, 17, 18, 19}
+_SEMANTIC_BINARY_TOKENS = {
+    16: "__VM_OP_MOD__", 17: "__VM_OP_POW__",
+    18: "__VM_OP_DIV__", 19: "__VM_OP_IDIV__",
+}
+_SEMANTIC_UNARY_TOKENS = {27: "__VM_OP_NOT__", 28: "__VM_OP_LEN__"}
+
 _SPLIT_PAD = "\n        "
 
 # ---------------------------------------------------------------------------
@@ -46,55 +60,93 @@ FUSE_OPS = {0, 1, 5} | _BINARY_SPLIT_OPS | _UNARY_SPLIT_OPS
 
 def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
     """Return handler body strings for each part of a split instruction."""
-    if orig_op in _BINARY_OP_LUA:
-        lua_op = _BINARY_OP_LUA[orig_op]
+    if orig_op in _GRAPH_BINARY_SLOTS:
+        slot = _GRAPH_BINARY_SLOTS[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{lua_op}regs[C]{_SPLIT_PAD}",
+                f" _split_tmp=_arith2(regs[B],regs[C],_av,{slot}){_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+        else:
+            return [
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
+                f" _split_tmp=_arith2(_split_tmp,regs[C],_av,{slot}){_SPLIT_PAD}",
+                f" rset(A,_split_tmp){_SPLIT_PAD}",
+            ]
+    if orig_op in _GRAPH_UNARY_SLOTS:
+        slot = _GRAPH_UNARY_SLOTS[orig_op]
+        if parts == 2:
+            return [
+                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" rset(A,_arith1(_split_tmp,_av,{slot})){_SPLIT_PAD}",
+            ]
+        return [
+            f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
+            f" _split_tmp=_arith1(_split_tmp,_av,{slot}){_SPLIT_PAD}",
+            f" rset(A,_split_tmp){_SPLIT_PAD}",
+        ]
+    if orig_op in _BINARY_OP_LUA:
+        lua_op = _BINARY_OP_LUA[orig_op]
+        def binary_expr(left: str, right: str) -> str:
+            if orig_op in _SEMANTIC_BINARY_TOKENS:
+                token = _SEMANTIC_BINARY_TOKENS[orig_op]
+                return f"_carry(_sem({token},{left},{right},nil),_av,{orig_op})"
+            expr = f"{left}{lua_op}{right}"
+            if orig_op in _VALUE_BINARY_TAGS:
+                return f"_carry({expr},_av,{orig_op})"
+            return expr
+        if parts == 2:
+            return [
+                f" _split_tmp={binary_expr('regs[B]', 'regs[C]')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
         else:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{lua_op}regs[C]{_SPLIT_PAD}",
+                f" _split_tmp={binary_expr('_split_tmp', 'regs[C]')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op in _UNARY_PREFIX:
         pfx = _UNARY_PREFIX[orig_op]
+        if orig_op in _SEMANTIC_UNARY_TOKENS:
+            token = _SEMANTIC_UNARY_TOKENS[orig_op]
+            unary_expr = lambda value: f"_carry(_sem({token},{value},nil,nil),_av,{orig_op})"
+        else:
+            unary_expr = lambda value: f"{pfx}{value}"
         if parts == 2:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,{pfx}_split_tmp){_SPLIT_PAD}",
+                f" rset(A,{unary_expr('_split_tmp')}){_SPLIT_PAD}",
             ]
         else:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={pfx}_split_tmp{_SPLIT_PAD}",
+                f" _split_tmp={unary_expr('_split_tmp')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op == 0:  # MOVE
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
             ]
     elif orig_op == 1:  # LOADK
         if parts == 2:
             return [
-                f" _split_tmp=kval(consts[Bx+1]){_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=kval(consts[Bx+1]){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
     return [f" {_SPLIT_PAD}"] * parts
 
@@ -305,18 +357,29 @@ def apply_split_to_vm(vm_code: str,
 # ---------------------------------------------------------------------------
 # 4. fusion(superopcode) 핸들러 삽입
 # ---------------------------------------------------------------------------
-def _op_body(op: int, a: str, b: str, c: str, bx: str) -> str:
+def _op_body(op: int, a: str, b: str, c: str, bx: str,
+             av: str = "_av") -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
-        return f"rset({a},regs[{b}])"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,regs[{b}],nil,nil),{av},0))"
     if op == 1:   # LOADK
-        return f"rset({a},kval(consts[{bx}+1]))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1]),nil,nil),{av},1))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},upvals[{b}+1].v)"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,upvals[{b}+1].v,nil,nil),{av},5))"
+    if op in _GRAPH_BINARY_SLOTS:
+        return f"rset({a},_arith2(regs[{b}],regs[{c}],{av},{_GRAPH_BINARY_SLOTS[op]}))"
+    if op in _GRAPH_UNARY_SLOTS:
+        return f"rset({a},_arith1(regs[{b}],{av},{_GRAPH_UNARY_SLOTS[op]}))"
     if op in _BINARY_OP_LUA:
-        return f"rset({a},regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}])"
+        expr = f"regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}]"
+        if op in _VALUE_BINARY_TAGS:
+            expr = f"_carry({expr},{av},{op})"
+        return f"rset({a},{expr})"
     if op in _UNARY_PREFIX:
-        return f"rset({a},{_UNARY_PREFIX[op]}regs[{b}])"
+        expr = f"{_UNARY_PREFIX[op]}regs[{b}]"
+        if op in _VALUE_UNARY_TAGS:
+            expr = f"_carry({expr},{av},{op})"
+        return f"rset({a},{expr})"
     raise ValueError(f"non-fuseable op: {op}")
 
 
@@ -330,13 +393,15 @@ def fused_handler_body(op1: int, op2: int) -> str:
     # 시프트는 _SH_* 토큰으로 두고 apply_instr_layout이 per-run 리터럴로 인라인한다
     # (decode/read_proto와 동일 레이아웃 공유). 반드시 레이아웃 인라인 전에 emit됨.
     lines = [
+        "local _fav=_avd[pc]",
         "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
         "local _fa=(_ei>>_SH_A)&0xFF",
         "local _fb=(_ei>>_SH_B)&0x1FF",
         "local _fc=(_ei>>_SH_C)&0x1FF",
         "local _fbx=(_ei>>_SH_C)&0x3FFFF",
-        _op_body(op1, "A", "B", "C", "Bx"),
-        _op_body(op2, "_fa", "_fb", "_fc", "_fbx"),
+        _op_body(op1, "A", "B", "C", "Bx", "_av"),
+        "_av_read()",
+        _op_body(op2, "_fa", "_fb", "_fc", "_fbx", "_fav"),
     ]
     return " " + _SPLIT_PAD.join(lines) + _SPLIT_PAD
 
@@ -474,9 +539,11 @@ def prune_and_inject_handlers(
 # fetch 라인(local ins=...decode(ins); pc=pc+1)은 _rename_vm_keys가 이미 치환한
 # code 변수명을 그대로 재사용해야 하므로 템플릿에서 추출해 _step 본문에 넣는다.
 _TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
-_TAILCALL_TAIL_RE     = re.compile(r'\s*end\s*return\s*\{r=\{\},n=0\}')
+_TAILCALL_TAIL_RE     = re.compile(
+    r'\s*end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
+)
 
-DISPATCH_KINDS = ("ifelseif", "tailcall", "bsearch")
+DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
 
 
 def _resolve_dispatch(dispatch: str) -> str:
@@ -486,12 +553,24 @@ def _resolve_dispatch(dispatch: str) -> str:
     return dispatch
 
 
+_SPLIT_KIND_RE = re.compile(r'^(b?)split(\d+)$')
+
+
 def _apply_dispatch(vm_code: str, kind: str) -> str:
-    """이미 해석된 구체 디스패치 종류(kind)를 exec 템플릿에 적용."""
-    if kind == "tailcall":
+    """이미 해석된 구체 디스패치 종류(kind)를 exec 템플릿에 적용.
+
+    kind: ifelseif | tailcall | bsearch | split{k} | bsplit{k}
+      · split{k}  : k 그룹 분할, 그룹 내부 ifelseif  (예: split2)
+      · bsplit{k} : k 그룹 분할, 그룹 내부 bsearch    (예: bsplit4)
+    """
+    if kind in {"tailcall", "table"}:
         return convert_dispatch_to_tailcall(vm_code)
     if kind == "bsearch":
         return convert_dispatch_to_bsearch(vm_code)
+    m = _SPLIT_KIND_RE.match(kind)
+    if m is not None:
+        inner = "bsearch" if m.group(1) else "ifelseif"
+        return convert_dispatch_to_split(vm_code, int(m.group(2)), inner)
     return vm_code  # ifelseif: 원본 체인 유지
 
 
@@ -586,6 +665,111 @@ def convert_dispatch_to_bsearch(vm_code: str) -> str:
 
     tree = build(0, len(vops) - 1)
     return vm_code[:chain_start] + tree + vm_code[chain_end:]
+
+
+def _emit_group_inner(ops: list[int], blocks: dict[int, str], inner: str) -> str:
+    """그룹 ops 에 대한 내부 디스패치 본문(inner: 'ifelseif'|'bsearch').
+
+    각 핸들러 body 에는 tailcall 과 동일 규칙으로 trampoline suffix(`return _step()`)
+    를 붙인다(top-level return 으로 끝나는 핸들러는 제외). 미매칭 op 는 error.
+    """
+    err = 'error("unknown op "..op)'
+
+    def branch_body(vop: int) -> str:
+        body = blocks[vop]
+        suffix = "" if _ends_with_top_return(body) else " return _step() "
+        return f"{body}{suffix}"
+
+    if inner == "bsearch":
+        def build(lo: int, hi: int) -> str:
+            if lo == hi:
+                vop = ops[lo]
+                return f"if op=={vop} then {branch_body(vop)}else {err} end"
+            mid   = (lo + hi + 1) // 2
+            pivot = ops[mid]
+            return f"if op<{pivot} then {build(lo, mid-1)} else {build(mid, hi)} end"
+        return build(0, len(ops) - 1)
+
+    parts = []
+    for i, vop in enumerate(ops):
+        kw = "if" if i == 0 else "elseif"
+        parts.append(f"{kw} op=={vop} then {branch_body(vop)}")
+    parts.append(f"else {err} end")
+    return " ".join(parts)
+
+
+def convert_dispatch_to_split(vm_code: str, k: int = 2,
+                              inner: str = "ifelseif") -> str:
+    """디스패처를 k 개 그룹 함수(_g0.._g{k-1})로 분할한다.
+
+    ifelseif/bsearch 는 전 핸들러를 한 exec 함수에 인라인해 CFF/junk 와 겹치면
+    Lua 함수당 한계(control structure too long)를 넘는다. 정렬된 vop 을 연속 구간
+    으로 k 등분해 각 그룹을 별도 함수(전체의 ~1/k 크기)에 담고, tailcall 과 동일한
+    클로저+트램폴린(`_step` 꼬리호출)으로 연결한다. 각 그룹 내부는 inner 모양
+    (ifelseif|bsearch)을 유지하므로 디스패치 다형성을 잃지 않으면서 크기만 낮춘다.
+    """
+    for_anchor = vm_code.find(_TAILCALL_FOR_ANCHOR)
+    if for_anchor == -1:
+        return vm_code
+
+    chain_start, chain_end = _find_chain(vm_code)
+    chain  = vm_code[chain_start:chain_end]
+    blocks = _parse_handler_blocks(chain)
+    if not blocks:
+        return vm_code
+
+    do_pos    = vm_code.index(" do", for_anchor) + len(" do")
+    fetch_src = vm_code[do_pos:chain_start].strip()
+
+    tail_m = _TAILCALL_TAIL_RE.match(vm_code, chain_end)
+    if tail_m is None:
+        raise RuntimeError("split convert: dispatch loop tail not found")
+    region_end = tail_m.end()
+
+    vops = sorted(blocks.keys())
+    k    = max(2, min(k, len(vops)))
+    size = -(-len(vops) // k)   # ceil division
+    groups = [vops[i:i + size] for i in range(0, len(vops), size)]
+    ng     = len(groups)
+    gnames = [f"_g{i}" for i in range(ng)]
+
+    # _step: fetch 후 op 를 그룹 최대값 기준 연속 구간으로 라우팅.
+    # 그룹은 정렬 vop 의 연속 slice 라 op<=그룹max 로 유일하게 결정된다.
+    route = " ".join(
+        f"if op<={groups[i][-1]} then return {gnames[i]}(op,A,B,C,Bx,sBx) else"
+        for i in range(ng - 1)
+    )
+    route = f"{route} return {gnames[-1]}(op,A,B,C,Bx,sBx)" + " end" * (ng - 1)
+    if ng == 1:
+        route = f"return {gnames[0]}(op,A,B,C,Bx,sBx)"
+
+    # 그룹 함수는 vararg 로 emit → function_obf 가 hot path 를 CFF 평탄화(꼬리호출
+    # 파괴)하지 않도록 한다(tailcall 과 동일 이유).
+    #
+    # dispatch sentinel: function_obf(skip_vm_dispatcher)는 `__call=function` 을
+    # 포함한 함수를 exec(디스패처)로 인식해 CFF 평탄화에서 제외한다. 원본 for-loop
+    # 는 이 토큰을 iterator 메타테이블로 갖고 있었고 tailcall 은 _H 메타테이블로
+    # 유지한다. split 은 for-loop 를 통째로 치환하므로, 이 토큰이 사라지면 exec 가
+    # 평탄화돼 트램폴린(`return _step()`)이 깨져 무한 루프가 된다. 따라서 sentinel
+    # 을 명시적으로 유지한다(function_obf 가 vm_output_passes 첫 패스라 dead 여도
+    # 그때까지 살아 있다).
+    parts = [
+        "local _dsm=setmetatable({},{__call=function(t)return t end})",
+        f"local {','.join(gnames)}",
+        "local function _step(...)",
+        f"    {fetch_src}",
+        f"    {route}",
+        "end",
+    ]
+    for i, g in enumerate(groups):
+        parts.append(
+            f"{gnames[i]}=function(...) local op,A,B,C,Bx,sBx=... "
+            f"{_emit_group_inner(g, blocks, inner)} end"
+        )
+    parts.append("return _step()")
+
+    scaffold = "\n        ".join(parts)
+    return vm_code[:for_anchor] + scaffold + vm_code[region_end:]
 
 
 # ---------------------------------------------------------------------------
