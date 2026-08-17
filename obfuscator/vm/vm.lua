@@ -149,7 +149,8 @@ local function make_reader(blob)
     return r
 end
 
-local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4
+local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4;local CTAG_IEXPR=5
+local _IT={seed=0,layout=0,vmc=1,script=0}
 
 -- 런타임 내부 keystream: read_proto가 디코드 직후 code[i]를 메모리에서 한 번 더
 -- 마스킹하고, exec가 fetch 시점에 동일 마스크로 푼다. 따라서 메모리에 상주하는
@@ -228,6 +229,13 @@ local function read_proto(r, acc_state)
         elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
         elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
         elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={4,_s and _kss(_s) or nil}
+        elseif tag==CTAG_IEXPR then
+            local _e=r.i64(); local _pn=r.u8(); local _p={}
+            for _j=1,_pn do
+                local _op=r.u8()
+                if _op==1 then _p[_j]={_op,r.u32()} else _p[_j]={_op} end
+            end
+            p.constants[i]={5,_e,_p}
         else error("bad const tag "..tostring(tag)) end
     end
     n=r.u32(); p.upvalues={}
@@ -237,10 +245,40 @@ local function read_proto(r, acc_state)
     return p
 end
 
-local function kval(k)
+local function _imix(proto)
+    return (_IT.seed~((_IT.vmc&0xFFFF)<<11)~_IT.layout~
+            ((proto.vm_id&0xFF)<<23)~((#proto.code&0xFFFF)*0x45D9F3B))&0xFFFFFFFF
+end
+
+local function _ieval(prog,proto)
+    local st,sp={},0
+    for i=1,#prog do
+        local ins=prog[i]; local op=ins[1]
+        if op==1 then sp=sp+1; st[sp]=ins[2]&0xFFFFFFFF
+        elseif op==2 then sp=sp+1; st[sp]=_IT.seed&0xFFFFFFFF
+        elseif op==3 then sp=sp+1; st[sp]=_IT.vmc&0xFFFFFFFF
+        elseif op==4 then sp=sp+1; st[sp]=_IT.layout&0xFFFFFFFF
+        elseif op==5 then sp=sp+1; st[sp]=proto.vm_id&0xFFFFFFFF
+        elseif op==6 then sp=sp+1; st[sp]=#proto.code&0xFFFFFFFF
+        elseif op==10 then sp=sp+1; st[sp]=_IT.script&0xFFFFFFFF
+        else
+            local b=st[sp]; local a=st[sp-1]; sp=sp-1
+            if op==7 then st[sp]=(a~b)&0xFFFFFFFF
+            elseif op==8 then st[sp]=(a+b)&0xFFFFFFFF
+            elseif op==9 then st[sp]=(a*(b|1))&0xFFFFFFFF
+            else st[sp]=(a~b)&0xFFFFFFFF end
+        end
+    end
+    return st[sp]&0xFFFFFFFF
+end
+
+local function kval(k,proto)
     if not k then return nil end
     if k[1]==0 then return nil end
     if k[1]==4 and k[2] then return _kss(k[2]) end
+    if k[1]==5 then
+        return k[2]~_ieval(k[3],proto)
+    end
     return k[2]
 end
 
@@ -326,7 +364,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if _c[1]==4 then
             if _c[2] then regs[255+_ci]=_kss(_c[2]) end
         elseif _c[1]~=0 then
-            regs[255+_ci]=_c[2]
+            regs[255+_ci]=kval(_c,proto)
         end
     end
 
@@ -492,11 +530,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,regs[B],nil,nil),_av,0))
-        elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil),_av,1))
+        elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,1))
         elseif op==2  then
             local ei=((code[pc]~_ksm(pc))~_dk)~_dk; pc=pc+1
             local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
-            rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[ax+1]),nil,nil),_av,2))
+            rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[ax+1],proto),nil,nil),_av,2))
         elseif op==3  then rset(A,_carry(_sem(__VM_DATA_VALUE__,(B~=0),nil,nil),_av,3)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end; _touch(_av,4)
         elseif op==5  then rset(A,_carry(_sem(__VM_DATA_VALUE__,upvals[B+1].v,nil,nil),_av,5))
@@ -659,6 +697,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
 
         elseif op==46 then error("unexpected EXTRAARG")
+        elseif op==47 then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,147))
+        elseif op==48 then rset(A,_IT.script&0xFFFFFFFF)
+        elseif op==49 then rset(A,_IT.vmc&0xFFFFFFFF)
+        elseif op==50 then rset(A,_IT.layout&0xFFFFFFFF)
+        elseif op==51 then rset(A,_IT.seed&0xFFFFFFFF)
+        elseif op==52 then rset(A,proto.vm_id&0xFFFFFFFF)
+        elseif op==53 then rset(A,#proto.code&0xFFFFFFFF)
+        elseif op==54 then rset(A,(regs[B] or 0)~(regs[C] or 0))
+        elseif op==55 then rset(A,((regs[B] or 0)+(regs[C] or 0))&0xFFFFFFFF)
+        elseif op==56 then rset(A,((regs[B] or 0)*((regs[C] or 0)|1))&0xFFFFFFFF)
+        elseif op==57 then rset(A,consts[Bx+1][2])
         else error("unknown op "..op) end
     end
     return _leave({},0,nil,138)
@@ -710,11 +759,13 @@ local function run(blob,rand_tail,self_func)
     if not _isC(table.unpack)  then _t=_t+512 end
     crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
     --<<ENDTAMPER>>
+    _IT.script=crc
     _ksd=crc
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
     local seed=r.u16()
+    _IT.seed=seed; _IT.layout=r.u32(); _IT.vmc=r.u16()
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
     local _fn=r.u32()
@@ -724,6 +775,9 @@ local function run(blob,rand_tail,self_func)
         elseif _ft==2 then r.i64()
         elseif _ft==3 then r.f64()
         elseif _ft==4 then r.str()
+        elseif _ft==5 then
+            r.i64(); local _pn=r.u8()
+            for _j=1,_pn do local _op=r.u8(); if _op==1 then r.u32() end end
         end
     end
     local proto=read_proto(r,acc_state)

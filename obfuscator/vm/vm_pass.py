@@ -14,7 +14,12 @@ from pathlib import Path
 
 from ..passes.base import PostPass
 from ..parser import Lua53Parser
-from .serializer import (serialize, assign_vm_ids, collect_fuseable_pairs_for_vm)
+from .serializer import (
+    serialize,
+    assign_vm_ids,
+    collect_fuseable_pairs_for_vm,
+    patch_integrity_script_hash,
+)
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS,
@@ -148,7 +153,7 @@ _NUMERIC_DECODE = (
 )
 
 
-_LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
+_LUA_OP_COUNT = 58  # Lua 5.3 opcode 0~46 plus karity integrity pseudo ops
 _VOP_SPACE    = 128  # 7비트 op × 256 variant = 32768, 실용 범위는 128*256
 
 
@@ -1019,6 +1024,8 @@ _DEFAULT_VM_OPTIONS = {
     "mutate_handlers": True,
     "junk_instructions": True,
     "junk_rate": 0.15,
+    "integrity_constants": False,
+    "integrity_constant_rate": 0.25,
 }
 
 
@@ -1063,7 +1070,11 @@ class VMPass(PostPass):
             fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
             fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
             vm_maps.append((vop_map, split_map, fuse_map))
-            used_ops_list.append(collect_used_ops_for_vm(proto, vm_assign, k, vop_map))
+            used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
+            if self.vm_options.get("integrity_constants", False):
+                for pseudo_op in range(47, _LUA_OP_COUNT):
+                    used_ops.update(vop_map[pseudo_op])
+            used_ops_list.append(used_ops)
         self.last_profile.append({"phase": "build_vm_maps", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
@@ -1071,8 +1082,17 @@ class VMPass(PostPass):
         _phase_start = time.perf_counter()
         instr_layout = make_instr_layout()
         graph_sites: set[int] = set()
-        blob = serialize(proto, vm_assign, vm_maps, layout=instr_layout,
-                         graph_sites=graph_sites)
+        blob = serialize(
+            proto,
+            vm_assign,
+            vm_maps,
+            layout=instr_layout,
+            graph_sites=graph_sites,
+            integrity_options={
+                "enabled": self.vm_options.get("integrity_constants", False),
+                "rate": self.vm_options.get("integrity_constant_rate", 0.25),
+            },
+        )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
@@ -1142,6 +1162,8 @@ class VMPass(PostPass):
         _phase_start = time.perf_counter()
         dump_bytes = _dump_function_stripped(vm_func_src, header)
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+        if self.vm_options.get("integrity_constants", False):
+            blob = patch_integrity_script_hash(blob, dump_crc)
         self.last_profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         alphabet  = string.ascii_letters + string.digits

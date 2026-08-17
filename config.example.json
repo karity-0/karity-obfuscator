@@ -22,7 +22,9 @@
                 "fake_handlers": false,
                 "mutate_handlers": false,
                 "junk_instructions": false,
-                "junk_rate": 0.0
+                "junk_rate": 0.0,
+                "integrity_constants": false,
+                "integrity_constant_rate": 0.0
             }
         },
         "fast-vm": {
@@ -48,7 +50,9 @@
                 "fake_handlers": false,
                 "mutate_handlers": false,
                 "junk_instructions": false,
-                "junk_rate": 0.0
+                "junk_rate": 0.0,
+                "integrity_constants": false,
+                "integrity_constant_rate": 0.0
             }
         },
         "max": {
@@ -90,7 +94,9 @@
                 "fake_handlers": true,
                 "mutate_handlers": true,
                 "junk_instructions": true,
-                "junk_rate": 0.3
+                "junk_rate": 0.3,
+                "integrity_constants": true,
+                "integrity_constant_rate": 0.35
             }
         }
     }

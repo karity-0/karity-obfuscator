@@ -27,6 +27,8 @@
   - [mutate_handlers](#mutate_handlers)
   - [junk_instructions](#junk_instructions)
   - [junk_rate](#junk_rate)
+  - [integrity_constants](#integrity_constants)
+  - [integrity_constant_rate](#integrity_constant_rate)
 
 ## profiles
 The default config uses named profiles so test and release builds can switch
@@ -229,5 +231,23 @@ Probability of inserting junk virtual instructions.
 range: 0.0 to 1.0
 
 default: `0.15`
+
+---
+
+### integrity_constants
+
+Encode selected integer constants as VM integrity expressions.
+
+default: false
+
+---
+
+### integrity_constant_rate
+
+Probability that an eligible integer constant uses an integrity expression.
+
+range: 0.0 to 1.0
+
+default: `0.25`
 
 ---

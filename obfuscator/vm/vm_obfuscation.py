@@ -11,7 +11,7 @@ import re
 from ..parser import Proto
 from .vm_mutation import mutate_handlers, _lua_depth_delta
 
-_LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
+_LUA_OP_COUNT = 58  # Lua 5.3 opcode 0~46 plus karity integrity pseudo ops
 
 # ---------------------------------------------------------------------------
 # Split opcode catalog
@@ -139,12 +139,12 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
     elif orig_op == 1:  # LOADK
         if parts == 2:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil){_SPLIT_PAD}",
                 f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
                 f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
@@ -363,7 +363,7 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
     if op == 0:   # MOVE
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,regs[{b}],nil,nil),{av},0))"
     if op == 1:   # LOADK
-        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1]),nil,nil),{av},1))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1],proto),nil,nil),{av},1))"
     if op == 5:   # GETUPVAL
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,upvals[{b}+1].v,nil,nil),{av},5))"
     if op in _GRAPH_BINARY_SLOTS:

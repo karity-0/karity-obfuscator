@@ -174,6 +174,15 @@ VM_OPTION_DOCS = {
         "default": 0.15,
         "range": "0.0 to 1.0",
     },
+    "integrity_constants": {
+        "description": "Encode selected integer constants as VM integrity expressions.",
+        "default": False,
+    },
+    "integrity_constant_rate": {
+        "description": "Probability that an eligible integer constant uses an integrity expression.",
+        "default": 0.25,
+        "range": "0.0 to 1.0",
+    },
 }
 
 
@@ -279,6 +288,12 @@ def validate_release_config(config: dict) -> None:
     if float(vm_options.get("junk_rate", 0.0)) <= 0.0:
         errors.append("vm_options.junk_rate should be > 0.0")
 
+    if vm_options.get("integrity_constants") is not True:
+        errors.append("vm_options.integrity_constants must be true")
+
+    if float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.integrity_constant_rate should be > 0.0")
+
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
@@ -316,14 +331,15 @@ def _validate_vm_options(options: dict) -> None:
         if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 1:
             raise ConfigError("vm_options.vm_count must be an integer >= 1")
 
-    junk_rate = options.get("junk_rate")
-    if junk_rate is not None:
-        if not isinstance(junk_rate, (int, float)) or isinstance(junk_rate, bool):
-            raise ConfigError("vm_options.junk_rate must be a number between 0.0 and 1.0")
-        if not 0.0 <= float(junk_rate) <= 1.0:
-            raise ConfigError("vm_options.junk_rate must be between 0.0 and 1.0")
+    for key in ("junk_rate", "integrity_constant_rate"):
+        value = options.get(key)
+        if value is not None:
+            if not isinstance(value, (int, float)) or isinstance(value, bool):
+                raise ConfigError(f"vm_options.{key} must be a number between 0.0 and 1.0")
+            if not 0.0 <= float(value) <= 1.0:
+                raise ConfigError(f"vm_options.{key} must be between 0.0 and 1.0")
 
-    for key in ("fake_handlers", "mutate_handlers", "junk_instructions"):
+    for key in ("fake_handlers", "mutate_handlers", "junk_instructions", "integrity_constants"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"vm_options.{key} must be true or false")
