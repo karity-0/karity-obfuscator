@@ -43,16 +43,38 @@ For a complete list of passes and configuration options, see
 ```bash
 # cli
 python main.py input.lua
+python main.py input.lua --profile fast-vm
+python main.py input.lua --profile max
+python main.py input.lua --passes string_obf,number_obf,minify
+python main.py input.lua --vm-option vm_count=1 --vm-option junk_rate=0
 python main.py input.lua -o output.lua
 python main.py input.lua -v
+python main.py input.lua --print-config
+python main.py --list-profiles
+python main.py --list-passes
 
 # gui
 python obfuscator_gui.py
 ```
 
+The default `config.json` uses profiles so testing and release builds do not
+require editing pass lists by hand:
+
+- `dev`: fast source-level obfuscation for quick iteration
+- `fast-vm`: lightweight VM build for VM behavior checks
+- `max`: full protection preset for real use
+
 ## testing
 ```bash
 python test/run_test.py
+python test/run_test.py --profile fast-vm 01 02
+python test/run_test.py --profile max --jobs 2 --seed 1234
 python test/run_test.py 01 02
 python test/run_test.py func
+```
+
+## docs
+```bash
+python tools/generate_config_docs.py
+python tools/generate_config_docs.py --check
 ```
