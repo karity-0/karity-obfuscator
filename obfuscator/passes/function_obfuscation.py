@@ -1600,6 +1600,7 @@ def _transform_body(ctx, block, params: list[str], rich_junk: bool = True) -> st
 # rename/number/string 난독화에도 살아남는다(`__call`은 테이블 필드 키,
 # `function`은 키워드).
 _DISPATCH_SENTINEL = re.compile(r'__call\s*=\s*function')
+_VM_HOT_LOOP_SENTINEL = re.compile(r'__VM_HOT_LOOP__')
 
 
 class FunctionObfuscationPass(BasePass):
@@ -1663,7 +1664,9 @@ class FunctionObfuscationPass(BasePass):
                 b = _block_of(node)
                 if b is None:
                     continue
-                if _DISPATCH_SENTINEL.search(ctx.text(b)):
+                body_text = ctx.text(b)
+                if (_DISPATCH_SENTINEL.search(body_text)
+                        or _VM_HOT_LOOP_SENTINEL.search(body_text)):
                     skip_node_ids.add(node.id)
 
         for node in func_nodes:

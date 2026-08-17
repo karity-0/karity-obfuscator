@@ -19,6 +19,7 @@ python main.py hello.lua
 **VM protection**
 - custom Lua 5.3 virtual machine
 - opcode virtualization and randomization
+- build-specific arithmetic handler graphs with liveness-aware state diffusion
 - handler mutation
 - multi-VM support
 

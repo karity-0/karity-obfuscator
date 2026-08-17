@@ -14,7 +14,8 @@
         "minify"
     ],
     "vm_options": {
-        "vm": "mixed",
+        "dispatcher_type": "mixed",
+        "blob_form": "random",
         "vm_count": 3,
         "fake_handlers": true,
         "mutate_handlers": true,

@@ -4,12 +4,19 @@ import struct
 from ..parser import Proto, Upvalue, ConstTag
 
 
+# instruction 워드 필드 시프트(기본 레이아웃). vm.lua의 _SH_A/_SH_B/_SH_C/_SH_V
+# 기본값과 일치해야 한다. 파이프라인은 per-run 랜덤 레이아웃을 주입한다.
+# 제약: op은 비트 0(7비트) 고정, B=C+9(연속, Bx=B|C), 모든 필드 ≤ 비트47(_ksm 48비트 마스크).
+DEFAULT_INSTR_LAYOUT = {"A": 32, "B": 23, "C": 14, "V": 40}
+
+
 # ---------------------------------------------------------------------------
 # Writer
 # ---------------------------------------------------------------------------
 class Writer:
-    def __init__(self):
+    def __init__(self, layout: dict | None = None):
         self._buf = bytearray()
+        self.layout = layout or DEFAULT_INSTR_LAYOUT
 
     def data(self) -> bytes:
         return bytes(self._buf)
@@ -42,31 +49,30 @@ class Writer:
 
     def instr(self, raw: int, enc_op: int, enc_variant: int):
         """
-        커스텀 64비트 instruction 레이아웃:
-          [63:48] reserved  (16비트, 랜덤 쓰레기)
-          [47:40] variant   (8비트,  acc-인코딩된 vop >> 7)
-          [39:32] A         (8비트)
-          [31:23] B         (9비트)
-          [22:14] C         (9비트)
-          [13:7]  pad       (7비트, 랜덤 쓰레기)
-          [6:0]   op        (7비트, acc-인코딩된 vop & 0x7F)
+        커스텀 64비트 instruction 레이아웃. op은 [6:0] 고정, A/B/C/variant 위치는
+        self.layout(per-run 랜덤)에 따른다. B=C+9(연속) → Bx=B|C. 나머지 비트는 랜덤.
+          op       (7비트, [6:0], acc-인코딩된 vop & 0x7F)
+          C        (9비트, <<L["C"])
+          B        (9비트, <<L["B"] = L["C"]+9)
+          A        (8비트, <<L["A"])
+          variant  (8비트, <<L["V"], acc-인코딩된 vop >> 7)
         """
-        A        = (raw >> 6)  & 0xFF
-        B        = (raw >> 23) & 0x1FF
-        C        = (raw >> 14) & 0x1FF
-        pad      = random.randint(0, 0x7F)
-        reserved = random.randint(0, 0xFFFF)
+        A = (raw >> 6)  & 0xFF
+        B = (raw >> 23) & 0x1FF
+        C = (raw >> 14) & 0x1FF
+        L = self.layout
 
         val = (
             (enc_op & 0x7F)
-            | (pad              << 7)
-            | (C                << 14)
-            | (B                << 23)
-            | (A                << 32)
-            | ((enc_variant & 0xFF) << 40)
-            | (reserved         << 48)
+            | (C                    << L["C"])
+            | (B                    << L["B"])   # B=C+9 이므로 B|C가 연속된 Bx 필드
+            | (A                    << L["A"])
+            | ((enc_variant & 0xFF) << L["V"])
         )
-        self.u64(val)
+        # 사용된 필드 비트를 제외한 나머지 전 비트에 랜덤 쓰레기(pad/reserved 대체)
+        used = 0x7F | (0x1FF << L["C"]) | (0x1FF << L["B"]) | (0xFF << L["A"]) | (0xFF << L["V"])
+        garbage = random.getrandbits(64) & ~used
+        self.u64((val | garbage) & 0xFFFFFFFFFFFFFFFF)
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +193,189 @@ from .vm_obfuscation import FUSE_OPS
 _SBXOPS: set[int] = {30, 39, 40, 42}
 # 조건부로 다음 명령어를 건너뛰는 opcodes: EQ/LT/LE/TEST/TESTSET
 _TESTOPS: set[int] = {31, 32, 33, 34, 35}
+
+
+def _abc(raw: int) -> tuple[int, int, int, int]:
+    a = (raw >> 6) & 0xFF
+    b = (raw >> 23) & 0x1FF
+    c = (raw >> 14) & 0x1FF
+    return a, b, c, (raw >> 14) & 0x3FFFF
+
+
+def _reg(value: int, max_stack: int) -> set[int]:
+    return {value} if value < max_stack else set()
+
+
+def _reg_range(lo: int, hi: int, max_stack: int) -> set[int]:
+    if hi < lo:
+        return set()
+    return set(range(max(0, lo), min(max_stack - 1, hi) + 1))
+
+
+def _instruction_rw(proto: Proto, index: int) -> tuple[set[int], set[int]]:
+    """Conservative Lua 5.3 register read/write sets for one instruction."""
+    raw = proto.code[index]
+    op = raw & 0x3F
+    a, b, c, _ = _abc(raw)
+    m = proto.max_stack_size
+    reads: set[int] = set()
+    writes: set[int] = set()
+
+    if op == 0:
+        reads |= _reg(b, m); writes |= _reg(a, m)
+    elif op in {1, 2, 3, 5, 11}:
+        writes |= _reg(a, m)
+    elif op == 4:
+        writes |= _reg_range(a, a + b, m)
+    elif op == 6:
+        reads |= _reg(c, m); writes |= _reg(a, m)
+    elif op == 7:
+        reads |= _reg(b, m) | _reg(c, m); writes |= _reg(a, m)
+    elif op == 8:
+        reads |= _reg(b, m) | _reg(c, m)
+    elif op == 9:
+        reads |= _reg(a, m)
+    elif op == 10:
+        reads |= _reg(a, m) | _reg(b, m) | _reg(c, m)
+    elif op == 12:
+        reads |= _reg(b, m) | _reg(c, m)
+        writes |= _reg(a, m) | _reg(a + 1, m)
+    elif 13 <= op <= 24:
+        reads |= _reg(b, m) | _reg(c, m); writes |= _reg(a, m)
+    elif 25 <= op <= 28:
+        reads |= _reg(b, m); writes |= _reg(a, m)
+    elif op == 29:
+        reads |= _reg_range(b, c, m); writes |= _reg(a, m)
+    elif 31 <= op <= 33:
+        reads |= _reg(b, m) | _reg(c, m)
+    elif op == 34:
+        reads |= _reg(a, m)
+    elif op == 35:
+        reads |= _reg(a, m) | _reg(b, m); writes |= _reg(a, m)
+    elif op == 36:
+        reads |= _reg(a, m)
+        reads |= _reg_range(a + 1, m - 1 if b == 0 else a + b - 1, m)
+        writes |= _reg_range(a, m - 1 if c == 0 else a + c - 2, m)
+    elif op == 37:
+        reads |= _reg_range(a, m - 1 if b == 0 else a + b - 1, m)
+    elif op == 38:
+        reads |= _reg_range(a, m - 1 if b == 0 else a + b - 2, m)
+    elif op == 39:
+        reads |= _reg_range(a, a + 3, m)
+        writes |= _reg(a, m) | _reg(a + 3, m)
+    elif op == 40:
+        reads |= _reg(a, m) | _reg(a + 2, m); writes |= _reg(a, m)
+    elif op == 41:
+        reads |= _reg_range(a, a + 2, m)
+        writes |= _reg_range(a + 3, a + 2 + c, m)
+    elif op == 42:
+        reads |= _reg(a, m) | _reg(a + 1, m); writes |= _reg(a, m)
+    elif op == 43:
+        reads |= _reg_range(a, m - 1 if b == 0 else a + b, m)
+    elif op == 44:
+        writes |= _reg(a, m)
+        bx = (raw >> 14) & 0x3FFFF
+        if bx < len(proto.protos):
+            reads |= {uv.idx for uv in proto.protos[bx].upvalues
+                      if uv.instack == 1 and uv.idx < m}
+    elif op == 45:
+        writes |= _reg_range(a, m - 1 if b == 0 else a + b - 2, m)
+    return reads, writes
+
+
+def _successors(code: list[int], index: int) -> set[int]:
+    raw = code[index]
+    op = raw & 0x3F
+    n = len(code)
+    nxt = index + 1
+    if op in {37, 38}:
+        return set()
+    if op in _SBXOPS:
+        sbx = ((raw >> 14) & 0x3FFFF) - 131071
+        target = nxt + sbx
+        if op in {30, 40}:
+            return {target} if 0 <= target < n else set()
+        result = {target} if 0 <= target < n else set()
+        if op in {39, 42} and nxt < n:
+            result.add(nxt)
+        return result
+    if op in _TESTOPS:
+        return {i for i in (nxt, index + 2) if i < n}
+    if op == 3 and ((raw >> 14) & 0x1FF) != 0:
+        return {index + 2} if index + 2 < n else set()
+    return {nxt} if nxt < n else set()
+
+
+def _live_out_sets(proto: Proto) -> list[set[int]]:
+    """Compute backward liveness to a fixed point over the bytecode CFG."""
+    n = len(proto.code)
+    rw = [_instruction_rw(proto, i) for i in range(n)]
+    succ = [_successors(proto.code, i) for i in range(n)]
+    live_in = [set() for _ in range(n)]
+    live_out = [set() for _ in range(n)]
+    changed = True
+    while changed:
+        changed = False
+        for i in range(n - 1, -1, -1):
+            out = set().union(*(live_in[j] for j in succ[i])) if succ[i] else set()
+            reads, writes = rw[i]
+            incoming = reads | (out - writes)
+            if out != live_out[i] or incoming != live_in[i]:
+                live_out[i] = out
+                live_in[i] = incoming
+                changed = True
+    return live_out
+
+
+_AVALANCHE_OPS = (
+    set(range(0, 30))
+    | {30, 31, 32, 33, 34, 35, 36, 39, 40, 41, 42, 43, 44, 45}
+)
+_AVALANCHE_RATE = {
+    **{op: 0.12 for op in range(0, 13)},
+    **{op: 1.0 for op in range(13, 27)},
+    **{op: 0.25 for op in range(27, 30)},
+    **{op: 0.45 for op in range(31, 36)},
+    30: 0.12,
+    36: 0.25,
+    39: 0.12,
+    40: 0.12,
+    41: 0.12,
+    42: 0.12,
+    43: 0.35,
+    44: 0.35,
+    45: 0.12,
+}
+
+
+def _instruction_avalanche_slots(proto: Proto) -> dict[int, tuple[int, ...]]:
+    """Pick owned scratch registers, using dead stack slots only for straight-line code."""
+    result: dict[int, tuple[int, ...]] = {}
+    live_out = _live_out_sets(proto)
+    all_regs = set(range(proto.max_stack_size))
+    reserved_regs = set(range(proto.max_stack_size, min(255, proto.max_stack_size + 12)))
+    straight_line = not proto.protos and all(
+        (raw & 0x3F) < 30 for raw in proto.code
+    )
+    captured = {
+        uv.idx for child in proto.protos for uv in child.upvalues
+        if uv.instack == 1 and uv.idx < proto.max_stack_size
+    }
+    for i, raw in enumerate(proto.code):
+        if (raw & 0x3F) not in _AVALANCHE_OPS:
+            continue
+        op = raw & 0x3F
+        if random.random() >= _AVALANCHE_RATE.get(op, 0.25):
+            continue
+        reads, writes = _instruction_rw(proto, i)
+        blocked = live_out[i] | reads | writes | captured
+        candidates = list(reserved_regs)
+        if straight_line:
+            candidates.extend(all_regs - blocked)
+        random.shuffle(candidates)
+        if candidates:
+            result[i] = tuple(candidates[:random.randint(1, min(3, len(candidates)))])
+    return result
 
 
 def _compute_protected(code: list[int]) -> set[int]:
@@ -341,6 +530,15 @@ def _rand_alias(vop_map: dict[int, list[int]] | None, op: int) -> int:
 # 직렬화
 # ---------------------------------------------------------------------------
 VMMaps = tuple  # (vop_map, split_map, fuse_map)
+_GRAPH_SITE_OPS = {13, 14, 15, 20, 21, 22, 23, 24, 25, 26}
+
+
+def _new_graph_site(site_registry: set[int]) -> int:
+    while True:
+        site = random.randint(0x10000, 0x7FFFFFFF)
+        if site not in site_registry:
+            site_registry.add(site)
+            return site
 
 
 def iter_protos(proto: Proto):
@@ -364,25 +562,31 @@ def assign_vm_ids(proto: Proto, n: int) -> tuple[dict[int, int], int]:
 
 def serialize(proto: Proto,
               vm_assign: dict[int, int] | None = None,
-              vm_maps: list | None = None) -> bytes:
+              vm_maps: list | None = None,
+              layout: dict | None = None,
+              graph_sites: set[int] | None = None) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map). vm_assign = {id(proto): vm_id}.
-    기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작."""
+    기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작.
+    layout: instruction 워드 필드 시프트(None이면 DEFAULT_INSTR_LAYOUT). vm.lua의
+    _SH_*와 반드시 동일해야 한다(deserialize는 기본 레이아웃만 지원)."""
     if vm_maps is None:
         vm_maps = [(None, None, None)]
     if vm_assign is None:
         vm_assign = {}
-    w = Writer()
+    w = Writer(layout)
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
     _write_fake_pool(w)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
-    _write_proto(w, proto, vm_assign, vm_maps, acc_state)
+    _write_proto(w, proto, vm_assign, vm_maps, acc_state,
+                 graph_sites if graph_sites is not None else set())
     return w.data()
 
 
 def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
-                 vm_maps: list, acc_state: list[int]):
+                 vm_maps: list, acc_state: list[int],
+                 graph_sites: set[int]):
     vm_id = vm_assign.get(id(proto), 0)
     vop_map, split_map, fuse_map = vm_maps[vm_id]
 
@@ -396,6 +600,9 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     plan          = _build_plan(proto.code, split_map, fuse_map, protected)
     new_pos, total = _plan_new_pos(plan, len(proto.code))
     code          = _adjust_jumps(proto.code, new_pos, total)
+    add_slots     = _instruction_avalanche_slots(proto)
+    emitted_av: list[tuple[int, ...]] = []
+    emitted_sites: list[tuple[int, ...]] = []
 
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
     w.u32(total)
@@ -405,17 +612,44 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         orig_op = raw & 0x3F
         if unit[0] == "normal":
             _emit_instr(w, raw, _rand_alias(vop_map, orig_op), acc_state)
+            emitted_av.append(add_slots.get(i, ()))
+            emitted_sites.append(
+                (_new_graph_site(graph_sites),) if orig_op in _GRAPH_SITE_OPS else ()
+            )
         elif unit[0] == "split":
             # 같은 raw 명령어를 각 part vop으로 반복 방출
             vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
             for vop in vops:
                 _emit_instr(w, raw, vop, acc_state)
+                emitted_av.append(add_slots.get(i, ()))
+                emitted_sites.append(
+                    (_new_graph_site(graph_sites),) if orig_op in _GRAPH_SITE_OPS else ()
+                )
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]] & 0x3F
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
             _emit_instr(w, raw, fuse_vop, acc_state)
+            emitted_av.append(add_slots.get(i, ()))
+            sites = []
+            if orig_op in _GRAPH_SITE_OPS:
+                sites.append(_new_graph_site(graph_sites))
+            if op2 in _GRAPH_SITE_OPS:
+                sites.append(_new_graph_site(graph_sites))
+            emitted_sites.append(tuple(sites))
             # operand 슬롯: dispatch 안 되지만 acc 동기화 위해 정상 슬롯으로 방출
             _emit_instr(w, code[unit[2]], _rand_alias(vop_map, op2), acc_state)
+            emitted_av.append(add_slots.get(unit[2], ()))
+            emitted_sites.append(())
+
+    for slots in emitted_av:
+        w.u8(len(slots))
+        for slot in slots:
+            w.u8(slot)
+
+    for sites in emitted_sites:
+        w.u8(len(sites))
+        for site in sites:
+            w.u32(site)
 
     # 상수
     w.u32(len(proto.constants))
@@ -446,7 +680,7 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     # 중첩 proto (acc_state 전역 공유, vm_id별 맵은 sub마다 재선택)
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub, vm_assign, vm_maps, acc_state)
+        _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites)
 
 
 # ---------------------------------------------------------------------------
@@ -480,6 +714,14 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
         # vop를 다시 raw64에 반영 (op, variant 필드 교체)
         raw64 = (raw64 & ~0xFF000000007F) | actual_op | (actual_variant << 40)
         code.append(raw64)
+
+    for _ in range(code_count):
+        for _ in range(r.u8()):
+            r.u8()
+
+    for _ in range(code_count):
+        for _ in range(r.u8()):
+            r.u32()
 
     const_count = r.u32()
     constants = []

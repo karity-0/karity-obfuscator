@@ -21,7 +21,8 @@ generate this document automatically from PASS_REGISTRY. (registry.py)
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
-   - [vm](#vm-1)
+   - [dispatcher_type](#dispatcher_type)
+   - [blob_form](#blob_form)
    - [vm_count](#vm_count)
    - [fake_handlers](#fake_handlers)
    - [mutate_handlers](#mutate_handlers)
@@ -106,6 +107,39 @@ reduces script size by removing unnecessary whitespace.
 
 virtualizes Lua bytecode using a custom virtual machine.
 
+Integer arithmetic, bitwise, shift, and unary handlers use build-specific function
+DAG banks with randomized topological layouts, sparse selectors, and equivalent
+mixed boolean-arithmetic expressions. The active graph is selected from the VM id,
+instruction position, and accumulated diffusion state. Every emitted arithmetic
+instruction also receives an encrypted, globally unique site id and a separately
+generated wrapper graph; fused instructions preserve one site id per internal
+operation. The VM performs bytecode control-flow liveness analysis and diffuses
+selected handler state through reserved scratch registers; straight-line prototypes
+may also use proven-dead stack registers. Diffused values key the next instruction
+decode and encode suspended continuation fields, so later VM execution consumes the
+generated state.
+
+VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
+instead of recursively returning through the host Lua stack. Calls and returns pass
+through build-specific bounded cyclic tail-call graphs. Callee state updates rekey
+the suspended parent's encoded program counter, stack top, result range, and state
+fields through a shared cross-frame ledger. Native functions and callable values
+retain a direct Lua call boundary for compatible metamethod, vararg, and multi-return
+behavior.
+
+Selected jump, loop, iterator, and vararg instruction sites encode their control
+operands into build-specific packets. A bounded control DAG rekeys those operands
+before the handler can consume them; repeated hot-loop visits use a per-frame site
+cache after the full path has executed once. Numeric and generic loop updates and
+predicates are evaluated by separate generated IR nodes. Load, table access, table
+assignment, comparison, modulo, power, division, floor division, logical not,
+length, concatenation, table construction/list population, closure creation, and
+vararg transfer semantics likewise execute inside generated semantic graphs.
+Metamethod-bearing operations remain single-evaluation boundaries. Each semantic
+site traverses its full wrapper graph on first execution and then uses the site's
+semantic core, keeping hot loops bounded without removing the generated graph from
+the emitted VM.
+
 
 ## anti_debug
 **group:** pre pass  
@@ -131,15 +165,36 @@ compresses and packs the obfuscated script into a self-extracting loader.
 
 ## vm_options
 
-### vm
+### dispatcher_type
 
-VM dispatcher mode.
+VM dispatcher shape. per obfuscation run the emitted VM uses one of these.
 
 | Value | Description |
 |--------|-------------|
-| karity | classic if/elseif dispatcher |
-| ruby | function table + tail-call dispatcher |
-| mixed | randomly choose per VM |
+| ifelseif | classic if/elseif dispatcher |
+| tailcall | function table + tail-call dispatcher |
+| table | alias for the function-table tail-call dispatcher |
+| bsearch | nested binary-search (if/else) tree over the opcode |
+| splitN | split handlers across N smaller if/elseif dispatcher functions, for example `split4` |
+| bsplitN | split handlers across N smaller binary-search dispatcher functions, for example `bsplit6` |
+| mixed | randomly choose per VM from `split4`, `split6`, `bsplit4`, `bsplit6`, `tailcall`, and `table` |
+
+default: `ifelseif`
+
+---
+
+### blob_form
+
+how the encrypted bytecode blob is stored in the output.
+
+| Value | Description |
+|--------|-------------|
+| string | single base36 string literal |
+| table | base36 blob split into chunks, stored as a key-scrambled string table (reassembled via table.concat) |
+| numeric | blob stored as a key-scrambled table of 32-bit integers `{[n]=…,…}` (base36 skipped, bytes rebuilt at runtime) |
+| random | randomly choose per obfuscation run |
+
+default: `random`
 
 ---
 
