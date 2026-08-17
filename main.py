@@ -7,12 +7,15 @@ import time
 from pathlib import Path
 
 from obfuscator import Pipeline, build_pipeline_from_config
+from obfuscator.profiling import Profiler
 from obfuscator.registry import (
     ConfigError,
+    ReleaseCheckError,
     get_pass_names,
     get_profile_names,
     resolve_config_profile,
     validate_config,
+    validate_release_config,
 )
 
 
@@ -49,6 +52,8 @@ def parse_args():
         help="override one vm_options value; can be repeated",
     )
     parser.add_argument("--print-config", action="store_true", help="print resolved config and exit")
+    parser.add_argument("--release-check", action="store_true", help="fail unless the resolved config is suitable for release")
+    parser.add_argument("--profile-report", help="write pass timing and size profile JSON to this path, or '-' for stdout")
     parser.add_argument("--list-passes", action="store_true", help="print known pass names")
     parser.add_argument("--list-profiles", action="store_true", help="print profiles in the config")
     parser.add_argument("--seed", type=int, help="seed python's random module for reproducible builds")
@@ -155,7 +160,14 @@ def main():
         config = resolve_config_profile(config_root, args.profile)
         config = apply_cli_overrides(config, args)
         validate_config(config)
+        if args.release_check:
+            if args.seed is not None:
+                raise ReleaseCheckError("release-check failed:\n- --seed is for reproducible test builds and cannot be used for release")
+            validate_release_config(config)
     except ConfigError as e:
+        print(f"error: {e}", file=sys.stderr)
+        sys.exit(1)
+    except ReleaseCheckError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
 
@@ -175,13 +187,26 @@ def main():
 
     start_time = time.perf_counter()
 
+    profiler = Profiler() if args.profile_report else None
     pipeline = build_pipeline(config)
-    output_script = pipeline.run(script, args.verbose)
+    output_script = pipeline.run(script, args.verbose, profiler=profiler)
 
     elapsed = time.perf_counter() - start_time
 
     print(f"saving {output_path}")
     write_script(output_path, output_script)
+    if profiler:
+        report = {
+            "profile": profile,
+            "seeded": args.seed is not None,
+            **profiler.as_dict(),
+        }
+        report_text = json.dumps(report, indent=4, ensure_ascii=False)
+        if args.profile_report == "-":
+            print(report_text)
+        else:
+            Path(args.profile_report).write_text(report_text + "\n", encoding="utf-8")
+            print(f"profile report saved to {args.profile_report}")
     print(f"obfuscation completed in {elapsed:.3f}s")
 
 

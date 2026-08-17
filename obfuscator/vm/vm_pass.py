@@ -5,6 +5,7 @@ import tempfile
 import secrets
 import string
 import random
+import time
 import zlib
 import shutil
 import os
@@ -1025,21 +1026,30 @@ class VMPass(PostPass):
     def __init__(self, vm_output_passes: list[str] | None = None, vm_options: dict | None = None):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
+        self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
+        self.last_profile = []
         # 1. luac 컴파일
+        _phase_start = time.perf_counter()
         luac_bytes = _compile(script)
+        self.last_profile.append({"phase": "compile_luac", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 2. 파싱 → junk instruction 삽입
+        _phase_start = time.perf_counter()
         proto = Lua53Parser(luac_bytes).parse()
+        self.last_profile.append({"phase": "parse_bytecode", "elapsed": round(time.perf_counter() - _phase_start, 6)})
         if self.vm_options.get("junk_instructions", True):
+            _phase_start = time.perf_counter()
             proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
+            self.last_profile.append({"phase": "inject_junk", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         fake = self.vm_options["fake_handlers"]
         mut  = self.vm_options["mutate_handlers"]
 
         # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
         #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
+        _phase_start = time.perf_counter()
         vm_count = max(1, int(self.vm_options.get("vm_count", 1)))
         vm_assign, n = assign_vm_ids(proto, vm_count)
 
@@ -1054,15 +1064,19 @@ class VMPass(PostPass):
             fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
             vm_maps.append((vop_map, split_map, fuse_map))
             used_ops_list.append(collect_used_ops_for_vm(proto, vm_assign, k, vop_map))
+        self.last_profile.append({"phase": "build_vm_maps", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
         # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
+        _phase_start = time.perf_counter()
         instr_layout = make_instr_layout()
         graph_sites: set[int] = set()
         blob = serialize(proto, vm_assign, vm_maps, layout=instr_layout,
                          graph_sites=graph_sites)
+        self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
+        _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(_load_vm())
         if n == 1:
@@ -1087,6 +1101,7 @@ class VMPass(PostPass):
         vm_code = apply_keystream(vm_code)
         vm_code = apply_tamper(vm_code)
         vm_code = apply_instr_layout(vm_code, instr_layout)
+        self.last_profile.append({"phase": "build_vm_code", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 3b. 블롭 저장 형태 결정. run은 type 분기 없이 스크립트마다 한 형태로
         # 고정 emit되므로, 형태별 재조립 프롤로그를 from_base36(blob) 자리에 주입한다.
@@ -1106,6 +1121,7 @@ class VMPass(PostPass):
             vm_code = vm_code.replace("from_base36(blob)", _NUMERIC_DECODE, 1)
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
+        _phase_start = time.perf_counter()
         vm_func_src = (
             f'return function(...)\n'
             f'local k1,k2,k3,k4,k5,k6,k7 = ... '
@@ -1113,6 +1129,7 @@ class VMPass(PostPass):
         )
         vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
         vm_func_src = _apply_handler_graphs(vm_func_src, graph_sites)
+        self.last_profile.append({"phase": "obfuscate_vm_output", "elapsed": round(time.perf_counter() - _phase_start, 6)})
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
@@ -1122,14 +1139,17 @@ class VMPass(PostPass):
             vm_func_src = vm_func_src[len(header):]
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
+        _phase_start = time.perf_counter()
         dump_bytes = _dump_function_stripped(vm_func_src, header)
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+        self.last_profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         alphabet  = string.ascii_letters + string.digits
         rand_tail = ''.join(secrets.choice(alphabet) for _ in range(16))
         _KEY = f"karityObfuscator/{format(dump_crc, '08x')}/{rand_tail}"
 
         # 6. blob 암호화: nonce(8B) + ciphertext
+        _phase_start = time.perf_counter()
         nonce, ct = encrypt_blob(blob, _KEY)
         encrypted_blob = nonce + ct
         if blob_form == "table":
@@ -1138,6 +1158,7 @@ class VMPass(PostPass):
             lua_blob = _to_numeric_blob(encrypted_blob)
         else:
             lua_blob = _to_base36(encrypted_blob)
+        self.last_profile.append({"phase": "encrypt_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 7. 최종 출력 조합 — vm_func_src(_vmf 본문)는 더 이상 재가공하지 않음
         # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용

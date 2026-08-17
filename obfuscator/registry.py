@@ -181,6 +181,10 @@ class ConfigError(ValueError):
     pass
 
 
+class ReleaseCheckError(ValueError):
+    pass
+
+
 def get_pass_names(group: str | None = None) -> list[str]:
     """그룹별 패스 이름 목록. group=None이면 전체."""
     if group is None:
@@ -251,6 +255,38 @@ def validate_config(config: dict) -> None:
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
     _validate_vm_options(config.get("vm_options", {}))
+
+
+def validate_release_config(config: dict) -> None:
+    validate_config(config)
+    errors: list[str] = []
+    passes = config.get("passes", [])
+    vm_options = config.get("vm_options", {})
+
+    required_passes = ("vm", "anti_debug", "anti_decompile")
+    for name in required_passes:
+        if name not in passes:
+            errors.append(f"passes must include '{name}'")
+
+    vm_count = vm_options.get("vm_count", 1)
+    if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2:
+        errors.append("vm_options.vm_count should be >= 2 for release builds")
+
+    for key in ("fake_handlers", "mutate_handlers", "junk_instructions"):
+        if vm_options.get(key) is not True:
+            errors.append(f"vm_options.{key} must be true")
+
+    if float(vm_options.get("junk_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.junk_rate should be > 0.0")
+
+    if vm_options.get("blob_form") != "random":
+        errors.append("vm_options.blob_form must be 'random'")
+
+    if vm_options.get("dispatcher_type") != "mixed":
+        errors.append("vm_options.dispatcher_type should be 'mixed'")
+
+    if errors:
+        raise ReleaseCheckError("release-check failed:\n- " + "\n- ".join(errors))
 
 
 def _reject_nested_output_passes(config: dict, key: str) -> None:

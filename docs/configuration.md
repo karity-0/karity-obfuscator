@@ -36,7 +36,11 @@ without manually editing pass lists.
 python main.py input.lua --profile dev
 python main.py input.lua --profile fast-vm
 python main.py input.lua --profile max
+python main.py input.lua --profile max --release-check
 ```
+
+`--seed` is for reproducible test builds. `--release-check` rejects seeded
+builds and weak VM settings before writing release output.
 
 ## remove_comment
 **label:** Remove Comment  

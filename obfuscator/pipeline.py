@@ -4,13 +4,34 @@ import time
 from typing import Union
 
 from luaparser import ast
+
+from .passes.base import BasePass, PostPass, PrePass, Replacement
+from .profiling import ProfileRecord, Profiler
 from .verbosity import Verbosity
-from .passes.base import BasePass, PrePass, PostPass, Replacement
 
 
 PassType = Union[BasePass, PrePass, PostPass]
+
+
 def info_message(step: str, p: PassType, message: str):
     print(f"[{step}] {p.__class__.__name__}: {message}")
+
+
+def _size(src: str) -> int:
+    return len(src.encode("utf-8"))
+
+
+def _format_record(record: ProfileRecord) -> str:
+    message = (
+        f"{record.elapsed:.3f}s "
+        f"{record.input_bytes}->{record.output_bytes} bytes "
+        f"(delta {record.output_bytes - record.input_bytes:+})"
+    )
+    if record.parser:
+        message += f" parser={record.parser}"
+    if record.replacements is not None:
+        message += f" replacements={record.replacements}"
+    return message
 
 
 class Pipeline:
@@ -20,7 +41,6 @@ class Pipeline:
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
-
         self.show_header = show_header
 
     def add(self, pass_: BasePass | PrePass) -> Pipeline:
@@ -32,51 +52,73 @@ class Pipeline:
             self._passes.append(pass_)
         return self
 
-    def run(self, script: str, verbose: int = 0) -> str:
+    def run(self, script: str, verbose: int = 0, profiler: Profiler | None = None) -> str:
         for pre in self._pre_passes:
+            before = _size(script)
             start = time.perf_counter()
             script = pre.run(script)
             elapsed = time.perf_counter() - start
+            record = ProfileRecord("PRE", pre.__class__.__name__, elapsed, before, _size(script))
+            if profiler:
+                profiler.add(record)
             if verbose >= Verbosity.NORMAL:
-                info_message("PRE", pre, f"{elapsed:.3f}s")
+                info_message("PRE", pre, _format_record(record))
 
         for pass_ in self._passes:
+            before = _size(script)
             start = time.perf_counter()
-            # 패스별 파서 선택: parser="treesitter"면 tree-sitter(빠름),
-            # 아니면 기존 luaparser. 큰 VM 출력을 다루는 패스는 tree-sitter로
-            # 파싱 비용(~90%)을 줄인다.
-            if getattr(pass_, "parser", "luaparser") == "treesitter":
+            parser = getattr(pass_, "parser", "luaparser")
+            if parser == "treesitter":
                 from .passes.ts_utils import parse as _ts_parse
+
                 tree = _ts_parse(script)
             else:
                 tree = ast.parse(script)
             replacements = pass_.run(script, tree)
-            elapsed = time.perf_counter() - start
-            if verbose >= Verbosity.NORMAL:
-                info_message("BASE", pass_, f"{elapsed:.3f}s")
-
             script = self._apply(script, replacements)
-            if verbose >= Verbosity.DEBUG:
-                #sep = "-" * 40
-                #print(f"\n{sep} {pass_.__class__.__name__} {sep}")
-                #print(script)
+            elapsed = time.perf_counter() - start
+            record = ProfileRecord(
+                "BASE",
+                pass_.__class__.__name__,
+                elapsed,
+                before,
+                _size(script),
+                parser=parser,
+                replacements=len(replacements),
+            )
+            if profiler:
+                profiler.add(record)
+            if verbose >= Verbosity.NORMAL:
+                info_message("BASE", pass_, _format_record(record))
+            if verbose > Verbosity.DEBUG:
                 new_tree = ast.parse(script)
                 print(ast.to_pretty_str(new_tree))
 
-
         for post in self._post_passes:
+            before = _size(script)
             start = time.perf_counter()
             script = post.run(script)
             elapsed = time.perf_counter() - start
+            details = getattr(post, "last_profile", [])
+            record = ProfileRecord(
+                "POST",
+                post.__class__.__name__,
+                elapsed,
+                before,
+                _size(script),
+                details=details,
+            )
+            if profiler:
+                profiler.add(record)
             if verbose >= Verbosity.NORMAL:
-                info_message("POST", post, f"{elapsed:.3f}s")
+                info_message("POST", post, _format_record(record))
+                if verbose >= Verbosity.DEBUG:
+                    for detail in details:
+                        print(f"  - {detail['phase']}: {detail['elapsed']:.3f}s")
 
         return f"{self.HEADER}{script}" if self.show_header else script
-    
+
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
-        # 치환들은 서로 겹치지 않으므로 한 번만 순회하며 세그먼트를 모아
-        # join한다 (치환마다 전체 문자열을 재생성하면 O(n²)이라, 큰 VM
-        # 출력에서 빌드 시간을 지배했다 — 여기서 O(n)으로 만든다).
         if not replacements:
             return src
         parts: list[str] = []

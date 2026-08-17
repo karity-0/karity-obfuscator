@@ -49,6 +49,8 @@ python main.py input.lua --passes string_obf,number_obf,minify
 python main.py input.lua --vm-option vm_count=1 --vm-option junk_rate=0
 python main.py input.lua -o output.lua
 python main.py input.lua -v
+python main.py input.lua -vv --profile-report build-profile.json
+python main.py input.lua --profile max --release-check
 python main.py input.lua --print-config
 python main.py --list-profiles
 python main.py --list-passes
@@ -63,6 +65,9 @@ require editing pass lists by hand:
 - `dev`: fast source-level obfuscation for quick iteration
 - `fast-vm`: lightweight VM build for VM behavior checks
 - `max`: full protection preset for real use
+
+`--seed` is intended for reproducible test builds. Use `--release-check` before
+real builds; it rejects seeded builds and weak VM settings.
 
 ## testing
 ```bash
