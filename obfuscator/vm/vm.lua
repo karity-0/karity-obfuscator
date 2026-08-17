@@ -69,6 +69,7 @@ end
 
 local _CRC_TABLE
 local function _crc32(data)
+    local __VM_HOT_LOOP__=true
     if not _CRC_TABLE then
         _CRC_TABLE={}
         for i=0,255 do
@@ -284,6 +285,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _S     = _fr and _fr[__VM_FR_SCRATCH__] or {[611]=_zz or 0}
     local _AA    = _fr and _fr[__VM_FR_ACTIVE__] or {}
     local _FC    = _fr and _fr[__VM_FR_FLOW_CACHE__] or {}
+    local _SC    = _fr and _fr[__VM_FR_SEM_CACHE__] or {}
     local _gsl, _gq
     local _XF    = _fr and _fr[__VM_FR_LEDGER__] or _xx or {[1]=_zz or 0}
 
@@ -369,6 +371,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_STATE__]=_st~(m&0xFF),[__VM_FR_VARARG__]=_va,
                 [__VM_FR_SPLIT__]=_split_tmp,[__VM_FR_SCRATCH__]=_S,
                 [__VM_FR_ACTIVE__]=_AA,[__VM_FR_FLOW_CACHE__]=_FC,
+                [__VM_FR_SEM_CACHE__]=_SC,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
                 [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
@@ -440,6 +443,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return _FG[pick](q,_S)
     end
 
+    local function _sem(tag,x,y,z)
+        local site=((pc-1)<<32)~tag
+        local bank=_DG[tag]
+        if _SC[site] then return bank[2](x,y,z,_S) end
+        _SC[site]=true
+        return bank[1](x,y,z,_S)
+    end
+
     local function _touch(av,tag)
         _carry(nil,av,tag)
     end
@@ -480,29 +491,29 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     for i in setmetatable({},{__call=function(t)return t end}) do
         _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1
 
-        if     op==0  then rset(A,_carry(_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S),_av,0))
-        elseif op==1  then rset(A,_carry(_DG[__VM_DATA_VALUE__](kval(consts[Bx+1]),nil,nil,_S),_av,1))
+        if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,regs[B],nil,nil),_av,0))
+        elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil),_av,1))
         elseif op==2  then
             local ei=((code[pc]~_ksm(pc))~_dk)~_dk; pc=pc+1
             local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
-            rset(A,_carry(_DG[__VM_DATA_VALUE__](kval(consts[ax+1]),nil,nil,_S),_av,2))
-        elseif op==3  then rset(A,_carry(_DG[__VM_DATA_VALUE__]((B~=0),nil,nil,_S),_av,3)); if C~=0 then pc=pc+1 end
+            rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[ax+1]),nil,nil),_av,2))
+        elseif op==3  then rset(A,_carry(_sem(__VM_DATA_VALUE__,(B~=0),nil,nil),_av,3)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end; _touch(_av,4)
-        elseif op==5  then rset(A,_carry(_DG[__VM_DATA_VALUE__](upvals[B+1].v,nil,nil,_S),_av,5))
-        elseif op==6  then rset(A,_carry(_DG[__VM_DATA_GET__](upvals[B+1].v,regs[C],nil,_S),_av,6))
-        elseif op==7  then rset(A,_carry(_DG[__VM_DATA_GET__](regs[B],regs[C],nil,_S),_av,7))
-        elseif op==8  then _DG[__VM_DATA_SET__](upvals[A+1].v,regs[B],regs[C],_S); _touch(_av,8)
+        elseif op==5  then rset(A,_carry(_sem(__VM_DATA_VALUE__,upvals[B+1].v,nil,nil),_av,5))
+        elseif op==6  then rset(A,_carry(_sem(__VM_DATA_GET__,upvals[B+1].v,regs[C],nil),_av,6))
+        elseif op==7  then rset(A,_carry(_sem(__VM_DATA_GET__,regs[B],regs[C],nil),_av,7))
+        elseif op==8  then _sem(__VM_DATA_SET__,upvals[A+1].v,regs[B],regs[C]); _touch(_av,8)
         elseif op==9  then upvals[B+1].v=regs[A]; _touch(_av,9)
-        elseif op==10 then _DG[__VM_DATA_SET__](regs[A],regs[B],regs[C],_S); _touch(_av,10)
-        elseif op==11 then rset(A,_carry({},_av,11))
-        elseif op==12 then local t=regs[B]; rset(A+1,_carry(_DG[__VM_DATA_VALUE__](t,nil,nil,_S),_av,112)); rset(A,_carry(_DG[__VM_DATA_GET__](t,regs[C],nil,_S),_av,12))
+        elseif op==10 then _sem(__VM_DATA_SET__,regs[A],regs[B],regs[C]); _touch(_av,10)
+        elseif op==11 then rset(A,_carry(_sem(__VM_OP_NEWTABLE__,nil,nil,nil),_av,11))
+        elseif op==12 then local t=regs[B]; rset(A+1,_carry(_sem(__VM_DATA_VALUE__,t,nil,nil),_av,112)); rset(A,_carry(_sem(__VM_DATA_GET__,t,regs[C],nil),_av,12))
         elseif op==13 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_ADD__))
         elseif op==14 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_SUB__))
         elseif op==15 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_MUL__))
-        elseif op==16 then rset(A,_carry(regs[B]%regs[C],_av,16))
-        elseif op==17 then rset(A,_carry(regs[B]^regs[C],_av,17))
-        elseif op==18 then rset(A,_carry(regs[B]/regs[C],_av,18))
-        elseif op==19 then rset(A,_carry(regs[B]//regs[C],_av,19))
+        elseif op==16 then rset(A,_carry(_sem(__VM_OP_MOD__,regs[B],regs[C],nil),_av,16))
+        elseif op==17 then rset(A,_carry(_sem(__VM_OP_POW__,regs[B],regs[C],nil),_av,17))
+        elseif op==18 then rset(A,_carry(_sem(__VM_OP_DIV__,regs[B],regs[C],nil),_av,18))
+        elseif op==19 then rset(A,_carry(_sem(__VM_OP_IDIV__,regs[B],regs[C],nil),_av,19))
         elseif op==20 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_BAND__))
         elseif op==21 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_BOR__))
         elseif op==22 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_BXOR__))
@@ -510,21 +521,21 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==24 then rset(A,_arith2(regs[B],regs[C],_av,__VM_SLOT_SHR__))
         elseif op==25 then rset(A,_arith1(regs[B],_av,__VM_SLOT_UNM__))
         elseif op==26 then rset(A,_arith1(regs[B],_av,__VM_SLOT_BNOT__))
-        elseif op==27 then rset(A,_carry(not regs[B],_av,27))
-        elseif op==28 then rset(A,_carry(#regs[B],_av,28))
+        elseif op==27 then rset(A,_carry(_sem(__VM_OP_NOT__,regs[B],nil,nil),_av,27))
+        elseif op==28 then rset(A,_carry(_sem(__VM_OP_LEN__,regs[B],nil,nil),_av,28))
         elseif op==29 then
-            local t={}; for i=B,C do t[#t+1]=tostring(regs[i]) end
-            rset(A,_carry(table.concat(t),_av,29))
+            local t={}; for i=B,C do t[#t+1]=regs[i] end
+            rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
         elseif op==30 then
             local k=(_S[611] or 0)~pc~sBx
             local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
             q=_flow(q,_av,30); pc=q[__VM_CF_TARGET__]~q[__VM_CF_KEY__]
-        elseif op==31 then if _carry(_DG[__VM_CMP_EQ__](regs[B],regs[C],nil,_S),_av,31)~=(A~=0) then pc=pc+1 end
-        elseif op==32 then if _carry(_DG[__VM_CMP_LT__](regs[B],regs[C],nil,_S),_av,32)~=(A~=0) then pc=pc+1 end
-        elseif op==33 then if _carry(_DG[__VM_CMP_LE__](regs[B],regs[C],nil,_S),_av,33)~=(A~=0) then pc=pc+1 end
-        elseif op==34 then if _carry(_DG[__VM_CMP_TRUTH__](regs[A],nil,nil,_S),_av,34)~=(C~=0) then pc=pc+1 end
+        elseif op==31 then if _carry(_sem(__VM_CMP_EQ__,regs[B],regs[C],nil),_av,31)~=(A~=0) then pc=pc+1 end
+        elseif op==32 then if _carry(_sem(__VM_CMP_LT__,regs[B],regs[C],nil),_av,32)~=(A~=0) then pc=pc+1 end
+        elseif op==33 then if _carry(_sem(__VM_CMP_LE__,regs[B],regs[C],nil),_av,33)~=(A~=0) then pc=pc+1 end
+        elseif op==34 then if _carry(_sem(__VM_CMP_TRUTH__,regs[A],nil,nil),_av,34)~=(C~=0) then pc=pc+1 end
         elseif op==35 then
-            if _carry(_DG[__VM_CMP_TRUTH__](regs[B],nil,nil,_S),_av,35)==(C~=0) then rset(A,regs[B]) else pc=pc+1 end
+            if _carry(_sem(__VM_CMP_TRUTH__,regs[B],nil,nil),_av,35)==(C~=0) then rset(A,regs[B]) else pc=pc+1 end
 
         elseif op==36 then
             local fn=regs[A]; local ca={}; local ca_n=0
@@ -626,12 +637,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==43 then
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=regs[A]
-            for i=1,cnt do tbl[base+i]=regs[A+i] end
+            local vals={}; for i=1,cnt do vals[i]=regs[A+i] end
+            _sem(__VM_OP_SETLIST__,tbl,vals,{base,cnt})
             _touch(_av,43)
 
         elseif op==44 then
             boxes[A] = {v=nil}
-            local fn=make_closure(proto.protos[Bx+1])
+            local fn=_sem(__VM_OP_CLOSURE__,make_closure,proto.protos[Bx+1],nil)
             regs[A]=_carry(fn,_av,44); boxes[A].v=regs[A]
 
         elseif op==45 then
@@ -641,10 +653,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             q=_flow(q,_av,45); local qa=q[__VM_CF_A__]~q[__VM_CF_KEY__]
             local qb=q[__VM_CF_B__]~q[__VM_CF_KEY__]
             local qn=q[__VM_CF_COUNT__]~q[__VM_CF_KEY__]
+            _sem(__VM_OP_VARARG__,rset,qa,{qn,_va})
             if qb==0 then
-                for i=1,qn do rset(qa+i-1,_va[i]) end; top=qa+qn-1
-            else
-                for i=1,qn do rset(qa+i-1,_va[i]) end
+                top=qa+qn-1
             end
 
         elseif op==46 then error("unexpected EXTRAARG")

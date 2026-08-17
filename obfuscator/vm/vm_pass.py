@@ -762,6 +762,37 @@ def _make_semantic_ir_func(kind: str) -> str:
         semantic = f"local r=({ctx}.x<={ctx}.y);"
     elif kind == "TRUTH":
         semantic = f"local r=(not not {ctx}.x);"
+    elif kind == "MOD":
+        semantic = f"local r=({ctx}.x%{ctx}.y);"
+    elif kind == "POW":
+        semantic = f"local r=({ctx}.x^{ctx}.y);"
+    elif kind == "DIV":
+        semantic = f"local r=({ctx}.x/{ctx}.y);"
+    elif kind == "IDIV":
+        semantic = f"local r=({ctx}.x//{ctx}.y);"
+    elif kind == "NOT":
+        semantic = f"local r=(not {ctx}.x);"
+    elif kind == "LEN":
+        semantic = f"local r=(#{ctx}.x);"
+    elif kind == "CONCAT":
+        semantic = (
+            f"local r={ctx}.x[{ctx}.z];"
+            f"for i={ctx}.z-1,1,-1 do r={ctx}.x[i]..r end;"
+        )
+    elif kind == "NEWTABLE":
+        semantic = "local r={};"
+    elif kind == "SETLIST":
+        semantic = (
+            f"for i=1,{ctx}.z[2] do {ctx}.x[{ctx}.z[1]+i]={ctx}.y[i] end;"
+            f"local r={ctx}.x;"
+        )
+    elif kind == "CLOSURE":
+        semantic = f"local r={ctx}.x({ctx}.y);"
+    elif kind == "VARARG":
+        semantic = (
+            f"for i=1,{ctx}.z[1] do {ctx}.x({ctx}.y+i-1,{ctx}.z[2][i]) end;"
+            f"local r={ctx}.z[1];"
+        )
     else:
         semantic = f"local r={ctx}.x;"
 
@@ -782,10 +813,13 @@ def _make_semantic_ir_func(kind: str) -> str:
     )
     random.shuffle(definitions)
     seed = _hex64()
+    context = (
+        f"{{x={x},y={y},z={z},s={state},g=({seed}~({state}[611] or 0))}}"
+    )
     return (
         "(function()local " + ",".join(names) + ";" + "".join(definitions)
-        + f"return function({x},{y},{z},{state})return {names[-1]}({{x={x},y={y},z={z},"
-          f"s={state},g=({seed}~({state}[611] or 0))}}) end end)()"
+        + f"return {{function({x},{y},{z},{state})return {names[-1]}({context}) end,"
+          f"function({x},{y},{z},{state})return {names[0]}({context}) end}} end)()"
     )
 
 
@@ -867,8 +901,12 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
     vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
     vm_code = vm_code.replace("__VM_LOOP_FORPREP__", str(loop_tags[1]))
     vm_code = vm_code.replace("__VM_LOOP_TFORLOOP__", str(loop_tags[2]))
-    data_tags = random.sample(range(0x10000, 0x7FFFFFFF), 7)
-    semantic_kinds = ("VALUE", "GET", "SET", "EQ", "LT", "LE", "TRUTH")
+    data_tags = random.sample(range(0x10000, 0x7FFFFFFF), 18)
+    semantic_kinds = (
+        "VALUE", "GET", "SET", "EQ", "LT", "LE", "TRUTH",
+        "MOD", "POW", "DIV", "IDIV", "NOT", "LEN", "CONCAT",
+        "NEWTABLE", "SETLIST", "CLOSURE", "VARARG",
+    )
     semantic_graphs = "{" + ",".join(
         f"[{tag}]={_make_semantic_ir_func(kind)}"
         for kind, tag in zip(semantic_kinds, data_tags)
@@ -878,6 +916,11 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
         "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
         "__VM_CMP_TRUTH__",
+        "__VM_OP_MOD__", "__VM_OP_POW__", "__VM_OP_DIV__",
+        "__VM_OP_IDIV__", "__VM_OP_NOT__", "__VM_OP_LEN__",
+        "__VM_OP_CONCAT__",
+        "__VM_OP_NEWTABLE__", "__VM_OP_SETLIST__",
+        "__VM_OP_CLOSURE__", "__VM_OP_VARARG__",
     ), data_tags):
         vm_code = vm_code.replace(token, str(tag))
     occurrence_graphs = "{" + ",".join(
@@ -890,7 +933,7 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
         "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
         "__VM_FR_SPLIT__", "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
-        "__VM_FR_FLOW_CACHE__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
         "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",

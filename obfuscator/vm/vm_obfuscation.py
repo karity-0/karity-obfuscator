@@ -41,6 +41,11 @@ _GRAPH_BINARY_SLOTS = {
 _GRAPH_UNARY_SLOTS = {25: "__VM_SLOT_UNM__", 26: "__VM_SLOT_BNOT__"}
 _VALUE_UNARY_TAGS = {27, 28}
 _VALUE_BINARY_TAGS = {16, 17, 18, 19}
+_SEMANTIC_BINARY_TOKENS = {
+    16: "__VM_OP_MOD__", 17: "__VM_OP_POW__",
+    18: "__VM_OP_DIV__", 19: "__VM_OP_IDIV__",
+}
+_SEMANTIC_UNARY_TOKENS = {27: "__VM_OP_NOT__", 28: "__VM_OP_LEN__"}
 
 _SPLIT_PAD = "\n        "
 
@@ -64,7 +69,7 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
             ]
         else:
             return [
-                f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
                 f" _split_tmp=_arith2(_split_tmp,regs[C],_av,{slot}){_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
@@ -76,13 +81,16 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
                 f" rset(A,_arith1(_split_tmp,_av,{slot})){_SPLIT_PAD}",
             ]
         return [
-            f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+            f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
             f" _split_tmp=_arith1(_split_tmp,_av,{slot}){_SPLIT_PAD}",
             f" rset(A,_split_tmp){_SPLIT_PAD}",
         ]
     if orig_op in _BINARY_OP_LUA:
         lua_op = _BINARY_OP_LUA[orig_op]
         def binary_expr(left: str, right: str) -> str:
+            if orig_op in _SEMANTIC_BINARY_TOKENS:
+                token = _SEMANTIC_BINARY_TOKENS[orig_op]
+                return f"_carry(_sem({token},{left},{right},nil),_av,{orig_op})"
             expr = f"{left}{lua_op}{right}"
             if orig_op in _VALUE_BINARY_TAGS:
                 return f"_carry({expr},_av,{orig_op})"
@@ -100,39 +108,43 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
             ]
     elif orig_op in _UNARY_PREFIX:
         pfx = _UNARY_PREFIX[orig_op]
-        wrap = (lambda expr: f"_carry({expr},_av,{orig_op})") if orig_op in _VALUE_UNARY_TAGS else (lambda expr: expr)
+        if orig_op in _SEMANTIC_UNARY_TOKENS:
+            token = _SEMANTIC_UNARY_TOKENS[orig_op]
+            unary_expr = lambda value: f"_carry(_sem({token},{value},nil,nil),_av,{orig_op})"
+        else:
+            unary_expr = lambda value: f"{pfx}{value}"
         if parts == 2:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,{wrap(f'{pfx}_split_tmp')}){_SPLIT_PAD}",
+                f" rset(A,{unary_expr('_split_tmp')}){_SPLIT_PAD}",
             ]
         else:
             return [
                 f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={wrap(f'{pfx}_split_tmp')}{_SPLIT_PAD}",
+                f" _split_tmp={unary_expr('_split_tmp')}{_SPLIT_PAD}",
                 f" rset(A,_split_tmp){_SPLIT_PAD}",
             ]
     elif orig_op == 0:  # MOVE
         if parts == 2:
             return [
-                f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
                 f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_DG[__VM_DATA_VALUE__](regs[B],nil,nil,_S){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
                 f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
             ]
     elif orig_op == 1:  # LOADK
         if parts == 2:
             return [
-                f" _split_tmp=_DG[__VM_DATA_VALUE__](kval(consts[Bx+1]),nil,nil,_S){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
                 f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_DG[__VM_DATA_VALUE__](kval(consts[Bx+1]),nil,nil,_S){_SPLIT_PAD}",
+                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
                 f" _split_tmp=_split_tmp{_SPLIT_PAD}",
                 f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
             ]
@@ -349,11 +361,11 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
              av: str = "_av") -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
-        return f"rset({a},_carry(_DG[__VM_DATA_VALUE__](regs[{b}],nil,nil,_S),{av},0))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,regs[{b}],nil,nil),{av},0))"
     if op == 1:   # LOADK
-        return f"rset({a},_carry(_DG[__VM_DATA_VALUE__](kval(consts[{bx}+1]),nil,nil,_S),{av},1))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1]),nil,nil),{av},1))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},_carry(_DG[__VM_DATA_VALUE__](upvals[{b}+1].v,nil,nil,_S),{av},5))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,upvals[{b}+1].v,nil,nil),{av},5))"
     if op in _GRAPH_BINARY_SLOTS:
         return f"rset({a},_arith2(regs[{b}],regs[{c}],{av},{_GRAPH_BINARY_SLOTS[op]}))"
     if op in _GRAPH_UNARY_SLOTS:

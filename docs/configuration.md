@@ -132,8 +132,13 @@ operands into build-specific packets. A bounded control DAG rekeys those operand
 before the handler can consume them; repeated hot-loop visits use a per-frame site
 cache after the full path has executed once. Numeric and generic loop updates and
 predicates are evaluated by separate generated IR nodes. Load, table access, table
-assignment, and comparison semantics likewise execute inside generated semantic
-graphs so metamethod-bearing operations remain single-evaluation boundaries.
+assignment, comparison, modulo, power, division, floor division, logical not,
+length, concatenation, table construction/list population, closure creation, and
+vararg transfer semantics likewise execute inside generated semantic graphs.
+Metamethod-bearing operations remain single-evaluation boundaries. Each semantic
+site traverses its full wrapper graph on first execution and then uses the site's
+semantic core, keeping hot loops bounded without removing the generated graph from
+the emitted VM.
 
 
 ## anti_debug
