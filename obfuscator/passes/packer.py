@@ -200,30 +200,49 @@ def _best_compression(raw: bytes) -> bytes:
     return min(candidates, key=len)
 
 
-def _dump_loader_stripped(loader_src: str) -> bytes:
-    """Dump the final loader function in the same visible outer context.
 
-    The packer itself owns the public signature header, so `_P` is always
-    compiled immediately after exactly one Pipeline.HEADER regardless of
-    whether the outer pipeline also contains VM.
+def _loader_binding(loader_src: str) -> str:
+    """Bind the obfuscated loader chunk to `_P` without adding another load().
+
+    Fast path:
+        return function(...) ... end
+    becomes:
+        local _P=function(...) ... end;
+
+    Fallback:
+        <arbitrary transformed chunk that eventually returns the loader>
+    becomes:
+        local _P=(function()<chunk>end)();
+
+    `_dump_loader_stripped()` and `_render_packed()` both use this exact helper
+    so the loader function's enclosing source position stays identical between
+    build-time dumping and runtime execution.
     """
+    if loader_src.startswith("return "):
+        return f"local _P={loader_src[len('return '):]};"
+    return f"local _P=(function(){loader_src}end)();"
+
+
+
+def _dump_loader_stripped(loader_src: str) -> bytes:
+    """Dump the final loader function in the exact runtime outer context."""
     if not _LUA or (isinstance(_LUA, Path) and not _LUA.exists()):
         raise FileNotFoundError("lua5.3 not found.")
-    if not loader_src.startswith("return "):
-        raise RuntimeError("packer loader output must start with 'return '")
 
     from ..pipeline import Pipeline
 
-    loader_body = loader_src[len("return "):]
     wrapped = (
         f"{Pipeline.HEADER}"
-        f"local _P={loader_body};"
+        f"{_loader_binding(loader_src)}"
         f'local _D="";'
         f"return _P"
     )
 
     with tempfile.NamedTemporaryFile(
-        suffix=".lua", delete=False, mode="w", encoding="utf-8"
+        suffix=".lua",
+        delete=False,
+        mode="w",
+        encoding="utf-8",
     ) as f:
         f.write(wrapped)
         src_path = f.name
@@ -248,20 +267,25 @@ out:close()
         f.write(helper)
 
     try:
-        result = subprocess.run([str(_LUA), helper_path], capture_output=True)
+        result = subprocess.run(
+            [str(_LUA), helper_path],
+            capture_output=True,
+        )
         if result.returncode != 0:
             raise RuntimeError(
                 "lua packer dump failed: "
                 + result.stderr.decode(errors="replace")
             )
+
         if not os.path.exists(dump_path):
             raise RuntimeError("lua packer dump produced no dump")
+
         with open(dump_path, "rb") as f:
             return f.read()
     finally:
-        for p in (src_path, dump_path, helper_path):
-            if os.path.exists(p):
-                os.unlink(p)
+        for path in (src_path, dump_path, helper_path):
+            if os.path.exists(path):
+                os.unlink(path)
 
 
 def _distinct_slots(count: int) -> list[int]:
@@ -989,13 +1013,9 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
     from ..pipeline import Pipeline
 
-    if not loader_src.startswith("return "):
-        raise RuntimeError("packer loader output must start with 'return '")
-
-    loader_body = loader_src[len("return "):]
     return (
         f"{Pipeline.HEADER}"
-        f"local _P={loader_body};"
+        f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
         f"return _P(_D,_P)\n"
     )
