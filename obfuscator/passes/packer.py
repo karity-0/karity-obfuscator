@@ -556,6 +556,70 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
 
 
 def _alloc_plan(script: str) -> ContextPlan:
+    # VM output has a rigid, known tail shape.  Do not run the generic Lua
+    # structure analysis over the entire generated VM source: that path
+    # repeatedly scans large prefixes and becomes effectively quadratic on
+    # hundreds-of-KB VM output.
+    vm_match = _VM_TAIL_RE.search(script)
+    if vm_match:
+        vm_args = [part.strip() for part in vm_match.group("args").split(",")]
+        vm_tail = vm_match.group("tail")
+
+        # The VM path intentionally keeps `_vmf` untouched.  External Context
+        # only supplies runtime primitives/state plus the VM call constants
+        # and tail reconstruction inputs.
+        slot_names = [
+            "hash",
+            "dump",
+            "b64",
+            "byte",
+            "char",
+            "concat",
+            "state",
+            "decode",
+            "k0",
+            "k1",
+            "k2",
+            "k3",
+            "mul",
+            "d0",
+            "d1",
+            "d2",
+            "decoy0",
+            "decoy1",
+            "decoy2",
+        ]
+        slot_names.extend(f"vmarg:{i}" for i in range(len(vm_args)))
+
+        slots = dict(
+            zip(
+                slot_names,
+                _distinct_slots(len(slot_names)),
+            )
+        )
+
+        state_consts = {
+            "k0": secrets.randbits(32),
+            "k1": secrets.randbits(32),
+            "k2": secrets.randbits(32),
+            "k3": secrets.randbits(32),
+            "mul": secrets.randbits(32) | 1,
+            "decoy_seed0": secrets.randbits(32),
+            "decoy_seed1": secrets.randbits(32),
+            "decoy_seed2": secrets.randbits(32),
+        }
+
+        return ContextPlan(
+            slots=slots,
+            state_consts=state_consts,
+            extracted_functions=[],
+            extracted_constants=[],
+            refs={},
+            vm_args=vm_args,
+            vm_tail=vm_tail,
+            is_vm=True,
+        )
+
     masked = _mask_lua_noncode(script)
     top_locals = _top_level_locals(script, masked)
     constants = _find_simple_constants(script, masked)
