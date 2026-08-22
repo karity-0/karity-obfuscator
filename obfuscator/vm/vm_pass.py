@@ -984,12 +984,18 @@ def _rename_vm_keys(src: str) -> str:
     return src
 
 
-def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
-    """VM 출력물에 passes 재적용."""
+def _obfuscate_vm_output(
+    script: str,
+    pass_names: list[str],
+) -> tuple[str, list[dict]]:
+    """VM 출력물에 passes 재적용 + pass별 profiling."""
     from ..pipeline import Pipeline
+    from ..profiling import Profiler
     from ..registry import PASS_REGISTRY
 
     pipeline = Pipeline()
+    applied_names: list[str] = []
+
     for name in pass_names:
         info = PASS_REGISTRY.get(name)
         if info is None:
@@ -997,19 +1003,52 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
         cls = info["cls"]
 
+        # VM 재귀 적용 금지.
         if cls.__name__ == "VMPass":
             continue
 
-        # function_obf는 디스패처(exec)와 그 내부 클로저를 변환에서 제외해야
-        # 한다(거대 + 내부 클로저가 exec 로컬을 upvalue로 캡처해 깨지고, hot
-        # path라 runtime도 망가짐). skip_vm_dispatcher로 exec/wrapper만 빼고
-        # cold 헬퍼들(kae_decrypt/read_proto/run 등)에는 정상 적용한다.
+        # function_obf는 exec/dispatcher 자체는 제외하고 cold helper에만 적용.
         if cls.__name__ == "FunctionObfuscationPass":
             pipeline.add(cls(skip_vm_dispatcher=True))
         else:
             pipeline.add(cls())
 
-    return pipeline.run(script)
+        applied_names.append(name)
+
+    profiler = Profiler()
+    output = pipeline.run(script, profiler=profiler)
+
+    details: list[dict] = []
+
+    # 현재 vm_output_passes는 BASE passes + 마지막 POST(minify) 구조라
+    # profiler.records와 적용 순서가 동일하다.
+    for index, record in enumerate(profiler.records):
+        data = record.as_dict()
+
+        configured_name = (
+            applied_names[index]
+            if index < len(applied_names)
+            else record.name
+        )
+
+        details.append({
+            "phase": f"vm_output:{configured_name}",
+            "class": record.name,
+            "elapsed": data["elapsed"],
+            "input_bytes": data["input_bytes"],
+            "output_bytes": data["output_bytes"],
+            "delta_bytes": data["delta_bytes"],
+            **(
+                {"parser": data["parser"]}
+                if "parser" in data else {}
+            ),
+            **(
+                {"replacements": data["replacements"]}
+                if "replacements" in data else {}
+            ),
+        })
+
+    return output, details
 
 
 
@@ -1142,14 +1181,49 @@ class VMPass(PostPass):
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
         _phase_start = time.perf_counter()
+
         vm_func_src = (
             f'return function(...)\n'
             f'local k1,k2,k3,k4,k5,k6,k7 = ... '
             f'{vm_code} return run end'
         )
-        vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
-        vm_func_src = _apply_handler_graphs(vm_func_src, graph_sites)
-        self.last_profile.append({"phase": "obfuscate_vm_output", "elapsed": round(time.perf_counter() - _phase_start, 6)})
+
+        # VM output passes 자체를 세분화해서 측정.
+        vm_func_src, vm_output_details = _obfuscate_vm_output(
+            vm_func_src,
+            self.vm_output_passes,
+        )
+
+        # handler graph는 vm_output_passes와 별개의 후처리이므로 따로 측정.
+        _graph_start = time.perf_counter()
+        _graph_input_bytes = len(vm_func_src.encode("utf-8"))
+
+        vm_func_src = _apply_handler_graphs(
+            vm_func_src,
+            graph_sites,
+        )
+
+        _graph_elapsed = time.perf_counter() - _graph_start
+        _graph_output_bytes = len(vm_func_src.encode("utf-8"))
+
+        vm_output_details.append({
+            "phase": "vm_output:handler_graphs",
+            "class": "_apply_handler_graphs",
+            "elapsed": round(_graph_elapsed, 6),
+            "input_bytes": _graph_input_bytes,
+            "output_bytes": _graph_output_bytes,
+            "delta_bytes": _graph_output_bytes - _graph_input_bytes,
+            "graph_sites": len(graph_sites),
+        })
+
+        self.last_profile.append({
+            "phase": "obfuscate_vm_output",
+            "elapsed": round(
+                time.perf_counter() - _phase_start,
+                6,
+            ),
+            "details": vm_output_details,
+        })
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
