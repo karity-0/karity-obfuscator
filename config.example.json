@@ -67,7 +67,8 @@
                 "rename_obf",
                 "localize_globals",
                 "minify",
-                "vm"
+                "vm",
+                "pack"
             ],
             "vm_output_passes": [
                 "function_obf",
