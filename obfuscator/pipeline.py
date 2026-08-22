@@ -116,7 +116,11 @@ class Pipeline:
                     for detail in details:
                         print(f"  - {detail['phase']}: {detail['elapsed']:.3f}s")
 
-        return f"{self.HEADER}{script}" if self.show_header else script
+        if not self.show_header:
+            return script
+        if script.startswith(self.HEADER):
+            return script
+        return f"{self.HEADER}{script}"
 
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
         if not replacements:

@@ -177,13 +177,18 @@ local function _inf(data)
     return _concat(out)
 end
 
+__CTX_SETUP__
+
 local _is_function=_type(_load)=="function"
 local _is_lua=_select(1,_pcall(_dump,_load,true))
 local _fp=({[false]=__FP_TYPE_BAD__,[true]=__FP_TYPE_OK__})[_is_function]
     ~({[false]=__FP_C__,[true]=__FP_LUA__})[_is_lua]
     ~({[false]=__FP_PRINT_OK__,[true]=__FP_PRINT_BAD__})[_load==print]
+
 local _enc=_b64(_D)
 local _seed=(_hash(_dump(_self,true))~__SALT__~_fp~((#_enc*0x045D9F3B)&0xFFFFFFFF))&0xFFFFFFFF
 local _src=_inf(_xor(_enc,_seed))
-return _load(_src,"=(packed)","t")()
+local _fn=_load(_src,"=(packed)","t")
+
+return _fn(_C,_C[__CTX_STATE_SLOT__],_C[__CTX_DECODE_SLOT__])
 end
