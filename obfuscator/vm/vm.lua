@@ -370,11 +370,20 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function get_box(slot)
         if not boxes[slot] then
-            boxes[slot]={v=regs[slot]}
-        else
-            boxes[slot].v=regs[slot]
+            boxes[slot]={
+                v=regs[slot],
+                regs=regs,
+                slot=slot
+            }
         end
         return boxes[slot]
+    end
+
+    local function set_upvalue(box,v)
+        box.v=v
+        if box.regs then
+            box.regs[box.slot]=v
+        end
     end
 
     local function make_closure(sub)
@@ -541,7 +550,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==6  then rset(A,_carry(_sem(__VM_DATA_GET__,upvals[B+1].v,regs[C],nil),_av,6))
         elseif op==7  then rset(A,_carry(_sem(__VM_DATA_GET__,regs[B],regs[C],nil),_av,7))
         elseif op==8  then _sem(__VM_DATA_SET__,upvals[A+1].v,regs[B],regs[C]); _touch(_av,8)
-        elseif op==9  then upvals[B+1].v=regs[A]; _touch(_av,9)
+        elseif op==9 then set_upvalue(upvals[B+1],regs[A]); _touch(_av,9)
         elseif op==10 then _sem(__VM_DATA_SET__,regs[A],regs[B],regs[C]); _touch(_av,10)
         elseif op==11 then rset(A,_carry(_sem(__VM_OP_NEWTABLE__,nil,nil,nil),_av,11))
         elseif op==12 then local t=regs[B]; rset(A+1,_carry(_sem(__VM_DATA_VALUE__,t,nil,nil),_av,112)); rset(A,_carry(_sem(__VM_DATA_GET__,t,regs[C],nil),_av,12))
