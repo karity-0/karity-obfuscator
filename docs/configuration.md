@@ -30,6 +30,7 @@
   - [integrity_constants](#integrity_constants)
   - [integrity_constant_rate](#integrity_constant_rate)
   - [graph_execution_rate](#graph_execution_rate)
+  - [cross_instruction_rate](#cross_instruction_rate)
 
 ## profiles
 The default config uses named profiles so test and release builds can switch
@@ -155,6 +156,15 @@ mapping generation, and sparse call/control ticks migrate every represented slot
 to a fresh generation through collision-free replacement tables. Thus a logical
 register's payload and metadata neither share an index nor remain at stable
 physical locations across a long-running frame.
+
+Selected integer ADD, SUB, and UNM instructions can stop at an encoded pending
+packet rather than writing their destination immediately. The packet snapshots
+destination-domain partial shares without retaining source logical indices,
+survives unrelated dispatches and continuation frames, and is completed in the
+encoded domain only when a later consumer reads the logical destination. Pending
+metadata uses a fifth independent physical permutation. Non-integer operands and
+active semantic-graph occurrences fall back to immediate execution so Lua
+metamethod timing and diffusion state remain unchanged.
 
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
@@ -293,5 +303,15 @@ Fraction of VM sites that execute heavy compiled handlers and cross-frame diffus
 range: 0.0 to 1.0
 
 default: `0.1`
+
+---
+
+### cross_instruction_rate
+
+Fraction of eligible ADD, SUB, and UNM instructions emitted as lazy producers whose encoded result is materialized by a later consumer.
+
+range: 0.0 to 1.0
+
+default: `0.2`
 
 ---

@@ -20,6 +20,7 @@ _BINARY_SPLIT_OPS = {13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 _UNARY_SPLIT_OPS  = {25, 26, 27, 28}
 _LOAD_SPLIT_OPS   = {0, 1}
 ALL_SPLIT_OPS     = _BINARY_SPLIT_OPS | _UNARY_SPLIT_OPS | _LOAD_SPLIT_OPS
+DEFER_OPS         = {13, 14, 25}
 
 _BINARY_OP_LUA = {
     13: "+", 14: "-", 15: "*", 16: "%", 17: "^",
@@ -434,6 +435,42 @@ def apply_fuse_to_vm(vm_code: str,
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
 
 
+def apply_defer_to_vm(vm_code: str,
+                      defer_map: dict[int, int],
+                      mutate: bool = True) -> str:
+    """Insert lazy producer handlers whose result is completed by a later rget."""
+    if not defer_map:
+        return vm_code
+    chain_start, chain_end = _find_chain(vm_code)
+    chain = vm_code[chain_start:chain_end]
+    blocks = _parse_handler_blocks(chain)
+    tokens = {
+        13: "__VM_PENDING_ADD__",
+        14: "__VM_PENDING_SUB__",
+        25: "__VM_PENDING_UNM__",
+    }
+    deferred: dict[int, str] = {}
+    for op, vop in defer_map.items():
+        if op in (13, 14):
+            body = (
+                f" _defer2r(A,B,C,_av,{_GRAPH_BINARY_SLOTS[op]},"
+                f"{tokens[op]}){_SPLIT_PAD}"
+            )
+        elif op == 25:
+            body = (
+                f" _defer1r(A,B,_av,{_GRAPH_UNARY_SLOTS[op]},"
+                f"{tokens[op]}){_SPLIT_PAD}"
+            )
+        else:
+            raise ValueError(f"non-deferable op: {op}")
+        deferred[vop] = body
+    if mutate:
+        deferred = mutate_handlers(deferred)
+    blocks.update(deferred)
+    new_chain = _rebuild_chain(blocks)
+    return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
+
+
 # ---------------------------------------------------------------------------
 # 5. alias 핸들러 생성 + vop 치환
 # ---------------------------------------------------------------------------
@@ -806,12 +843,13 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
 
     defs = []
     for k in range(n):
-        vop_map, split_map, fuse_map = vm_maps[k]
+        vop_map, split_map, fuse_map, defer_map = vm_maps[k]
         c = apply_vop_to_vm(template, vop_map)
         c = prune_and_inject_handlers(c, used_ops_list[k],
                                       fake_handlers=fake_handlers, mutate=mutate)
         c = apply_split_to_vm(c, split_map, mutate=mutate)
         c = apply_fuse_to_vm(c, fuse_map, mutate=mutate)
+        c = apply_defer_to_vm(c, defer_map, mutate=mutate)
         # exec 정의 head 이름만 _ex{k}로 변경 (make_closure는 이미 _EX로 라우팅)
         c = c.replace("exec = function", f"_ex{k} = function", 1)
         # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)

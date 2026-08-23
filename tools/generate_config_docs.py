@@ -53,6 +53,15 @@ to a fresh generation through collision-free replacement tables. Thus a logical
 register's payload and metadata neither share an index nor remain at stable
 physical locations across a long-running frame.
 
+Selected integer ADD, SUB, and UNM instructions can stop at an encoded pending
+packet rather than writing their destination immediately. The packet snapshots
+destination-domain partial shares without retaining source logical indices,
+survives unrelated dispatches and continuation frames, and is completed in the
+encoded domain only when a later consumer reads the logical destination. Pending
+metadata uses a fifth independent physical permutation. Non-integer operands and
+active semantic-graph occurrences fall back to immediate execution so Lua
+metamethod timing and diffusion state remain unchanged.
+
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
 through build-specific bounded cyclic routing graphs compiled to shuffled Lua

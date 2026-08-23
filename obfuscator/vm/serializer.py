@@ -471,9 +471,12 @@ def _collect_pairs(proto: Proto, pairs: set[tuple[int, int]]) -> None:
 #   ("normal", i)         — 1 슬롯
 #   ("split",  i, parts)  — parts 슬롯 (parts in {2,3})
 #   ("fuse",   i, i+1)    — 2 슬롯 (fused vop + operand)
+#   ("defer",  i)         — 1 슬롯 (lazy producer)
 def _build_plan(code: list[int],
                 split_map: dict[int, dict[str, tuple[int, ...]]] | None,
                 fuse_map: dict[tuple[int, int], int] | None,
+                defer_map: dict[int, int] | None,
+                cross_instruction_rate: float,
                 protected: set[int]) -> list[tuple]:
     n = len(code)
     plan: list[tuple] = []
@@ -492,7 +495,11 @@ def _build_plan(code: list[int],
                 and (op, code[i + 1] & 0x3F) in fuse_map):
             options.append(("fuse", i, i + 1))
 
-        choice = random.choice(options) if len(options) > 1 else options[0]
+        if (defer_map and op in defer_map
+                and random.random() < cross_instruction_rate):
+            choice = ("defer", i)
+        else:
+            choice = random.choice(options) if len(options) > 1 else options[0]
         plan.append(choice)
         i += 2 if choice[0] == "fuse" else 1
     return plan
@@ -559,7 +566,7 @@ def _rand_alias(vop_map: dict[int, list[int]] | None, op: int) -> int:
 # ---------------------------------------------------------------------------
 # 직렬화
 # ---------------------------------------------------------------------------
-VMMaps = tuple  # (vop_map, split_map, fuse_map)
+VMMaps = tuple  # (vop_map, split_map, fuse_map, defer_map)
 _GRAPH_SITE_OPS = {
     # Integer arithmetic occurrence families.
     13, 14, 15, 20, 21, 22, 23, 24, 25, 26,
@@ -786,13 +793,16 @@ def serialize(proto: Proto,
               graph_sites: set[int] | None = None,
               integrity_options: dict | None = None,
               graph_execution_rate: float = 0.1,
+              cross_instruction_rate: float = 0.2,
               graph_family_count: int = 8) -> bytes:
-    """vm_maps[vm_id] = (vop_map, split_map, fuse_map). vm_assign = {id(proto): vm_id}.
+    """vm_maps[vm_id] = (vop_map, split_map, fuse_map, defer_map).
+
+    vm_assign = {id(proto): vm_id}.
     기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작.
     layout: instruction 워드 필드 시프트(None이면 DEFAULT_INSTR_LAYOUT). vm.lua의
     _SH_*와 반드시 동일해야 한다(deserialize는 기본 레이아웃만 지원)."""
     if vm_maps is None:
-        vm_maps = [(None, None, None)]
+        vm_maps = [(None, None, None, None)]
     if vm_assign is None:
         vm_assign = {}
     w = Writer(layout)
@@ -812,16 +822,18 @@ def serialize(proto: Proto,
     acc_state = [seed, 0]
     _write_proto(w, proto, vm_assign, vm_maps, acc_state,
                  graph_sites if graph_sites is not None else set(), seed, integrity,
-                 graph_execution_rate, graph_family_count)
+                 graph_execution_rate, cross_instruction_rate,
+                 graph_family_count)
     return w.data()
 
 
 def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                  vm_maps: list, acc_state: list[int],
                  graph_sites: set[int], seed: int, integrity: dict,
-                 graph_execution_rate: float, graph_family_count: int):
+                 graph_execution_rate: float, cross_instruction_rate: float,
+                 graph_family_count: int):
     vm_id = vm_assign.get(id(proto), 0)
-    vop_map, split_map, fuse_map = vm_maps[vm_id]
+    vop_map, split_map, fuse_map, defer_map = vm_maps[vm_id]
 
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
@@ -834,7 +846,10 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     temp0 = proto.max_stack_size
     temp1 = proto.max_stack_size + 1
     protected     = _compute_protected(proto.code)
-    plan          = _build_plan(proto.code, split_map, fuse_map, protected)
+    plan          = _build_plan(
+        proto.code, split_map, fuse_map, defer_map,
+        cross_instruction_rate, protected,
+    )
     plan          = _mark_integrity_stream_units(plan, proto.code, iexpr_indices, stream_enabled)
     new_pos, total = _plan_new_pos(plan, len(proto.code))
     code          = _adjust_jumps(proto.code, new_pos, total)
@@ -885,6 +900,11 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                 emitted_av.append(add_slots.get(i, ()))
                 desc = graph_descriptor(orig_op)
                 emitted_sites.append((desc,) if desc is not None else ())
+        elif unit[0] == "defer":
+            _emit_instr(w, emit_raw, defer_map[orig_op], acc_state)  # type: ignore[index]
+            emitted_av.append(add_slots.get(i, ()))
+            desc = graph_descriptor(orig_op)
+            emitted_sites.append((desc,) if desc is not None else ())
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]] & 0x3F
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
@@ -957,7 +977,8 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     w.u32(len(proto.protos))
     for sub in proto.protos:
         _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites, seed,
-                     integrity, graph_execution_rate, graph_family_count)
+                     integrity, graph_execution_rate, cross_instruction_rate,
+                     graph_family_count)
 
 
 # ---------------------------------------------------------------------------
