@@ -55,79 +55,112 @@ python main.py input.lua --profile max --release-check
 builds and weak VM settings before writing release output.
 
 ## remove_comment
-**label:** Remove Comment  
-**group:** pre pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Remove Comment
+
+**group:** pre pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Removes comments from the source code before AST parsing.
 
 ## string_encode
-**label:** Encode String  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Encode String
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Encodes string literals.
 
 ## string_obf
-**label:** String Obfuscation  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** String Obfuscation
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Obfuscates string literals.
 
 ## boolean_obf
-**label:** Boolean Obfuscation  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Boolean Obfuscation
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Obfuscates boolean literals.
 
 ## number_obf
-**label:** Number Obfuscation  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Number Obfuscation
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Obfuscates number literals.
 
 ## table_obf
-**label:** Table Obfuscation  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Table Obfuscation
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Obfuscates table variables.
 
 ## function_obf
-**label:** Function Obfuscation  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Function Obfuscation
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Obfuscates functions using control-flow flattening and junk blocks.
 
 ## rename_obf
-**label:** Rename Obfuscation  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Rename Obfuscation
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Renames local identifiers.
 
 ## localize_globals
-**label:** Localize Globals  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Localize Globals
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Converts global variable accesses to local aliases where possible.
 
 ## minify
-**label:** Minify  
-**group:** post pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Minify
+
+**group:** post pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Reduces script size by removing unnecessary whitespace.
 
 ## vm
-**label:** VM  
-**group:** post pass  
-**type:** passes  
+
+**label:** VM
+
+**group:** post pass
+
+**type:** passes
 
 Virtualizes Lua bytecode using the custom Lua 5.3 VM.
 
@@ -205,23 +238,32 @@ semantic graphs where supported.
 
 
 ## anti_debug
-**label:** Anti-Debug Wrapper  
-**group:** pre pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Anti-Debug Wrapper
+
+**group:** pre pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Inserts anti-debugging checks.
 
 ## anti_decompile
-**label:** Anti-Decompile (unluac trap)  
-**group:** base pass  
-**type:** passes | vm_output_passes | packer_output_passes  
+
+**label:** Anti-Decompile (unluac trap)
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
 
 Adds source-level traps that make decompiler output less useful.
 
 ## pack
-**label:** Packer (deflate + load)  
-**group:** post pass  
-**type:** passes  
+
+**label:** Packer (deflate + load)
+
+**group:** post pass
+
+**type:** passes
 
 Compresses and wraps the final output in a self-extracting loader.
 

@@ -103,9 +103,12 @@ def render_pass(name: str, info: dict) -> list[str]:
     contexts = " | ".join(get_pass_contexts(name))
     lines = [
         f"## {name}",
-        f"**label:** {info['label']}  ",
-        f"**group:** {info['group']} pass  ",
-        f"**type:** {contexts}  ",
+        "",
+        f"**label:** {info['label']}",
+        "",
+        f"**group:** {info['group']} pass",
+        "",
+        f"**type:** {contexts}",
         "",
         PASS_DESCRIPTIONS.get(name, "No description available."),
         "",

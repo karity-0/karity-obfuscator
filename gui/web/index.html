@@ -1,209 +1,138 @@
 <!DOCTYPE html>
 <html lang="ko">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lua Obfuscator</title>
-<link rel="stylesheet" href="style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Karity Obfuscator</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-
-<div class="window-root">
-  <div class="titlebar" id="titlebar">
+<div class="window-shell">
+  <header class="titlebar">
     <div class="titlebar-drag pywebview-drag-region">
-      <span class="titlebar-glyph">λ</span>
-      <span class="titlebar-title">lua-obfuscator</span>
-    </div>
-    <div class="titlebar-controls">
-      <button id="win-min" class="win-btn" title="최소화">─</button>
-      <button id="win-max" class="win-btn" title="최대화">▢</button>
-      <button id="win-close" class="win-btn win-close" title="닫기">✕</button>
-    </div>
-  </div>
-
-  <div class="app">
-
-  <aside class="sidebar">
-    <div class="brand">
-      <span class="brand-sub">PIPELINE CONFIG</span>
-    </div>
-
-    <section class="panel">
-      <header class="panel-head">
-        <span class="panel-title">PIPELINE OPTIONS</span>
-        <span class="panel-hint">옵션 설정</span>
-      </header>
-      
-      <ol id="pipeline-options-list" class="pass-list">
-        <li class="pass-item" data-hint="생성되는 바이트코드 자체에 추가적인 내장 데이터 난독화 처리를 적용합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-bytecode">
-            <div class="pass-info">
-              <span class="pass-name">Bytecode Obfuscation</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 문자열을 난독화합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-string">
-            <div class="pass-info">
-              <span class="pass-name">String Obfuscation</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 참/거짓 조건을 난독화합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-boolean">
-            <div class="pass-info">
-              <span class="pass-name">Boolean Obfuscation</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 숫자를 난독화합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-number">
-            <div class="pass-info">
-              <span class="pass-name">Number Obfuscation</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 테이블을 난독화합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-table">
-            <div class="pass-info">
-              <span class="pass-name">Table Obfuscation</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="출력된 스크립트에 포함된 모든 함수를 난독화합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-function">
-            <div class="pass-info">
-              <span class="pass-name">Function Obfuscation (X)</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="VM 출력의 string.char/math.max/type 등 전역 접근을 맨 마지막에 _ENV 체인 로컬로 모아 난독화합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-localize">
-            <div class="pass-info">
-              <span class="pass-name">Localize Globals</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="디버거를 감지하는 보호 코드를 추가합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-anti-debug">
-            <div class="pass-info">
-              <span class="pass-name">Anti-Debug Wrapper</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="최종 출력을 deflate로 압축해 load 기반 스텁으로 감쌉니다(패커). 다른 모든 패스 이후 맨 마지막에 적용됩니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="opt-checkbox" id="opt-pack">
-            <div class="pass-info">
-              <span class="pass-name">Packer (deflate + load)</span>
-            </div>
-          </label>
-        </li>
-      </ol>
-    </section>
-
-    <section class="panel">
-      <header class="panel-head">
-        <span class="panel-title">VM PROTECTION</span>
-        <span class="panel-hint">VM 보호 옵션</span>
-      </header>
-
-      <ol id="vm-protection-list" class="pass-list">
-        <li class="pass-item" data-hint="가짜 핸들러를 삽입하여 분석을 방해합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="vmopt-checkbox" id="vmopt-fake-handlers" checked>
-            <div class="pass-info">
-              <span class="pass-name">Fake Handlers</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="핸들러 구조를 변형하여 정적 분석을 어렵게 만듭니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="vmopt-checkbox" id="vmopt-mutate-handlers" checked>
-            <div class="pass-info">
-              <span class="pass-name">Handler Mutation</span>
-            </div>
-          </label>
-        </li>
-        <li class="pass-item" data-hint="실행에 영향을 주지 않는 더미 명령어를 바이트코드 사이에 삽입합니다.">
-          <label class="pass-label">
-            <input type="checkbox" class="vmopt-checkbox" id="vmopt-junk-instructions" checked>
-            <div class="pass-info">
-              <span class="pass-name">Junk Instructions</span>
-            </div>
-          </label>
-        </li>
-      </ol>
-
-      <div class="slider-row" data-hint="명령어 사이마다 더미 명령어가 삽입될 확률입니다. 높이면 분석이 어려워지지만 코드 크기가 커집니다.">
-        <div class="slider-head">
-          <span class="slider-label">Junk Rate</span>
-          <span id="vmopt-junk-rate-value" class="slider-value">0.15</span>
-        </div>
-        <input type="range" id="vmopt-junk-rate" class="slider"
-               min="0" max="0.5" step="0.01" value="0.15">
+      <span class="app-mark">K</span>
+      <div>
+        <div class="app-name">KARITY</div>
+        <div class="app-caption">Lua 5.3 protection studio</div>
       </div>
-    </section>
-
-    <footer class="sidebar-footer">
-      <button id="save-config-btn" class="btn btn-ghost">설정 저장</button>
-      <div id="config-status" class="config-status"></div>
-    </footer>
-  </aside>
-
-  <main class="main">
-    <div class="pipeline-strip" id="pipeline-strip">
-      <div class="pipeline-empty">선택된 옵션 없음</div>
     </div>
+    <div class="title-meta"><span class="live-dot"></span><span id="backend-label">connecting</span></div>
+    <div class="window-controls">
+      <button id="win-min" class="window-button" title="최소화">─</button>
+      <button id="win-max" class="window-button" title="최대화">□</button>
+      <button id="win-close" class="window-button close" title="닫기">×</button>
+    </div>
+  </header>
 
-    <div class="editors">
-      <section class="editor-pane">
-        <header class="editor-head">
-          <span class="editor-title">INPUT</span>
-          <div class="editor-actions">
-            <span id="input-filename" class="filename"></span>
-            <button id="open-file-btn" class="btn btn-small">파일 열기</button>
-            <button id="clear-input-btn" class="btn btn-small btn-ghost">지우기</button>
+  <div class="workspace">
+    <aside class="settings-rail">
+      <div class="rail-scroll">
+        <section class="hero-card">
+          <span class="eyebrow">BUILD CONFIGURATION</span>
+          <h1>Protection setup</h1>
+          <p>프리셋으로 시작하고 필요한 항목만 직접 조정하세요.</p>
+
+          <label class="field-label" for="preset-select">Preset</label>
+          <select id="preset-select" class="select-control"></select>
+
+          <label class="field-label" for="level-select">Protect level</label>
+          <select id="level-select" class="select-control">
+            <option value="light">Light</option>
+            <option value="balanced">Balanced</option>
+            <option value="strong">Strong</option>
+            <option value="maximum">Maximum</option>
+            <option value="custom">&lt;Custom&gt;</option>
+          </select>
+
+          <div class="config-source" id="config-source"></div>
+        </section>
+
+        <details class="config-section" open>
+          <summary><span>Pipeline</span><span class="section-count" id="pipeline-count">0</span></summary>
+          <div class="section-body">
+            <div class="context-block">
+              <div class="context-title">Source &amp; main</div>
+              <div id="passes-list" class="toggle-list"></div>
+            </div>
+            <div class="context-block">
+              <div class="context-title">VM output</div>
+              <div id="vm-output-list" class="toggle-list compact"></div>
+            </div>
+            <div class="context-block">
+              <div class="context-title">Packer output</div>
+              <div id="packer-output-list" class="toggle-list compact"></div>
+            </div>
           </div>
-        </header>
-        <textarea id="input-script" class="editor" spellcheck="false"
-          placeholder="-- Lua 스크립트를 입력하거나 파일을 여세요&#10;print(&quot;hello world&quot;)"></textarea>
+        </details>
+
+        <div id="vm-option-groups"></div>
+      </div>
+
+      <footer class="rail-footer">
+        <button id="save-config-btn" class="button secondary">Save configuration</button>
+        <span id="config-status" class="save-status"></span>
+      </footer>
+    </aside>
+
+    <main class="main-stage">
+      <section class="overview-bar">
+        <div>
+          <span class="eyebrow">ACTIVE BUILD</span>
+          <div class="build-title"><span id="active-preset">Custom</span><span class="slash">/</span><span id="active-level">Custom</span></div>
+        </div>
+        <div class="metric-row">
+          <div class="metric"><span id="metric-passes">0</span><small>passes</small></div>
+          <div class="metric"><span id="metric-vms">1</span><small>VMs</small></div>
+          <div class="metric"><span id="metric-runtime">0%</span><small>runtime poly</small></div>
+        </div>
       </section>
 
-      <section class="editor-pane">
-        <header class="editor-head">
-          <span class="editor-title">OUTPUT</span>
-          <div class="editor-actions">
-            <span id="elapsed-label" class="filename"></span>
-            <button id="copy-output-btn" class="btn btn-small btn-ghost">복사</button>
-            <button id="save-output-btn" class="btn btn-small">저장</button>
-          </div>
-        </header>
-        <textarea id="output-script" class="editor editor-output" spellcheck="false" readonly
-          placeholder="-- 결과가 여기에 표시됩니다"></textarea>
+      <section class="pipeline-card">
+        <div class="pipeline-head">
+          <span>Execution pipeline</span>
+          <span id="pipeline-hint">No passes selected</span>
+        </div>
+        <div id="pipeline-strip" class="pipeline-strip"></div>
       </section>
-    </div>
 
-    <div class="run-bar">
-      <div id="status-msg" class="status-msg">대기 중</div>
-      <button id="run-btn" class="btn btn-primary">
-        <span class="btn-icon">▶</span> 난독화 실행
-      </button>
-    </div>
-  </main>
+      <section class="editors">
+        <article class="editor-card">
+          <header class="editor-header">
+            <div><span class="editor-kicker">SOURCE</span><span id="input-filename" class="filename"></span></div>
+            <div class="editor-actions">
+              <button id="open-file-btn" class="button tiny">Open</button>
+              <button id="clear-input-btn" class="button tiny ghost">Clear</button>
+            </div>
+          </header>
+          <textarea id="input-script" class="code-editor" spellcheck="false" placeholder="-- Lua 5.3 source
+print(&quot;hello, karity&quot;)"></textarea>
+        </article>
+
+        <article class="editor-card output-card">
+          <header class="editor-header">
+            <div><span class="editor-kicker">PROTECTED OUTPUT</span><span id="output-stats" class="filename"></span></div>
+            <div class="editor-actions">
+              <button id="copy-output-btn" class="button tiny ghost">Copy</button>
+              <button id="save-output-btn" class="button tiny">Save</button>
+            </div>
+          </header>
+          <textarea id="output-script" class="code-editor output" spellcheck="false" readonly placeholder="Protected output will appear here."></textarea>
+        </article>
+      </section>
+
+      <footer class="run-dock">
+        <div class="status-wrap">
+          <span id="status-indicator" class="status-indicator"></span>
+          <div><span id="status-msg">Ready</span><small id="profile-summary">Configure a build or choose a preset.</small></div>
+        </div>
+        <label class="release-check"><input id="release-check" type="checkbox"><span>Release check</span></label>
+        <button id="run-btn" class="button primary"><span>Protect script</span><span class="run-arrow">→</span></button>
+      </footer>
+    </main>
   </div>
 </div>
 
-<div id="tooltip" class="tooltip-box"></div>
-
+<div id="tooltip" class="tooltip"></div>
 <script src="app.js"></script>
 </body>
 </html>

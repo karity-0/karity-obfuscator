@@ -179,7 +179,13 @@ python obfuscator_gui.py
 
 The GUI exposes the same profile-based configuration used by the CLI.
 
-![GUI](images/4.png)
+![GUI](images/5.png)
+
+Choose a complete build preset (`dev`, `fast-vm`, or `max`) or apply an
+independent VM protection level (`Light` through `Maximum`). Every pass and VM
+option can also be edited directly; manual changes automatically switch the
+affected selector to `<Custom>`. VM controls are generated from the central
+option registry so newly registered options stay in sync with the CLI.
 
 ## Configuration
 
@@ -221,6 +227,7 @@ python test/run_number_obf_regression.py
 python test/run_packer_regression.py
 python test/run_runtime_poly_regression.py
 python test/run_vm_choke_regression.py
+python test/run_gui_regression.py
 ```
 
 For a deterministic build during diagnosis, pass `--seed`. Compare the source
@@ -233,6 +240,7 @@ this automatically.
 obfuscator/passes/   source and output transformation passes
 obfuscator/vm/       serializer, VM template, variants, and VM build pipeline
 test/scripts/        Lua semantic fixtures
+test/benchmarks/     repeatable runtime profiling workloads
 test/run_*.py        semantic and subsystem regression runners
 tools/               generated-document utilities
 gui/web/             GUI frontend assets

@@ -1,3 +1,4 @@
 luaparser
 tree_sitter
 tree_sitter_lua
+pywebview
