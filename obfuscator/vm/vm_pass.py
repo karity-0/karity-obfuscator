@@ -822,11 +822,411 @@ def _make_semantic_ir_func(kind: str) -> str:
     context = (
         f"{{x={x},y={y},z={z},s={state},g=({seed}~({state}[611] or 0))}}"
     )
+    direct_semantic = (
+        semantic
+        .replace(f"{ctx}.x", x)
+        .replace(f"{ctx}.y", y)
+        .replace(f"{ctx}.z", z)
+    )
     return (
         "(function()local " + ",".join(names) + ";" + "".join(definitions)
         + f"return {{function({x},{y},{z},{state})return {names[-1]}({context}) end,"
-          f"function({x},{y},{z},{state})return {names[0]}({context}) end}} end)()"
+          f"function({x},{y},{z},{state}){direct_semantic}return r end}} end)()"
     )
+
+
+def _random_topological_order(nodes: dict[int, dict], label: str) -> list[int]:
+    """Compile-time scheduling for DAG graphs; no runtime node dispatcher remains."""
+    indegree = {node_id: len(node["deps"]) for node_id, node in nodes.items()}
+    children = {node_id: [] for node_id in nodes}
+    for node_id, node in nodes.items():
+        for dep in node["deps"]:
+            children[dep].append(node_id)
+    ready = [node_id for node_id, degree in indegree.items() if degree == 0]
+    order: list[int] = []
+    while ready:
+        node_id = ready.pop(random.randrange(len(ready)))
+        order.append(node_id)
+        for child in children[node_id]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    if len(order) != len(nodes):
+        raise RuntimeError(f"generated {label} graph contains a cycle")
+    return order
+
+
+def _compile_integer_graph_func(op_kind: str) -> str:
+    """Compile an arithmetic DAG into one specialized straight-line handler."""
+    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
+    trace = _rand_lua_name()
+    state_key = random.randint(700, 1200)
+    nodes: dict[int, dict] = {}
+
+    def add_node(kind: str, deps: list[int]) -> int:
+        node_id = len(nodes)
+        nodes[node_id] = {"kind": kind, "deps": tuple(dict.fromkeys(deps))}
+        return node_id
+
+    core = add_node("core", [])
+    zeros: list[int] = []
+    for _ in range(random.randint(8, 12)):
+        deps = random.sample(zeros, min(len(zeros), random.randint(0, 2)))
+        zeros.append(add_node("zero", deps))
+    value = core
+    for i in range(random.randint(max(12, len(zeros)), 18)):
+        deps = [value, zeros[i % len(zeros)]]
+        if random.random() < 0.45:
+            deps.append(random.choice(zeros))
+        value = add_node("identity", deps)
+    sink = add_node("sink", [value, *random.sample(zeros, 2)])
+
+    order = _random_topological_order(nodes, op_kind)
+    names = {node_id: _rand_lua_name() for node_id in nodes}
+    lines = [
+        f"function({a},{b},{state},{slots},{regs},{active},{boxes})",
+        f"{state}={state} or {{}};{active}={active} or {{}};",
+        "local " + ",".join(names.values()) + ";",
+        f"local {trace}=(({a}~{b})~{_hex64()}~({state}[611] or 0));",
+    ]
+    for node_id in order:
+        node = nodes[node_id]
+        name = names[node_id]
+        deps = [names[dep] for dep in node["deps"]]
+        if node["kind"] == "core":
+            lines.append(
+                f"{name}={_make_integer_expr(op_kind, a, b)};"
+                f"{trace}=({trace}~({name}|(~{name})));"
+            )
+        elif node["kind"] == "zero":
+            terms = deps or [a, b]
+            joined = "~".join(f"(({term})~({term}))" for term in terms)
+            lines.append(
+                f"{name}=({joined});{trace}=(({trace}~{name})~"
+                f"(({state}[{state_key}] or 0)&{name}));"
+                f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{name});"
+            )
+        elif node["kind"] == "identity":
+            source = deps[0]
+            zero_expr = "+".join(deps[1:])
+            mode = random.randrange(3)
+            if mode == 0:
+                mask = _hex64()
+                expr = f"((({source}~{mask})~{mask})+({zero_expr}))"
+            elif mode == 1:
+                key = _hex64()
+                expr = f"((({source}+{key})-{key})+({zero_expr}))"
+            else:
+                expr = f"(({source})+({zero_expr})+(({trace}~{trace})))"
+            lines.append(
+                f"{name}={expr};{trace}=({trace}~({name}&{name})~({zero_expr}));"
+            )
+        else:
+            lines.append(
+                f"{name}=({deps[0]})+({deps[1]})+({deps[2]});"
+                f"{trace}=({trace}~{name}~({name}<<1));"
+            )
+
+    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    out = names[sink]
+    lines.extend([
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
+        f"if not {boxes}[{slot}] then local {mixed}=({out}~{trace}~"
+        f"(({index}*{_hex64()})&-1));{regs}[{slot}]={mixed};",
+        f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~"
+        f"{mixed}~{slot}) end end end;return {out} end",
+    ])
+    return "".join(lines)
+
+
+def _compile_value_graph_func() -> str:
+    """Compile a value diffusion DAG without runtime closures or memo tables."""
+    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
+    nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
+    zeros: list[int] = []
+    for _ in range(random.randint(7, 11)):
+        deps = random.sample(zeros, min(len(zeros), random.randint(0, 2)))
+        node_id = len(nodes)
+        nodes[node_id] = {"kind": "zero", "deps": tuple(deps)}
+        zeros.append(node_id)
+    current = 0
+    for i in range(random.randint(10, 16)):
+        deps = [current, zeros[i % len(zeros)]]
+        if random.random() < 0.4:
+            deps.append(random.choice(zeros))
+        node_id = len(nodes)
+        nodes[node_id] = {"kind": "identity", "deps": tuple(dict.fromkeys(deps))}
+        current = node_id
+    sink = len(nodes)
+    nodes[sink] = {"kind": "sink", "deps": (current, *random.sample(zeros, 2))}
+
+    names = {node_id: _rand_lua_name() for node_id in nodes}
+    trace = _rand_lua_name()
+    state_key = random.randint(1201, 1700)
+    lines = [
+        f"function({value},{state},{slots},{regs},{active},{boxes},{tag})",
+        "local " + ",".join(names.values()) + ";",
+        f"local {trace}=(({state}[611] or 0)~{tag}~{_hex64()});",
+    ]
+    for node_id in _random_topological_order(nodes, "value"):
+        node = nodes[node_id]
+        name = names[node_id]
+        deps = [names[dep] for dep in node["deps"]]
+        if node["kind"] == "source":
+            lines.append(f"{name}={value};")
+        elif node["kind"] == "zero":
+            source = "+".join(deps) if deps else f"({tag}~{tag})"
+            lines.append(
+                f"{name}=({source});{name}=({name}~{name});"
+                f"{trace}=({trace}~{name}~({tag}&0xFF));"
+            )
+        else:
+            zero_expr = "+".join(deps[1:])
+            lines.append(
+                f"{name}={deps[0]};{trace}=({trace}~({zero_expr})~({tag}&0xFF));"
+            )
+    out = names[sink]
+    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    lines.extend([
+        f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{tag});",
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
+        f"if not {boxes}[{slot}] then local {mixed}=({trace}~{tag}~"
+        f"(({index}*{_hex64()})&-1));{regs}[{slot}]={mixed};{active}[{slot}]=true;",
+        f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{mixed}~{slot}) end end end;",
+        f"return {out} end",
+    ])
+    return "".join(lines)
+
+
+def _compiled_label_blocks(entry: str, blocks: list[tuple[str, str]]) -> str:
+    """Lay graph blocks out randomly while preserving explicit build-time edges."""
+    shuffled = list(blocks)
+    random.shuffle(shuffled)
+    return f"goto {entry};" + "".join(
+        f"::{label}::do {body} end;" for label, body in shuffled
+    )
+
+
+def _compile_call_route_func() -> str:
+    terminal, query = [_rand_lua_name() for _ in range(2)]
+    count = random.randint(14, 22)
+    labels = [_rand_lua_name() for _ in range(count)]
+    blocks: list[tuple[str, str]] = []
+    for i, label in enumerate(labels):
+        if i == count - 1:
+            body = (
+                f"{query}[__VM_Q_FLOW__]=({query}[__VM_Q_TRACE__]~"
+                f"({query}[__VM_Q_FLOW__] or 0));local d={query}[__VM_Q_LEDGER__];"
+                f"if d then d[1]=((d[1] or 0)~{query}[__VM_Q_TRACE__])&-1 end;"
+                f"return {terminal}({query})"
+            )
+        elif i == 0:
+            salt = _hex64()
+            body = (
+                f"{query}[__VM_Q_TRACE__]=({query}[__VM_Q_TRACE__]~{salt})&-1;"
+                f"goto {labels[1]}"
+            )
+        elif i == 1:
+            salt = _hex64()
+            body = (
+                f"{query}[__VM_Q_TRACE__]=(({query}[__VM_Q_TRACE__]+{salt})~"
+                f"{query}[__VM_Q_KIND__])&-1;if {query}[__VM_Q_BUDGET__]>0 then "
+                f"{query}[__VM_Q_BUDGET__]={query}[__VM_Q_BUDGET__]-1;goto {labels[0]} end;"
+                f"goto {labels[2]}"
+            )
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + random.randint(2, 5)))
+            salt = _hex64()
+            body = (
+                f"{query}[__VM_Q_TRACE__]=(({query}[__VM_Q_TRACE__]~{salt})+{i + 1})&-1;"
+                f"if (({query}[__VM_Q_TRACE__]~{query}[__VM_Q_KIND__]~{salt})&1)==0 "
+                f"then goto {labels[primary]} end;goto {labels[alternate]}"
+            )
+        blocks.append((label, body))
+    seed = _hex64()
+    return (
+        f"function({terminal},{query}){query}[__VM_Q_TRACE__]=({query}[__VM_Q_TRACE__] "
+        f"or ({query}[__VM_Q_KIND__]~{seed}));{query}[__VM_Q_BUDGET__]="
+        f"({query}[__VM_Q_BUDGET__] or ((({query}[__VM_Q_KIND__]~{seed})&3)+1));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _compile_control_graph_func() -> str:
+    packet, state = [_rand_lua_name() for _ in range(2)]
+    count = random.randint(12, 18)
+    labels = [_rand_lua_name() for _ in range(count)]
+    state_key = random.randint(1701, 2200)
+    blocks: list[tuple[str, str]] = []
+    for i, label in enumerate(labels):
+        if i == count - 1:
+            body = f"return {packet}"
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + 4))
+            salt, loop_salt = _hex64(), _hex64()
+            body = (
+                f"local o={packet}[__VM_CF_KEY__];local n=(o~{salt}~"
+                f"({state}[{state_key}] or 0))&-1;for j=1,(({packet}[__VM_CF_TRACE__]&3)+1) "
+                f"do n=(n~((j*{loop_salt})&-1))&-1 end;for _,f in ipairs("
+                f"{packet}[__VM_CF_FIELDS__]) do {packet}[f]=({packet}[f]~o)~n end;"
+                f"{packet}[__VM_CF_KEY__]=n;{packet}[__VM_CF_TRACE__]="
+                f"({packet}[__VM_CF_TRACE__]~n~{salt})&-1;{state}[{state_key}]="
+                f"(({state}[{state_key}] or 0)~n~{i + 1});if ((n~{packet}[__VM_CF_TRACE__])&1)==0 "
+                f"then goto {labels[primary]} end;goto {labels[alternate]}"
+            )
+        blocks.append((label, body))
+    seed = _hex64()
+    return (
+        f"function({packet},{state}){packet}[__VM_CF_TRACE__]=({packet}[__VM_CF_TRACE__] "
+        f"or ({packet}[__VM_CF_KEY__]~{seed}));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _compile_occurrence_graph_func(family_seed: int) -> str:
+    bank, pick, a, b, state, slots, regs, active, boxes, ledger, vm_state = [
+        _rand_lua_name() for _ in range(11)
+    ]
+    site, selector, state_key, policy = [_rand_lua_name() for _ in range(4)]
+    count = random.randint(7, 11)
+    labels = [_rand_lua_name() for _ in range(count)]
+    trace = _rand_lua_name()
+    blocks: list[tuple[str, str]] = []
+    for i, label in enumerate(labels):
+        if i == count - 1:
+            key, out, result_value, mixed = [_rand_lua_name() for _ in range(4)]
+            body = (
+                f"local {key}=(({pick}~{trace}~{selector}~"
+                f"({state}[{state_key}] or 0)~{vm_state})%#{bank})+1;"
+                f"local {out}={bank}[{key}]({a},{b},{state},{slots},{regs},{active},{boxes});"
+                f"local {result_value}=0;if math.type({out})=='integer' then "
+                f"{result_value}={out} end;local {mixed}=({trace}~{site}~{selector}~"
+                f"{result_value}~{vm_state})&-1;{state}[{state_key}]="
+                f"(({state}[{state_key}] or 0)~{mixed});if ({policy}&1)~=0 then "
+                f"{state}[611]=(({state}[611] or 0)~{mixed}~{site})&-1 end;"
+                f"if ({policy}&2)~=0 then {ledger}[1]=(({ledger}[1] or 0)~"
+                f"{mixed}~{selector})&-1 end;return {out}"
+            )
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + 3))
+            salt = _hex64()
+            body = (
+                f"{trace}=(({trace}~{salt})+{i + 1}+"
+                f"({state}[{state_key}] or 0))&-1;"
+                f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{site});"
+                f"if (({trace}~{site})&1)==0 then goto {labels[primary]} end;"
+                f"goto {labels[alternate]}"
+            )
+        blocks.append((label, body))
+    return (
+        f"function({bank},{pick},{a},{b},{state},{slots},{regs},{active},{boxes},"
+        f"{ledger},{vm_state},{site},{selector},{state_key},{policy})"
+        f"local {trace}=({site}~{selector}~{family_seed}~({state}[611] or 0)~"
+        f"({state}[{state_key}] or 0)~{vm_state});"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _compile_loop_ir_func(kind: str) -> str:
+    packet, state = [_rand_lua_name() for _ in range(2)]
+    trace = _rand_lua_name()
+    state_key = random.randint(2801, 3300)
+    labels: list[str] = []
+    bodies: list[str] = []
+    if kind == "FORLOOP":
+        labels.extend([_rand_lua_name(), _rand_lua_name()])
+        bodies.extend([
+            f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]+"
+            f"{packet}[__VM_CF_STEP__];{state}[{state_key}]="
+            f"(({state}[{state_key}] or 0)~{trace});goto {labels[1]}",
+            f"local v={packet}[__VM_CF_VALUE__];local d={packet}[__VM_CF_STEP__];"
+            f"local l={packet}[__VM_CF_LIMIT__];{packet}[__VM_CF_TAKE__]="
+            f"(d>0 and v<=l) or (d<=0 and v>=l)",
+        ])
+    elif kind == "FORPREP":
+        labels.append(_rand_lua_name())
+        bodies.append(
+            f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]-"
+            f"{packet}[__VM_CF_STEP__]"
+        )
+    else:
+        labels.append(_rand_lua_name())
+        bodies.append(
+            f"{packet}[__VM_CF_TAKE__]=({packet}[__VM_CF_VALUE__]~=nil)"
+        )
+    for _ in range(random.randint(7, 11)):
+        if bodies:
+            bodies[-1] += f";goto "
+        next_label = _rand_lua_name()
+        if bodies:
+            bodies[-1] += next_label
+        labels.append(next_label)
+        salt = _hex64()
+        bodies.append(
+            f"{trace}=(({trace}~{salt})+{len(labels)})&-1;{state}[{state_key}]="
+            f"(({state}[{state_key}] or 0)~{trace})"
+        )
+    bodies[-1] += f";return {packet}"
+    blocks = list(zip(labels, bodies))
+    seed = _hex64()
+    return (
+        f"function({packet},{state})local {trace}=({seed}~({state}[611] or 0));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
+    if kind == "GET": return f"local r={x}[{y}];"
+    if kind == "SET": return f"{x}[{y}]={z};local r={z};"
+    if kind == "EQ": return f"local r=({x}=={y});"
+    if kind == "LT": return f"local r=({x}<{y});"
+    if kind == "LE": return f"local r=({x}<={y});"
+    if kind == "TRUTH": return f"local r=(not not {x});"
+    if kind == "MOD": return f"local r=({x}%{y});"
+    if kind == "POW": return f"local r=({x}^{y});"
+    if kind == "DIV": return f"local r=({x}/{y});"
+    if kind == "IDIV": return f"local r=({x}//{y});"
+    if kind == "NOT": return f"local r=(not {x});"
+    if kind == "LEN": return f"local r=(#{x});"
+    if kind == "CONCAT": return f"local r={x}[{z}];for i={z}-1,1,-1 do r={x}[i]..r end;"
+    if kind == "NEWTABLE": return "local r={};"
+    if kind == "SETLIST":
+        return f"for i=1,{z}[2] do {x}[{z}[1]+i]={y}[i] end;local r={x};"
+    if kind == "CLOSURE": return f"local r={x}({y});"
+    if kind == "VARARG":
+        return f"for i=1,{z}[1] do {x}({y}+i-1,{z}[2][i]) end;local r={z}[1];"
+    return f"local r={x};"
+
+
+def _compile_semantic_ir_func(kind: str) -> str:
+    x, y, z, state = [_rand_lua_name() for _ in range(4)]
+    direct = _semantic_source(kind, x, y, z)
+    trace = _rand_lua_name()
+    result = _rand_lua_name()
+    state_key = random.randint(3301, 3900)
+    labels = [_rand_lua_name() for _ in range(random.randint(7, 11))]
+    blocks: list[tuple[str, str]] = []
+    # The semantic source may read the result again (notably CONCAT), so bind
+    # every standalone result reference to the compiler-owned local.
+    first = re.sub(r"\br\b", result, direct).replace("local " + result, result)
+    blocks.append((labels[0], first + f"goto {labels[1]}"))
+    for i in range(1, len(labels) - 1):
+        salt = _hex64()
+        blocks.append((labels[i],
+            f"{trace}=(({trace}~{salt})+{i})&-1;{state}[{state_key}]="
+            f"(({state}[{state_key}] or 0)~{trace});goto {labels[i + 1]}"))
+    blocks.append((labels[-1], f"return {result}"))
+    seed = _hex64()
+    heavy = (
+        f"function({x},{y},{z},{state})local {result};local {trace}="
+        f"({seed}~({state}[611] or 0));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+    direct_func = f"function({x},{y},{z},{state}){direct}return r end"
+    return "{" + heavy + "," + direct_func + "}"
 
 
 _ARITH_SPECS = {
@@ -843,7 +1243,11 @@ _ARITH_SPECS = {
 }
 
 
-def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> str:
+def _apply_handler_graphs(
+    vm_code: str,
+    graph_sites: set[int] | None = None,
+    graph_family_count: int = 8,
+) -> str:
     slots: dict[str, int] = {}
     used_slots: set[int] = set()
     for kind, (token, _, _) in _ARITH_SPECS.items():
@@ -868,8 +1272,7 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
             native = f"function({x},{y})return {x}{operator}{y} end"
         native_entries.append(f"[{slot}]={{{native},{native}}}")
         graph_entries.append(
-            f"[{slot}]={{{_make_integer_graph_func(kind)},"
-            f"{_make_integer_graph_func(kind)}}}"
+            f"[{slot}]={{{','.join(_compile_integer_graph_func(kind) for _ in range(4))}}}"
         )
 
     bundle = "{{" + ",".join(native_entries) + "},{" + ",".join(graph_entries) + "}}"
@@ -878,7 +1281,7 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         vm_code = vm_code.replace(token, str(slots[kind]))
     value_token = "__VM_VALUE_GRAPHS__"
     while value_token in vm_code:
-        variants = ",".join(_make_value_graph_func() for _ in range(2))
+        variants = ",".join(_compile_value_graph_func() for _ in range(2))
         vm_code = vm_code.replace(value_token, "{" + variants + "}", 1)
 
     call_tags = random.sample(range(0x10000, 0x7FFFFFFF), 4)
@@ -889,19 +1292,19 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "__VM_ROUTE_LEAVE__": call_tags[3],
     }
     call_graph = (
-        "{[" + str(call_tags[2]) + "]=" + _make_call_route_func()
-        + ",[" + str(call_tags[3]) + "]=" + _make_call_route_func() + "}"
+        "{[" + str(call_tags[2]) + "]=" + _compile_call_route_func()
+        + ",[" + str(call_tags[3]) + "]=" + _compile_call_route_func() + "}"
     )
     vm_code = vm_code.replace("__VM_CALL_GRAPHS__", call_graph)
     control_graphs = "{" + ",".join(
-        _make_control_graph_func() for _ in range(2)
+        _compile_control_graph_func() for _ in range(2)
     ) + "}"
     vm_code = vm_code.replace("__VM_CONTROL_GRAPHS__", control_graphs)
     loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
     loop_graphs = (
-        "{[" + str(loop_tags[0]) + "]=" + _make_loop_ir_func("FORLOOP")
-        + ",[" + str(loop_tags[1]) + "]=" + _make_loop_ir_func("FORPREP")
-        + ",[" + str(loop_tags[2]) + "]=" + _make_loop_ir_func("TFORLOOP") + "}"
+        "{[" + str(loop_tags[0]) + "]=" + _compile_loop_ir_func("FORLOOP")
+        + ",[" + str(loop_tags[1]) + "]=" + _compile_loop_ir_func("FORPREP")
+        + ",[" + str(loop_tags[2]) + "]=" + _compile_loop_ir_func("TFORLOOP") + "}"
     )
     vm_code = vm_code.replace("__VM_LOOP_GRAPHS__", loop_graphs)
     vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
@@ -914,7 +1317,7 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "NEWTABLE", "SETLIST", "CLOSURE", "VARARG",
     )
     semantic_graphs = "{" + ",".join(
-        f"[{tag}]={_make_semantic_ir_func(kind)}"
+        f"[{tag}]={_compile_semantic_ir_func(kind)}"
         for kind, tag in zip(semantic_kinds, data_tags)
     ) + "}"
     vm_code = vm_code.replace("__VM_SEMANTIC_GRAPHS__", semantic_graphs)
@@ -930,8 +1333,8 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
     ), data_tags):
         vm_code = vm_code.replace(token, str(tag))
     occurrence_graphs = "{" + ",".join(
-        f"[{site}]={_make_occurrence_graph_func(site)}"
-        for site in sorted(graph_sites or ())
+        _compile_occurrence_graph_func(random.randint(0x10000, 0x7FFFFFFF))
+        for _ in range(graph_family_count)
     ) + "}"
     vm_code = vm_code.replace("__VM_OCCURRENCE_GRAPHS__", occurrence_graphs)
 
@@ -939,14 +1342,14 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
         "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
         "__VM_FR_SPLIT__", "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
-        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_KEYS__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
         "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
         "__VM_Q_FLOW__", "__VM_Q_BUDGET__", "__VM_Q_LEDGER__",
         "__VM_RES_VALUES__", "__VM_RES_COUNT__",
         "__VM_META_PROTO__", "__VM_META_UPVALS__",
-        "__VM_CF_KEY__", "__VM_CF_TRACE__", "__VM_CF_FIELDS__",
+        "__VM_CF_KEY__", "__VM_CF_TRACE__", "__VM_CF_FIELDS__", "__VM_CF_SEAL__",
         "__VM_CF_TARGET__", "__VM_CF_A__", "__VM_CF_B__",
         "__VM_CF_C__", "__VM_CF_COUNT__",
         "__VM_CF_VALUE__", "__VM_CF_STEP__", "__VM_CF_LIMIT__",
@@ -1065,6 +1468,7 @@ _DEFAULT_VM_OPTIONS = {
     "junk_rate": 0.15,
     "integrity_constants": False,
     "integrity_constant_rate": 0.25,
+    "graph_execution_rate": 0.1,
 }
 
 
@@ -1121,6 +1525,7 @@ class VMPass(PostPass):
         _phase_start = time.perf_counter()
         instr_layout = make_instr_layout()
         graph_sites: set[int] = set()
+        graph_family_count = 8
         blob = serialize(
             proto,
             vm_assign,
@@ -1131,6 +1536,10 @@ class VMPass(PostPass):
                 "enabled": self.vm_options.get("integrity_constants", False),
                 "rate": self.vm_options.get("integrity_constant_rate", 0.25),
             },
+            graph_execution_rate=float(
+                self.vm_options.get("graph_execution_rate", 0.1)
+            ),
+            graph_family_count=graph_family_count,
         )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
@@ -1201,6 +1610,7 @@ class VMPass(PostPass):
         vm_func_src = _apply_handler_graphs(
             vm_func_src,
             graph_sites,
+            graph_family_count,
         )
 
         _graph_elapsed = time.perf_counter() - _graph_start
@@ -1214,6 +1624,7 @@ class VMPass(PostPass):
             "output_bytes": _graph_output_bytes,
             "delta_bytes": _graph_output_bytes - _graph_input_bytes,
             "graph_sites": len(graph_sites),
+            "graph_families": graph_family_count,
         })
 
         self.last_profile.append({

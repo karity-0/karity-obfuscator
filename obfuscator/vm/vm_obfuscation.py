@@ -540,7 +540,8 @@ def prune_and_inject_handlers(
 # code 변수명을 그대로 재사용해야 하므로 템플릿에서 추출해 _step 본문에 넣는다.
 _TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
 _TAILCALL_TAIL_RE     = re.compile(
-    r'\s*end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
+    r'\s*(?P<epilogue>if _has_pending then _seal_pending\(\) end\s*)?'
+    r'end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
 )
 
 DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
@@ -614,6 +615,7 @@ def convert_dispatch_to_tailcall(vm_code: str) -> str:
     if tail_m is None:
         raise RuntimeError("tailcall convert: dispatch loop tail not found")
     region_end = tail_m.end()
+    epilogue = (tail_m.group("epilogue") or "").strip()
 
     # _step과 핸들러는 vararg 함수로 emit한다. function_obf는 이미 vararg인
     # 함수를 변환에서 제외하므로(skip_vm_dispatcher와 무관) 디스패치 hot path가
@@ -628,7 +630,7 @@ def convert_dispatch_to_tailcall(vm_code: str) -> str:
     ]
     for vop in sorted(blocks.keys()):
         body   = blocks[vop]
-        suffix = "" if _ends_with_top_return(body) else " return _step() "
+        suffix = "" if _ends_with_top_return(body) else f" {epilogue} return _step() "
         parts.append(f"_H[{vop}]=function(...) local A,B,C,Bx,sBx=...{body}{suffix}end")
     parts.append("return _step()")
 
@@ -667,7 +669,9 @@ def convert_dispatch_to_bsearch(vm_code: str) -> str:
     return vm_code[:chain_start] + tree + vm_code[chain_end:]
 
 
-def _emit_group_inner(ops: list[int], blocks: dict[int, str], inner: str) -> str:
+def _emit_group_inner(
+    ops: list[int], blocks: dict[int, str], inner: str, epilogue: str = ""
+) -> str:
     """그룹 ops 에 대한 내부 디스패치 본문(inner: 'ifelseif'|'bsearch').
 
     각 핸들러 body 에는 tailcall 과 동일 규칙으로 trampoline suffix(`return _step()`)
@@ -677,7 +681,7 @@ def _emit_group_inner(ops: list[int], blocks: dict[int, str], inner: str) -> str
 
     def branch_body(vop: int) -> str:
         body = blocks[vop]
-        suffix = "" if _ends_with_top_return(body) else " return _step() "
+        suffix = "" if _ends_with_top_return(body) else f" {epilogue} return _step() "
         return f"{body}{suffix}"
 
     if inner == "bsearch":
@@ -725,6 +729,7 @@ def convert_dispatch_to_split(vm_code: str, k: int = 2,
     if tail_m is None:
         raise RuntimeError("split convert: dispatch loop tail not found")
     region_end = tail_m.end()
+    epilogue = (tail_m.group("epilogue") or "").strip()
 
     vops = sorted(blocks.keys())
     k    = max(2, min(k, len(vops)))
@@ -764,7 +769,7 @@ def convert_dispatch_to_split(vm_code: str, k: int = 2,
     for i, g in enumerate(groups):
         parts.append(
             f"{gnames[i]}=function(...) local op,A,B,C,Bx,sBx=... "
-            f"{_emit_group_inner(g, blocks, inner)} end"
+            f"{_emit_group_inner(g, blocks, inner, epilogue)} end"
         )
     parts.append("return _step()")
 

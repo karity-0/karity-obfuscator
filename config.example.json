@@ -24,7 +24,8 @@
                 "junk_instructions": false,
                 "junk_rate": 0.0,
                 "integrity_constants": false,
-                "integrity_constant_rate": 0.0
+                "integrity_constant_rate": 0.0,
+                "graph_execution_rate": 0.1
             }
         },
         "fast-vm": {
@@ -52,7 +53,8 @@
                 "junk_instructions": false,
                 "junk_rate": 0.0,
                 "integrity_constants": false,
-                "integrity_constant_rate": 0.0
+                "integrity_constant_rate": 0.0,
+                "graph_execution_rate": 0.1
             }
         },
         "max": {
@@ -97,7 +99,8 @@
                 "junk_instructions": true,
                 "junk_rate": 0.3,
                 "integrity_constants": true,
-                "integrity_constant_rate": 0.35
+                "integrity_constant_rate": 0.35,
+                "graph_execution_rate": 0.15
             }
         }
     }

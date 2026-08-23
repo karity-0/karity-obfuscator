@@ -217,7 +217,14 @@ local function read_proto(r, acc_state)
         local sn=r.u8()
         if sn>0 then
             local sites={}
-            for j=1,sn do sites[j]=r.u32() end
+            for j=1,sn do
+                local family=r.u8()
+                local policy=r.u8()
+                local state_key=r.u16()
+                local site=r.u32()
+                local selector=r.u32()
+                sites[j]={family,site,selector,state_key,policy}
+            end
             p.graph_sites[i]=sites
         end
     end
@@ -324,6 +331,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _AA    = _fr and _fr[__VM_FR_ACTIVE__] or {}
     local _FC    = _fr and _fr[__VM_FR_FLOW_CACHE__] or {}
     local _SC    = _fr and _fr[__VM_FR_SEM_CACHE__] or {}
+    local _LC    = _fr and _fr[__VM_FR_LOOP_CACHE__] or {}
+    local _GC    = _fr and _fr[__VM_FR_GRAPH_CACHE__] or {}
+    local _RK    = _fr and _fr[__VM_FR_REG_KEYS__] or {}
+    local _PS    = {}
+    local _has_sealed = next(_RK)~=nil
+    local _has_pending = false
+    local _seal_next
     local _gsl, _gq
     local _XF    = _fr and _fr[__VM_FR_LEDGER__] or _xx or {[1]=_zz or 0}
 
@@ -344,6 +358,39 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function rset(i,v)
         regs[i]=v
         if boxes[i] then boxes[i].v=v end
+        local seal=_seal_next
+        _seal_next=nil
+        if seal and not boxes[i] and math.type(v)=="integer" then
+            _PS[i]=seal
+            _has_pending=true
+        end
+    end
+
+    local function _reg_key(slot,seal)
+        local desc=seal[1]
+        return (((_S[611] or 0)~(_S[desc[4]] or 0)~(_XF[1] or 0)~
+                 desc[2]~desc[3]~slot~(seal[2] or 0)~seal[3])|1)&-1
+    end
+
+    local function _seal_pending()
+        for slot,seal in pairs(_PS) do
+            local v=regs[slot]
+            if math.type(v)=="integer" and not boxes[slot] then
+                regs[slot]=v~_reg_key(slot,seal)
+                _RK[slot]=seal
+                _has_sealed=true
+            end
+            _PS[slot]=nil
+        end
+        _has_pending=false
+    end
+
+    local function _open_regs()
+        for slot,seal in pairs(_RK) do
+            regs[slot]=regs[slot]~_reg_key(slot,seal)
+            _RK[slot]=nil
+        end
+        _has_sealed=false
     end
 
     local function _av_read()
@@ -370,11 +417,20 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function get_box(slot)
         if not boxes[slot] then
-            boxes[slot]={v=regs[slot]}
-        else
-            boxes[slot].v=regs[slot]
+            boxes[slot]={
+                v=regs[slot],
+                regs=regs,
+                slot=slot
+            }
         end
         return boxes[slot]
+    end
+
+    local function set_upvalue(box,v)
+        box.v=v
+        if box.regs then
+            box.regs[box.slot]=v
+        end
     end
 
     local function make_closure(sub)
@@ -410,6 +466,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_SPLIT__]=_split_tmp,[__VM_FR_SCRATCH__]=_S,
                 [__VM_FR_ACTIVE__]=_AA,[__VM_FR_FLOW_CACHE__]=_FC,
                 [__VM_FR_SEM_CACHE__]=_SC,
+                [__VM_FR_LOOP_CACHE__]=_LC,
+                [__VM_FR_GRAPH_CACHE__]=_GC,
+                [__VM_FR_REG_KEYS__]=_RK,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
                 [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
@@ -462,23 +521,50 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     _carry=function(v,av,tag)
-        _cross((tag~pc~(_S[611] or 0))&-1)
         if not av then
             _S[1731]=((_S[1731] or 0)~tag~(pc&0xFF))
             return v
         end
+        _cross((tag~pc~(_S[611] or 0))&-1)
         local pick=(((tag*5+3)&1)+1)
         return _GV[pick](v,_S,av,regs,_AA,boxes,tag)
     end
 
     local function _flow(q,av,tag)
         q=_carry(q,av,tag)
-        if not av then return q end
-        local site=((pc-1)<<8)~tag
-        if _FC[site] then return q end
-        _FC[site]=true
-        local pick=((tag~pc~proto.vm_id~(_S[611] or 0))&1)+1
-        return _FG[pick](q,_S)
+        if av then
+            local site=((pc-1)<<8)~tag
+            if not _FC[site] then
+                _FC[site]=true
+                local pick=((tag~pc~proto.vm_id~(_S[611] or 0))&1)+1
+                q=_FG[pick](q,_S)
+            end
+        end
+        _gq=(_gq or 0)+1
+        local desc=_gsl and _gsl[_gq]
+        if not desc or desc[1]==0 then return q end
+        local site=desc[2]
+        local hit=_GC[site] or 0
+        _GC[site]=hit+1
+        local live=((_S[desc[4]] or 0)~(_S[611] or 0)~(_XF[1] or 0)~
+                    desc[2]~desc[3]~_st~hit~tag)&-1
+        _S[desc[4]]=live
+        local old=q[__VM_CF_KEY__]
+        local key=(live~desc[2]~desc[3]~tag)&-1
+        for _,f in ipairs(q[__VM_CF_FIELDS__]) do q[f]=(q[f]~old)~key end
+        q[__VM_CF_KEY__]=nil
+        q[__VM_CF_SEAL__]=desc
+        local mixed=(live~hit~tag)&-1
+        if (desc[5]&1)~=0 then _S[611]=((_S[611] or 0)~mixed)&-1 end
+        if (desc[5]&2)~=0 then _XF[1]=((_XF[1] or 0)~mixed)&-1 end
+        return q
+    end
+
+    local function _cf(q,field,tag)
+        local desc=q[__VM_CF_SEAL__]
+        if not desc then return q[field]~q[__VM_CF_KEY__] end
+        local key=((_S[desc[4]] or 0)~desc[2]~desc[3]~tag)&-1
+        return q[field]~key
     end
 
     local function _sem(tag,x,y,z)
@@ -493,24 +579,76 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _carry(nil,av,tag)
     end
 
+    local function _graph_for(desc)
+        if not desc or desc[1]==0 then return nil,nil end
+        local site=desc[2]
+        local hit=_GC[site] or 0
+        _GC[site]=hit+1
+        if hit==0 or (((hit~desc[3]~(_S[611] or 0)~_st)&15)==0) then
+            return _OG[desc[1]],hit
+        end
+        return false,hit
+    end
+
+    local function _couple_direct(v,desc,hit)
+        local rv=0
+        if math.type(v)=="integer" then rv=v end
+        local mixed=(desc[2]~desc[3]~rv~_st~(hit or 0))&-1
+        local key=desc[4]
+        _S[key]=((_S[key] or 0)~mixed)&-1
+        local policy=desc[5]
+        if (policy&1)~=0 then
+            _S[611]=((_S[611] or 0)~mixed~desc[2])&-1
+        end
+        if (policy&2)~=0 then
+            _XF[1]=((_XF[1] or 0)~mixed~desc[3])&-1
+        end
+        return v
+    end
+
+    local function _seal_result(v,desc,hit)
+        if math.type(v)=="integer" then
+            _seal_next={desc,hit,_st}
+        end
+        return v
+    end
+
     local function _arith2(a,b,av,slot)
-        local bank=_AR[_int2(a,b)][slot]
         local pick=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         _gq=(_gq or 0)+1
-        local site=_gsl and _gsl[_gq]
-        local graph=site and _OG[site]
-        if graph then return graph(bank,pick,a,b,_S,av,regs,_AA,boxes) end
-        return bank[pick](a,b,_S,av,regs,_AA,boxes)
+        local desc=_gsl and _gsl[_gq]
+        local graph,hit=_graph_for(desc)
+        if graph then
+            local bank=_AR[_int2(a,b)][slot]
+            local out=graph(bank,pick,a,b,_S,av,regs,_AA,boxes,_XF,_st,
+                            desc[2],desc[3],desc[4],desc[5])
+            return _seal_result(out,desc,hit)
+        end
+        local out=_AR[1][slot][pick](a,b)
+        if graph==false then
+            out=_couple_direct(out,desc,hit)
+            return out
+        end
+        return out
     end
 
     local function _arith1(a,av,slot)
-        local bank=_AR[_int1(a)][slot]
         local pick=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         _gq=(_gq or 0)+1
-        local site=_gsl and _gsl[_gq]
-        local graph=site and _OG[site]
-        if graph then return graph(bank,pick,a,a,_S,av,regs,_AA,boxes) end
-        return bank[pick](a,a,_S,av,regs,_AA,boxes)
+        local desc=_gsl and _gsl[_gq]
+        local graph,hit=_graph_for(desc)
+        if graph then
+            local bank=_AR[_int1(a)][slot]
+            local out=graph(bank,pick,a,a,_S,av,regs,_AA,boxes,_XF,_st,
+                            desc[2],desc[3],desc[4],desc[5])
+            return _seal_result(out,desc,hit)
+        end
+        local out=_AR[1][slot][pick](a)
+        if graph==false then
+            out=_couple_direct(out,desc,hit)
+            return out
+        end
+        return out
     end
 
     if _rr then
@@ -527,7 +665,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     for i in setmetatable({},{__call=function(t)return t end}) do
-        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1
+        if _has_sealed then _open_regs() end; _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,regs[B],nil,nil),_av,0))
         elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,1))
@@ -541,7 +679,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==6  then rset(A,_carry(_sem(__VM_DATA_GET__,upvals[B+1].v,regs[C],nil),_av,6))
         elseif op==7  then rset(A,_carry(_sem(__VM_DATA_GET__,regs[B],regs[C],nil),_av,7))
         elseif op==8  then _sem(__VM_DATA_SET__,upvals[A+1].v,regs[B],regs[C]); _touch(_av,8)
-        elseif op==9  then upvals[B+1].v=regs[A]; _touch(_av,9)
+        elseif op==9 then set_upvalue(upvals[B+1],regs[A]); _touch(_av,9)
         elseif op==10 then _sem(__VM_DATA_SET__,regs[A],regs[B],regs[C]); _touch(_av,10)
         elseif op==11 then rset(A,_carry(_sem(__VM_OP_NEWTABLE__,nil,nil,nil),_av,11))
         elseif op==12 then local t=regs[B]; rset(A+1,_carry(_sem(__VM_DATA_VALUE__,t,nil,nil),_av,112)); rset(A,_carry(_sem(__VM_DATA_GET__,t,regs[C],nil),_av,12))
@@ -567,7 +705,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==30 then
             local k=(_S[611] or 0)~pc~sBx
             local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
-            q=_flow(q,_av,30); pc=q[__VM_CF_TARGET__]~q[__VM_CF_KEY__]
+            q=_flow(q,_av,30); pc=_cf(q,__VM_CF_TARGET__,30)
         elseif op==31 then if _carry(_sem(__VM_CMP_EQ__,regs[B],regs[C],nil),_av,31)~=(A~=0) then pc=pc+1 end
         elseif op==32 then if _carry(_sem(__VM_CMP_LT__,regs[B],regs[C],nil),_av,32)~=(A~=0) then pc=pc+1 end
         elseif op==33 then if _carry(_sem(__VM_CMP_LE__,regs[B],regs[C],nil),_av,33)~=(A~=0) then pc=pc+1 end
@@ -641,36 +779,52 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local k=(_S[611] or 0)~pc~A
             local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
             q[__VM_CF_VALUE__]=regs[A]; q[__VM_CF_STEP__]=step; q[__VM_CF_LIMIT__]=limit
-            q=_LG[__VM_LOOP_FORLOOP__](_flow(q,_av,39),_S)
+            q=_flow(q,_av,39)
+            local _ls=((pc-1)<<8)~__VM_LOOP_FORLOOP__
+            if not _LC[_ls] then
+                _LC[_ls]=true; q=_LG[__VM_LOOP_FORLOOP__](q,_S)
+            else
+                q[__VM_CF_VALUE__]=q[__VM_CF_VALUE__]+q[__VM_CF_STEP__]
+                local _lv=q[__VM_CF_VALUE__]
+                local _ld=q[__VM_CF_STEP__]
+                local _ll=q[__VM_CF_LIMIT__]
+                q[__VM_CF_TAKE__]=(_ld>0 and _lv<=_ll) or (_ld<=0 and _lv>=_ll)
+            end
             local idx=q[__VM_CF_VALUE__]
             rset(A,idx)
             if q[__VM_CF_TAKE__] then
-                pc=q[__VM_CF_TARGET__]~q[__VM_CF_KEY__]; rset(A+3,idx)
+                pc=_cf(q,__VM_CF_TARGET__,39); rset(A+3,idx)
             end
 
         elseif op==40 then
             local k=(_S[611] or 0)~pc~A
             local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_A__]=A~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
-            q=_flow(q,_av,40); local qa=q[__VM_CF_A__]~q[__VM_CF_KEY__]
+            q=_flow(q,_av,40); local qa=_cf(q,__VM_CF_A__,40)
             q[__VM_CF_VALUE__]=regs[qa]; q[__VM_CF_STEP__]=regs[qa+2]
             q=_LG[__VM_LOOP_FORPREP__](q,_S)
-            rset(qa,q[__VM_CF_VALUE__]); pc=q[__VM_CF_TARGET__]~q[__VM_CF_KEY__]
+            rset(qa,q[__VM_CF_VALUE__]); pc=_cf(q,__VM_CF_TARGET__,40)
 
         elseif op==41 then
             local k=(_S[611] or 0)~pc~A~C
             local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=A~k,[__VM_CF_C__]=C~k,[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_C__}}
-            q=_flow(q,_av,41); local qa=q[__VM_CF_A__]~q[__VM_CF_KEY__]
-            local qc=q[__VM_CF_C__]~q[__VM_CF_KEY__]
+            q=_flow(q,_av,41); local qa=_cf(q,__VM_CF_A__,41)
+            local qc=_cf(q,__VM_CF_C__,41)
             local res=table.pack(regs[qa](regs[qa+1],regs[qa+2]))
             for i=1,qc do rset(qa+2+i,res[i]) end
 
         elseif op==42 then
             local k=(_S[611] or 0)~pc~A
             local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_A__]=A~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
-            q=_flow(q,_av,42); local qa=q[__VM_CF_A__]~q[__VM_CF_KEY__]
-            q[__VM_CF_VALUE__]=regs[qa+1]; q=_LG[__VM_LOOP_TFORLOOP__](q,_S)
+            q=_flow(q,_av,42); local qa=_cf(q,__VM_CF_A__,42)
+            q[__VM_CF_VALUE__]=regs[qa+1]
+            local _ls=((pc-1)<<8)~__VM_LOOP_TFORLOOP__
+            if not _LC[_ls] then
+                _LC[_ls]=true; q=_LG[__VM_LOOP_TFORLOOP__](q,_S)
+            else
+                q[__VM_CF_TAKE__]=(q[__VM_CF_VALUE__]~=nil)
+            end
             if q[__VM_CF_TAKE__] then rset(qa,q[__VM_CF_VALUE__]);
-                pc=q[__VM_CF_TARGET__]~q[__VM_CF_KEY__] end
+                pc=_cf(q,__VM_CF_TARGET__,42) end
 
         elseif op==43 then
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
@@ -688,9 +842,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local _vn=B==0 and (_va.n or #_va) or B-1
             local k=(_S[611] or 0)~pc~A~B~_vn
             local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=A~k,[__VM_CF_B__]=B~k,[__VM_CF_COUNT__]=_vn~k,[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_B__,__VM_CF_COUNT__}}
-            q=_flow(q,_av,45); local qa=q[__VM_CF_A__]~q[__VM_CF_KEY__]
-            local qb=q[__VM_CF_B__]~q[__VM_CF_KEY__]
-            local qn=q[__VM_CF_COUNT__]~q[__VM_CF_KEY__]
+            q=_flow(q,_av,45); local qa=_cf(q,__VM_CF_A__,45)
+            local qb=_cf(q,__VM_CF_B__,45)
+            local qn=_cf(q,__VM_CF_COUNT__,45)
             _sem(__VM_OP_VARARG__,rset,qa,{qn,_va})
             if qb==0 then
                 top=qa+qn-1
@@ -709,6 +863,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==56 then rset(A,((regs[B] or 0)*((regs[C] or 0)|1))&0xFFFFFFFF)
         elseif op==57 then rset(A,consts[Bx+1][2])
         else error("unknown op "..op) end
+        if _has_pending then _seal_pending() end
     end
     return _leave({},0,nil,138)
 end
