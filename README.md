@@ -23,6 +23,10 @@ python main.py hello.lua --profile fast-vm
 The result is written next to the input as `hello_obfuscated.lua`. Use `-o` to
 choose another path.
 
+> **Obfuscation example:** Compare the [original `print("hello karity")` source](examples/hello.lua)
+> with its [obfuscated output](examples/hello.protected.lua), generated through the GUI using
+> the `obf_gui_config` configuration.
+
 On Windows, compatible Lua binaries are included in `bin/`. On other platforms,
 install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 
