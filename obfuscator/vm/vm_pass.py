@@ -24,7 +24,9 @@ from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              apply_split_to_vm, apply_fuse_to_vm,
                              apply_defer_to_vm, ALL_SPLIT_OPS, DEFER_OPS,
-                             apply_dispatch, build_exec_variants,
+                             apply_dispatch, apply_execution_kit,
+                             wire_exec_router, build_next_router_kit,
+                             build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
                           apply_keystream, apply_tamper)
@@ -1514,6 +1516,9 @@ _DEFAULT_VM_OPTIONS = {
     "block_variant_rate": 0.08,
     "block_variant_count": 3,
     "block_variant_max_instructions": 6,
+    "helper_variant_count": 3,
+    "helper_diversity_rate": 0.35,
+    "semantic_diversity_rate": 0.35,
 }
 
 
@@ -1611,7 +1616,10 @@ class VMPass(PostPass):
         vm_code = _rename_vm_keys(_load_vm())
         if n == 1:
             vop_map, split_map, fuse_map, defer_map = vm_maps[0]
-            vm_code = apply_vop_to_vm(vm_code, vop_map)
+            vm_code = apply_vop_to_vm(
+                vm_code, vop_map,
+                float(self.vm_options.get("semantic_diversity_rate", 0.35)),
+            )
             vm_code = prune_and_inject_handlers(vm_code, used_ops_list[0],
                                                 fake_handlers=fake, mutate=mut)
             vm_code = apply_split_to_vm(vm_code, split_map, mutate=mut)
@@ -1620,10 +1628,26 @@ class VMPass(PostPass):
             # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
             # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
             vm_code = apply_dispatch(vm_code, dispatch)
+            vm_code = apply_execution_kit(
+                vm_code,
+                int(self.vm_options.get("helper_variant_count", 3)),
+                float(self.vm_options.get("helper_diversity_rate", 0.35)),
+            )
+            vm_code = wire_exec_router(vm_code, 0)
+            vm_code = build_next_router_kit(vm_code, 1)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
                                           fake_handlers=fake, mutate=mut,
-                                          dispatch=dispatch)
+                                          dispatch=dispatch,
+                                          helper_variant_count=int(
+                                              self.vm_options.get("helper_variant_count", 3)
+                                          ),
+                                          helper_diversity_rate=float(
+                                              self.vm_options.get("helper_diversity_rate", 0.35)
+                                          ),
+                                          semantic_diversity_rate=float(
+                                              self.vm_options.get("semantic_diversity_rate", 0.35)
+                                          ))
 
         # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
         # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.

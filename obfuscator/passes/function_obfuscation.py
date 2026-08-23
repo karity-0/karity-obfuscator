@@ -1676,6 +1676,10 @@ class FunctionObfuscationPass(BasePass):
             bstart, bend = ctx.cs(block), ctx.ce(block)
 
             if self.skip_vm_dispatcher and node.id in skip_node_ids:
+                # The execution-kit compiler already diversifies nested hot
+                # helpers. Claim this range so later nodes inside the exec are
+                # not flattened again by the VM-output pass.
+                claimed_ranges.append((bstart, bend))
                 # sentinel을 직접 포함하는 함수(wrapper/exec) 자체만 스킵.
                 # exec 내부의 헬퍼 클로저는 아래에서 정상 변환된다.
                 continue

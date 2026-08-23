@@ -323,6 +323,10 @@ local _PY=__VM_POLY_THRESHOLD__
 local _PTRACE=__VM_POLY_TRACE__
 local _PN,_PX,_PE,_PBC,_PBH=0,0,0,0,0
 
+local function _vid(p)
+    return p.vm_id
+end
+
 local function _pmix(x)
     x=(x~(x>>30))*-4658895280553007687
     x=(x~(x>>27))*-7723592293110705685
@@ -335,6 +339,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local regs   = _fr and _fr[__VM_FR_REGS__] or {}
     local boxes  = _fr and _fr[__VM_FR_BOXES__] or {}
     local consts = proto["constants"]
+    local _subs  = proto["protos"]
     local code   = proto["code"]
     local _avd   = proto["avalanche"]
     local _gsd   = proto["graph_sites"]
@@ -504,6 +509,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return id,4
     end
 
+    --<<RGET>>
     local function rget(i)
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
         local p1,p2,p3,p4=_rpositions(i)
@@ -512,7 +518,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local _,b,inv=_rparams(i,epoch)
         return _rdecode(((regs[p1]+_RS[p2])-b)*inv,_RT[p4])
     end
+    --<<ENDRGET>>
 
+    --<<RSET>>
     local function rset(i,v)
         local seal=_seal_next
         _seal_next=nil
@@ -526,6 +534,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local a,b=_rparams(i,epoch)
         _rstore(i,a*payload+b,epoch,kind)
     end
+    --<<ENDRSET>>
 
     local function _rrotate(slot,salt)
         local p1,p2,p3=_rpositions(slot)
@@ -766,6 +775,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return _GV[pick](v,_S,av,rset,_AA,boxes,tag)
     end
 
+    --<<FLOW>>
     local function _flow(q,av,tag)
         q=_carry(q,av,tag)
         if av then
@@ -800,6 +810,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _rmap_tick(mixed~site~tag)
         return q
     end
+    --<<ENDFLOW>>
 
     local function _cf(q,field,tag)
         local desc=q[__VM_CF_SEAL__]
@@ -808,6 +819,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return q[field]~key
     end
 
+    --<<SEM>>
     local function _sem(tag,x,y,z)
         local site=((pc-1)<<32)~tag
         local bank=_DG[tag]
@@ -817,6 +829,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local pick=_poly_pick(2,site~tag~hit~0x53454D41,base)
         return bank[pick](x,y,z,_S)
     end
+    --<<ENDSEM>>
 
     local function _touch(av,tag)
         _carry(nil,av,tag)
@@ -1028,7 +1041,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     for i in setmetatable({},{__call=function(t)return t end}) do
+        --<<FETCH>>
         _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C)
+        --<<ENDFETCH>>
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,rget(B),nil,nil),_av,0))
         elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,1))
@@ -1198,7 +1213,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
         elseif op==44 then
             get_box(A)
-            local fn=_sem(__VM_OP_CLOSURE__,make_closure,proto.protos[Bx+1],nil)
+            local fn=_sem(__VM_OP_CLOSURE__,make_closure,_subs[Bx+1],nil)
             rset(A,_carry(fn,_av,44))
 
         elseif op==45 then
@@ -1234,6 +1249,7 @@ end
 --<<ENDEXEC>>
 _EX={exec}
 
+--<<NEXT_ROUTER>>
 _NX=function(...)
     local q=...
     if q[__VM_Q_KIND__]==__VM_CALL_ENTER__ then
@@ -1248,6 +1264,7 @@ _NX=function(...)
     return _EX[k[__VM_FR_PROTO__].vm_id+1](k[__VM_FR_PROTO__],
                k[__VM_FR_UPVALS__],nil,nil,k,k[__VM_FR_PARENT__],r)
 end
+--<<ENDNEXT_ROUTER>>
 
 local function run(blob,rand_tail,self_func)
     local dump=string.dump(self_func,true)
@@ -1311,7 +1328,7 @@ local function run(blob,rand_tail,self_func)
     end
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
-    _CG[__VM_ROUTE_ENTER__](_NX,
+    _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
          [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]={n=0}})
     if _PTRACE then

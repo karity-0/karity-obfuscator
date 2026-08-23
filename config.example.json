@@ -31,7 +31,10 @@
                 "runtime_trace": false,
                 "block_variant_rate": 0.08,
                 "block_variant_count": 3,
-                "block_variant_max_instructions": 6
+                "block_variant_max_instructions": 6,
+                "helper_variant_count": 3,
+                "helper_diversity_rate": 0.35,
+                "semantic_diversity_rate": 0.35
             }
         },
         "fast-vm": {
@@ -66,7 +69,10 @@
                 "runtime_trace": false,
                 "block_variant_rate": 0.03,
                 "block_variant_count": 2,
-                "block_variant_max_instructions": 6
+                "block_variant_max_instructions": 6,
+                "helper_variant_count": 2,
+                "helper_diversity_rate": 0.2,
+                "semantic_diversity_rate": 0.2
             }
         },
         "max": {
@@ -118,7 +124,10 @@
                 "runtime_trace": false,
                 "block_variant_rate": 0.18,
                 "block_variant_count": 3,
-                "block_variant_max_instructions": 8
+                "block_variant_max_instructions": 8,
+                "helper_variant_count": 4,
+                "helper_diversity_rate": 0.7,
+                "semantic_diversity_rate": 0.75
             }
         }
     }

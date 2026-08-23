@@ -36,6 +36,9 @@
   - [block_variant_rate](#block_variant_rate)
   - [block_variant_count](#block_variant_count)
   - [block_variant_max_instructions](#block_variant_max_instructions)
+  - [helper_variant_count](#helper_variant_count)
+  - [helper_diversity_rate](#helper_diversity_rate)
+  - [semantic_diversity_rate](#semantic_diversity_rate)
 
 ## profiles
 The default config uses named profiles so test and release builds can switch
@@ -382,5 +385,35 @@ Maximum original instruction count in one runtime-polymorphic block chunk.
 range: 2 to 32
 
 default: `6`
+
+---
+
+### helper_variant_count
+
+Independent build-time implementations emitted per hot VM helper.
+
+range: 1 to 4
+
+default: `3`
+
+---
+
+### helper_diversity_rate
+
+Fraction of hot helper call sites wired to a non-baseline per-VM implementation.
+
+range: 0.0 to 1.0
+
+default: `0.35`
+
+---
+
+### semantic_diversity_rate
+
+Fraction of eligible opcode aliases lowered without the common semantic graph entry point.
+
+range: 0.0 to 1.0
+
+default: `0.35`
 
 ---

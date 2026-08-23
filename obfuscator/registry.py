@@ -217,6 +217,21 @@ VM_OPTION_DOCS = {
         "default": 6,
         "range": "2 to 32",
     },
+    "helper_variant_count": {
+        "description": "Independent build-time implementations emitted per hot VM helper.",
+        "default": 3,
+        "range": "1 to 4",
+    },
+    "helper_diversity_rate": {
+        "description": "Fraction of hot helper call sites wired to a non-baseline per-VM implementation.",
+        "default": 0.35,
+        "range": "0.0 to 1.0",
+    },
+    "semantic_diversity_rate": {
+        "description": "Fraction of eligible opcode aliases lowered without the common semantic graph entry point.",
+        "default": 0.35,
+        "range": "0.0 to 1.0",
+    },
 }
 
 
@@ -343,6 +358,15 @@ def validate_release_config(config: dict) -> None:
     if float(vm_options.get("block_variant_rate", 0.0)) <= 0.0:
         errors.append("vm_options.block_variant_rate should be > 0.0")
 
+    if int(vm_options.get("helper_variant_count", 0)) < 2:
+        errors.append("vm_options.helper_variant_count should be >= 2")
+
+    if float(vm_options.get("helper_diversity_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.helper_diversity_rate should be > 0.0")
+
+    if float(vm_options.get("semantic_diversity_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.semantic_diversity_rate should be > 0.0")
+
     if int(vm_options.get("block_variant_count", 0)) < 2:
         errors.append("vm_options.block_variant_count should be >= 2")
 
@@ -385,7 +409,8 @@ def _validate_vm_options(options: dict) -> None:
 
     for key in ("junk_rate", "integrity_constant_rate", "graph_execution_rate",
                 "cross_instruction_rate", "runtime_polymorphism_rate",
-                "block_variant_rate"):
+                "block_variant_rate", "helper_diversity_rate",
+                "semantic_diversity_rate"):
         value = options.get(key)
         if value is not None:
             if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -401,6 +426,7 @@ def _validate_vm_options(options: dict) -> None:
     for key, minimum, maximum in (
         ("block_variant_count", 2, 4),
         ("block_variant_max_instructions", 2, 32),
+        ("helper_variant_count", 1, 4),
     ):
         value = options.get(key)
         if value is not None:
