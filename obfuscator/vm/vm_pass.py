@@ -932,7 +932,7 @@ def _compile_integer_graph_func(op_kind: str) -> str:
     lines.extend([
         f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
         f"if not {boxes}[{slot}] then local {mixed}=({out}~{trace}~"
-        f"(({index}*{_hex64()})&-1));{regs}[{slot}]={mixed};",
+        f"(({index}*{_hex64()})&-1));{regs}({slot},{mixed});",
         f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~"
         f"{mixed}~{slot}) end end end;return {out} end",
     ])
@@ -991,7 +991,7 @@ def _compile_value_graph_func() -> str:
         f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{tag});",
         f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
         f"if not {boxes}[{slot}] then local {mixed}=({trace}~{tag}~"
-        f"(({index}*{_hex64()})&-1));{regs}[{slot}]={mixed};{active}[{slot}]=true;",
+        f"(({index}*{_hex64()})&-1));{regs}({slot},{mixed});{active}[{slot}]=true;",
         f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{mixed}~{slot}) end end end;",
         f"return {out} end",
     ])
@@ -1277,6 +1277,14 @@ def _apply_handler_graphs(
 
     bundle = "{{" + ",".join(native_entries) + "},{" + ",".join(graph_entries) + "}}"
     vm_code = vm_code.replace("__VM_ARITH_BUNDLE__", bundle)
+    affine_pairs = []
+    for _ in range(16):
+        multiplier = random.getrandbits(64) | 1
+        inverse = pow(multiplier, -1, 1 << 64)
+        signed_multiplier = multiplier if multiplier < (1 << 63) else multiplier - (1 << 64)
+        signed_inverse = inverse if inverse < (1 << 63) else inverse - (1 << 64)
+        affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
+    vm_code = vm_code.replace("__VM_AFFINE_POOL__", "{" + ",".join(affine_pairs) + "}")
     for kind, (token, _, _) in _ARITH_SPECS.items():
         vm_code = vm_code.replace(token, str(slots[kind]))
     value_token = "__VM_VALUE_GRAPHS__"
@@ -1341,8 +1349,9 @@ def _apply_handler_graphs(
     field_tokens = [
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
         "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
-        "__VM_FR_SPLIT__", "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
-        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_KEYS__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
+        "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
         "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",

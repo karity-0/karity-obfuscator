@@ -30,10 +30,20 @@ pool. Results feed site state and selected global/cross-frame state on every act
 occurrence; heavy family paths run on the first hit and at sparse state-dependent
 intervals.
 
-Selected integer arithmetic results are stored between dispatch iterations in a
-state-keyed register representation. The key is recomputed from the site
-descriptor, site state, global diffusion state, cross-frame ledger, destination
-slot, and hit count rather than stored directly.
+Register values remain virtualized across dispatch boundaries. Integers use
+build-specific per-value affine encodings fragmented into additive shares; the
+multiplier family is selected from slot and epoch state, while offsets and shares
+are derived rather than stored as plaintext keys. Booleans and nil use affine
+canonical tokens. Floats, strings, tables, functions, userdata, and threads use
+affine handles into a frame value vault, so the register bank does not directly
+contain those program values.
+
+Each write selects a new representation epoch. Selected control and call edges
+also rotate long-lived values by transforming both shares directly, without
+materializing the program value. ADD, SUB, and UNM use encoded-domain affine
+transforms when their operands are integer representations; unsupported dynamic
+operations decode only their required operands into handler-local temporaries and
+immediately re-encode their results.
 
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
