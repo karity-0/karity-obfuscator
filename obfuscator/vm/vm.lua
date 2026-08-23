@@ -228,6 +228,12 @@ local function read_proto(r, acc_state)
             p.graph_sites[i]=sites
         end
     end
+    n=r.u16(); p.block_routes={}
+    for i=1,n do
+        local rn=r.u8(); local route={}
+        for j=1,rn do route[j]=r.u32() end
+        p.block_routes[i]=route
+    end
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
@@ -313,6 +319,15 @@ local _LG=__VM_LOOP_GRAPHS__
 local _DG=__VM_SEMANTIC_GRAPHS__
 local _RP=__VM_AFFINE_POOL__
 local _MP=__VM_REGISTER_MAPS__
+local _PY=__VM_POLY_THRESHOLD__
+local _PTRACE=__VM_POLY_TRACE__
+local _PN,_PX,_PE,_PBC,_PBH=0,0,0,0,0
+
+local function _pmix(x)
+    x=(x~(x>>30))*-4658895280553007687
+    x=(x~(x>>27))*-7723592293110705685
+    return (x~(x>>31))&-1
+end
 
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
@@ -323,6 +338,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local code   = proto["code"]
     local _avd   = proto["avalanche"]
     local _gsd   = proto["graph_sites"]
+    local _brd   = proto["block_routes"]
     local _cd    = code   -- rename되지 않는 code 별칭 (fused 핸들러가 다음 슬롯을 읽을 때 사용)
     local pc     = _fr and (_fr[__VM_FR_PC__]~_fm) or 1
     local top    = _fr and (_fr[__VM_FR_TOP__]~_fm) or -1
@@ -346,19 +362,73 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
-                   (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code)|1)
+                   (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
+                    ((_PY~=0 and _PN) or 0))|1)
     local _MG    = _fr and _fr[__VM_FR_MAP_STATE__] or
-                   {((_IT.seed~proto.vm_id~#code)&0x3FF),0}
+                   {((_IT.seed~proto.vm_id~#code~
+                     ((_PY~=0 and _PN) or 0))&0x3FF),0}
     local _RL    = _fr and _fr[__VM_FR_LOGICAL_SLOTS__] or {}
+    local _PR    = _fr and _fr[__VM_FR_ROUTE_STATE__]
     local _seal_next
     local _pending_finish
     local _gsl, _gq
     local _XF    = _fr and _fr[__VM_FR_LEDGER__] or _xx or {[1]=_zz or 0}
 
     local function _rmix(x)
-        x=(x~(x>>30))*-4658895280553007687
-        x=(x~(x>>27))*-7723592293110705685
-        return (x~(x>>31))&-1
+        return _pmix(x)
+    end
+
+    if not _PR then
+        _PR={_rmix(_PN~(_zz or 0)~(_IT.seed or 0)~
+                   (proto.vm_id<<19)~#code),0}
+    end
+
+    local function _route_step(ip,op,a,b,c)
+        if _PY==0 then return end
+        local n=(_PR[2] or 0)+1
+        local x=((_PR[1] or 0)~_PN~(ip<<32)~(op<<24)~
+                 (a<<16)~(b<<7)~c~n~(_MG[1]<<3)~(_RX[1] or 0))&-1
+        x=(x~(x<<13)~(x>>7)~(x<<17))&-1
+        _PR[1],_PR[2]=x,n
+        if _PTRACE then _PX=_rmix(_PX~x~ip~(op<<11)~n) end
+    end
+
+    local function _poly_gate(salt)
+        return ((_PR[1] or 0)~salt~((_PR[2] or 0)<<7))&0xFFFF
+    end
+
+    local function _poly_word(salt)
+        return _rmix((_PR[1] or 0)~salt~((_PR[2] or 0)<<17)~_PN)
+    end
+
+    local function _poly_pick(count,salt,baseline)
+        if _PY==0 then return baseline end
+        if _poly_gate(salt)>=_PY then return baseline end
+        local x=_poly_word(salt)
+        local pick=((x>>16)%count)+1
+        if _PTRACE then _PX=_rmix(_PX~x~pick~salt) end
+        return pick
+    end
+
+    local function _poly_lazy(salt)
+        if _PY==0 then return true end
+        if _poly_gate(salt)>=_PY then return true end
+        local x=_poly_word(salt)
+        local lazy=((x>>16)&1)==0
+        if _PTRACE then
+            _PX=_rmix(_PX~x~(lazy and 0x4C415A59 or 0x4E4F5721))
+        end
+        return lazy
+    end
+
+    local function _poly_route(route,salt)
+        local x=_poly_word(salt~#route~0x424C4F43)
+        local pick=((x>>16)%#route)+1
+        if _PTRACE then _PX=_rmix(_PX~x~pick~salt~0x524F5554) end
+        _PBC=_PBC+1
+        _PBH=_pmix(_PBH~x~pick~route[pick]~_PBC)
+        _PR[1]=(_PR[1]~x~route[pick])&-1
+        return route[pick]
     end
 
     local function _rparams(slot,epoch)
@@ -634,6 +704,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_REG_SEED__]=_RZ,
                 [__VM_FR_MAP_STATE__]=_MG,
                 [__VM_FR_LOGICAL_SLOTS__]=_RL,
+                [__VM_FR_ROUTE_STATE__]=_PR,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
                 [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
@@ -691,7 +762,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             return v
         end
         _cross((tag~pc~(_S[611] or 0))&-1)
-        local pick=(((tag*5+3)&1)+1)
+        local pick=_poly_pick(2,tag~pc~0x56414C55,(((tag*5+3)&1)+1))
         return _GV[pick](v,_S,av,rset,_AA,boxes,tag)
     end
 
@@ -701,7 +772,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local site=((pc-1)<<8)~tag
             if not _FC[site] then
                 _FC[site]=true
-                local pick=((tag~pc~proto.vm_id~(_S[611] or 0))&1)+1
+                local base=((tag~pc~proto.vm_id~(_S[611] or 0))&1)+1
+                local pick=_poly_pick(2,site~tag~0x464C4F57,base)
                 q=_FG[pick](q,_S)
             end
         end
@@ -739,9 +811,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _sem(tag,x,y,z)
         local site=((pc-1)<<32)~tag
         local bank=_DG[tag]
-        if _SC[site] then return bank[2](x,y,z,_S) end
-        _SC[site]=true
-        return bank[1](x,y,z,_S)
+        local hit=_SC[site] or 0
+        _SC[site]=hit+1
+        local base=hit==0 and 1 or 2
+        local pick=_poly_pick(2,site~tag~hit~0x53454D41,base)
+        return bank[pick](x,y,z,_S)
     end
 
     local function _touch(av,tag)
@@ -783,14 +857,16 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith2(a,b,av,slot,desc)
-        local pick=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
+        local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         local graph,hit=_graph_for(desc)
         if graph then
+            local pick=_poly_pick(4,slot~pc~0x41524932,base)
             local bank=_AR[_int2(a,b)][slot]
             local out=graph(bank,pick,a,b,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
+        local pick=_poly_pick(2,slot~pc~0x41524932,base)
         local out=_AR[1][slot][pick](a,b)
         if graph==false then
             out=_couple_direct(out,desc,hit)
@@ -800,14 +876,16 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith1(a,av,slot,desc)
-        local pick=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
+        local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         local graph,hit=_graph_for(desc)
         if graph then
+            local pick=_poly_pick(4,slot~pc~0x41524931,base)
             local bank=_AR[_int1(a)][slot]
             local out=graph(bank,pick,a,a,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
+        local pick=_poly_pick(2,slot~pc~0x41524931,base)
         local out=_AR[1][slot][pick](a)
         if graph==false then
             out=_couple_direct(out,desc,hit)
@@ -880,7 +958,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if not desc or desc[1]==0 then
             local left=_pending_snapshot(lhs)
             local right=_pending_snapshot(rhs)
-            if left and right then
+            if left and right and _poly_lazy(token~dst~lhs~(rhs<<8)) then
                 local epoch=_rnext(dst,token~lhs~(rhs<<8))
                 local scale,bias=_rparams(dst,epoch)
                 local l1,l2=_pending_fragment(left,scale,epoch~token)
@@ -898,7 +976,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if not desc or desc[1]==0 then
             local value=_pending_snapshot(src)
-            if value then
+            if value and _poly_lazy(token~dst~src) then
                 local epoch=_rnext(dst,token~src)
                 local scale,bias=_rparams(dst,epoch)
                 local p1,p2=_pending_fragment(value,scale,epoch~token)
@@ -950,7 +1028,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     for i in setmetatable({},{__call=function(t)return t end}) do
-        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1
+        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C)
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,rget(B),nil,nil),_av,0))
         elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,1))
@@ -1147,6 +1225,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==55 then rset(A,((rget(B) or 0)+(rget(C) or 0))&0xFFFFFFFF)
         elseif op==56 then rset(A,((rget(B) or 0)*((rget(C) or 0)|1))&0xFFFFFFFF)
         elseif op==57 then rset(A,consts[Bx+1][2])
+        elseif op==58 then pc=_poly_route(_brd[A+1],A~pc~proto.vm_id)
+        elseif op==59 then pc=Bx+1
         else error("unknown op "..op) end
     end
     return _leave({},0,nil,138)
@@ -1205,6 +1285,16 @@ local function run(blob,rand_tail,self_func)
     local r=make_reader(blob)
     local seed=r.u16()
     _IT.seed=seed; _IT.layout=r.u32(); _IT.vmc=r.u16()
+    _PE=_PE+1
+    local _pa=tostring({})
+    local _pf=tostring(self_func)
+    local _aa=tonumber(_pa:match("(%x+)$") or "0",16) or 0
+    local _af=tonumber(_pf:match("(%x+)$") or "0",16) or 0
+    local _clock=math.floor(((os.clock and os.clock()) or 0)*1000000000)
+    local _wall=(os.time and os.time()) or 0
+    _PN=_pmix(_aa~_af~_clock~(_wall<<21)~crc~seed~_PE)
+    _PX=_pmix(_PN~seed~crc)
+    _PBC=0; _PBH=_pmix(_PN~0x424C4F434B)
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
     local _fn=r.u32()
@@ -1224,6 +1314,11 @@ local function run(blob,rand_tail,self_func)
     _CG[__VM_ROUTE_ENTER__](_NX,
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
          [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]={n=0}})
+    if _PTRACE then
+        io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
+                        " blocks:",_PBC," blocktrace:",
+                        string.format("%016x",_PBH),"\n")
+    end
 end
 
 if arg and arg[0] and arg[0]:match("vm") then

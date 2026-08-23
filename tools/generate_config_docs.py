@@ -62,6 +62,22 @@ metadata uses a fifth independent physical permutation. Non-integer operands and
 active semantic-graph occurrences fall back to immediate execution so Lua
 metamethod timing and diffusion state remain unchanged.
 
+At runtime, each execution derives a fresh nonce without consuming the program's
+`math.random` stream. Every frame carries a rolling route state updated after
+instruction decode from VM-internal state, instruction identity, mapping
+generation, and representation epochs. Sparse route decisions choose equivalent
+semantic, arithmetic, value, control, and delayed-materialization recipes, so the
+same serialized program produces different microtraces across executions without
+feeding unpredictable state into bytecode decryption.
+
+Eligible straight-line basic-block chunks can also be cloned into independently
+compiled physical lanes. Each lane receives its own opcode aliases and may choose
+different split, fusion, graph, and delayed-materialization plans. A compact
+runtime route instruction selects the lane from rolling execution state, and a
+direct physical edge rejoins the canonical successor. Control-transfer, skip,
+return, and LOADKX/EXTRAARG boundaries remain single-copy routing anchors so jump
+targets, metamethod order, and continuation behavior stay stable.
+
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
 through build-specific bounded cyclic routing graphs compiled to shuffled Lua

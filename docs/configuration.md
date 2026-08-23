@@ -31,6 +31,11 @@
   - [integrity_constant_rate](#integrity_constant_rate)
   - [graph_execution_rate](#graph_execution_rate)
   - [cross_instruction_rate](#cross_instruction_rate)
+  - [runtime_polymorphism_rate](#runtime_polymorphism_rate)
+  - [runtime_trace](#runtime_trace)
+  - [block_variant_rate](#block_variant_rate)
+  - [block_variant_count](#block_variant_count)
+  - [block_variant_max_instructions](#block_variant_max_instructions)
 
 ## profiles
 The default config uses named profiles so test and release builds can switch
@@ -165,6 +170,22 @@ encoded domain only when a later consumer reads the logical destination. Pending
 metadata uses a fifth independent physical permutation. Non-integer operands and
 active semantic-graph occurrences fall back to immediate execution so Lua
 metamethod timing and diffusion state remain unchanged.
+
+At runtime, each execution derives a fresh nonce without consuming the program's
+`math.random` stream. Every frame carries a rolling route state updated after
+instruction decode from VM-internal state, instruction identity, mapping
+generation, and representation epochs. Sparse route decisions choose equivalent
+semantic, arithmetic, value, control, and delayed-materialization recipes, so the
+same serialized program produces different microtraces across executions without
+feeding unpredictable state into bytecode decryption.
+
+Eligible straight-line basic-block chunks can also be cloned into independently
+compiled physical lanes. Each lane receives its own opcode aliases and may choose
+different split, fusion, graph, and delayed-materialization plans. A compact
+runtime route instruction selects the lane from rolling execution state, and a
+direct physical edge rejoins the canonical successor. Control-transfer, skip,
+return, and LOADKX/EXTRAARG boundaries remain single-copy routing anchors so jump
+targets, metamethod order, and continuation behavior stay stable.
 
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
@@ -313,5 +334,53 @@ Fraction of eligible ADD, SUB, and UNM instructions emitted as lazy producers wh
 range: 0.0 to 1.0
 
 default: `0.2`
+
+---
+
+### runtime_polymorphism_rate
+
+Fraction of eligible VM execution sites whose equivalent microtrace recipe is selected from a per-execution rolling route state.
+
+range: 0.0 to 1.0
+
+default: `0.2`
+
+---
+
+### runtime_trace
+
+Emit the final runtime route hash to stderr for diagnostics. Keep disabled in normal and release builds.
+
+default: false
+
+---
+
+### block_variant_rate
+
+Fraction of eligible straight-line basic-block chunks cloned into independently compiled runtime-selectable variants.
+
+range: 0.0 to 1.0
+
+default: `0.08`
+
+---
+
+### block_variant_count
+
+Number of physical variants emitted for each selected basic-block chunk.
+
+range: 2 to 4
+
+default: `3`
+
+---
+
+### block_variant_max_instructions
+
+Maximum original instruction count in one runtime-polymorphic block chunk.
+
+range: 2 to 32
+
+default: `6`
 
 ---

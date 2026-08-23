@@ -20,6 +20,8 @@ python main.py hello.lua
 - custom Lua 5.3 virtual machine
 - opcode virtualization and randomization
 - build-time compiled handler graphs with liveness-aware state diffusion
+- per-execution rolling route state for runtime-polymorphic VM microtraces
+- sparse runtime-selected physical variants for straight-line basic blocks
 - per-occurrence descriptors with runtime state and cross-frame coupling
 - per-value affine register encodings fragmented into additive shares
 - lazy representation rotation with encoded-domain ADD, SUB, and UNM

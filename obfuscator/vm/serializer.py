@@ -154,6 +154,8 @@ PSEUDO_IXOR = 54
 PSEUDO_IADD = 55
 PSEUDO_IMUL = 56
 PSEUDO_LOAD_IENC = 57
+PSEUDO_BLOCK_ROUTE = 58
+PSEUDO_BLOCK_GOTO = 59
 
 _STREAM_IEXPR_SLOTS = 13
 
@@ -477,10 +479,12 @@ def _build_plan(code: list[int],
                 fuse_map: dict[tuple[int, int], int] | None,
                 defer_map: dict[int, int] | None,
                 cross_instruction_rate: float,
-                protected: set[int]) -> list[tuple]:
-    n = len(code)
+                protected: set[int],
+                start: int = 0,
+                end: int | None = None) -> list[tuple]:
+    n = len(code) if end is None else end
     plan: list[tuple] = []
-    i = 0
+    i = start
     while i < n:
         op = code[i] & 0x3F
         options: list[tuple] = [("normal", i)]
@@ -503,6 +507,73 @@ def _build_plan(code: list[int],
         plan.append(choice)
         i += 2 if choice[0] == "fuse" else 1
     return plan
+
+
+_BLOCK_VARIANT_SAFE_OPS = set(range(0, 30)) - {2, 3}
+
+
+def _cfg_blocks(code: list[int]) -> list[tuple[int, int]]:
+    """Return half-open basic-block ranges in original instruction space."""
+    if not code:
+        return []
+    leaders = {0}
+    for i in range(len(code)):
+        succ = _successors(code, i)
+        if succ != ({i + 1} if i + 1 < len(code) else set()):
+            leaders.update(succ)
+            if i + 1 < len(code):
+                leaders.add(i + 1)
+    ordered = sorted(i for i in leaders if 0 <= i < len(code))
+    return [
+        (start, ordered[index + 1] if index + 1 < len(ordered) else len(code))
+        for index, start in enumerate(ordered)
+    ]
+
+
+def _block_chunks(code: list[int], max_instructions: int) -> list[tuple[int, int, bool]]:
+    """Split CFG blocks into small straight-line candidate runs.
+
+    The bool marks chunks that may be cloned. LOADKX/EXTRAARG remains adjacent,
+    while control-transfer and skip instructions are emitted only once.
+    """
+    chunks: list[tuple[int, int, bool]] = []
+    limit = max(2, max_instructions)
+    for block_start, block_end in _cfg_blocks(code):
+        i = block_start
+        while i < block_end:
+            op = code[i] & 0x3F
+            if op == 2 and i + 1 < block_end:
+                chunks.append((i, i + 2, False))
+                i += 2
+                continue
+            if op not in _BLOCK_VARIANT_SAFE_OPS:
+                chunks.append((i, i + 1, False))
+                i += 1
+                continue
+            run_end = i + 1
+            while (run_end < block_end
+                   and (code[run_end] & 0x3F) in _BLOCK_VARIANT_SAFE_OPS):
+                run_end += 1
+            while i < run_end:
+                remaining = run_end - i
+                size = min(limit, remaining)
+                if remaining - size == 1 and size > 2:
+                    size -= 1
+                chunks.append((i, i + size, size >= 2))
+                i += size
+    return chunks
+
+
+def _adjust_jump_at(raw: int, original_index: int, physical_index: int,
+                    canonical: list[int], total: int) -> int:
+    if (raw & 0x3F) not in _SBXOPS:
+        return raw
+    old_sbx = ((raw >> 14) & 0x3FFFF) - 131071
+    target = original_index + 1 + old_sbx
+    new_target = canonical[target] if 0 <= target < len(canonical) else total
+    new_sbx = new_target - physical_index - 1
+    new_bx = (new_sbx + 131071) & 0x3FFFF
+    return (raw & ~(0x3FFFF << 14)) | (new_bx << 14)
 
 
 def _plan_slots(unit: tuple) -> int:
@@ -786,6 +857,87 @@ def _mark_integrity_stream_units(plan: list[tuple], code: list[int],
     return marked
 
 
+def _make_block_layout(
+    code: list[int],
+    split_map: dict[int, dict[str, tuple[int, ...]]] | None,
+    fuse_map: dict[tuple[int, int], int] | None,
+    defer_map: dict[int, int] | None,
+    cross_instruction_rate: float,
+    protected: set[int],
+    iexpr_indices: set[int],
+    stream_enabled: bool,
+    block_variant_rate: float,
+    block_variant_count: int,
+    block_variant_max_instructions: int,
+) -> tuple[list[dict], list[int], int, list[list[int]]]:
+    chunks = _block_chunks(code, block_variant_max_instructions)
+    block_layout: list[dict] = []
+    route_count = 0
+    for start, end, eligible in chunks:
+        selected = (
+            eligible
+            and route_count < 256
+            and random.random() < block_variant_rate
+        )
+        variant_total = block_variant_count if selected else 1
+        plans = []
+        for _ in range(variant_total):
+            plan = _build_plan(
+                code, split_map, fuse_map, defer_map,
+                cross_instruction_rate, protected, start, end,
+            )
+            plans.append(_mark_integrity_stream_units(
+                plan, code, iexpr_indices, stream_enabled
+            ))
+        block_layout.append({
+            "start": start,
+            "end": end,
+            "selected": selected,
+            "route_index": route_count if selected else None,
+            "plans": plans,
+        })
+        if selected:
+            route_count += 1
+
+    canonical = [0] * len(code)
+    position = 0
+    for entry in block_layout:
+        entry["entry"] = position
+        if entry["selected"]:
+            position += 1
+        variant_starts = []
+        for variant_index, plan in enumerate(entry["plans"]):
+            variant_starts.append(position)
+            cursor = position
+            for unit in plan:
+                if variant_index == 0:
+                    canonical[unit[1]] = cursor
+                    if unit[0] == "fuse":
+                        canonical[unit[2]] = cursor + 1
+                cursor += _plan_slots(unit)
+            position = cursor
+            if entry["selected"]:
+                position += 1
+        entry["variant_starts"] = variant_starts
+        if entry["selected"]:
+            canonical[entry["start"]] = entry["entry"]
+
+    if position > 0x3FFFF and any(entry["selected"] for entry in block_layout):
+        return _make_block_layout(
+            code, split_map, fuse_map, defer_map,
+            cross_instruction_rate, protected, iexpr_indices, stream_enabled,
+            0.0, block_variant_count, block_variant_max_instructions,
+        )
+
+    routes: list[list[int]] = [[] for _ in range(route_count)]
+    for entry in block_layout:
+        if entry["selected"]:
+            routes[entry["route_index"]] = [
+                pos + 1 for pos in entry["variant_starts"]
+            ]
+    return block_layout, canonical, position, routes
+
+
 def serialize(proto: Proto,
               vm_assign: dict[int, int] | None = None,
               vm_maps: list | None = None,
@@ -794,7 +946,10 @@ def serialize(proto: Proto,
               integrity_options: dict | None = None,
               graph_execution_rate: float = 0.1,
               cross_instruction_rate: float = 0.2,
-              graph_family_count: int = 8) -> bytes:
+              graph_family_count: int = 8,
+              block_variant_rate: float = 0.0,
+              block_variant_count: int = 3,
+              block_variant_max_instructions: int = 6) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map, defer_map).
 
     vm_assign = {id(proto): vm_id}.
@@ -823,7 +978,8 @@ def serialize(proto: Proto,
     _write_proto(w, proto, vm_assign, vm_maps, acc_state,
                  graph_sites if graph_sites is not None else set(), seed, integrity,
                  graph_execution_rate, cross_instruction_rate,
-                 graph_family_count)
+                 graph_family_count, block_variant_rate, block_variant_count,
+                 block_variant_max_instructions)
     return w.data()
 
 
@@ -831,7 +987,9 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                  vm_maps: list, acc_state: list[int],
                  graph_sites: set[int], seed: int, integrity: dict,
                  graph_execution_rate: float, cross_instruction_rate: float,
-                 graph_family_count: int):
+                 graph_family_count: int, block_variant_rate: float,
+                 block_variant_count: int,
+                 block_variant_max_instructions: int):
     vm_id = vm_assign.get(id(proto), 0)
     vop_map, split_map, fuse_map, defer_map = vm_maps[vm_id]
 
@@ -846,13 +1004,13 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     temp0 = proto.max_stack_size
     temp1 = proto.max_stack_size + 1
     protected     = _compute_protected(proto.code)
-    plan          = _build_plan(
+    block_layout, canonical, total, block_routes = _make_block_layout(
         proto.code, split_map, fuse_map, defer_map,
-        cross_instruction_rate, protected,
+        cross_instruction_rate, protected, iexpr_indices, stream_enabled,
+        block_variant_rate, block_variant_count,
+        block_variant_max_instructions,
     )
-    plan          = _mark_integrity_stream_units(plan, proto.code, iexpr_indices, stream_enabled)
-    new_pos, total = _plan_new_pos(plan, len(proto.code))
-    code          = _adjust_jumps(proto.code, new_pos, total)
+    code          = proto.code
     add_slots     = _instruction_avalanche_slots(proto, graph_execution_rate)
     emitted_av: list[tuple[int, ...]] = []
     # (family, site, selector_seed, state_key, diffusion_policy)
@@ -870,10 +1028,9 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         return family, site, selector_seed, state_key, policy
 
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
-    w.u32(total)
-    for unit in plan:
+    def emit_unit(unit: tuple, physical: int) -> int:
         i = unit[1]
-        raw = code[i]
+        raw = _adjust_jump_at(code[i], i, physical, canonical, total)
         orig_op = raw & 0x3F
         emit_raw = (
             _as_pseudo_loadiexpr(raw)
@@ -887,11 +1044,13 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                 _emit_instr(w, pseudo_raw, _rand_alias(vop_map, pseudo_op), acc_state)
                 emitted_av.append(())
                 emitted_sites.append(())
+                physical += 1
         elif unit[0] == "normal":
             _emit_instr(w, emit_raw, _rand_alias(vop_map, emit_op), acc_state)
             emitted_av.append(add_slots.get(i, ()))
             desc = graph_descriptor(emit_op)
             emitted_sites.append((desc,) if desc is not None else ())
+            physical += 1
         elif unit[0] == "split":
             # 같은 raw 명령어를 각 part vop으로 반복 방출
             vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
@@ -900,11 +1059,13 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                 emitted_av.append(add_slots.get(i, ()))
                 desc = graph_descriptor(orig_op)
                 emitted_sites.append((desc,) if desc is not None else ())
+                physical += 1
         elif unit[0] == "defer":
             _emit_instr(w, emit_raw, defer_map[orig_op], acc_state)  # type: ignore[index]
             emitted_av.append(add_slots.get(i, ()))
             desc = graph_descriptor(orig_op)
             emitted_sites.append((desc,) if desc is not None else ())
+            physical += 1
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]] & 0x3F
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
@@ -922,6 +1083,36 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
             _emit_instr(w, code[unit[2]], _rand_alias(vop_map, op2), acc_state)
             emitted_av.append(add_slots.get(unit[2], ()))
             emitted_sites.append(())
+            physical += 2
+        return physical
+
+    w.u32(total)
+    physical = 0
+    for chunk_index, entry in enumerate(block_layout):
+        if entry["selected"]:
+            route_raw = _make_abc(PSEUDO_BLOCK_ROUTE, entry["route_index"])
+            _emit_instr(w, route_raw, _rand_alias(vop_map, PSEUDO_BLOCK_ROUTE), acc_state)
+            emitted_av.append(())
+            emitted_sites.append(())
+            physical += 1
+        for plan in entry["plans"]:
+            for unit in plan:
+                physical = emit_unit(unit, physical)
+            if entry["selected"]:
+                successor = (
+                    block_layout[chunk_index + 1]["entry"]
+                    if chunk_index + 1 < len(block_layout) else total
+                )
+                goto_raw = _make_abx(PSEUDO_BLOCK_GOTO, 0, successor)
+                _emit_instr(w, goto_raw, _rand_alias(vop_map, PSEUDO_BLOCK_GOTO), acc_state)
+                emitted_av.append(())
+                emitted_sites.append(())
+                physical += 1
+
+    if physical != total:
+        raise RuntimeError(
+            f"block layout size mismatch: emitted={physical}, expected={total}"
+        )
 
     for slots in emitted_av:
         w.u8(len(slots))
@@ -936,6 +1127,12 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
             w.u16(state_key)
             w.u32(site)
             w.u32(selector_seed)
+
+    w.u16(len(block_routes))
+    for route in block_routes:
+        w.u8(len(route))
+        for target in route:
+            w.u32(target)
 
     # 상수
     w.u32(len(proto.constants))
@@ -978,7 +1175,8 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     for sub in proto.protos:
         _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites, seed,
                      integrity, graph_execution_rate, cross_instruction_rate,
-                     graph_family_count)
+                     graph_family_count, block_variant_rate,
+                     block_variant_count, block_variant_max_instructions)
 
 
 # ---------------------------------------------------------------------------
@@ -1070,6 +1268,9 @@ def _patch_proto_integrity(
     for _ in range(code_count):
         for _ in range(r.u8()):
             r.u8(); r.u8(); r.u16(); r.u32(); r.u32()
+    for _ in range(r.u16()):
+        for _ in range(r.u8()):
+            r.u32()
 
     sources_base = {
         "vm_count": vm_count,
@@ -1148,6 +1349,9 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
     for _ in range(code_count):
         for _ in range(r.u8()):
             r.u8(); r.u8(); r.u16(); r.u32(); r.u32()
+    for _ in range(r.u16()):
+        for _ in range(r.u8()):
+            r.u32()
 
     const_count = r.u32()
     constants = []

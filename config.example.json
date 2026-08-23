@@ -25,7 +25,13 @@
                 "junk_rate": 0.0,
                 "integrity_constants": false,
                 "integrity_constant_rate": 0.0,
-                "graph_execution_rate": 0.1
+                "graph_execution_rate": 0.1,
+                "cross_instruction_rate": 0.2,
+                "runtime_polymorphism_rate": 0.2,
+                "runtime_trace": false,
+                "block_variant_rate": 0.08,
+                "block_variant_count": 3,
+                "block_variant_max_instructions": 6
             }
         },
         "fast-vm": {
@@ -54,7 +60,13 @@
                 "junk_rate": 0.0,
                 "integrity_constants": false,
                 "integrity_constant_rate": 0.0,
-                "graph_execution_rate": 0.1
+                "graph_execution_rate": 0.1,
+                "cross_instruction_rate": 0.15,
+                "runtime_polymorphism_rate": 0.1,
+                "runtime_trace": false,
+                "block_variant_rate": 0.03,
+                "block_variant_count": 2,
+                "block_variant_max_instructions": 6
             }
         },
         "max": {
@@ -100,7 +112,13 @@
                 "junk_rate": 0.3,
                 "integrity_constants": true,
                 "integrity_constant_rate": 0.35,
-                "graph_execution_rate": 0.15
+                "graph_execution_rate": 0.15,
+                "cross_instruction_rate": 0.4,
+                "runtime_polymorphism_rate": 0.35,
+                "runtime_trace": false,
+                "block_variant_rate": 0.18,
+                "block_variant_count": 3,
+                "block_variant_max_instructions": 8
             }
         }
     }

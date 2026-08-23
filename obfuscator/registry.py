@@ -193,6 +193,30 @@ VM_OPTION_DOCS = {
         "default": 0.2,
         "range": "0.0 to 1.0",
     },
+    "runtime_polymorphism_rate": {
+        "description": "Fraction of eligible VM execution sites whose equivalent microtrace recipe is selected from a per-execution rolling route state.",
+        "default": 0.2,
+        "range": "0.0 to 1.0",
+    },
+    "runtime_trace": {
+        "description": "Emit the final runtime route hash to stderr for diagnostics. Keep disabled in normal and release builds.",
+        "default": False,
+    },
+    "block_variant_rate": {
+        "description": "Fraction of eligible straight-line basic-block chunks cloned into independently compiled runtime-selectable variants.",
+        "default": 0.08,
+        "range": "0.0 to 1.0",
+    },
+    "block_variant_count": {
+        "description": "Number of physical variants emitted for each selected basic-block chunk.",
+        "default": 3,
+        "range": "2 to 4",
+    },
+    "block_variant_max_instructions": {
+        "description": "Maximum original instruction count in one runtime-polymorphic block chunk.",
+        "default": 6,
+        "range": "2 to 32",
+    },
 }
 
 
@@ -310,6 +334,18 @@ def validate_release_config(config: dict) -> None:
     if float(vm_options.get("cross_instruction_rate", 0.0)) <= 0.0:
         errors.append("vm_options.cross_instruction_rate should be > 0.0")
 
+    if float(vm_options.get("runtime_polymorphism_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.runtime_polymorphism_rate should be > 0.0")
+
+    if vm_options.get("runtime_trace") is True:
+        errors.append("vm_options.runtime_trace must be false for release builds")
+
+    if float(vm_options.get("block_variant_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.block_variant_rate should be > 0.0")
+
+    if int(vm_options.get("block_variant_count", 0)) < 2:
+        errors.append("vm_options.block_variant_count should be >= 2")
+
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
@@ -348,7 +384,8 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError("vm_options.vm_count must be an integer >= 1")
 
     for key in ("junk_rate", "integrity_constant_rate", "graph_execution_rate",
-                "cross_instruction_rate"):
+                "cross_instruction_rate", "runtime_polymorphism_rate",
+                "block_variant_rate"):
         value = options.get(key)
         if value is not None:
             if not isinstance(value, (int, float)) or isinstance(value, bool):
@@ -356,10 +393,23 @@ def _validate_vm_options(options: dict) -> None:
             if not 0.0 <= float(value) <= 1.0:
                 raise ConfigError(f"vm_options.{key} must be between 0.0 and 1.0")
 
-    for key in ("fake_handlers", "mutate_handlers", "junk_instructions", "integrity_constants"):
+    for key in ("fake_handlers", "mutate_handlers", "junk_instructions", "integrity_constants", "runtime_trace"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"vm_options.{key} must be true or false")
+
+    for key, minimum, maximum in (
+        ("block_variant_count", 2, 4),
+        ("block_variant_max_instructions", 2, 32),
+    ):
+        value = options.get(key)
+        if value is not None:
+            if not isinstance(value, int) or isinstance(value, bool):
+                raise ConfigError(f"vm_options.{key} must be an integer")
+            if not minimum <= value <= maximum:
+                raise ConfigError(
+                    f"vm_options.{key} must be between {minimum} and {maximum}"
+                )
 
 
 def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = True):

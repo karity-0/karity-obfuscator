@@ -154,7 +154,7 @@ _NUMERIC_DECODE = (
 )
 
 
-_LUA_OP_COUNT = 58  # Lua 5.3 opcode 0~46 plus karity integrity pseudo ops
+_LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
 _VOP_SPACE    = 128  # 7비트 op × 256 variant = 32768, 실용 범위는 128*256
 
 
@@ -1254,7 +1254,12 @@ def _apply_handler_graphs(
     vm_code: str,
     graph_sites: set[int] | None = None,
     graph_family_count: int = 8,
+    runtime_polymorphism_rate: float = 0.0,
+    runtime_trace: bool = False,
 ) -> str:
+    threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
+    vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
+    vm_code = vm_code.replace("__VM_POLY_TRACE__", "true" if runtime_trace else "false")
     slots: dict[str, int] = {}
     used_slots: set[int] = set()
     for kind, (token, _, _) in _ARITH_SPECS.items():
@@ -1377,7 +1382,7 @@ def _apply_handler_graphs(
         "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
         "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
         "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_PENDING__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
-        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
+        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_FR_ROUTE_STATE__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
         "__VM_Q_FLOW__", "__VM_Q_BUDGET__", "__VM_Q_LEDGER__",
@@ -1399,7 +1404,7 @@ def _apply_handler_graphs(
 _VM_RENAME_KEYS = [
     # proto 테이블 키
     "num_params", "is_vararg", "max_stack_size", "vm_id",
-    "constants", "code", "avalanche", "graph_sites", "upvalues", "protos",
+    "constants", "code", "avalanche", "graph_sites", "block_routes", "upvalues", "protos",
     "instack", "idx",
     # reader 메서드명
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
@@ -1504,6 +1509,11 @@ _DEFAULT_VM_OPTIONS = {
     "integrity_constant_rate": 0.25,
     "graph_execution_rate": 0.1,
     "cross_instruction_rate": 0.2,
+    "runtime_polymorphism_rate": 0.2,
+    "runtime_trace": False,
+    "block_variant_rate": 0.08,
+    "block_variant_count": 3,
+    "block_variant_max_instructions": 6,
 }
 
 
@@ -1554,6 +1564,9 @@ class VMPass(PostPass):
             if self.vm_options.get("integrity_constants", False):
                 for pseudo_op in range(47, _LUA_OP_COUNT):
                     used_ops.update(vop_map[pseudo_op])
+            if float(self.vm_options.get("block_variant_rate", 0.08)) > 0.0:
+                for pseudo_op in (58, 59):
+                    used_ops.update(vop_map[pseudo_op])
             used_ops_list.append(used_ops)
         self.last_profile.append({"phase": "build_vm_maps", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
@@ -1580,6 +1593,15 @@ class VMPass(PostPass):
                 self.vm_options.get("cross_instruction_rate", 0.2)
             ),
             graph_family_count=graph_family_count,
+            block_variant_rate=float(
+                self.vm_options.get("block_variant_rate", 0.08)
+            ),
+            block_variant_count=int(
+                self.vm_options.get("block_variant_count", 3)
+            ),
+            block_variant_max_instructions=int(
+                self.vm_options.get("block_variant_max_instructions", 6)
+            ),
         )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
@@ -1652,6 +1674,10 @@ class VMPass(PostPass):
             vm_func_src,
             graph_sites,
             graph_family_count,
+            runtime_polymorphism_rate=float(
+                self.vm_options.get("runtime_polymorphism_rate", 0.2)
+            ),
+            runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
         )
 
         _graph_elapsed = time.perf_counter() - _graph_start

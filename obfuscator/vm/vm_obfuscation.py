@@ -11,7 +11,7 @@ import re
 from ..parser import Proto
 from .vm_mutation import mutate_handlers, _lua_depth_delta
 
-_LUA_OP_COUNT = 58  # Lua 5.3 opcode 0~46 plus karity integrity pseudo ops
+_LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
 
 # ---------------------------------------------------------------------------
 # Split opcode catalog
