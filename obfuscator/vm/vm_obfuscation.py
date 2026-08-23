@@ -11,7 +11,7 @@ import re
 from ..parser import Proto
 from .vm_mutation import mutate_handlers, _lua_depth_delta
 
-_LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
+_LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
 
 # ---------------------------------------------------------------------------
 # Split opcode catalog
@@ -20,6 +20,7 @@ _BINARY_SPLIT_OPS = {13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24}
 _UNARY_SPLIT_OPS  = {25, 26, 27, 28}
 _LOAD_SPLIT_OPS   = {0, 1}
 ALL_SPLIT_OPS     = _BINARY_SPLIT_OPS | _UNARY_SPLIT_OPS | _LOAD_SPLIT_OPS
+DEFER_OPS         = {13, 14, 25}
 
 _BINARY_OP_LUA = {
     13: "+", 14: "-", 15: "*", 16: "%", 17: "^",
@@ -64,26 +65,26 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
         slot = _GRAPH_BINARY_SLOTS[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=_arith2(regs[B],regs[C],_av,{slot}){_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(_arith2s(rget(B),rget(C),_av,{slot})){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-                f" _split_tmp=_arith2(_split_tmp,regs[C],_av,{slot}){_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+                f" _split_set(_arith2s(_split_get(),rget(C),_av,{slot})){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
     if orig_op in _GRAPH_UNARY_SLOTS:
         slot = _GRAPH_UNARY_SLOTS[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,_arith1(_split_tmp,_av,{slot})){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" rset(A,_arith1s(_split_get(),_av,{slot})){_SPLIT_PAD}",
             ]
         return [
-            f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-            f" _split_tmp=_arith1(_split_tmp,_av,{slot}){_SPLIT_PAD}",
-            f" rset(A,_split_tmp){_SPLIT_PAD}",
+            f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+            f" _split_set(_arith1s(_split_get(),_av,{slot})){_SPLIT_PAD}",
+            f" rset(A,_split_get()){_SPLIT_PAD}",
         ]
     if orig_op in _BINARY_OP_LUA:
         lua_op = _BINARY_OP_LUA[orig_op]
@@ -97,14 +98,14 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
             return expr
         if parts == 2:
             return [
-                f" _split_tmp={binary_expr('regs[B]', 'regs[C]')}{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set({binary_expr('rget(B)', 'rget(C)')}){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={binary_expr('_split_tmp', 'regs[C]')}{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" _split_set({binary_expr('_split_get()', 'rget(C)')}){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
     elif orig_op in _UNARY_PREFIX:
         pfx = _UNARY_PREFIX[orig_op]
@@ -115,38 +116,38 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
             unary_expr = lambda value: f"{pfx}{value}"
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,{unary_expr('_split_tmp')}){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" rset(A,{unary_expr('_split_get()')}){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={unary_expr('_split_tmp')}{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" _split_set({unary_expr('_split_get()')}){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
     elif orig_op == 0:  # MOVE
         if parts == 2:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,0)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+                f" _split_set(_split_get()){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,0)){_SPLIT_PAD}",
             ]
     elif orig_op == 1:  # LOADK
         if parts == 2:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil)){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,1)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1]),nil,nil){_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil)){_SPLIT_PAD}",
+                f" _split_set(_split_get()){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,1)){_SPLIT_PAD}",
             ]
     return [f" {_SPLIT_PAD}"] * parts
 
@@ -361,22 +362,24 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
              av: str = "_av") -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
-        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,regs[{b}],nil,nil),{av},0))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,rget({b}),nil,nil),{av},0))"
     if op == 1:   # LOADK
-        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1]),nil,nil),{av},1))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1],proto),nil,nil),{av},1))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,upvals[{b}+1].v,nil,nil),{av},5))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,get_upvalue(upvals[{b}+1]),nil,nil),{av},5))"
     if op in _GRAPH_BINARY_SLOTS:
-        return f"rset({a},_arith2(regs[{b}],regs[{c}],{av},{_GRAPH_BINARY_SLOTS[op]}))"
+        linear = "1" if op == 13 else "-1" if op == 14 else "nil"
+        return f"_arith2r({a},{b},{c},{av},{_GRAPH_BINARY_SLOTS[op]},{linear})"
     if op in _GRAPH_UNARY_SLOTS:
-        return f"rset({a},_arith1(regs[{b}],{av},{_GRAPH_UNARY_SLOTS[op]}))"
+        linear = "-1" if op == 25 else "nil"
+        return f"_arith1r({a},{b},{av},{_GRAPH_UNARY_SLOTS[op]},{linear})"
     if op in _BINARY_OP_LUA:
-        expr = f"regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}]"
+        expr = f"rget({b}){_BINARY_OP_LUA[op]}rget({c})"
         if op in _VALUE_BINARY_TAGS:
             expr = f"_carry({expr},{av},{op})"
         return f"rset({a},{expr})"
     if op in _UNARY_PREFIX:
-        expr = f"{_UNARY_PREFIX[op]}regs[{b}]"
+        expr = f"{_UNARY_PREFIX[op]}rget({b})"
         if op in _VALUE_UNARY_TAGS:
             expr = f"_carry({expr},{av},{op})"
         return f"rset({a},{expr})"
@@ -432,10 +435,66 @@ def apply_fuse_to_vm(vm_code: str,
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
 
 
+def apply_defer_to_vm(vm_code: str,
+                      defer_map: dict[int, int],
+                      mutate: bool = True) -> str:
+    """Insert lazy producer handlers whose result is completed by a later rget."""
+    if not defer_map:
+        return vm_code
+    chain_start, chain_end = _find_chain(vm_code)
+    chain = vm_code[chain_start:chain_end]
+    blocks = _parse_handler_blocks(chain)
+    tokens = {
+        13: "__VM_PENDING_ADD__",
+        14: "__VM_PENDING_SUB__",
+        25: "__VM_PENDING_UNM__",
+    }
+    deferred: dict[int, str] = {}
+    for op, vop in defer_map.items():
+        if op in (13, 14):
+            body = (
+                f" _defer2r(A,B,C,_av,{_GRAPH_BINARY_SLOTS[op]},"
+                f"{tokens[op]}){_SPLIT_PAD}"
+            )
+        elif op == 25:
+            body = (
+                f" _defer1r(A,B,_av,{_GRAPH_UNARY_SLOTS[op]},"
+                f"{tokens[op]}){_SPLIT_PAD}"
+            )
+        else:
+            raise ValueError(f"non-deferable op: {op}")
+        deferred[vop] = body
+    if mutate:
+        deferred = mutate_handlers(deferred)
+    blocks.update(deferred)
+    new_chain = _rebuild_chain(blocks)
+    return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
+
+
 # ---------------------------------------------------------------------------
 # 5. alias 핸들러 생성 + vop 치환
 # ---------------------------------------------------------------------------
-def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]]) -> str:
+_DIRECT_SEMANTIC_BODIES = {
+    5:  " rset(A,_carry(get_upvalue(upvals[B+1]),_av,5))\n        ",
+    6:  " local _t=get_upvalue(upvals[B+1]); rset(A,_carry(_t[rget(C)],_av,6))\n        ",
+    7:  " local _t=rget(B); rset(A,_carry(_t[rget(C)],_av,7))\n        ",
+    8:  " local _t=get_upvalue(upvals[A+1]); _t[rget(B)]=rget(C); _touch(_av,8)\n        ",
+    10: " local _t=rget(A); _t[rget(B)]=rget(C); _touch(_av,10)\n        ",
+    11: " rset(A,_carry({},_av,11))\n        ",
+    12: " local _t=rget(B); rset(A+1,_carry(_t,_av,112)); rset(A,_carry(_t[rget(C)],_av,12))\n        ",
+    31: " if _carry(rget(B)==rget(C),_av,31)~=(A~=0) then pc=pc+1 end\n        ",
+    32: " if _carry(rget(B)<rget(C),_av,32)~=(A~=0) then pc=pc+1 end\n        ",
+    33: " if _carry(rget(B)<=rget(C),_av,33)~=(A~=0) then pc=pc+1 end\n        ",
+    34: " if _carry(not not rget(A),_av,34)~=(C~=0) then pc=pc+1 end\n        ",
+    35: " local _v=rget(B); if _carry(not not _v,_av,35)==(C~=0) then rset(A,_v) else pc=pc+1 end\n        ",
+    43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _t[_b+_i]=_v[_i] end; _touch(_av,43)\n        ",
+    44: " get_box(A); rset(A,_carry(make_closure(_subs[Bx+1]),_av,44))\n        ",
+    45: " local _n=B==0 and (_va.n or #_va) or B-1; for _i=1,_n do rset(A+_i-1,_va[_i]) end; _touch(_av,45); if B==0 then top=A+_n-1 end\n        ",
+}
+
+
+def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
+                    semantic_diversity_rate: float = 0.0) -> str:
     """
     vm.lua의 op==N 체인을 파싱해서:
     1. 각 원본 op의 alias vop들에 대해 state 전이가 다른 핸들러를 생성
@@ -454,7 +513,14 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]]) -> str:
         for i, vop in enumerate(aliases):
             transition = transitions[i % len(transitions)]
             pre = (i % 2 == 0)
-            new_blocks[vop] = _make_alias_body(body, transition, pre)
+            alias_body = body
+            # Keep one graph-backed alias as the baseline. Other aliases may
+            # lower the same operation directly so table/upvalue/control
+            # semantics do not all converge on _sem.
+            if (i > 0 and orig_op in _DIRECT_SEMANTIC_BODIES and
+                    random.random() < semantic_diversity_rate):
+                alias_body = _DIRECT_SEMANTIC_BODIES[orig_op]
+            new_blocks[vop] = _make_alias_body(alias_body, transition, pre)
 
     new_chain = _rebuild_chain(new_blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
@@ -466,13 +532,13 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]]) -> str:
 # 절대 참이 될 수 없는 가드 조건들 (정수 op 코드 자체를 활용해 매번 다르게)
 _FAKE_BODIES = [
     " local _j={}; for _i=1,(B or 0)%3 do _j[_i]=_i*7 end\n        ",
-    " if false then rset(A,regs[B] and regs[C] or 0) end\n        ",
+    " if false then rset(A,rget(B) and rget(C) or 0) end\n        ",
     " local _j=(A or 0)~(C or 0); if _j==-1 then rset(0,_j) end\n        ",
     " local _j=Bx or 0; _j=(_j+1)*2-(_j*2+2)\n        ",
     " if pc<0 then pc=pc+sBx end\n        ",
     " local _j={A,B,C}; if #_j==0 then return end\n        ",
     " local _j=(sBx or 0)*0; if _j~=0 then rset(A,_j) end\n        ",
-    " if regs[A]==regs and regs[A]~=regs then error(\"unreachable\") end\n        ",
+    " if rget(A)==regs and rget(A)~=regs then error(\"unreachable\") end\n        ",
 ]
 
 
@@ -540,7 +606,8 @@ def prune_and_inject_handlers(
 # code 변수명을 그대로 재사용해야 하므로 템플릿에서 추출해 _step 본문에 넣는다.
 _TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
 _TAILCALL_TAIL_RE     = re.compile(
-    r'\s*end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
+    r'\s*(?P<epilogue>if _has_pending then _seal_pending\(\) end\s*)?'
+    r'end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
 )
 
 DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
@@ -614,6 +681,7 @@ def convert_dispatch_to_tailcall(vm_code: str) -> str:
     if tail_m is None:
         raise RuntimeError("tailcall convert: dispatch loop tail not found")
     region_end = tail_m.end()
+    epilogue = (tail_m.group("epilogue") or "").strip()
 
     # _step과 핸들러는 vararg 함수로 emit한다. function_obf는 이미 vararg인
     # 함수를 변환에서 제외하므로(skip_vm_dispatcher와 무관) 디스패치 hot path가
@@ -628,7 +696,7 @@ def convert_dispatch_to_tailcall(vm_code: str) -> str:
     ]
     for vop in sorted(blocks.keys()):
         body   = blocks[vop]
-        suffix = "" if _ends_with_top_return(body) else " return _step() "
+        suffix = "" if _ends_with_top_return(body) else f" {epilogue} return _step() "
         parts.append(f"_H[{vop}]=function(...) local A,B,C,Bx,sBx=...{body}{suffix}end")
     parts.append("return _step()")
 
@@ -667,7 +735,9 @@ def convert_dispatch_to_bsearch(vm_code: str) -> str:
     return vm_code[:chain_start] + tree + vm_code[chain_end:]
 
 
-def _emit_group_inner(ops: list[int], blocks: dict[int, str], inner: str) -> str:
+def _emit_group_inner(
+    ops: list[int], blocks: dict[int, str], inner: str, epilogue: str = ""
+) -> str:
     """그룹 ops 에 대한 내부 디스패치 본문(inner: 'ifelseif'|'bsearch').
 
     각 핸들러 body 에는 tailcall 과 동일 규칙으로 trampoline suffix(`return _step()`)
@@ -677,7 +747,7 @@ def _emit_group_inner(ops: list[int], blocks: dict[int, str], inner: str) -> str
 
     def branch_body(vop: int) -> str:
         body = blocks[vop]
-        suffix = "" if _ends_with_top_return(body) else " return _step() "
+        suffix = "" if _ends_with_top_return(body) else f" {epilogue} return _step() "
         return f"{body}{suffix}"
 
     if inner == "bsearch":
@@ -725,6 +795,7 @@ def convert_dispatch_to_split(vm_code: str, k: int = 2,
     if tail_m is None:
         raise RuntimeError("split convert: dispatch loop tail not found")
     region_end = tail_m.end()
+    epilogue = (tail_m.group("epilogue") or "").strip()
 
     vops = sorted(blocks.keys())
     k    = max(2, min(k, len(vops)))
@@ -764,7 +835,7 @@ def convert_dispatch_to_split(vm_code: str, k: int = 2,
     for i, g in enumerate(groups):
         parts.append(
             f"{gnames[i]}=function(...) local op,A,B,C,Bx,sBx=... "
-            f"{_emit_group_inner(g, blocks, inner)} end"
+            f"{_emit_group_inner(g, blocks, inner, epilogue)} end"
         )
     parts.append("return _step()")
 
@@ -781,11 +852,207 @@ def convert_dispatch_to_split(vm_code: str, k: int = 2,
 _EXEC_MARK_START = "--<<EXEC>>"
 _EXEC_MARK_END   = "--<<ENDEXEC>>"
 
+_HELPER_MARKERS = {
+    "rget": ("--<<RGET>>", "--<<ENDRGET>>"),
+    "rset": ("--<<RSET>>", "--<<ENDRSET>>"),
+    "_flow": ("--<<FLOW>>", "--<<ENDFLOW>>"),
+    "_sem": ("--<<SEM>>", "--<<ENDSEM>>"),
+}
+
+
+def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, list[str]]:
+    """Emit independent copies of a hot helper inside one exec template."""
+    start_marker, end_marker = _HELPER_MARKERS[helper]
+    start = vm_code.index(start_marker) + len(start_marker)
+    end = vm_code.index(end_marker, start)
+    source = vm_code[start:end]
+    names = [helper]
+    clones = []
+    for index in range(1, count):
+        name = f"{helper}_{random.randint(0x1000, 0xFFFF):x}_{index}"
+        clone = source.replace(f"local function {helper}(",
+                               f"local function {name}(", 1)
+        if clone == source:
+            raise RuntimeError(f"execution kit: helper {helper} not found")
+        if helper == "rget":
+            before = clone
+            clone = clone.replace(
+                "return _rdecode(((regs[p1]+_RS[p2])-b)*inv,_RT[p4])",
+                "local _v=((regs[p1]+_RS[p2])-b)*inv; local _k=_RT[p4]; "
+                "if _k==1 then return _v elseif _k==2 then return _v~=0 "
+                "elseif _k==3 then return nil end; return _RO[_v]",
+                1,
+            )
+            if clone == before:
+                raise RuntimeError("execution kit: rget specialization did not match")
+        elif helper == "rset":
+            before = clone
+            clone = clone.replace(
+                "local payload,kind=_rvalue(v,epoch)\n"
+                "        local a,b=_rparams(i,epoch)\n"
+                "        _rstore(i,a*payload+b,epoch,kind)",
+                "local payload,kind\n"
+                "        if math.type(v)==\"integer\" then payload,kind=v,1\n"
+                "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n"
+                "        elseif v==nil then payload,kind=_rmix(epoch~_RZ~0x4E494C),3\n"
+                "        else\n"
+                "            if not (type(v)==\"number\" and v~=v) then payload=_RI[v] end\n"
+                "            if payload==nil then _RX[2]=(_RX[2] or 0)+1; payload=_RX[2]; "
+                "_RO[payload]=v; if not (type(v)==\"number\" and v~=v) then "
+                "_RI[v]=payload end end; kind=4\n"
+                "        end\n"
+                "        local a,b=_rparams(i,epoch); local encoded=a*payload+b\n"
+                "        _PD[_rpos(5,i)]=nil; local share=_rmix(epoch~_RZ~"
+                "((i+3)*-3372029247567499371)); local p1,p2,p3,p4=_rpositions(i)\n"
+                "        regs[p1]=encoded-share; _RS[p2]=share; _RE[p3]=epoch; "
+                "_RT[p4]=kind; _RL[i]=true",
+                1,
+            )
+            if clone == before:
+                raise RuntimeError("execution kit: rset specialization did not match")
+        names.append(name)
+        clones.append(clone)
+    if clones:
+        vm_code = vm_code[:end] + "".join(clones) + vm_code[end:]
+    return vm_code, names
+
+
+def _rewrite_helper_calls(source: str, helper: str, names: list[str],
+                          rate: float) -> str:
+    pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(helper)}(?=\s*\()")
+
+    def replace(match: re.Match) -> str:
+        if len(names) == 1 or random.random() >= rate:
+            return match.group(0)
+        return random.choice(names[1:])
+
+    return pattern.sub(replace, source)
+
+
+def _inline_fetch_decode(vm_code: str) -> str:
+    start_marker, end_marker = "--<<FETCH>>", "--<<ENDFETCH>>"
+    start = vm_code.index(start_marker)
+    end = vm_code.index(end_marker, start) + len(end_marker)
+    layouts = [
+        (
+            "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
+            "local _dk=(_S[611] or 0)~(_XF[1] or 0); "
+            "local _dw=((_cd[pc]~_ksm(pc))~_dk)~_dk; local _av=_avd[_ip]; "
+            "local _lo=_dw&0x7F; local _hi=(_dw>>_SH_V)&0xFF; "
+            "local op=_lo|(_hi<<7); local A=(_dw>>_SH_A)&0xFF; "
+            "local B=(_dw>>_SH_B)&0x1FF; local C=(_dw>>_SH_C)&0x1FF; "
+            "local Bx=(_dw>>_SH_C)&0x3FFFF; local sBx=Bx-131071; pc=pc+1; "
+            "_route_step(_ip,op,A,B,C)"
+        ),
+        (
+            "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
+            "local _dk=(_S[611] or 0)~(_XF[1] or 0); "
+            "local ins=(_cd[pc]~_ksm(pc))~_dk; local _dw=ins~_dk; "
+            "local C=(_dw>>_SH_C)&0x1FF; local B=(_dw>>_SH_B)&0x1FF; "
+            "local A=(_dw>>_SH_A)&0xFF; local Bx=(_dw>>_SH_C)&0x3FFFF; "
+            "local op=(_dw&0x7F)|(((_dw>>_SH_V)&0xFF)<<7); "
+            "local sBx=Bx-131071; local _av=_avd[_ip]; pc=pc+1; "
+            "_route_step(_ip,op,A,B,C)"
+        ),
+        (
+            "_av_read(); local _ip=pc; local _dk=(_S[611] or 0)~(_XF[1] or 0); "
+            "local ins=(_cd[pc]~_ksm(pc))~_dk; local _dw=ins~_dk; "
+            "local Bx=(_dw>>_SH_C)&0x3FFFF; local sBx=Bx-131071; "
+            "local A=(_dw>>_SH_A)&0xFF; local C=Bx&0x1FF; "
+            "local B=(_dw>>_SH_B)&0x1FF; local op=(_dw&0x7F)|"
+            "(((_dw>>_SH_V)&0xFF)<<7); local _av=_avd[_ip]; "
+            "_gsl=_gsd[_ip]; _gq=0; pc=pc+1; _route_step(_ip,op,A,B,C)"
+        ),
+    ]
+    return vm_code[:start] + random.choice(layouts) + vm_code[end:]
+
+
+def apply_execution_kit(vm_code: str, helper_variant_count: int = 3,
+                        helper_diversity_rate: float = 0.35) -> str:
+    """Compile one VM's fetch and hot helper topology at build time.
+
+    Runtime selection is deliberately avoided: each call site is wired to a
+    concrete implementation, so there is no replacement selector choke point.
+    """
+    count = max(1, min(4, int(helper_variant_count)))
+    rate = max(0.0, min(1.0, float(helper_diversity_rate)))
+    helper_names = {}
+    for helper in _HELPER_MARKERS:
+        vm_code, helper_names[helper] = _clone_local_helper(vm_code, helper, count)
+
+    # All four helper declarations precede ENDSEM. Rewriting only the suffix
+    # avoids recursively wiring variants through one another while covering
+    # dispatcher handlers, split/fuse handlers, and call continuations.
+    split_at = vm_code.index(_HELPER_MARKERS["_sem"][1]) + len(_HELPER_MARKERS["_sem"][1])
+    prefix, suffix = vm_code[:split_at], vm_code[split_at:]
+    for helper, names in helper_names.items():
+        suffix = _rewrite_helper_calls(suffix, helper, names, rate)
+    vm_code = prefix + suffix
+    vm_code = _inline_fetch_decode(vm_code)
+    for start_marker, end_marker in _HELPER_MARKERS.values():
+        vm_code = vm_code.replace(start_marker, "").replace(end_marker, "")
+    return vm_code
+
+
+def wire_exec_router(vm_code: str, router_index: int) -> str:
+    """Bind every continuation edge in one marked exec to its VM router."""
+    start = vm_code.index(_EXEC_MARK_START) + len(_EXEC_MARK_START)
+    end = vm_code.index(_EXEC_MARK_END, start)
+    body = vm_code[start:end].replace("_NX", f"_NX[{router_index + 1}]")
+    return vm_code[:start] + body + vm_code[end:]
+
+
+def build_next_router_kit(vm_code: str, count: int) -> str:
+    """Replace the global continuation router with per-VM implementations."""
+    start_marker = "--<<NEXT_ROUTER>>"
+    end_marker = "--<<ENDNEXT_ROUTER>>"
+    start = vm_code.index(start_marker)
+    end = vm_code.index(end_marker, start) + len(end_marker)
+    routers = []
+    for index in range(count):
+        if index % 2 == 0:
+            router = """function(...)
+    local q=...
+    if q[__VM_Q_KIND__]==__VM_CALL_ENTER__ then
+        local p=q[__VM_Q_PROTO__]
+        return _EX[_vid(p)+1](p,q[__VM_Q_UPVALS__],q[__VM_Q_ARGS__],nil,
+                              nil,q[__VM_Q_CONT__],nil,q[__VM_Q_FLOW__],
+                              q[__VM_Q_LEDGER__])
+    end
+    local k=q[__VM_Q_CONT__]
+    local r=q[__VM_Q_RESULT__]
+    if not k then return r end
+    local p=k[__VM_FR_PROTO__]
+    return _EX[_vid(p)+1](p,k[__VM_FR_UPVALS__],nil,nil,k,
+                          k[__VM_FR_PARENT__],r)
+end"""
+        else:
+            router = """function(...)
+    local q=(...)
+    local k=q[__VM_Q_CONT__]
+    if q[__VM_Q_KIND__]~=__VM_CALL_ENTER__ then
+        local result=q[__VM_Q_RESULT__]
+        if k==nil then return result end
+        local saved=k[__VM_FR_PROTO__]
+        return _EX[_vid(saved)+1](saved,k[__VM_FR_UPVALS__],nil,nil,k,
+                                  k[__VM_FR_PARENT__],result)
+    end
+    local target=q[__VM_Q_PROTO__]
+    local invoke=_EX[_vid(target)+1]
+    return invoke(target,q[__VM_Q_UPVALS__],q[__VM_Q_ARGS__],nil,nil,k,nil,
+                  q[__VM_Q_FLOW__],q[__VM_Q_LEDGER__])
+end"""
+        routers.append(router)
+    return vm_code[:start] + "_NX={" + ",".join(routers) + "}" + vm_code[end:]
+
 
 def build_exec_variants(vm_code: str, n: int, vm_maps: list,
                         used_ops_list: list[set[int]],
                         fake_handlers: bool = True, mutate: bool = True,
-                        dispatch: str = "ifelseif") -> str:
+                        dispatch: str = "ifelseif",
+                        helper_variant_count: int = 3,
+                        helper_diversity_rate: float = 0.35,
+                        semantic_diversity_rate: float = 0.35) -> str:
     """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립.
 
     dispatch: "ifelseif"(전부 if-elseif) | "tailcall"(전부 테이블+꼬리호출) |
@@ -799,16 +1066,19 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
 
     defs = []
     for k in range(n):
-        vop_map, split_map, fuse_map = vm_maps[k]
-        c = apply_vop_to_vm(template, vop_map)
+        vop_map, split_map, fuse_map, defer_map = vm_maps[k]
+        c = apply_vop_to_vm(template, vop_map, semantic_diversity_rate)
         c = prune_and_inject_handlers(c, used_ops_list[k],
                                       fake_handlers=fake_handlers, mutate=mutate)
         c = apply_split_to_vm(c, split_map, mutate=mutate)
         c = apply_fuse_to_vm(c, fuse_map, mutate=mutate)
+        c = apply_defer_to_vm(c, defer_map, mutate=mutate)
         # exec 정의 head 이름만 _ex{k}로 변경 (make_closure는 이미 _EX로 라우팅)
         c = c.replace("exec = function", f"_ex{k} = function", 1)
         # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)
         c = _apply_dispatch(c, _resolve_dispatch(dispatch))
+        c = apply_execution_kit(c, helper_variant_count, helper_diversity_rate)
+        c = c.replace("_NX", f"_NX[{k + 1}]")
         defs.append(c)
 
     # 마커 영역 → N벌 정의로 치환
@@ -817,4 +1087,5 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
     names = ",".join(f"_ex{k}" for k in range(n))
     vm_code = vm_code.replace("local exec, _EX", f"local {names}, _EX", 1)
     vm_code = vm_code.replace("_EX={exec}", "_EX={" + names + "}", 1)
+    vm_code = build_next_router_kit(vm_code, n)
     return vm_code

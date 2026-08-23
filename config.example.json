@@ -1,25 +1,134 @@
 {
-    "passes": [
-        "anti_debug", "anti_decompile",
-        "function_obf", "boolean_obf", "string_obf", "number_obf", "rename_obf", "localize_globals", "string_obf", "minify", "vm"
-    ],
-    "vm_output_passes": [
-        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
-        "rename_obf", "localize_globals", "string_obf",
-         "minify"
-    ],
-    "packer_output_passes": [
-        "function_obf", "boolean_obf", "table_obf", "string_obf", "number_obf",
-        "rename_obf", "localize_globals", "string_obf",
-        "minify"
-    ],
-    "vm_options": {
-        "dispatcher_type": "mixed",
-        "blob_form": "random",
-        "vm_count": 3,
-        "fake_handlers": true,
-        "mutate_handlers": true,
-        "junk_instructions": true,
-        "junk_rate": 0.30
+    "profile": "dev",
+    "profiles": {
+        "dev": {
+            "passes": [
+                "remove_comment",
+                "string_obf",
+                "number_obf",
+                "rename_obf",
+                "minify"
+            ],
+            "vm_output_passes": [
+                "minify"
+            ],
+            "packer_output_passes": [
+                "minify"
+            ],
+            "vm_options": {
+                "dispatcher_type": "ifelseif",
+                "blob_form": "string",
+                "vm_count": 1,
+                "fake_handlers": false,
+                "mutate_handlers": false,
+                "junk_instructions": false,
+                "junk_rate": 0.0,
+                "integrity_constants": false,
+                "integrity_constant_rate": 0.0,
+                "graph_execution_rate": 0.1,
+                "cross_instruction_rate": 0.2,
+                "runtime_polymorphism_rate": 0.2,
+                "runtime_trace": false,
+                "block_variant_rate": 0.08,
+                "block_variant_count": 3,
+                "block_variant_max_instructions": 6,
+                "helper_variant_count": 3,
+                "helper_diversity_rate": 0.35,
+                "semantic_diversity_rate": 0.35
+            }
+        },
+        "fast-vm": {
+            "passes": [
+                "remove_comment",
+                "string_obf",
+                "number_obf",
+                "rename_obf",
+                "minify",
+                "vm"
+            ],
+            "vm_output_passes": [
+                "rename_obf",
+                "minify"
+            ],
+            "packer_output_passes": [
+                "minify"
+            ],
+            "vm_options": {
+                "dispatcher_type": "ifelseif",
+                "blob_form": "string",
+                "vm_count": 1,
+                "fake_handlers": false,
+                "mutate_handlers": false,
+                "junk_instructions": false,
+                "junk_rate": 0.0,
+                "integrity_constants": false,
+                "integrity_constant_rate": 0.0,
+                "graph_execution_rate": 0.1,
+                "cross_instruction_rate": 0.15,
+                "runtime_polymorphism_rate": 0.1,
+                "runtime_trace": false,
+                "block_variant_rate": 0.03,
+                "block_variant_count": 2,
+                "block_variant_max_instructions": 6,
+                "helper_variant_count": 2,
+                "helper_diversity_rate": 0.2,
+                "semantic_diversity_rate": 0.2
+            }
+        },
+        "max": {
+            "passes": [
+                "anti_debug",
+                "anti_decompile",
+                "function_obf",
+                "boolean_obf",
+                "table_obf",
+                "string_obf",
+                "number_obf",
+                "rename_obf",
+                "localize_globals",
+                "minify",
+                "vm",
+                "pack"
+            ],
+            "vm_output_passes": [
+                "function_obf",
+                "number_obf",
+                "rename_obf",
+                "localize_globals",
+                "string_obf",
+                "minify"
+            ],
+            "packer_output_passes": [
+                "function_obf",
+                "boolean_obf",
+                "table_obf",
+                "string_obf",
+                "number_obf",
+                "rename_obf",
+                "localize_globals",
+                "minify"
+            ],
+            "vm_options": {
+                "dispatcher_type": "mixed",
+                "blob_form": "random",
+                "vm_count": 3,
+                "fake_handlers": true,
+                "mutate_handlers": true,
+                "junk_instructions": true,
+                "junk_rate": 0.3,
+                "integrity_constants": true,
+                "integrity_constant_rate": 0.35,
+                "graph_execution_rate": 0.15,
+                "cross_instruction_rate": 0.4,
+                "runtime_polymorphism_rate": 0.35,
+                "runtime_trace": false,
+                "block_variant_rate": 0.18,
+                "block_variant_count": 3,
+                "block_variant_max_instructions": 8,
+                "helper_variant_count": 4,
+                "helper_diversity_rate": 0.7,
+                "semantic_diversity_rate": 0.75
+            }
+        }
     }
 }

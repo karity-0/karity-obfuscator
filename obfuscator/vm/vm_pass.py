@@ -5,6 +5,7 @@ import tempfile
 import secrets
 import string
 import random
+import time
 import zlib
 import shutil
 import os
@@ -13,11 +14,19 @@ from pathlib import Path
 
 from ..passes.base import PostPass
 from ..parser import Lua53Parser
-from .serializer import (serialize, assign_vm_ids, collect_fuseable_pairs_for_vm)
+from .serializer import (
+    serialize,
+    assign_vm_ids,
+    collect_fuseable_pairs_for_vm,
+    patch_integrity_script_hash,
+)
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
-                             apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS,
-                             apply_dispatch, build_exec_variants,
+                             apply_split_to_vm, apply_fuse_to_vm,
+                             apply_defer_to_vm, ALL_SPLIT_OPS, DEFER_OPS,
+                             apply_dispatch, apply_execution_kit,
+                             wire_exec_router, build_next_router_kit,
+                             build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
                           apply_keystream, apply_tamper)
@@ -147,7 +156,7 @@ _NUMERIC_DECODE = (
 )
 
 
-_LUA_OP_COUNT = 47  # Lua 5.3 opcode 0~46
+_LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
 _VOP_SPACE    = 128  # 7비트 op × 256 variant = 32768, 실용 범위는 128*256
 
 
@@ -210,6 +219,12 @@ def _make_split_map(used_vops: set[int],
                   _new_unique_vop(used_vops)),
         }
     return split_map
+
+
+def _make_defer_map(used_vops: set[int],
+                    defer_ops: set[int]) -> dict[int, int]:
+    """Allocate one producer vop for each lazy cross-instruction operation."""
+    return {op: _new_unique_vop(used_vops) for op in sorted(defer_ops)}
 
 
 def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
@@ -816,11 +831,411 @@ def _make_semantic_ir_func(kind: str) -> str:
     context = (
         f"{{x={x},y={y},z={z},s={state},g=({seed}~({state}[611] or 0))}}"
     )
+    direct_semantic = (
+        semantic
+        .replace(f"{ctx}.x", x)
+        .replace(f"{ctx}.y", y)
+        .replace(f"{ctx}.z", z)
+    )
     return (
         "(function()local " + ",".join(names) + ";" + "".join(definitions)
         + f"return {{function({x},{y},{z},{state})return {names[-1]}({context}) end,"
-          f"function({x},{y},{z},{state})return {names[0]}({context}) end}} end)()"
+          f"function({x},{y},{z},{state}){direct_semantic}return r end}} end)()"
     )
+
+
+def _random_topological_order(nodes: dict[int, dict], label: str) -> list[int]:
+    """Compile-time scheduling for DAG graphs; no runtime node dispatcher remains."""
+    indegree = {node_id: len(node["deps"]) for node_id, node in nodes.items()}
+    children = {node_id: [] for node_id in nodes}
+    for node_id, node in nodes.items():
+        for dep in node["deps"]:
+            children[dep].append(node_id)
+    ready = [node_id for node_id, degree in indegree.items() if degree == 0]
+    order: list[int] = []
+    while ready:
+        node_id = ready.pop(random.randrange(len(ready)))
+        order.append(node_id)
+        for child in children[node_id]:
+            indegree[child] -= 1
+            if indegree[child] == 0:
+                ready.append(child)
+    if len(order) != len(nodes):
+        raise RuntimeError(f"generated {label} graph contains a cycle")
+    return order
+
+
+def _compile_integer_graph_func(op_kind: str) -> str:
+    """Compile an arithmetic DAG into one specialized straight-line handler."""
+    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
+    trace = _rand_lua_name()
+    state_key = random.randint(700, 1200)
+    nodes: dict[int, dict] = {}
+
+    def add_node(kind: str, deps: list[int]) -> int:
+        node_id = len(nodes)
+        nodes[node_id] = {"kind": kind, "deps": tuple(dict.fromkeys(deps))}
+        return node_id
+
+    core = add_node("core", [])
+    zeros: list[int] = []
+    for _ in range(random.randint(8, 12)):
+        deps = random.sample(zeros, min(len(zeros), random.randint(0, 2)))
+        zeros.append(add_node("zero", deps))
+    value = core
+    for i in range(random.randint(max(12, len(zeros)), 18)):
+        deps = [value, zeros[i % len(zeros)]]
+        if random.random() < 0.45:
+            deps.append(random.choice(zeros))
+        value = add_node("identity", deps)
+    sink = add_node("sink", [value, *random.sample(zeros, 2)])
+
+    order = _random_topological_order(nodes, op_kind)
+    names = {node_id: _rand_lua_name() for node_id in nodes}
+    lines = [
+        f"function({a},{b},{state},{slots},{regs},{active},{boxes})",
+        f"{state}={state} or {{}};{active}={active} or {{}};",
+        "local " + ",".join(names.values()) + ";",
+        f"local {trace}=(({a}~{b})~{_hex64()}~({state}[611] or 0));",
+    ]
+    for node_id in order:
+        node = nodes[node_id]
+        name = names[node_id]
+        deps = [names[dep] for dep in node["deps"]]
+        if node["kind"] == "core":
+            lines.append(
+                f"{name}={_make_integer_expr(op_kind, a, b)};"
+                f"{trace}=({trace}~({name}|(~{name})));"
+            )
+        elif node["kind"] == "zero":
+            terms = deps or [a, b]
+            joined = "~".join(f"(({term})~({term}))" for term in terms)
+            lines.append(
+                f"{name}=({joined});{trace}=(({trace}~{name})~"
+                f"(({state}[{state_key}] or 0)&{name}));"
+                f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{name});"
+            )
+        elif node["kind"] == "identity":
+            source = deps[0]
+            zero_expr = "+".join(deps[1:])
+            mode = random.randrange(3)
+            if mode == 0:
+                mask = _hex64()
+                expr = f"((({source}~{mask})~{mask})+({zero_expr}))"
+            elif mode == 1:
+                key = _hex64()
+                expr = f"((({source}+{key})-{key})+({zero_expr}))"
+            else:
+                expr = f"(({source})+({zero_expr})+(({trace}~{trace})))"
+            lines.append(
+                f"{name}={expr};{trace}=({trace}~({name}&{name})~({zero_expr}));"
+            )
+        else:
+            lines.append(
+                f"{name}=({deps[0]})+({deps[1]})+({deps[2]});"
+                f"{trace}=({trace}~{name}~({name}<<1));"
+            )
+
+    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    out = names[sink]
+    lines.extend([
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
+        f"if not {boxes}[{slot}] then local {mixed}=({out}~{trace}~"
+        f"(({index}*{_hex64()})&-1));{regs}({slot},{mixed});",
+        f"{active}[{slot}]=true;{state}[{state_key}]=(({state}[{state_key}] or 0)~"
+        f"{mixed}~{slot}) end end end;return {out} end",
+    ])
+    return "".join(lines)
+
+
+def _compile_value_graph_func() -> str:
+    """Compile a value diffusion DAG without runtime closures or memo tables."""
+    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
+    nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
+    zeros: list[int] = []
+    for _ in range(random.randint(7, 11)):
+        deps = random.sample(zeros, min(len(zeros), random.randint(0, 2)))
+        node_id = len(nodes)
+        nodes[node_id] = {"kind": "zero", "deps": tuple(deps)}
+        zeros.append(node_id)
+    current = 0
+    for i in range(random.randint(10, 16)):
+        deps = [current, zeros[i % len(zeros)]]
+        if random.random() < 0.4:
+            deps.append(random.choice(zeros))
+        node_id = len(nodes)
+        nodes[node_id] = {"kind": "identity", "deps": tuple(dict.fromkeys(deps))}
+        current = node_id
+    sink = len(nodes)
+    nodes[sink] = {"kind": "sink", "deps": (current, *random.sample(zeros, 2))}
+
+    names = {node_id: _rand_lua_name() for node_id in nodes}
+    trace = _rand_lua_name()
+    state_key = random.randint(1201, 1700)
+    lines = [
+        f"function({value},{state},{slots},{regs},{active},{boxes},{tag})",
+        "local " + ",".join(names.values()) + ";",
+        f"local {trace}=(({state}[611] or 0)~{tag}~{_hex64()});",
+    ]
+    for node_id in _random_topological_order(nodes, "value"):
+        node = nodes[node_id]
+        name = names[node_id]
+        deps = [names[dep] for dep in node["deps"]]
+        if node["kind"] == "source":
+            lines.append(f"{name}={value};")
+        elif node["kind"] == "zero":
+            source = "+".join(deps) if deps else f"({tag}~{tag})"
+            lines.append(
+                f"{name}=({source});{name}=({name}~{name});"
+                f"{trace}=({trace}~{name}~({tag}&0xFF));"
+            )
+        else:
+            zero_expr = "+".join(deps[1:])
+            lines.append(
+                f"{name}={deps[0]};{trace}=({trace}~({zero_expr})~({tag}&0xFF));"
+            )
+    out = names[sink]
+    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    lines.extend([
+        f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{tag});",
+        f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
+        f"if not {boxes}[{slot}] then local {mixed}=({trace}~{tag}~"
+        f"(({index}*{_hex64()})&-1));{regs}({slot},{mixed});{active}[{slot}]=true;",
+        f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{mixed}~{slot}) end end end;",
+        f"return {out} end",
+    ])
+    return "".join(lines)
+
+
+def _compiled_label_blocks(entry: str, blocks: list[tuple[str, str]]) -> str:
+    """Lay graph blocks out randomly while preserving explicit build-time edges."""
+    shuffled = list(blocks)
+    random.shuffle(shuffled)
+    return f"goto {entry};" + "".join(
+        f"::{label}::do {body} end;" for label, body in shuffled
+    )
+
+
+def _compile_call_route_func() -> str:
+    terminal, query = [_rand_lua_name() for _ in range(2)]
+    count = random.randint(14, 22)
+    labels = [_rand_lua_name() for _ in range(count)]
+    blocks: list[tuple[str, str]] = []
+    for i, label in enumerate(labels):
+        if i == count - 1:
+            body = (
+                f"{query}[__VM_Q_FLOW__]=({query}[__VM_Q_TRACE__]~"
+                f"({query}[__VM_Q_FLOW__] or 0));local d={query}[__VM_Q_LEDGER__];"
+                f"if d then d[1]=((d[1] or 0)~{query}[__VM_Q_TRACE__])&-1 end;"
+                f"return {terminal}({query})"
+            )
+        elif i == 0:
+            salt = _hex64()
+            body = (
+                f"{query}[__VM_Q_TRACE__]=({query}[__VM_Q_TRACE__]~{salt})&-1;"
+                f"goto {labels[1]}"
+            )
+        elif i == 1:
+            salt = _hex64()
+            body = (
+                f"{query}[__VM_Q_TRACE__]=(({query}[__VM_Q_TRACE__]+{salt})~"
+                f"{query}[__VM_Q_KIND__])&-1;if {query}[__VM_Q_BUDGET__]>0 then "
+                f"{query}[__VM_Q_BUDGET__]={query}[__VM_Q_BUDGET__]-1;goto {labels[0]} end;"
+                f"goto {labels[2]}"
+            )
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + random.randint(2, 5)))
+            salt = _hex64()
+            body = (
+                f"{query}[__VM_Q_TRACE__]=(({query}[__VM_Q_TRACE__]~{salt})+{i + 1})&-1;"
+                f"if (({query}[__VM_Q_TRACE__]~{query}[__VM_Q_KIND__]~{salt})&1)==0 "
+                f"then goto {labels[primary]} end;goto {labels[alternate]}"
+            )
+        blocks.append((label, body))
+    seed = _hex64()
+    return (
+        f"function({terminal},{query}){query}[__VM_Q_TRACE__]=({query}[__VM_Q_TRACE__] "
+        f"or ({query}[__VM_Q_KIND__]~{seed}));{query}[__VM_Q_BUDGET__]="
+        f"({query}[__VM_Q_BUDGET__] or ((({query}[__VM_Q_KIND__]~{seed})&3)+1));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _compile_control_graph_func() -> str:
+    packet, state = [_rand_lua_name() for _ in range(2)]
+    count = random.randint(12, 18)
+    labels = [_rand_lua_name() for _ in range(count)]
+    state_key = random.randint(1701, 2200)
+    blocks: list[tuple[str, str]] = []
+    for i, label in enumerate(labels):
+        if i == count - 1:
+            body = f"return {packet}"
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + 4))
+            salt, loop_salt = _hex64(), _hex64()
+            body = (
+                f"local o={packet}[__VM_CF_KEY__];local n=(o~{salt}~"
+                f"({state}[{state_key}] or 0))&-1;for j=1,(({packet}[__VM_CF_TRACE__]&3)+1) "
+                f"do n=(n~((j*{loop_salt})&-1))&-1 end;for _,f in ipairs("
+                f"{packet}[__VM_CF_FIELDS__]) do {packet}[f]=({packet}[f]~o)~n end;"
+                f"{packet}[__VM_CF_KEY__]=n;{packet}[__VM_CF_TRACE__]="
+                f"({packet}[__VM_CF_TRACE__]~n~{salt})&-1;{state}[{state_key}]="
+                f"(({state}[{state_key}] or 0)~n~{i + 1});if ((n~{packet}[__VM_CF_TRACE__])&1)==0 "
+                f"then goto {labels[primary]} end;goto {labels[alternate]}"
+            )
+        blocks.append((label, body))
+    seed = _hex64()
+    return (
+        f"function({packet},{state}){packet}[__VM_CF_TRACE__]=({packet}[__VM_CF_TRACE__] "
+        f"or ({packet}[__VM_CF_KEY__]~{seed}));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _compile_occurrence_graph_func(family_seed: int) -> str:
+    bank, pick, a, b, state, slots, regs, active, boxes, ledger, vm_state = [
+        _rand_lua_name() for _ in range(11)
+    ]
+    site, selector, state_key, policy = [_rand_lua_name() for _ in range(4)]
+    count = random.randint(7, 11)
+    labels = [_rand_lua_name() for _ in range(count)]
+    trace = _rand_lua_name()
+    blocks: list[tuple[str, str]] = []
+    for i, label in enumerate(labels):
+        if i == count - 1:
+            key, out, result_value, mixed = [_rand_lua_name() for _ in range(4)]
+            body = (
+                f"local {key}=(({pick}~{trace}~{selector}~"
+                f"({state}[{state_key}] or 0)~{vm_state})%#{bank})+1;"
+                f"local {out}={bank}[{key}]({a},{b},{state},{slots},{regs},{active},{boxes});"
+                f"local {result_value}=0;if math.type({out})=='integer' then "
+                f"{result_value}={out} end;local {mixed}=({trace}~{site}~{selector}~"
+                f"{result_value}~{vm_state})&-1;{state}[{state_key}]="
+                f"(({state}[{state_key}] or 0)~{mixed});if ({policy}&1)~=0 then "
+                f"{state}[611]=(({state}[611] or 0)~{mixed}~{site})&-1 end;"
+                f"if ({policy}&2)~=0 then {ledger}[1]=(({ledger}[1] or 0)~"
+                f"{mixed}~{selector})&-1 end;return {out}"
+            )
+        else:
+            primary = i + 1
+            alternate = random.randint(primary, min(count - 1, i + 3))
+            salt = _hex64()
+            body = (
+                f"{trace}=(({trace}~{salt})+{i + 1}+"
+                f"({state}[{state_key}] or 0))&-1;"
+                f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{site});"
+                f"if (({trace}~{site})&1)==0 then goto {labels[primary]} end;"
+                f"goto {labels[alternate]}"
+            )
+        blocks.append((label, body))
+    return (
+        f"function({bank},{pick},{a},{b},{state},{slots},{regs},{active},{boxes},"
+        f"{ledger},{vm_state},{site},{selector},{state_key},{policy})"
+        f"local {trace}=({site}~{selector}~{family_seed}~({state}[611] or 0)~"
+        f"({state}[{state_key}] or 0)~{vm_state});"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _compile_loop_ir_func(kind: str) -> str:
+    packet, state = [_rand_lua_name() for _ in range(2)]
+    trace = _rand_lua_name()
+    state_key = random.randint(2801, 3300)
+    labels: list[str] = []
+    bodies: list[str] = []
+    if kind == "FORLOOP":
+        labels.extend([_rand_lua_name(), _rand_lua_name()])
+        bodies.extend([
+            f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]+"
+            f"{packet}[__VM_CF_STEP__];{state}[{state_key}]="
+            f"(({state}[{state_key}] or 0)~{trace});goto {labels[1]}",
+            f"local v={packet}[__VM_CF_VALUE__];local d={packet}[__VM_CF_STEP__];"
+            f"local l={packet}[__VM_CF_LIMIT__];{packet}[__VM_CF_TAKE__]="
+            f"(d>0 and v<=l) or (d<=0 and v>=l)",
+        ])
+    elif kind == "FORPREP":
+        labels.append(_rand_lua_name())
+        bodies.append(
+            f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]-"
+            f"{packet}[__VM_CF_STEP__]"
+        )
+    else:
+        labels.append(_rand_lua_name())
+        bodies.append(
+            f"{packet}[__VM_CF_TAKE__]=({packet}[__VM_CF_VALUE__]~=nil)"
+        )
+    for _ in range(random.randint(7, 11)):
+        if bodies:
+            bodies[-1] += f";goto "
+        next_label = _rand_lua_name()
+        if bodies:
+            bodies[-1] += next_label
+        labels.append(next_label)
+        salt = _hex64()
+        bodies.append(
+            f"{trace}=(({trace}~{salt})+{len(labels)})&-1;{state}[{state_key}]="
+            f"(({state}[{state_key}] or 0)~{trace})"
+        )
+    bodies[-1] += f";return {packet}"
+    blocks = list(zip(labels, bodies))
+    seed = _hex64()
+    return (
+        f"function({packet},{state})local {trace}=({seed}~({state}[611] or 0));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+
+
+def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
+    if kind == "GET": return f"local r={x}[{y}];"
+    if kind == "SET": return f"{x}[{y}]={z};local r={z};"
+    if kind == "EQ": return f"local r=({x}=={y});"
+    if kind == "LT": return f"local r=({x}<{y});"
+    if kind == "LE": return f"local r=({x}<={y});"
+    if kind == "TRUTH": return f"local r=(not not {x});"
+    if kind == "MOD": return f"local r=({x}%{y});"
+    if kind == "POW": return f"local r=({x}^{y});"
+    if kind == "DIV": return f"local r=({x}/{y});"
+    if kind == "IDIV": return f"local r=({x}//{y});"
+    if kind == "NOT": return f"local r=(not {x});"
+    if kind == "LEN": return f"local r=(#{x});"
+    if kind == "CONCAT": return f"local r={x}[{z}];for i={z}-1,1,-1 do r={x}[i]..r end;"
+    if kind == "NEWTABLE": return "local r={};"
+    if kind == "SETLIST":
+        return f"for i=1,{z}[2] do {x}[{z}[1]+i]={y}[i] end;local r={x};"
+    if kind == "CLOSURE": return f"local r={x}({y});"
+    if kind == "VARARG":
+        return f"for i=1,{z}[1] do {x}({y}+i-1,{z}[2][i]) end;local r={z}[1];"
+    return f"local r={x};"
+
+
+def _compile_semantic_ir_func(kind: str) -> str:
+    x, y, z, state = [_rand_lua_name() for _ in range(4)]
+    direct = _semantic_source(kind, x, y, z)
+    trace = _rand_lua_name()
+    result = _rand_lua_name()
+    state_key = random.randint(3301, 3900)
+    labels = [_rand_lua_name() for _ in range(random.randint(7, 11))]
+    blocks: list[tuple[str, str]] = []
+    # The semantic source may read the result again (notably CONCAT), so bind
+    # every standalone result reference to the compiler-owned local.
+    first = re.sub(r"\br\b", result, direct).replace("local " + result, result)
+    blocks.append((labels[0], first + f"goto {labels[1]}"))
+    for i in range(1, len(labels) - 1):
+        salt = _hex64()
+        blocks.append((labels[i],
+            f"{trace}=(({trace}~{salt})+{i})&-1;{state}[{state_key}]="
+            f"(({state}[{state_key}] or 0)~{trace});goto {labels[i + 1]}"))
+    blocks.append((labels[-1], f"return {result}"))
+    seed = _hex64()
+    heavy = (
+        f"function({x},{y},{z},{state})local {result};local {trace}="
+        f"({seed}~({state}[611] or 0));"
+        + _compiled_label_blocks(labels[0], blocks) + "end"
+    )
+    direct_func = f"function({x},{y},{z},{state}){direct}return r end"
+    return "{" + heavy + "," + direct_func + "}"
 
 
 _ARITH_SPECS = {
@@ -837,7 +1252,16 @@ _ARITH_SPECS = {
 }
 
 
-def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> str:
+def _apply_handler_graphs(
+    vm_code: str,
+    graph_sites: set[int] | None = None,
+    graph_family_count: int = 8,
+    runtime_polymorphism_rate: float = 0.0,
+    runtime_trace: bool = False,
+) -> str:
+    threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
+    vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
+    vm_code = vm_code.replace("__VM_POLY_TRACE__", "true" if runtime_trace else "false")
     slots: dict[str, int] = {}
     used_slots: set[int] = set()
     for kind, (token, _, _) in _ARITH_SPECS.items():
@@ -862,17 +1286,37 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
             native = f"function({x},{y})return {x}{operator}{y} end"
         native_entries.append(f"[{slot}]={{{native},{native}}}")
         graph_entries.append(
-            f"[{slot}]={{{_make_integer_graph_func(kind)},"
-            f"{_make_integer_graph_func(kind)}}}"
+            f"[{slot}]={{{','.join(_compile_integer_graph_func(kind) for _ in range(4))}}}"
         )
 
     bundle = "{{" + ",".join(native_entries) + "},{" + ",".join(graph_entries) + "}}"
     vm_code = vm_code.replace("__VM_ARITH_BUNDLE__", bundle)
+    affine_pairs = []
+    for _ in range(16):
+        multiplier = random.getrandbits(64) | 1
+        inverse = pow(multiplier, -1, 1 << 64)
+        signed_multiplier = multiplier if multiplier < (1 << 63) else multiplier - (1 << 64)
+        signed_inverse = inverse if inverse < (1 << 63) else inverse - (1 << 64)
+        affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
+    vm_code = vm_code.replace("__VM_AFFINE_POOL__", "{" + ",".join(affine_pairs) + "}")
+    register_maps: list[str] = []
+    used_maps: set[tuple[int, int, int]] = set()
+    while len(register_maps) < 5:
+        spec = (
+            random.randrange(1, 1024, 2),
+            random.randrange(0, 1024),
+            random.randrange(1, 1024, 2),
+        )
+        if spec in used_maps:
+            continue
+        used_maps.add(spec)
+        register_maps.append("{" + ",".join(map(str, spec)) + "}")
+    vm_code = vm_code.replace("__VM_REGISTER_MAPS__", "{" + ",".join(register_maps) + "}")
     for kind, (token, _, _) in _ARITH_SPECS.items():
         vm_code = vm_code.replace(token, str(slots[kind]))
     value_token = "__VM_VALUE_GRAPHS__"
     while value_token in vm_code:
-        variants = ",".join(_make_value_graph_func() for _ in range(2))
+        variants = ",".join(_compile_value_graph_func() for _ in range(2))
         vm_code = vm_code.replace(value_token, "{" + variants + "}", 1)
 
     call_tags = random.sample(range(0x10000, 0x7FFFFFFF), 4)
@@ -883,19 +1327,19 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "__VM_ROUTE_LEAVE__": call_tags[3],
     }
     call_graph = (
-        "{[" + str(call_tags[2]) + "]=" + _make_call_route_func()
-        + ",[" + str(call_tags[3]) + "]=" + _make_call_route_func() + "}"
+        "{[" + str(call_tags[2]) + "]=" + _compile_call_route_func()
+        + ",[" + str(call_tags[3]) + "]=" + _compile_call_route_func() + "}"
     )
     vm_code = vm_code.replace("__VM_CALL_GRAPHS__", call_graph)
     control_graphs = "{" + ",".join(
-        _make_control_graph_func() for _ in range(2)
+        _compile_control_graph_func() for _ in range(2)
     ) + "}"
     vm_code = vm_code.replace("__VM_CONTROL_GRAPHS__", control_graphs)
     loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
     loop_graphs = (
-        "{[" + str(loop_tags[0]) + "]=" + _make_loop_ir_func("FORLOOP")
-        + ",[" + str(loop_tags[1]) + "]=" + _make_loop_ir_func("FORPREP")
-        + ",[" + str(loop_tags[2]) + "]=" + _make_loop_ir_func("TFORLOOP") + "}"
+        "{[" + str(loop_tags[0]) + "]=" + _compile_loop_ir_func("FORLOOP")
+        + ",[" + str(loop_tags[1]) + "]=" + _compile_loop_ir_func("FORPREP")
+        + ",[" + str(loop_tags[2]) + "]=" + _compile_loop_ir_func("TFORLOOP") + "}"
     )
     vm_code = vm_code.replace("__VM_LOOP_GRAPHS__", loop_graphs)
     vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
@@ -908,7 +1352,7 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "NEWTABLE", "SETLIST", "CLOSURE", "VARARG",
     )
     semantic_graphs = "{" + ",".join(
-        f"[{tag}]={_make_semantic_ir_func(kind)}"
+        f"[{tag}]={_compile_semantic_ir_func(kind)}"
         for kind, tag in zip(semantic_kinds, data_tags)
     ) + "}"
     vm_code = vm_code.replace("__VM_SEMANTIC_GRAPHS__", semantic_graphs)
@@ -923,24 +1367,30 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
         "__VM_OP_CLOSURE__", "__VM_OP_VARARG__",
     ), data_tags):
         vm_code = vm_code.replace(token, str(tag))
+    pending_tokens = random.sample(range(0x10000, 0x7FFFFFFF), 3)
+    for token, value in zip((
+        "__VM_PENDING_ADD__", "__VM_PENDING_SUB__", "__VM_PENDING_UNM__",
+    ), pending_tokens):
+        vm_code = vm_code.replace(token, str(value))
     occurrence_graphs = "{" + ",".join(
-        f"[{site}]={_make_occurrence_graph_func(site)}"
-        for site in sorted(graph_sites or ())
+        _compile_occurrence_graph_func(random.randint(0x10000, 0x7FFFFFFF))
+        for _ in range(graph_family_count)
     ) + "}"
     vm_code = vm_code.replace("__VM_OCCURRENCE_GRAPHS__", occurrence_graphs)
 
     field_tokens = [
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
         "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
-        "__VM_FR_SPLIT__", "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
-        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
-        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
+        "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
+        "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_PENDING__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_FR_ROUTE_STATE__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
         "__VM_Q_FLOW__", "__VM_Q_BUDGET__", "__VM_Q_LEDGER__",
         "__VM_RES_VALUES__", "__VM_RES_COUNT__",
         "__VM_META_PROTO__", "__VM_META_UPVALS__",
-        "__VM_CF_KEY__", "__VM_CF_TRACE__", "__VM_CF_FIELDS__",
+        "__VM_CF_KEY__", "__VM_CF_TRACE__", "__VM_CF_FIELDS__", "__VM_CF_SEAL__",
         "__VM_CF_TARGET__", "__VM_CF_A__", "__VM_CF_B__",
         "__VM_CF_C__", "__VM_CF_COUNT__",
         "__VM_CF_VALUE__", "__VM_CF_STEP__", "__VM_CF_LIMIT__",
@@ -956,7 +1406,7 @@ def _apply_handler_graphs(vm_code: str, graph_sites: set[int] | None = None) -> 
 _VM_RENAME_KEYS = [
     # proto 테이블 키
     "num_params", "is_vararg", "max_stack_size", "vm_id",
-    "constants", "code", "avalanche", "graph_sites", "upvalues", "protos",
+    "constants", "code", "avalanche", "graph_sites", "block_routes", "upvalues", "protos",
     "instack", "idx",
     # reader 메서드명
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
@@ -978,12 +1428,18 @@ def _rename_vm_keys(src: str) -> str:
     return src
 
 
-def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
-    """VM 출력물에 passes 재적용."""
+def _obfuscate_vm_output(
+    script: str,
+    pass_names: list[str],
+) -> tuple[str, list[dict]]:
+    """VM 출력물에 passes 재적용 + pass별 profiling."""
     from ..pipeline import Pipeline
+    from ..profiling import Profiler
     from ..registry import PASS_REGISTRY
 
     pipeline = Pipeline()
+    applied_names: list[str] = []
+
     for name in pass_names:
         info = PASS_REGISTRY.get(name)
         if info is None:
@@ -991,19 +1447,52 @@ def _obfuscate_vm_output(script: str, pass_names: list[str]) -> str:
 
         cls = info["cls"]
 
+        # VM 재귀 적용 금지.
         if cls.__name__ == "VMPass":
             continue
 
-        # function_obf는 디스패처(exec)와 그 내부 클로저를 변환에서 제외해야
-        # 한다(거대 + 내부 클로저가 exec 로컬을 upvalue로 캡처해 깨지고, hot
-        # path라 runtime도 망가짐). skip_vm_dispatcher로 exec/wrapper만 빼고
-        # cold 헬퍼들(kae_decrypt/read_proto/run 등)에는 정상 적용한다.
+        # function_obf는 exec/dispatcher 자체는 제외하고 cold helper에만 적용.
         if cls.__name__ == "FunctionObfuscationPass":
             pipeline.add(cls(skip_vm_dispatcher=True))
         else:
             pipeline.add(cls())
 
-    return pipeline.run(script)
+        applied_names.append(name)
+
+    profiler = Profiler()
+    output = pipeline.run(script, profiler=profiler)
+
+    details: list[dict] = []
+
+    # 현재 vm_output_passes는 BASE passes + 마지막 POST(minify) 구조라
+    # profiler.records와 적용 순서가 동일하다.
+    for index, record in enumerate(profiler.records):
+        data = record.as_dict()
+
+        configured_name = (
+            applied_names[index]
+            if index < len(applied_names)
+            else record.name
+        )
+
+        details.append({
+            "phase": f"vm_output:{configured_name}",
+            "class": record.name,
+            "elapsed": data["elapsed"],
+            "input_bytes": data["input_bytes"],
+            "output_bytes": data["output_bytes"],
+            "delta_bytes": data["delta_bytes"],
+            **(
+                {"parser": data["parser"]}
+                if "parser" in data else {}
+            ),
+            **(
+                {"replacements": data["replacements"]}
+                if "replacements" in data else {}
+            ),
+        })
+
+    return output, details
 
 
 
@@ -1018,6 +1507,18 @@ _DEFAULT_VM_OPTIONS = {
     "mutate_handlers": True,
     "junk_instructions": True,
     "junk_rate": 0.15,
+    "integrity_constants": False,
+    "integrity_constant_rate": 0.25,
+    "graph_execution_rate": 0.1,
+    "cross_instruction_rate": 0.2,
+    "runtime_polymorphism_rate": 0.2,
+    "runtime_trace": False,
+    "block_variant_rate": 0.08,
+    "block_variant_count": 3,
+    "block_variant_max_instructions": 6,
+    "helper_variant_count": 3,
+    "helper_diversity_rate": 0.35,
+    "semantic_diversity_rate": 0.35,
 }
 
 
@@ -1025,21 +1526,30 @@ class VMPass(PostPass):
     def __init__(self, vm_output_passes: list[str] | None = None, vm_options: dict | None = None):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
+        self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
+        self.last_profile = []
         # 1. luac 컴파일
+        _phase_start = time.perf_counter()
         luac_bytes = _compile(script)
+        self.last_profile.append({"phase": "compile_luac", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 2. 파싱 → junk instruction 삽입
+        _phase_start = time.perf_counter()
         proto = Lua53Parser(luac_bytes).parse()
+        self.last_profile.append({"phase": "parse_bytecode", "elapsed": round(time.perf_counter() - _phase_start, 6)})
         if self.vm_options.get("junk_instructions", True):
+            _phase_start = time.perf_counter()
             proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
+            self.last_profile.append({"phase": "inject_junk", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         fake = self.vm_options["fake_handlers"]
         mut  = self.vm_options["mutate_handlers"]
 
         # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
         #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
+        _phase_start = time.perf_counter()
         vm_count = max(1, int(self.vm_options.get("vm_count", 1)))
         vm_assign, n = assign_vm_ids(proto, vm_count)
 
@@ -1052,33 +1562,92 @@ class VMPass(PostPass):
             split_map  = _make_split_map(used_vops, split_ops)
             fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
             fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
-            vm_maps.append((vop_map, split_map, fuse_map))
-            used_ops_list.append(collect_used_ops_for_vm(proto, vm_assign, k, vop_map))
+            defer_ops  = DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+            defer_map  = _make_defer_map(used_vops, defer_ops)
+            vm_maps.append((vop_map, split_map, fuse_map, defer_map))
+            used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
+            if self.vm_options.get("integrity_constants", False):
+                for pseudo_op in range(47, _LUA_OP_COUNT):
+                    used_ops.update(vop_map[pseudo_op])
+            if float(self.vm_options.get("block_variant_rate", 0.08)) > 0.0:
+                for pseudo_op in (58, 59):
+                    used_ops.update(vop_map[pseudo_op])
+            used_ops_list.append(used_ops)
+        self.last_profile.append({"phase": "build_vm_maps", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
         # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
+        _phase_start = time.perf_counter()
         instr_layout = make_instr_layout()
         graph_sites: set[int] = set()
-        blob = serialize(proto, vm_assign, vm_maps, layout=instr_layout,
-                         graph_sites=graph_sites)
+        graph_family_count = 8
+        blob = serialize(
+            proto,
+            vm_assign,
+            vm_maps,
+            layout=instr_layout,
+            graph_sites=graph_sites,
+            integrity_options={
+                "enabled": self.vm_options.get("integrity_constants", False),
+                "rate": self.vm_options.get("integrity_constant_rate", 0.25),
+            },
+            graph_execution_rate=float(
+                self.vm_options.get("graph_execution_rate", 0.1)
+            ),
+            cross_instruction_rate=float(
+                self.vm_options.get("cross_instruction_rate", 0.2)
+            ),
+            graph_family_count=graph_family_count,
+            block_variant_rate=float(
+                self.vm_options.get("block_variant_rate", 0.08)
+            ),
+            block_variant_count=int(
+                self.vm_options.get("block_variant_count", 3)
+            ),
+            block_variant_max_instructions=int(
+                self.vm_options.get("block_variant_max_instructions", 6)
+            ),
+        )
+        self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
+        _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(_load_vm())
         if n == 1:
-            vop_map, split_map, fuse_map = vm_maps[0]
-            vm_code = apply_vop_to_vm(vm_code, vop_map)
+            vop_map, split_map, fuse_map, defer_map = vm_maps[0]
+            vm_code = apply_vop_to_vm(
+                vm_code, vop_map,
+                float(self.vm_options.get("semantic_diversity_rate", 0.35)),
+            )
             vm_code = prune_and_inject_handlers(vm_code, used_ops_list[0],
                                                 fake_handlers=fake, mutate=mut)
             vm_code = apply_split_to_vm(vm_code, split_map, mutate=mut)
             vm_code = apply_fuse_to_vm(vm_code, fuse_map, mutate=mut)
+            vm_code = apply_defer_to_vm(vm_code, defer_map, mutate=mut)
             # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
             # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
             vm_code = apply_dispatch(vm_code, dispatch)
+            vm_code = apply_execution_kit(
+                vm_code,
+                int(self.vm_options.get("helper_variant_count", 3)),
+                float(self.vm_options.get("helper_diversity_rate", 0.35)),
+            )
+            vm_code = wire_exec_router(vm_code, 0)
+            vm_code = build_next_router_kit(vm_code, 1)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
                                           fake_handlers=fake, mutate=mut,
-                                          dispatch=dispatch)
+                                          dispatch=dispatch,
+                                          helper_variant_count=int(
+                                              self.vm_options.get("helper_variant_count", 3)
+                                          ),
+                                          helper_diversity_rate=float(
+                                              self.vm_options.get("helper_diversity_rate", 0.35)
+                                          ),
+                                          semantic_diversity_rate=float(
+                                              self.vm_options.get("semantic_diversity_rate", 0.35)
+                                          ))
 
         # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
         # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.
@@ -1087,6 +1656,7 @@ class VMPass(PostPass):
         vm_code = apply_keystream(vm_code)
         vm_code = apply_tamper(vm_code)
         vm_code = apply_instr_layout(vm_code, instr_layout)
+        self.last_profile.append({"phase": "build_vm_code", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 3b. 블롭 저장 형태 결정. run은 type 분기 없이 스크립트마다 한 형태로
         # 고정 emit되므로, 형태별 재조립 프롤로그를 from_base36(blob) 자리에 주입한다.
@@ -1106,13 +1676,56 @@ class VMPass(PostPass):
             vm_code = vm_code.replace("from_base36(blob)", _NUMERIC_DECODE, 1)
 
         # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
+        _phase_start = time.perf_counter()
+
         vm_func_src = (
             f'return function(...)\n'
             f'local k1,k2,k3,k4,k5,k6,k7 = ... '
             f'{vm_code} return run end'
         )
-        vm_func_src = _obfuscate_vm_output(vm_func_src, self.vm_output_passes)
-        vm_func_src = _apply_handler_graphs(vm_func_src, graph_sites)
+
+        # VM output passes 자체를 세분화해서 측정.
+        vm_func_src, vm_output_details = _obfuscate_vm_output(
+            vm_func_src,
+            self.vm_output_passes,
+        )
+
+        # handler graph는 vm_output_passes와 별개의 후처리이므로 따로 측정.
+        _graph_start = time.perf_counter()
+        _graph_input_bytes = len(vm_func_src.encode("utf-8"))
+
+        vm_func_src = _apply_handler_graphs(
+            vm_func_src,
+            graph_sites,
+            graph_family_count,
+            runtime_polymorphism_rate=float(
+                self.vm_options.get("runtime_polymorphism_rate", 0.2)
+            ),
+            runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
+        )
+
+        _graph_elapsed = time.perf_counter() - _graph_start
+        _graph_output_bytes = len(vm_func_src.encode("utf-8"))
+
+        vm_output_details.append({
+            "phase": "vm_output:handler_graphs",
+            "class": "_apply_handler_graphs",
+            "elapsed": round(_graph_elapsed, 6),
+            "input_bytes": _graph_input_bytes,
+            "output_bytes": _graph_output_bytes,
+            "delta_bytes": _graph_output_bytes - _graph_input_bytes,
+            "graph_sites": len(graph_sites),
+            "graph_families": graph_family_count,
+        })
+
+        self.last_profile.append({
+            "phase": "obfuscate_vm_output",
+            "elapsed": round(
+                time.perf_counter() - _phase_start,
+                6,
+            ),
+            "details": vm_output_details,
+        })
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
         from ..pipeline import Pipeline
@@ -1122,14 +1735,19 @@ class VMPass(PostPass):
             vm_func_src = vm_func_src[len(header):]
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
+        _phase_start = time.perf_counter()
         dump_bytes = _dump_function_stripped(vm_func_src, header)
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+        if self.vm_options.get("integrity_constants", False):
+            blob = patch_integrity_script_hash(blob, dump_crc)
+        self.last_profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         alphabet  = string.ascii_letters + string.digits
         rand_tail = ''.join(secrets.choice(alphabet) for _ in range(16))
         _KEY = f"karityObfuscator/{format(dump_crc, '08x')}/{rand_tail}"
 
         # 6. blob 암호화: nonce(8B) + ciphertext
+        _phase_start = time.perf_counter()
         nonce, ct = encrypt_blob(blob, _KEY)
         encrypted_blob = nonce + ct
         if blob_form == "table":
@@ -1138,6 +1756,7 @@ class VMPass(PostPass):
             lua_blob = _to_numeric_blob(encrypted_blob)
         else:
             lua_blob = _to_base36(encrypted_blob)
+        self.last_profile.append({"phase": "encrypt_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 7. 최종 출력 조합 — vm_func_src(_vmf 본문)는 더 이상 재가공하지 않음
         # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용

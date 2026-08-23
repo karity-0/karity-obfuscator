@@ -1,325 +1,364 @@
 document.addEventListener('DOMContentLoaded', () => {
-    // ------------------------------------------------------------
-    // 커스텀 타이틀바 - 윈도우 컨트롤
-    // ------------------------------------------------------------
-    const winMinBtn = document.getElementById('win-min');
-    const winMaxBtn = document.getElementById('win-max');
-    const winCloseBtn = document.getElementById('win-close');
+  const $ = (id) => document.getElementById(id);
+  const ui = {
+    preset: $('preset-select'), level: $('level-select'), source: $('config-source'),
+    passLists: { passes: $('passes-list'), vm_output_passes: $('vm-output-list'), packer_output_passes: $('packer-output-list') },
+    optionGroups: $('vm-option-groups'), pipelineCount: $('pipeline-count'),
+    activePreset: $('active-preset'), activeLevel: $('active-level'),
+    metricPasses: $('metric-passes'), metricVms: $('metric-vms'), metricRuntime: $('metric-runtime'),
+    pipeline: $('pipeline-strip'), pipelineHint: $('pipeline-hint'),
+    input: $('input-script'), output: $('output-script'), inputFilename: $('input-filename'),
+    outputStats: $('output-stats'), status: $('status-msg'), statusIndicator: $('status-indicator'),
+    profileSummary: $('profile-summary'), releaseCheck: $('release-check'),
+    backendLabel: $('backend-label'), tooltip: $('tooltip'), saveStatus: $('config-status'),
+    run: $('run-btn'), open: $('open-file-btn'), clear: $('clear-input-btn'),
+    copy: $('copy-output-btn'), saveOutput: $('save-output-btn'), saveConfig: $('save-config-btn'),
+  };
 
-    winMinBtn?.addEventListener('click', () => {
-        window.pywebview?.api?.window_minimize?.();
-    });
+  let api = null;
+  let bootstrap = null;
+  let state = null;
+  let originalFilename = 'obfuscated.lua';
 
-    winMaxBtn?.addEventListener('click', () => {
-        window.pywebview?.api?.window_toggle_maximize?.();
-    });
+  const clone = (value) => JSON.parse(JSON.stringify(value));
+  const titleCase = (value) => String(value || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+  const formatPercent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
 
-    winCloseBtn?.addEventListener('click', () => {
-        window.pywebview?.api?.window_close?.();
-    });
+  $('win-min').addEventListener('click', () => window.pywebview?.api?.window_minimize());
+  $('win-max').addEventListener('click', () => window.pywebview?.api?.window_toggle_maximize());
+  $('win-close').addEventListener('click', () => window.pywebview?.api?.window_close());
 
-    // DOM Elements
-    const pipelineStrip = document.getElementById('pipeline-strip');
-    const inputScript = document.getElementById('input-script');
-    const outputScript = document.getElementById('output-script');
-    const inputFilename = document.getElementById('input-filename');
-    const elapsedLabel = document.getElementById('elapsed-label');
-    const statusMsg = document.getElementById('status-msg');
-    const configStatus = document.getElementById('config-status');
-    const tooltip = document.getElementById('tooltip');
+  if (window.pywebview?.api) initialize();
+  else window.addEventListener('pywebviewready', initialize);
 
-    // Checkboxes
-    const optBytecode = document.getElementById('opt-bytecode');
-    const optString = document.getElementById('opt-string');
-    const optBoolean = document.getElementById('opt-boolean');
-    const optNumber = document.getElementById('opt-number');
-    const optTable  = document.getElementById('opt-table');
-    const optFunction  = document.getElementById('opt-function');
-    const optLocalize  = document.getElementById('opt-localize');
-    const optAntiDebug = document.getElementById('opt-anti-debug');
-    const optPack      = document.getElementById('opt-pack');
-    const allCheckboxes = document.querySelectorAll('.opt-checkbox');
-
-    const vmoptFakeHandlers = document.getElementById('vmopt-fake-handlers');
-    const vmoptMutateHandlers = document.getElementById('vmopt-mutate-handlers');
-    const vmoptJunkInstructions = document.getElementById('vmopt-junk-instructions');
-    const vmoptJunkRate = document.getElementById('vmopt-junk-rate');
-    const vmoptJunkRateValue = document.getElementById('vmopt-junk-rate-value');
-    const allVmOptCheckboxes = document.querySelectorAll('.vmopt-checkbox');
-
-    vmoptJunkRate?.addEventListener('input', () => {
-        vmoptJunkRateValue.textContent = Number(vmoptJunkRate.value).toFixed(2);
-    });
-
-    // Buttons
-    const openFileBtn = document.getElementById('open-file-btn');
-    const clearInputBtn = document.getElementById('clear-input-btn');
-    const copyOutputBtn = document.getElementById('copy-output-btn');
-    const saveOutputBtn = document.getElementById('save-output-btn');
-    const saveConfigBtn = document.getElementById('save-config-btn');
-    const runBtn = document.getElementById('run-btn');
-
-    let pyapi = null;
-    let originalFilename = "obfuscated.lua";
-
-    // pywebview 준비 체크
-    if (window.pywebview && window.pywebview.api) {
-        onBackendReady();
-    } else {
-        window.addEventListener('pywebviewready', onBackendReady);
+  async function initialize() {
+    api = window.pywebview.api;
+    try {
+      bootstrap = await api.get_bootstrap();
+      state = bootstrap.state;
+      ensureConfigShape();
+      renderPresetChoices();
+      bindStaticEvents();
+      renderAll();
+      ui.backendLabel.textContent = 'backend ready';
+      document.querySelector('.live-dot')?.classList.add('ready');
+      setStatus('Ready', 'idle', 'Choose a preset or tune individual controls.');
+    } catch (error) {
+      setStatus('Initialization failed', 'error', String(error));
     }
+  }
 
-    async function onBackendReady() {
-        pyapi = window.pywebview.api;
-        setStatus('백엔드 연결 완료', 'info');
-        
-        try {
-            const savedConfig = await pyapi.load_config();
-            applySavedConfig(savedConfig);
-            updatePipelineStrip();
-        } catch (err) {
-            console.error('설정 로드 실패:', err);
-        }
-        
-        // 툴팁 이벤트 바인딩 초기화
-        initTooltipEvents();
-    }
+  function ensureConfigShape() {
+    state.config ||= {};
+    state.config.passes ||= [];
+    state.config.vm_output_passes ||= [];
+    state.config.packer_output_passes ||= [];
+    state.config.vm_options ||= {};
+    state.preset ||= 'custom';
+    state.protection_level ||= 'custom';
+  }
 
-    // 체크박스 변동 시 하단 시각화 스트립 업데이트
-    allCheckboxes.forEach(cb => {
-        cb.addEventListener('change', updatePipelineStrip);
+  function renderPresetChoices() {
+    ui.preset.innerHTML = '';
+    Object.keys(bootstrap.profiles).forEach(name => {
+      ui.preset.add(new Option(titleCase(name), name));
+    });
+    ui.preset.add(new Option('<Custom>', 'custom'));
+  }
+
+  function bindStaticEvents() {
+    ui.preset.addEventListener('change', () => {
+      const name = ui.preset.value;
+      if (name === 'custom') {
+        state.preset = 'custom';
+        updateOverview();
+        return;
+      }
+      state.config = clone(bootstrap.profiles[name]);
+      state.preset = name;
+      state.protection_level = ({ dev: 'light', 'fast-vm': 'balanced', max: 'maximum' })[name] || inferLevel();
+      state.release_check = name === 'max';
+      ensureConfigShape();
+      renderAll();
     });
 
-    function updatePipelineStrip() {
-        const nodes = [];
-        if (optBytecode.checked) nodes.push('Bytecode Obf');
-        nodes.push('VM'); 
-        if (optString.checked) nodes.push('String Obf');
-        if (optBoolean.checked) nodes.push('Boolean Obf');
-        if (optNumber.checked) nodes.push('Number Obf');
-        if (optTable.checked) nodes.push("Table Obf");
-        if (optFunction.checked) nodes.push("Function Obf");
-        if (optLocalize.checked) nodes.push("Localize");
-        nodes.push('Rename & Minify');
-        if (optPack.checked) nodes.push("Pack");
+    ui.level.addEventListener('change', () => {
+      const name = ui.level.value;
+      if (name === 'custom') {
+        state.protection_level = 'custom';
+        updateOverview();
+        return;
+      }
+      state.config.vm_options = clone(bootstrap.protection_levels[name]);
+      state.protection_level = name;
+      state.preset = 'custom';
+      renderAll();
+    });
 
-        pipelineStrip.innerHTML = nodes
-            .map(name => `<div class="pipeline-node">${name}</div>`)
-            .join('<div class="pipeline-arrow">→</div>');
-    }
+    ui.releaseCheck.addEventListener('change', () => {
+      state.release_check = ui.releaseCheck.checked;
+    });
 
-    // ------------------------------------------------------------
-    // 전역 툴팁 핸들러 인터페이스
-    // ------------------------------------------------------------
-    function initTooltipEvents() {
-        const hintElements = document.querySelectorAll('[data-hint]');
-        
-        hintElements.forEach(el => {
-            el.addEventListener('mouseenter', (e) => {
-                const hintText = el.getAttribute('data-hint');
-                if (!hintText) return;
-                
-                tooltip.textContent = hintText;
-                tooltip.classList.add('active');
-            });
-            
-            el.addEventListener('mousemove', (e) => {
-                // 마우스 포인터 우하단에 살짝 여백을 주고 배치
-                tooltip.style.left = (e.pageX + 12) + 'px';
-                tooltip.style.top = (e.pageY + 12) + 'px';
-            });
-            
-            el.addEventListener('mouseleave', () => {
-                tooltip.classList.remove('active');
-            });
+    ui.saveConfig.addEventListener('click', saveConfiguration);
+    ui.open.addEventListener('click', openFile);
+    ui.clear.addEventListener('click', clearInput);
+    ui.copy.addEventListener('click', copyOutput);
+    ui.saveOutput.addEventListener('click', saveOutput);
+    ui.run.addEventListener('click', runObfuscation);
+
+    document.addEventListener('mouseover', showTooltip);
+    document.addEventListener('mousemove', moveTooltip);
+    document.addEventListener('mouseout', hideTooltip);
+  }
+
+  function renderAll() {
+    ensureConfigShape();
+    ui.preset.value = bootstrap.profiles[state.preset] ? state.preset : 'custom';
+    ui.level.value = bootstrap.protection_levels[state.protection_level] ? state.protection_level : 'custom';
+    ui.releaseCheck.checked = Boolean(state.release_check);
+    ui.source.textContent = bootstrap.profile_source ? `profiles: ${bootstrap.profile_source}` : 'profiles unavailable';
+    renderPasses();
+    renderVmOptions();
+    updateOverview();
+  }
+
+  function renderPasses() {
+    Object.entries(ui.passLists).forEach(([context, container]) => {
+      container.innerHTML = '';
+      bootstrap.passes.filter(pass => pass.contexts.includes(context)).forEach(pass => {
+        const enabled = state.config[context].includes(pass.name);
+        const label = document.createElement('label');
+        label.className = `toggle-item${enabled ? ' enabled' : ''}`;
+        label.dataset.hint = pass.description;
+        label.innerHTML = `<input type="checkbox" ${enabled ? 'checked' : ''}><span class="toggle-dot"></span><span class="toggle-name">${pass.label}</span>`;
+        label.querySelector('input').addEventListener('change', event => {
+          togglePass(context, pass.name, event.target.checked);
+          markPresetCustom(false);
+          renderPasses();
+          updateOverview();
         });
+        container.appendChild(label);
+      });
+    });
+  }
+
+  function togglePass(context, name, enabled) {
+    const values = state.config[context];
+    const index = values.indexOf(name);
+    if (enabled && index < 0) values.push(name);
+    if (!enabled && index >= 0) values.splice(index, 1);
+  }
+
+  function renderVmOptions() {
+    ui.optionGroups.innerHTML = '';
+    const groups = new Map();
+    bootstrap.vm_options.forEach(option => {
+      if (!groups.has(option.group)) groups.set(option.group, []);
+      groups.get(option.group).push(option);
+    });
+    groups.forEach((options, groupName) => {
+      const details = document.createElement('details');
+      details.className = 'config-section';
+      if (['Execution', 'Semantic routing', 'Runtime diversity'].includes(groupName)) details.open = true;
+      details.innerHTML = `<summary><span>${groupName}</span><span class="section-count">${options.length}</span></summary><div class="section-body"></div>`;
+      const body = details.querySelector('.section-body');
+      options.forEach(option => body.appendChild(makeOptionRow(option)));
+      ui.optionGroups.appendChild(details);
+    });
+  }
+
+  function makeOptionRow(option) {
+    const row = document.createElement('div');
+    row.className = 'option-row';
+    row.dataset.hint = option.description;
+    row.innerHTML = `<div><span class="option-label">${option.label}</span><small class="option-description">${option.name}</small></div><div class="option-control"></div>`;
+    const host = row.querySelector('.option-control');
+    const current = state.config.vm_options[option.name] ?? option.default;
+
+    if (option.kind === 'boolean') {
+      const label = document.createElement('label');
+      label.className = 'switch';
+      label.innerHTML = `<input type="checkbox" ${current ? 'checked' : ''}><span class="switch-track"></span>`;
+      label.querySelector('input').addEventListener('change', event => setVmOption(option.name, event.target.checked));
+      host.appendChild(label);
+    } else if (option.kind === 'select') {
+      const select = document.createElement('select');
+      select.className = 'select-control';
+      option.values.forEach(item => select.add(new Option(item.label, item.value)));
+      if (![...select.options].some(item => item.value === String(current))) select.add(new Option(String(current), String(current)));
+      select.value = String(current);
+      select.addEventListener('change', event => setVmOption(option.name, event.target.value));
+      host.appendChild(select);
+    } else if (option.kind === 'integer') {
+      const input = document.createElement('input');
+      input.type = 'number'; input.className = 'number-control';
+      input.min = option.min; input.max = option.max; input.step = option.step; input.value = current;
+      input.addEventListener('change', event => {
+        const value = Math.max(Number(option.min), Math.min(Number(option.max), Number(event.target.value)));
+        event.target.value = value;
+        setVmOption(option.name, Math.trunc(value));
+      });
+      host.appendChild(input);
+    } else {
+      const wrap = document.createElement('div');
+      wrap.className = 'range-wrap';
+      wrap.innerHTML = `<input class="range-control" type="range" min="${option.min}" max="${option.max}" step="${option.step}" value="${current}"><span class="range-value">${Number(current).toFixed(2)}</span>`;
+      const range = wrap.querySelector('input');
+      const value = wrap.querySelector('.range-value');
+      range.addEventListener('input', event => {
+        value.textContent = Number(event.target.value).toFixed(2);
+        setVmOption(option.name, Number(event.target.value), false);
+      });
+      range.addEventListener('change', () => renderAll());
+      host.appendChild(wrap);
     }
+    return row;
+  }
 
-    // ------------------------------------------------------------
-    // 설정값 적용 및 페이로드 조립 제어 규칙
-    // ------------------------------------------------------------
-    function applySavedConfig(savedConfig) {
-        if (!savedConfig) return;
-        
-        const mainPasses = savedConfig.passes || [];
-        optBytecode.checked = mainPasses.includes('string_obf') || mainPasses.includes('number_obf');
-        optAntiDebug.checked = mainPasses.includes('anti_debug');
-        optPack.checked = mainPasses.includes('pack');
+  function setVmOption(name, value, rerender = true) {
+    state.config.vm_options[name] = value;
+    markPresetCustom(true);
+    if (rerender) renderAll();
+    else updateOverview();
+  }
 
-        const vmPasses = savedConfig.vm_output_passes || [];
-        optString.checked = vmPasses.includes('string_encode') || vmPasses.includes('string_obf');
-        optBoolean.checked = vmPasses.includes('boolean_obf');
-        optNumber.checked = vmPasses.includes('number_obf');
-        optTable.checked = vmPasses.includes("table_obf");
-        optFunction.checked = vmPasses.includes("function_obf");
-        optLocalize.checked = vmPasses.includes("localize_globals");
+  function markPresetCustom(vmChanged) {
+    state.preset = 'custom';
+    if (vmChanged) state.protection_level = 'custom';
+    ui.preset.value = 'custom';
+    if (vmChanged) ui.level.value = 'custom';
+  }
 
-        const vmOptions = savedConfig.vm_options || {};
-        vmoptFakeHandlers.checked = vmOptions.fake_handlers !== false;
-        vmoptMutateHandlers.checked = vmOptions.mutate_handlers !== false;
-        vmoptJunkInstructions.checked = vmOptions.junk_instructions !== false;
+  function inferLevel() {
+    const options = JSON.stringify(state.config.vm_options);
+    return Object.keys(bootstrap.protection_levels).find(name => JSON.stringify(bootstrap.protection_levels[name]) === options) || 'custom';
+  }
 
-        const junkRate = vmOptions.junk_rate;
-        vmoptJunkRate.value = (typeof junkRate === 'number') ? junkRate : 0.15;
-        vmoptJunkRateValue.textContent = Number(vmoptJunkRate.value).toFixed(2);
+  function updateOverview() {
+    const allPasses = [...state.config.passes, ...state.config.vm_output_passes, ...state.config.packer_output_passes];
+    ui.pipelineCount.textContent = allPasses.length;
+    ui.activePreset.textContent = titleCase(state.preset);
+    ui.activeLevel.textContent = titleCase(state.protection_level);
+    ui.metricPasses.textContent = allPasses.length;
+    ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
+    ui.metricRuntime.textContent = formatPercent(state.config.vm_options.runtime_polymorphism_rate);
+    renderPipeline();
+  }
+
+  function renderPipeline() {
+    const names = state.config.passes;
+    ui.pipeline.innerHTML = '';
+    if (!names.length) {
+      ui.pipeline.innerHTML = '<span class="pipeline-empty">No passes selected</span>';
+      ui.pipelineHint.textContent = 'Select at least one main pass';
+      return;
     }
+    names.forEach((name, index) => {
+      const meta = bootstrap.passes.find(pass => pass.name === name);
+      const node = document.createElement('span');
+      node.className = `pipeline-node${name === 'vm' ? ' vm' : ''}${name === 'pack' ? ' pack' : ''}`;
+      node.textContent = meta?.label || name;
+      ui.pipeline.appendChild(node);
+      if (index < names.length - 1) {
+        const arrow = document.createElement('span'); arrow.className = 'pipeline-arrow'; arrow.textContent = '→';
+        ui.pipeline.appendChild(arrow);
+      }
+    });
+    ui.pipelineHint.textContent = `${names.length} main stages · ${state.config.vm_output_passes.length} VM output · ${state.config.packer_output_passes.length} packer output`;
+  }
 
-    function buildPayloadConfig() {
-        const passes = [];
-        if (optAntiDebug.checked) {
-            passes.push("anti_debug");
-        }
-        if (optBytecode.checked) {
-            passes.push("string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf");
-        }
-        passes.push("vm");
-        // 패커는 다른 모든 패스(특히 vm) 이후 맨 마지막에 적용되어야 한다.
-        if (optPack.checked) {
-            passes.push("pack");
-        }
-
-        const vm_output_passes = [];
-        // function_obf는 string_obf/number_obf가 string.char(...)/XOR식을
-        // 주입하기 전(맨 먼저) 돌아야 텍스트 기반 CFF가 깨지지 않는다.
-        if (optFunction.checked) {
-            vm_output_passes.push("function_obf");
-        }
-        if (optString.checked) {
-            vm_output_passes.push("string_obf");
-        }
-        if (optBoolean.checked) {
-            vm_output_passes.push("boolean_obf");
-        }
-        if (optNumber.checked) {
-            vm_output_passes.push("number_obf");
-        }
-        if (optTable.checked) {
-            vm_output_passes.push("table_obf");
-        }
-
-        vm_output_passes.push("rename_obf");
-        // localize_globals 는 rename 이후, minify 이전(마지막 base 패스)에 와야
-        // string_obf/junk가 만든 전역을 모두 잡고, emit한 _ENV 키가 다시
-        // 인코딩되지 않는다.
-        if (optLocalize.checked) {
-            vm_output_passes.push("localize_globals");
-        }
-        vm_output_passes.push("minify");
-
-        const vm_options = {
-            fake_handlers: vmoptFakeHandlers.checked,
-            mutate_handlers: vmoptMutateHandlers.checked,
-            junk_instructions: vmoptJunkInstructions.checked,
-            junk_rate: Number(vmoptJunkRate.value),
-        };
-
-        return { passes, vm_output_passes, vm_options };
+  async function saveConfiguration() {
+    try {
+      const result = await api.save_config(state);
+      ui.saveStatus.textContent = result.ok ? 'Saved locally' : 'Save failed';
+    } catch (error) {
+      ui.saveStatus.textContent = String(error);
     }
+    setTimeout(() => { ui.saveStatus.textContent = ''; }, 2500);
+  }
 
-    // ------------------------------------------------------------
-    // 원격 및 로컬 입출력 제어 이벤트 핸들러
-    // ------------------------------------------------------------
+  async function openFile() {
+    setStatus('Opening file…', 'running', 'Waiting for file selection.');
+    const result = await api.pick_input_file();
+    if (!result) return setStatus('Ready', 'idle', 'File selection cancelled.');
+    if (result.error) return setStatus('Open failed', 'error', result.error);
+    ui.input.value = result.content;
+    ui.inputFilename.textContent = result.name;
+    originalFilename = result.name;
+    setStatus('Source loaded', 'success', `${result.name} · ${result.content.length.toLocaleString()} characters`);
+  }
 
-    saveConfigBtn.addEventListener('click', async () => {
-        if (!pyapi) return;
-        const config = buildPayloadConfig();
-        const res = await pyapi.save_config(config);
-        
-        if (res && res.ok) {
-            configStatus.textContent = '설정 저장 완료';
-            configStatus.classList.add('active');
-            setTimeout(() => {
-                configStatus.textContent = '';
-                configStatus.classList.remove('active');
-            }, 2000);
-        }
-    });
+  function clearInput() {
+    ui.input.value = ''; ui.inputFilename.textContent = ''; originalFilename = 'obfuscated.lua';
+    setStatus('Ready', 'idle', 'Input cleared.');
+  }
 
-    openFileBtn.addEventListener('click', async () => {
-        if (!pyapi) return;
-        setStatus('파일 선택 중...', 'info');
-        const res = await pyapi.pick_input_file();
-        
-        if (!res) {
-            setStatus('파일 열기 취소됨', 'info');
-            return;
-        }
-        if (res.error) {
-            setStatus(res.error, 'error');
-            alert(res.error);
-            return;
-        }
-
-        inputScript.value = res.content;
-        inputFilename.textContent = res.name;
-        originalFilename = res.name;
-        setStatus('파일을 불러왔습니다.', 'success');
-    });
-
-    clearInputBtn.addEventListener('click', () => {
-        inputScript.value = '';
-        inputFilename.textContent = '';
-        originalFilename = "obfuscated.lua";
-        setStatus('입력창 초기화됨', 'info');
-    });
-
-    copyOutputBtn.addEventListener('click', () => {
-        const content = outputScript.value;
-        if (!content.trim()) return;
-
-        navigator.clipboard.writeText(content)
-            .then(() => {
-                const prevLabel = elapsedLabel.textContent;
-                elapsedLabel.textContent = '복사 완료!';
-                setTimeout(() => { elapsedLabel.textContent = prevLabel; }, 1500);
-            })
-            .catch(() => alert('클립보드 복사 실패'));
-    });
-
-    saveOutputBtn.addEventListener('click', async () => {
-        if (!pyapi) return;
-        const content = outputScript.value;
-        if (!content.trim()) return alert('저장할 결과가 없습니다.');
-
-        const defaultName = originalFilename.startsWith('obf_') ? originalFilename : `obf_${originalFilename}`;
-        setStatus('파일 저장 중...', 'info');
-        const res = await pyapi.save_output(content, defaultName);
-        
-        if (res.ok) setStatus(`저장 성공: ${res.path}`, 'success');
-        else setStatus('저장 취소 또는 실패', 'info');
-    });
-
-    runBtn.addEventListener('click', async () => {
-        if (!pyapi) return;
-        const script = inputScript.value;
-
-        if (!script.trim()) {
-            setStatus('입력 코드가 없습니다.', 'error');
-            return;
-        }
-
-        setStatus('난독화 진행 중...', 'info');
-        runBtn.disabled = true;
-
-        const { passes, vm_output_passes, vm_options } = buildPayloadConfig();
-        const payload = { script, passes, vm_output_passes, vm_options };
-
-        const res = await pyapi.run_obfuscation(payload);
-        runBtn.disabled = false;
-
-        if (res.ok) {
-            outputScript.value = res.output;
-            elapsedLabel.textContent = `${res.elapsed}s`;
-            setStatus('난독화 완료', 'success');
-        } else {
-            outputScript.value = res.error;
-            elapsedLabel.textContent = '에러';
-            setStatus('오류가 발생했습니다.', 'error');
-        }
-    });
-
-    function setStatus(msg, type) {
-        statusMsg.textContent = msg;
-        statusMsg.className = `status-msg status-${type}`;
+  async function copyOutput() {
+    if (!ui.output.value) return;
+    try {
+      await navigator.clipboard.writeText(ui.output.value);
+      setStatus('Copied', 'success', 'Protected output copied to clipboard.');
+    } catch (error) {
+      setStatus('Copy failed', 'error', String(error));
     }
+  }
+
+  async function saveOutput() {
+    if (!ui.output.value) return setStatus('Nothing to save', 'error', 'Run protection first.');
+    const base = originalFilename.replace(/\.lua$/i, '');
+    const result = await api.save_output(ui.output.value, `${base}.protected.lua`);
+    setStatus(result.ok ? 'Output saved' : 'Save cancelled', result.ok ? 'success' : 'idle', result.path || result.error || '');
+  }
+
+  async function runObfuscation() {
+    if (!ui.input.value.trim()) return setStatus('Input required', 'error', 'Paste Lua source or open a file.');
+    ui.run.disabled = true;
+    setStatus('Protecting…', 'running', `${titleCase(state.preset)} / ${titleCase(state.protection_level)}`);
+    try {
+      const result = await api.run_obfuscation({
+        script: ui.input.value,
+        config: state.config,
+        release_check: Boolean(state.release_check),
+      });
+      if (!result.ok) {
+        ui.output.value = result.error;
+        ui.outputStats.textContent = 'error';
+        setStatus('Build failed', 'error', lastErrorLine(result.error));
+        return;
+      }
+      ui.output.value = result.output;
+      ui.outputStats.textContent = `${result.output.length.toLocaleString()} chars · ${result.elapsed}s`;
+      const passCount = result.profile?.passes?.length || 0;
+      setStatus('Protection complete', 'success', `${passCount} passes · ${result.elapsed}s total`);
+    } catch (error) {
+      setStatus('Build failed', 'error', String(error));
+    } finally {
+      ui.run.disabled = false;
+    }
+  }
+
+  function lastErrorLine(text) {
+    return String(text || '').trim().split(/\r?\n/).slice(-1)[0] || 'Unknown error';
+  }
+
+  function setStatus(message, type, detail) {
+    ui.status.textContent = message;
+    ui.profileSummary.textContent = detail || '';
+    ui.statusIndicator.className = `status-indicator${type && type !== 'idle' ? ` ${type}` : ''}`;
+  }
+
+  function showTooltip(event) {
+    const target = event.target.closest('[data-hint]');
+    if (!target || !target.dataset.hint) return;
+    ui.tooltip.textContent = target.dataset.hint;
+    ui.tooltip.classList.add('active');
+  }
+  function moveTooltip(event) {
+    if (!ui.tooltip.classList.contains('active')) return;
+    ui.tooltip.style.left = `${Math.min(event.clientX + 14, window.innerWidth - 290)}px`;
+    ui.tooltip.style.top = `${Math.min(event.clientY + 14, window.innerHeight - 90)}px`;
+  }
+  function hideTooltip(event) {
+    if (event.target.closest('[data-hint]')) ui.tooltip.classList.remove('active');
+  }
 });
