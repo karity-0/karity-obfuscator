@@ -22,7 +22,8 @@ from .serializer import (
 )
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
-                             apply_split_to_vm, apply_fuse_to_vm, ALL_SPLIT_OPS,
+                             apply_split_to_vm, apply_fuse_to_vm,
+                             apply_defer_to_vm, ALL_SPLIT_OPS, DEFER_OPS,
                              apply_dispatch, build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
@@ -216,6 +217,12 @@ def _make_split_map(used_vops: set[int],
                   _new_unique_vop(used_vops)),
         }
     return split_map
+
+
+def _make_defer_map(used_vops: set[int],
+                    defer_ops: set[int]) -> dict[int, int]:
+    """Allocate one producer vop for each lazy cross-instruction operation."""
+    return {op: _new_unique_vop(used_vops) for op in sorted(defer_ops)}
 
 
 def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
@@ -1287,7 +1294,7 @@ def _apply_handler_graphs(
     vm_code = vm_code.replace("__VM_AFFINE_POOL__", "{" + ",".join(affine_pairs) + "}")
     register_maps: list[str] = []
     used_maps: set[tuple[int, int, int]] = set()
-    while len(register_maps) < 4:
+    while len(register_maps) < 5:
         spec = (
             random.randrange(1, 1024, 2),
             random.randrange(0, 1024),
@@ -1353,6 +1360,11 @@ def _apply_handler_graphs(
         "__VM_OP_CLOSURE__", "__VM_OP_VARARG__",
     ), data_tags):
         vm_code = vm_code.replace(token, str(tag))
+    pending_tokens = random.sample(range(0x10000, 0x7FFFFFFF), 3)
+    for token, value in zip((
+        "__VM_PENDING_ADD__", "__VM_PENDING_SUB__", "__VM_PENDING_UNM__",
+    ), pending_tokens):
+        vm_code = vm_code.replace(token, str(value))
     occurrence_graphs = "{" + ",".join(
         _compile_occurrence_graph_func(random.randint(0x10000, 0x7FFFFFFF))
         for _ in range(graph_family_count)
@@ -1364,7 +1376,7 @@ def _apply_handler_graphs(
         "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
         "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
         "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
-        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_PENDING__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
         "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
@@ -1491,6 +1503,7 @@ _DEFAULT_VM_OPTIONS = {
     "integrity_constants": False,
     "integrity_constant_rate": 0.25,
     "graph_execution_rate": 0.1,
+    "cross_instruction_rate": 0.2,
 }
 
 
@@ -1534,7 +1547,9 @@ class VMPass(PostPass):
             split_map  = _make_split_map(used_vops, split_ops)
             fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
             fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
-            vm_maps.append((vop_map, split_map, fuse_map))
+            defer_ops  = DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+            defer_map  = _make_defer_map(used_vops, defer_ops)
+            vm_maps.append((vop_map, split_map, fuse_map, defer_map))
             used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
             if self.vm_options.get("integrity_constants", False):
                 for pseudo_op in range(47, _LUA_OP_COUNT):
@@ -1561,6 +1576,9 @@ class VMPass(PostPass):
             graph_execution_rate=float(
                 self.vm_options.get("graph_execution_rate", 0.1)
             ),
+            cross_instruction_rate=float(
+                self.vm_options.get("cross_instruction_rate", 0.2)
+            ),
             graph_family_count=graph_family_count,
         )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
@@ -1570,12 +1588,13 @@ class VMPass(PostPass):
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(_load_vm())
         if n == 1:
-            vop_map, split_map, fuse_map = vm_maps[0]
+            vop_map, split_map, fuse_map, defer_map = vm_maps[0]
             vm_code = apply_vop_to_vm(vm_code, vop_map)
             vm_code = prune_and_inject_handlers(vm_code, used_ops_list[0],
                                                 fake_handlers=fake, mutate=mut)
             vm_code = apply_split_to_vm(vm_code, split_map, mutate=mut)
             vm_code = apply_fuse_to_vm(vm_code, fuse_map, mutate=mut)
+            vm_code = apply_defer_to_vm(vm_code, defer_map, mutate=mut)
             # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
             # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
             vm_code = apply_dispatch(vm_code, dispatch)

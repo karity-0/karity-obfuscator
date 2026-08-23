@@ -23,6 +23,7 @@ python main.py hello.lua
 - per-occurrence descriptors with runtime state and cross-frame coupling
 - per-value affine register encodings fragmented into additive shares
 - lazy representation rotation with encoded-domain ADD, SUB, and UNM
+- consumer-triggered cross-instruction ADD, SUB, and UNM materialization
 - affine handles for booleans, nil, floats, strings, and reference values
 - independent dynamic physical mappings for value, share, epoch, and type storage
 - sparse live-state sealing for jump, loop, iterator, and vararg control operands

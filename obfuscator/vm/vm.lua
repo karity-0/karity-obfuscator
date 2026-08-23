@@ -344,12 +344,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RO    = _fr and _fr[__VM_FR_VALUE_VAULT__] or {}
     local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="k"})
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
+    local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
                    (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code)|1)
     local _MG    = _fr and _fr[__VM_FR_MAP_STATE__] or
                    {((_IT.seed~proto.vm_id~#code)&0x3FF),0}
     local _RL    = _fr and _fr[__VM_FR_LOGICAL_SLOTS__] or {}
     local _seal_next
+    local _pending_finish
     local _gsl, _gq
     local _XF    = _fr and _fr[__VM_FR_LEDGER__] or _xx or {[1]=_zz or 0}
 
@@ -382,7 +384,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rmap_offsets()
         local generation=_MG[1]
-        for kind=1,4 do
+        for kind=1,5 do
             local map=_MP[kind]
             _MG[kind+2]=(map[2]+generation*map[3])&0x3FF
         end
@@ -402,6 +404,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     _rmap_offsets()
 
     local function _rstore(slot,encoded,epoch,kind)
+        _PD[_rpos(5,slot)]=nil
         local share=_rmix(epoch~_RZ~((slot+3)*-3372029247567499371))
         local p1,p2,p3,p4=_rpositions(slot)
         regs[p1]=encoded-share
@@ -432,6 +435,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function rget(i)
+        if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
         local p1,p2,p3,p4=_rpositions(i)
         local epoch=_RE[p3]
         if epoch==nil then return nil end
@@ -472,7 +476,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local old_generation=_MG[1]
         local step=(_rmix(_RZ~salt~old_generation)&0x3FF)|1
         local new_generation=(old_generation+step)&0x3FF
-        local new_regs,new_shares,new_epochs,new_types={},{},{},{}
+        local new_regs,new_shares,new_epochs,new_types,new_pending={},{},{},{},{}
         for slot in pairs(_RL) do
             local o1,o2,o3,o4=_rpositions_at(slot,old_generation)
             local n1,n2,n3,n4=_rpositions_at(slot,new_generation)
@@ -480,15 +484,19 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             new_shares[n2]=_RS[o2]
             new_epochs[n3]=_RE[o3]
             new_types[n4]=_RT[o4]
+            new_pending[_rpos_at(5,slot,new_generation)]=
+                _PD[_rpos_at(5,slot,old_generation)]
         end
         for key in pairs(regs) do regs[key]=nil end
         for key in pairs(_RS) do _RS[key]=nil end
         for key in pairs(_RE) do _RE[key]=nil end
         for key in pairs(_RT) do _RT[key]=nil end
+        for key in pairs(_PD) do _PD[key]=nil end
         for key,value in pairs(new_regs) do regs[key]=value end
         for key,value in pairs(new_shares) do _RS[key]=value end
         for key,value in pairs(new_epochs) do _RE[key]=value end
         for key,value in pairs(new_types) do _RT[key]=value end
+        for key,value in pairs(new_pending) do _PD[key]=value end
         _MG[1]=new_generation
         _rmap_offsets()
     end
@@ -622,6 +630,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_VALUE_VAULT__]=_RO,
                 [__VM_FR_VALUE_INDEX__]=_RI,
                 [__VM_FR_REPR_COUNTERS__]=_RX,
+                [__VM_FR_PENDING__]=_PD,
                 [__VM_FR_REG_SEED__]=_RZ,
                 [__VM_FR_MAP_STATE__]=_MG,
                 [__VM_FR_LOGICAL_SLOTS__]=_RL,
@@ -808,6 +817,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _elinear2(dst,lhs,rhs,sign)
+        if _PD[_rpos(5,lhs)]~=nil then _pending_finish(lhs) end
+        if _PD[_rpos(5,rhs)]~=nil then _pending_finish(rhs) end
         local l1,l2,l3,l4=_rpositions(lhs)
         local r1,r2,r3,r4=_rpositions(rhs)
         local le,re=_RE[l3],_RE[r3]
@@ -823,6 +834,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _elinear1(dst,src,sign)
+        if _PD[_rpos(5,src)]~=nil then _pending_finish(src) end
         local p1,p2,p3,p4=_rpositions(src)
         local se=_RE[p3]
         if se==nil or _RT[p4]~=1 then return false end
@@ -831,6 +843,71 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local oa,ob=_rparams(dst,epoch)
         _rstore(dst,sign*oa*si*(regs[p1]+_RS[p2]-sb)+ob,epoch,1)
         return true
+    end
+
+    local function _pending_snapshot(slot)
+        if _PD[_rpos(5,slot)]~=nil then _pending_finish(slot) end
+        local p1,p2,p3,p4=_rpositions(slot)
+        local epoch=_RE[p3]
+        if epoch==nil or _RT[p4]~=1 then return nil end
+        return {regs[p1],_RS[p2],epoch,slot}
+    end
+
+    local function _pending_fragment(snapshot,scale,salt)
+        local _,bias,inverse=_rparams(snapshot[4],snapshot[3])
+        local share=_rmix(snapshot[3]~salt~_RZ)
+        return scale*inverse*(snapshot[1]+snapshot[2]-bias)-share,share
+    end
+
+    _pending_finish=function(dst)
+        local physical=_rpos(5,dst)
+        local q=_PD[physical]
+        if q==nil then return end
+        _PD[physical]=nil
+        local encoded=q[2]+q[3]
+        if q[1]==__VM_PENDING_UNM__ then
+            encoded=-encoded
+        else
+            local right=q[4]+q[5]
+            encoded=encoded+(q[1]==__VM_PENDING_ADD__ and right or -right)
+        end
+        _rstore(dst,encoded+q[7],q[6],1)
+    end
+
+    local function _defer2r(dst,lhs,rhs,av,slot,token)
+        _gq=(_gq or 0)+1
+        local desc=_gsl and _gsl[_gq]
+        if not desc or desc[1]==0 then
+            local left=_pending_snapshot(lhs)
+            local right=_pending_snapshot(rhs)
+            if left and right then
+                local epoch=_rnext(dst,token~lhs~(rhs<<8))
+                local scale,bias=_rparams(dst,epoch)
+                local l1,l2=_pending_fragment(left,scale,epoch~token)
+                local r1,r2=_pending_fragment(right,scale,epoch~token~1)
+                _PD[_rpos(5,dst)]={token,l1,l2,r1,r2,epoch,bias}
+                _RL[dst]=true
+                return
+            end
+        end
+        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+    end
+
+    local function _defer1r(dst,src,av,slot,token)
+        _gq=(_gq or 0)+1
+        local desc=_gsl and _gsl[_gq]
+        if not desc or desc[1]==0 then
+            local value=_pending_snapshot(src)
+            if value then
+                local epoch=_rnext(dst,token~src)
+                local scale,bias=_rparams(dst,epoch)
+                local p1,p2=_pending_fragment(value,scale,epoch~token)
+                _PD[_rpos(5,dst)]={token,p1,p2,nil,nil,epoch,bias}
+                _RL[dst]=true
+                return
+            end
+        end
+        rset(dst,_arith1(rget(src),av,slot,desc))
     end
 
     local function _arith2r(dst,lhs,rhs,av,slot,linear)

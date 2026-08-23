@@ -39,6 +39,20 @@ def _parse_float_token(token: str) -> float:
 class NumberObfuscationPass(BasePass):
     parser = "treesitter"
 
+    @staticmethod
+    def _inside_string_char(node, tree) -> bool:
+        current = node.parent
+        while current is not None:
+            if current.type == "function_call":
+                return bool(
+                    current.children
+                    and tree.text(current.children[0]) == "string.char"
+                )
+            if current.type in ("assignment_statement", "return_statement"):
+                return False
+            current = current.parent
+        return False
+
     def _random_hex_case(self, text: str) -> str:
         out = []
 
@@ -1065,6 +1079,12 @@ class NumberObfuscationPass(BasePass):
 
         for node in tree.walk():
             if node.type != "number":
+                continue
+            # string_obf already hides each byte behind a random XOR pair.
+            # Re-obfuscating those operands can leave string.char's byte domain
+            # under aggressive output-pass combinations and adds no useful
+            # protection, so preserve the generated pair verbatim.
+            if self._inside_string_char(node, tree):
                 continue
 
             token = tree.text(node)

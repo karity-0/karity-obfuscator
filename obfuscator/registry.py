@@ -188,6 +188,11 @@ VM_OPTION_DOCS = {
         "default": 0.1,
         "range": "0.0 to 1.0",
     },
+    "cross_instruction_rate": {
+        "description": "Fraction of eligible ADD, SUB, and UNM instructions emitted as lazy producers whose encoded result is materialized by a later consumer.",
+        "default": 0.2,
+        "range": "0.0 to 1.0",
+    },
 }
 
 
@@ -302,6 +307,9 @@ def validate_release_config(config: dict) -> None:
     if float(vm_options.get("graph_execution_rate", 0.0)) <= 0.0:
         errors.append("vm_options.graph_execution_rate should be > 0.0")
 
+    if float(vm_options.get("cross_instruction_rate", 0.0)) <= 0.0:
+        errors.append("vm_options.cross_instruction_rate should be > 0.0")
+
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
@@ -339,7 +347,8 @@ def _validate_vm_options(options: dict) -> None:
         if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 1:
             raise ConfigError("vm_options.vm_count must be an integer >= 1")
 
-    for key in ("junk_rate", "integrity_constant_rate", "graph_execution_rate"):
+    for key in ("junk_rate", "integrity_constant_rate", "graph_execution_rate",
+                "cross_instruction_rate"):
         value = options.get(key)
         if value is not None:
             if not isinstance(value, (int, float)) or isinstance(value, bool):
