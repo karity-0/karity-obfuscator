@@ -19,19 +19,34 @@ from obfuscator.registry import (  # noqa: E402
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
 
 VM_DETAILS = """\
-Integer arithmetic, bitwise, shift, and unary handlers use build-specific function
-DAG banks with randomized topological layouts, sparse selectors, and equivalent
-mixed boolean-arithmetic expressions. The active graph is selected from the VM id,
+Integer arithmetic, bitwise, shift, and unary handlers are generated from
+build-specific DAG IR and compiled ahead of time into specialized straight-line
+Lua handlers. Sparse selectors choose the compiled handler from the VM id,
 instruction position, and accumulated diffusion state.
+
+Arithmetic occurrences carry compact descriptors (family id, site id, selector
+seed, state key, and diffusion policy) and share a build-specific compiled family
+pool. Results feed site state and selected global/cross-frame state on every active
+occurrence; heavy family paths run on the first hit and at sparse state-dependent
+intervals.
+
+Selected integer arithmetic results are stored between dispatch iterations in a
+state-keyed register representation. The key is recomputed from the site
+descriptor, site state, global diffusion state, cross-frame ledger, destination
+slot, and hit count rather than stored directly.
 
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
-through build-specific bounded cyclic tail-call graphs.
+through build-specific bounded cyclic routing graphs compiled to shuffled Lua
+labels, without runtime graph-node closures or context-table traversal.
 
-Selected jump, loop, iterator, and vararg instruction sites encode their control
-operands into build-specific packets. Load, table access, table assignment,
-comparison, arithmetic, closure creation, and vararg transfer semantics execute
-inside generated semantic graphs where supported.
+Selected jump, loop, iterator, and vararg sites remove the packet key after
+rebinding their control operands to live site state. The opening key is recomputed
+from the occurrence descriptor and state mixed with the global diffusion value and
+cross-frame ledger, so the operands cannot be consumed through a packet-local key.
+Load, table access, table assignment, comparison, arithmetic, closure creation,
+and vararg transfer semantics execute inside build-time compiled control and
+semantic graphs where supported.
 """
 
 

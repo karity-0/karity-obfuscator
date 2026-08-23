@@ -374,7 +374,9 @@ _AVALANCHE_RATE = {
 }
 
 
-def _instruction_avalanche_slots(proto: Proto) -> dict[int, tuple[int, ...]]:
+def _instruction_avalanche_slots(
+    proto: Proto, execution_rate: float = 1.0
+) -> dict[int, tuple[int, ...]]:
     """Pick owned scratch registers, using dead stack slots only for straight-line code."""
     result: dict[int, tuple[int, ...]] = {}
     live_out = _live_out_sets(proto)
@@ -391,7 +393,7 @@ def _instruction_avalanche_slots(proto: Proto) -> dict[int, tuple[int, ...]]:
         if (raw & 0x3F) not in _AVALANCHE_OPS:
             continue
         op = raw & 0x3F
-        if random.random() >= _AVALANCHE_RATE.get(op, 0.25):
+        if random.random() >= _AVALANCHE_RATE.get(op, 0.25) * execution_rate:
             continue
         reads, writes = _instruction_rw(proto, i)
         blocked = live_out[i] | reads | writes | captured
@@ -558,7 +560,12 @@ def _rand_alias(vop_map: dict[int, list[int]] | None, op: int) -> int:
 # 직렬화
 # ---------------------------------------------------------------------------
 VMMaps = tuple  # (vop_map, split_map, fuse_map)
-_GRAPH_SITE_OPS = {13, 14, 15, 20, 21, 22, 23, 24, 25, 26}
+_GRAPH_SITE_OPS = {
+    # Integer arithmetic occurrence families.
+    13, 14, 15, 20, 21, 22, 23, 24, 25, 26,
+    # Control packets whose operands are rebound to live VM state at runtime.
+    30, 39, 40, 41, 42, 45,
+}
 
 
 def _new_graph_site(site_registry: set[int]) -> int:
@@ -777,7 +784,9 @@ def serialize(proto: Proto,
               vm_maps: list | None = None,
               layout: dict | None = None,
               graph_sites: set[int] | None = None,
-              integrity_options: dict | None = None) -> bytes:
+              integrity_options: dict | None = None,
+              graph_execution_rate: float = 0.1,
+              graph_family_count: int = 8) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map). vm_assign = {id(proto): vm_id}.
     기본값(둘 다 None)은 단일 VM(vm_id=0, 맵 없음)으로 동작.
     layout: instruction 워드 필드 시프트(None이면 DEFAULT_INSTR_LAYOUT). vm.lua의
@@ -802,13 +811,15 @@ def serialize(proto: Proto,
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
     _write_proto(w, proto, vm_assign, vm_maps, acc_state,
-                 graph_sites if graph_sites is not None else set(), seed, integrity)
+                 graph_sites if graph_sites is not None else set(), seed, integrity,
+                 graph_execution_rate, graph_family_count)
     return w.data()
 
 
 def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                  vm_maps: list, acc_state: list[int],
-                 graph_sites: set[int], seed: int, integrity: dict):
+                 graph_sites: set[int], seed: int, integrity: dict,
+                 graph_execution_rate: float, graph_family_count: int):
     vm_id = vm_assign.get(id(proto), 0)
     vop_map, split_map, fuse_map = vm_maps[vm_id]
 
@@ -827,9 +838,21 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     plan          = _mark_integrity_stream_units(plan, proto.code, iexpr_indices, stream_enabled)
     new_pos, total = _plan_new_pos(plan, len(proto.code))
     code          = _adjust_jumps(proto.code, new_pos, total)
-    add_slots     = _instruction_avalanche_slots(proto)
+    add_slots     = _instruction_avalanche_slots(proto, graph_execution_rate)
     emitted_av: list[tuple[int, ...]] = []
-    emitted_sites: list[tuple[int, ...]] = []
+    # (family, site, selector_seed, state_key, diffusion_policy)
+    emitted_sites: list[tuple[tuple[int, int, int, int, int], ...]] = []
+
+    def graph_descriptor(op: int) -> tuple[int, int, int, int, int] | None:
+        if op not in _GRAPH_SITE_OPS:
+            return None
+        site = _new_graph_site(graph_sites)
+        active = random.random() < graph_execution_rate
+        family = random.randint(1, graph_family_count) if active else 0
+        selector_seed = random.randint(0x10000, 0xFFFFFFFF)
+        state_key = random.randint(4000, 0xFFFF)
+        policy = random.randrange(4)
+        return family, site, selector_seed, state_key, policy
 
     # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
     w.u32(total)
@@ -852,29 +875,29 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         elif unit[0] == "normal":
             _emit_instr(w, emit_raw, _rand_alias(vop_map, emit_op), acc_state)
             emitted_av.append(add_slots.get(i, ()))
-            emitted_sites.append(
-                (_new_graph_site(graph_sites),) if emit_op in _GRAPH_SITE_OPS else ()
-            )
+            desc = graph_descriptor(emit_op)
+            emitted_sites.append((desc,) if desc is not None else ())
         elif unit[0] == "split":
             # 같은 raw 명령어를 각 part vop으로 반복 방출
             vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
             for vop in vops:
                 _emit_instr(w, emit_raw, vop, acc_state)
                 emitted_av.append(add_slots.get(i, ()))
-                emitted_sites.append(
-                    (_new_graph_site(graph_sites),) if orig_op in _GRAPH_SITE_OPS else ()
-                )
+                desc = graph_descriptor(orig_op)
+                emitted_sites.append((desc,) if desc is not None else ())
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]] & 0x3F
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
             _emit_instr(w, raw, fuse_vop, acc_state)
             emitted_av.append(add_slots.get(i, ()))
-            sites = []
-            if orig_op in _GRAPH_SITE_OPS:
-                sites.append(_new_graph_site(graph_sites))
-            if op2 in _GRAPH_SITE_OPS:
-                sites.append(_new_graph_site(graph_sites))
-            emitted_sites.append(tuple(sites))
+            descriptors = []
+            desc = graph_descriptor(orig_op)
+            if desc is not None:
+                descriptors.append(desc)
+            desc = graph_descriptor(op2)
+            if desc is not None:
+                descriptors.append(desc)
+            emitted_sites.append(tuple(descriptors))
             # operand 슬롯: dispatch 안 되지만 acc 동기화 위해 정상 슬롯으로 방출
             _emit_instr(w, code[unit[2]], _rand_alias(vop_map, op2), acc_state)
             emitted_av.append(add_slots.get(unit[2], ()))
@@ -885,10 +908,14 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         for slot in slots:
             w.u8(slot)
 
-    for sites in emitted_sites:
-        w.u8(len(sites))
-        for site in sites:
+    for descriptors in emitted_sites:
+        w.u8(len(descriptors))
+        for family, site, selector_seed, state_key, policy in descriptors:
+            w.u8(family)
+            w.u8(policy)
+            w.u16(state_key)
             w.u32(site)
+            w.u32(selector_seed)
 
     # 상수
     w.u32(len(proto.constants))
@@ -929,7 +956,8 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
     # 중첩 proto (acc_state 전역 공유, vm_id별 맵은 sub마다 재선택)
     w.u32(len(proto.protos))
     for sub in proto.protos:
-        _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites, seed, integrity)
+        _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites, seed,
+                     integrity, graph_execution_rate, graph_family_count)
 
 
 # ---------------------------------------------------------------------------
@@ -1020,7 +1048,7 @@ def _patch_proto_integrity(
             r.u8()
     for _ in range(code_count):
         for _ in range(r.u8()):
-            r.u32()
+            r.u8(); r.u8(); r.u16(); r.u32(); r.u32()
 
     sources_base = {
         "vm_count": vm_count,
@@ -1098,7 +1126,7 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
 
     for _ in range(code_count):
         for _ in range(r.u8()):
-            r.u32()
+            r.u8(); r.u8(); r.u16(); r.u32(); r.u32()
 
     const_count = r.u32()
     constants = []
