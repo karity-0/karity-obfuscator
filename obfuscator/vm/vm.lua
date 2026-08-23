@@ -312,6 +312,7 @@ local _OG=__VM_OCCURRENCE_GRAPHS__
 local _LG=__VM_LOOP_GRAPHS__
 local _DG=__VM_SEMANTIC_GRAPHS__
 local _RP=__VM_AFFINE_POOL__
+local _MP=__VM_REGISTER_MAPS__
 
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
@@ -345,6 +346,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
                    (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code)|1)
+    local _MG    = _fr and _fr[__VM_FR_MAP_STATE__] or
+                   {((_IT.seed~proto.vm_id~#code)&0x3FF),0}
+    local _RL    = _fr and _fr[__VM_FR_LOGICAL_SLOTS__] or {}
     local _seal_next
     local _gsl, _gq
     local _XF    = _fr and _fr[__VM_FR_LEDGER__] or _xx or {[1]=_zz or 0}
@@ -366,11 +370,45 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return _rmix(_RX[1]~_RZ)
     end
 
-    local function _rstore(slot,encoded,epoch)
+    local function _rpos_at(kind,slot,generation)
+        local map=_MP[kind]
+        return (slot*map[1]+map[2]+generation*map[3])&0x3FF
+    end
+
+    local function _rpositions_at(slot,generation)
+        return _rpos_at(1,slot,generation),_rpos_at(2,slot,generation),
+               _rpos_at(3,slot,generation),_rpos_at(4,slot,generation)
+    end
+
+    local function _rmap_offsets()
+        local generation=_MG[1]
+        for kind=1,4 do
+            local map=_MP[kind]
+            _MG[kind+2]=(map[2]+generation*map[3])&0x3FF
+        end
+    end
+
+    local function _rpos(kind,slot)
+        return (slot*_MP[kind][1]+_MG[kind+2])&0x3FF
+    end
+
+    local function _rpositions(slot)
+        return (slot*_MP[1][1]+_MG[3])&0x3FF,
+               (slot*_MP[2][1]+_MG[4])&0x3FF,
+               (slot*_MP[3][1]+_MG[5])&0x3FF,
+               (slot*_MP[4][1]+_MG[6])&0x3FF
+    end
+
+    _rmap_offsets()
+
+    local function _rstore(slot,encoded,epoch,kind)
         local share=_rmix(epoch~_RZ~((slot+3)*-3372029247567499371))
-        regs[slot]=encoded-share
-        _RS[slot]=share
-        _RE[slot]=epoch
+        local p1,p2,p3,p4=_rpositions(slot)
+        regs[p1]=encoded-share
+        _RS[p2]=share
+        _RE[p3]=epoch
+        if kind~=nil then _RT[p4]=kind end
+        _RL[slot]=true
     end
 
     local function _rdecode(encoded,kind)
@@ -394,10 +432,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function rget(i)
-        local epoch=_RE[i]
-        if epoch==nil then return regs[i] end
+        local p1,p2,p3,p4=_rpositions(i)
+        local epoch=_RE[p3]
+        if epoch==nil then return nil end
         local _,b,inv=_rparams(i,epoch)
-        return _rdecode(((regs[i]+_RS[i])-b)*inv,_RT[i])
+        return _rdecode(((regs[p1]+_RS[p2])-b)*inv,_RT[p4])
     end
 
     local function rset(i,v)
@@ -411,12 +450,12 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local epoch=_rnext(i,salt)
         local payload,kind=_rvalue(v,epoch)
         local a,b=_rparams(i,epoch)
-        _rstore(i,a*payload+b,epoch)
-        _RT[i]=kind
+        _rstore(i,a*payload+b,epoch,kind)
     end
 
     local function _rrotate(slot,salt)
-        local old_epoch=_RE[slot]
+        local p1,p2,p3=_rpositions(slot)
+        local old_epoch=_RE[p3]
         if old_epoch==nil then return end
         local _,old_b,old_inv=_rparams(slot,old_epoch)
         local new_epoch=_rnext(slot,salt)
@@ -424,9 +463,39 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local alpha=new_a*old_inv
         local beta=new_b-alpha*old_b
         local delta=_rmix(new_epoch~salt~_RZ)
-        regs[slot]=alpha*regs[slot]+delta
-        _RS[slot]=alpha*_RS[slot]+beta-delta
-        _RE[slot]=new_epoch
+        regs[p1]=alpha*regs[p1]+delta
+        _RS[p2]=alpha*_RS[p2]+beta-delta
+        _RE[p3]=new_epoch
+    end
+
+    local function _rmap_rotate(salt)
+        local old_generation=_MG[1]
+        local step=(_rmix(_RZ~salt~old_generation)&0x3FF)|1
+        local new_generation=(old_generation+step)&0x3FF
+        local new_regs,new_shares,new_epochs,new_types={},{},{},{}
+        for slot in pairs(_RL) do
+            local o1,o2,o3,o4=_rpositions_at(slot,old_generation)
+            local n1,n2,n3,n4=_rpositions_at(slot,new_generation)
+            new_regs[n1]=regs[o1]
+            new_shares[n2]=_RS[o2]
+            new_epochs[n3]=_RE[o3]
+            new_types[n4]=_RT[o4]
+        end
+        for key in pairs(regs) do regs[key]=nil end
+        for key in pairs(_RS) do _RS[key]=nil end
+        for key in pairs(_RE) do _RE[key]=nil end
+        for key in pairs(_RT) do _RT[key]=nil end
+        for key,value in pairs(new_regs) do regs[key]=value end
+        for key,value in pairs(new_shares) do _RS[key]=value end
+        for key,value in pairs(new_epochs) do _RE[key]=value end
+        for key,value in pairs(new_types) do _RT[key]=value end
+        _MG[1]=new_generation
+        _rmap_offsets()
+    end
+
+    local function _rmap_tick(salt)
+        _MG[2]=(_MG[2] or 0)+1
+        if _MG[2]<=2 or (_MG[2]&1023)==0 then _rmap_rotate(salt) end
     end
 
     local function _split_set(v)
@@ -529,8 +598,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local slot=((pc~a~c~(_S[611] or 0))&0x7FFFFFFF)%proto.max_stack_size
             _rrotate(slot,pc~a~c)
         end
+        _rmap_tick(pc~a~c~(_S[611] or 0))
         local m=(_S[611] or 0)~(_XF[1] or 0)~((_st<<8)|(_st&0xFF))
-        for slot in pairs(_AA) do m=m~regs[slot]~slot end
+        for slot in pairs(_AA) do
+            local p1=_rpos(1,slot); m=m~regs[p1]~slot
+        end
         return {[__VM_FR_REGS__]=regs,[__VM_FR_BOXES__]=boxes,
                 [__VM_FR_MASK__]=m,[__VM_FR_PC__]=pc~m,
                 [__VM_FR_TOP__]=top~m,
@@ -551,6 +623,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_VALUE_INDEX__]=_RI,
                 [__VM_FR_REPR_COUNTERS__]=_RX,
                 [__VM_FR_REG_SEED__]=_RZ,
+                [__VM_FR_MAP_STATE__]=_MG,
+                [__VM_FR_LOGICAL_SLOTS__]=_RL,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
                 [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
@@ -642,6 +716,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if proto.max_stack_size>0 then
             _rrotate((site~tag~hit)%proto.max_stack_size,mixed)
         end
+        _rmap_tick(mixed~site~tag)
         return q
     end
 
@@ -733,27 +808,28 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _elinear2(dst,lhs,rhs,sign)
-        local le,re=_RE[lhs],_RE[rhs]
-        if le==nil or re==nil or _RT[lhs]~=1 or _RT[rhs]~=1 then return false end
+        local l1,l2,l3,l4=_rpositions(lhs)
+        local r1,r2,r3,r4=_rpositions(rhs)
+        local le,re=_RE[l3],_RE[r3]
+        if le==nil or re==nil or _RT[l4]~=1 or _RT[r4]~=1 then return false end
         local _,lb,li=_rparams(lhs,le)
         local _,rb,ri=_rparams(rhs,re)
         local epoch=_rnext(dst,sign~lhs~(rhs<<8))
         local oa,ob=_rparams(dst,epoch)
-        local encoded=oa*li*(regs[lhs]+_RS[lhs]-lb)+
-                      sign*oa*ri*(regs[rhs]+_RS[rhs]-rb)+ob
-        _rstore(dst,encoded,epoch)
-        _RT[dst]=1
+        local encoded=oa*li*(regs[l1]+_RS[l2]-lb)+
+                      sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
+        _rstore(dst,encoded,epoch,1)
         return true
     end
 
     local function _elinear1(dst,src,sign)
-        local se=_RE[src]
-        if se==nil or _RT[src]~=1 then return false end
+        local p1,p2,p3,p4=_rpositions(src)
+        local se=_RE[p3]
+        if se==nil or _RT[p4]~=1 then return false end
         local _,sb,si=_rparams(src,se)
         local epoch=_rnext(dst,sign~src)
         local oa,ob=_rparams(dst,epoch)
-        _rstore(dst,sign*oa*si*(regs[src]+_RS[src]-sb)+ob,epoch)
-        _RT[dst]=1
+        _rstore(dst,sign*oa*si*(regs[p1]+_RS[p2]-sb)+ob,epoch,1)
         return true
     end
 

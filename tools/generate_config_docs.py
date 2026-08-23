@@ -45,6 +45,14 @@ transforms when their operands are integer representations; unsupported dynamic
 operations decode only their required operands into handler-local temporaries and
 immediately re-encode their results.
 
+Logical registers do not directly index their persistent representation tables.
+Value shares, companion shares, epochs, and type tags use four independent
+build-specific affine permutations over the physical slot domain. Frames carry a
+mapping generation, and sparse call/control ticks migrate every represented slot
+to a fresh generation through collision-free replacement tables. Thus a logical
+register's payload and metadata neither share an index nor remain at stable
+physical locations across a long-running frame.
+
 VM-internal CALL, TAILCALL, and RETURN transitions use heap continuation frames
 instead of recursively returning through the host Lua stack. Calls and returns pass
 through build-specific bounded cyclic routing graphs compiled to shuffled Lua

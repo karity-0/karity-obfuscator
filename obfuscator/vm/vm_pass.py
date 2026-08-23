@@ -1285,6 +1285,19 @@ def _apply_handler_graphs(
         signed_inverse = inverse if inverse < (1 << 63) else inverse - (1 << 64)
         affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
     vm_code = vm_code.replace("__VM_AFFINE_POOL__", "{" + ",".join(affine_pairs) + "}")
+    register_maps: list[str] = []
+    used_maps: set[tuple[int, int, int]] = set()
+    while len(register_maps) < 4:
+        spec = (
+            random.randrange(1, 1024, 2),
+            random.randrange(0, 1024),
+            random.randrange(1, 1024, 2),
+        )
+        if spec in used_maps:
+            continue
+        used_maps.add(spec)
+        register_maps.append("{" + ",".join(map(str, spec)) + "}")
+    vm_code = vm_code.replace("__VM_REGISTER_MAPS__", "{" + ",".join(register_maps) + "}")
     for kind, (token, _, _) in _ARITH_SPECS.items():
         vm_code = vm_code.replace(token, str(slots[kind]))
     value_token = "__VM_VALUE_GRAPHS__"
@@ -1351,7 +1364,7 @@ def _apply_handler_graphs(
         "__VM_FR_TOP__", "__VM_FR_STATE__", "__VM_FR_VARARG__",
         "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
         "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
-        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
+        "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
         "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",

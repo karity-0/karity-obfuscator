@@ -24,6 +24,7 @@ python main.py hello.lua
 - per-value affine register encodings fragmented into additive shares
 - lazy representation rotation with encoded-domain ADD, SUB, and UNM
 - affine handles for booleans, nil, floats, strings, and reference values
+- independent dynamic physical mappings for value, share, epoch, and type storage
 - sparse live-state sealing for jump, loop, iterator, and vararg control operands
 - handler mutation
 - multi-VM support
