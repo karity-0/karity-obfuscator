@@ -21,7 +21,10 @@ python main.py hello.lua
 - opcode virtualization and randomization
 - build-time compiled handler graphs with liveness-aware state diffusion
 - per-occurrence descriptors with runtime state and cross-frame coupling
-- sparse state-keyed integer register representations
+- per-value affine register encodings fragmented into additive shares
+- lazy representation rotation with encoded-domain ADD, SUB, and UNM
+- affine handles for booleans, nil, floats, strings, and reference values
+- independent dynamic physical mappings for value, share, epoch, and type storage
 - sparse live-state sealing for jump, loop, iterator, and vararg control operands
 - handler mutation
 - multi-VM support

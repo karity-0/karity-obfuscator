@@ -64,26 +64,26 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
         slot = _GRAPH_BINARY_SLOTS[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=_arith2(regs[B],regs[C],_av,{slot}){_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(_arith2s(rget(B),rget(C),_av,{slot})){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-                f" _split_tmp=_arith2(_split_tmp,regs[C],_av,{slot}){_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+                f" _split_set(_arith2s(_split_get(),rget(C),_av,{slot})){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
     if orig_op in _GRAPH_UNARY_SLOTS:
         slot = _GRAPH_UNARY_SLOTS[orig_op]
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,_arith1(_split_tmp,_av,{slot})){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" rset(A,_arith1s(_split_get(),_av,{slot})){_SPLIT_PAD}",
             ]
         return [
-            f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-            f" _split_tmp=_arith1(_split_tmp,_av,{slot}){_SPLIT_PAD}",
-            f" rset(A,_split_tmp){_SPLIT_PAD}",
+            f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+            f" _split_set(_arith1s(_split_get(),_av,{slot})){_SPLIT_PAD}",
+            f" rset(A,_split_get()){_SPLIT_PAD}",
         ]
     if orig_op in _BINARY_OP_LUA:
         lua_op = _BINARY_OP_LUA[orig_op]
@@ -97,14 +97,14 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
             return expr
         if parts == 2:
             return [
-                f" _split_tmp={binary_expr('regs[B]', 'regs[C]')}{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set({binary_expr('rget(B)', 'rget(C)')}){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={binary_expr('_split_tmp', 'regs[C]')}{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" _split_set({binary_expr('_split_get()', 'rget(C)')}){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
     elif orig_op in _UNARY_PREFIX:
         pfx = _UNARY_PREFIX[orig_op]
@@ -115,38 +115,38 @@ def split_handler_bodies(orig_op: int, parts: int) -> list[str]:
             unary_expr = lambda value: f"{pfx}{value}"
         if parts == 2:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" rset(A,{unary_expr('_split_tmp')}){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" rset(A,{unary_expr('_split_get()')}){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=regs[B]{_SPLIT_PAD}",
-                f" _split_tmp={unary_expr('_split_tmp')}{_SPLIT_PAD}",
-                f" rset(A,_split_tmp){_SPLIT_PAD}",
+                f" _split_set(rget(B)){_SPLIT_PAD}",
+                f" _split_set({unary_expr('_split_get()')}){_SPLIT_PAD}",
+                f" rset(A,_split_get()){_SPLIT_PAD}",
             ]
     elif orig_op == 0:  # MOVE
         if parts == 2:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,0)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,regs[B],nil,nil){_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,0)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,rget(B),nil,nil)){_SPLIT_PAD}",
+                f" _split_set(_split_get()){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,0)){_SPLIT_PAD}",
             ]
     elif orig_op == 1:  # LOADK
         if parts == 2:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil){_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil)){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,1)){_SPLIT_PAD}",
             ]
         else:
             return [
-                f" _split_tmp=_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil){_SPLIT_PAD}",
-                f" _split_tmp=_split_tmp{_SPLIT_PAD}",
-                f" rset(A,_carry(_split_tmp,_av,1)){_SPLIT_PAD}",
+                f" _split_set(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil)){_SPLIT_PAD}",
+                f" _split_set(_split_get()){_SPLIT_PAD}",
+                f" rset(A,_carry(_split_get(),_av,1)){_SPLIT_PAD}",
             ]
     return [f" {_SPLIT_PAD}"] * parts
 
@@ -361,22 +361,24 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
              av: str = "_av") -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
-        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,regs[{b}],nil,nil),{av},0))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,rget({b}),nil,nil),{av},0))"
     if op == 1:   # LOADK
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1],proto),nil,nil),{av},1))"
     if op == 5:   # GETUPVAL
-        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,upvals[{b}+1].v,nil,nil),{av},5))"
+        return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,get_upvalue(upvals[{b}+1]),nil,nil),{av},5))"
     if op in _GRAPH_BINARY_SLOTS:
-        return f"rset({a},_arith2(regs[{b}],regs[{c}],{av},{_GRAPH_BINARY_SLOTS[op]}))"
+        linear = "1" if op == 13 else "-1" if op == 14 else "nil"
+        return f"_arith2r({a},{b},{c},{av},{_GRAPH_BINARY_SLOTS[op]},{linear})"
     if op in _GRAPH_UNARY_SLOTS:
-        return f"rset({a},_arith1(regs[{b}],{av},{_GRAPH_UNARY_SLOTS[op]}))"
+        linear = "-1" if op == 25 else "nil"
+        return f"_arith1r({a},{b},{av},{_GRAPH_UNARY_SLOTS[op]},{linear})"
     if op in _BINARY_OP_LUA:
-        expr = f"regs[{b}]{_BINARY_OP_LUA[op]}regs[{c}]"
+        expr = f"rget({b}){_BINARY_OP_LUA[op]}rget({c})"
         if op in _VALUE_BINARY_TAGS:
             expr = f"_carry({expr},{av},{op})"
         return f"rset({a},{expr})"
     if op in _UNARY_PREFIX:
-        expr = f"{_UNARY_PREFIX[op]}regs[{b}]"
+        expr = f"{_UNARY_PREFIX[op]}rget({b})"
         if op in _VALUE_UNARY_TAGS:
             expr = f"_carry({expr},{av},{op})"
         return f"rset({a},{expr})"
@@ -466,13 +468,13 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]]) -> str:
 # 절대 참이 될 수 없는 가드 조건들 (정수 op 코드 자체를 활용해 매번 다르게)
 _FAKE_BODIES = [
     " local _j={}; for _i=1,(B or 0)%3 do _j[_i]=_i*7 end\n        ",
-    " if false then rset(A,regs[B] and regs[C] or 0) end\n        ",
+    " if false then rset(A,rget(B) and rget(C) or 0) end\n        ",
     " local _j=(A or 0)~(C or 0); if _j==-1 then rset(0,_j) end\n        ",
     " local _j=Bx or 0; _j=(_j+1)*2-(_j*2+2)\n        ",
     " if pc<0 then pc=pc+sBx end\n        ",
     " local _j={A,B,C}; if #_j==0 then return end\n        ",
     " local _j=(sBx or 0)*0; if _j~=0 then rset(A,_j) end\n        ",
-    " if regs[A]==regs and regs[A]~=regs then error(\"unreachable\") end\n        ",
+    " if rget(A)==regs and rget(A)~=regs then error(\"unreachable\") end\n        ",
 ]
 
 
