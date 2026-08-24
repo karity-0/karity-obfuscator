@@ -646,6 +646,87 @@ def apply_dispatch(vm_code: str, dispatch: str) -> str:
     return _apply_dispatch(vm_code, _resolve_dispatch(dispatch))
 
 
+_DISPATCH_TARGET_EQ_RE = re.compile(r"\bop==(\d+)")
+_DISPATCH_TARGET_LE_RE = re.compile(r"\bop<=(\d+)")
+_DISPATCH_TARGET_LT_RE = re.compile(r"\bop<(\d+)")
+_DISPATCH_TABLE_KEY_RE = re.compile(r"_H\[(\d+)\]")
+
+
+def apply_dispatch_target_hiding(vm_code: str) -> str:
+    """Hide fixed dispatcher targets behind a state-coupled runtime domain.
+
+    This runs after the dispatcher-shape conversion because the bsearch/split/
+    tailcall builders intentionally consume the plain ``op==N`` chain.  The
+    emitted target literals are first masked per build.  Equality dispatchers
+    then compare both operands in a domain derived from live semantic, route,
+    register-map, cross-frame, pc, and tamper state.  Ordered routing and table
+    keys recover the masked target through the same build-local mask, so no
+    plain virtual opcode target remains in any dispatcher shape.
+    """
+    prefix = ""
+    suffix = ""
+    if _EXEC_MARK_START in vm_code and _EXEC_MARK_END in vm_code:
+        start = vm_code.index(_EXEC_MARK_START) + len(_EXEC_MARK_START)
+        end = vm_code.index(_EXEC_MARK_END, start)
+        prefix, suffix = vm_code[:start], vm_code[end:]
+        vm_code = vm_code[start:end]
+
+    mask = random.randint(1, 0x7FFF)
+
+    def encoded(raw: str) -> str:
+        return str(int(raw) ^ mask)
+
+    def recovered(raw: str) -> str:
+        return f"(({encoded(raw)}~_DM)&0x7FFF)"
+
+    transformed = _DISPATCH_TARGET_EQ_RE.sub(
+        lambda match: f"_DV==(({recovered(match.group(1))}~_DD)&-1)",
+        vm_code,
+    )
+    transformed = _DISPATCH_TARGET_LE_RE.sub(
+        lambda match: f"op<={recovered(match.group(1))}",
+        transformed,
+    )
+    transformed = _DISPATCH_TARGET_LT_RE.sub(
+        lambda match: f"op<{recovered(match.group(1))}",
+        transformed,
+    )
+    transformed = _DISPATCH_TABLE_KEY_RE.sub(
+        lambda match: f"_H[{recovered(match.group(1))}]",
+        transformed,
+    )
+
+    helpers = (
+        f" local _DM={mask};local _DD,_DV=0,0;"
+        "local function _ds(v)local s=((_S[611] or 0)~(_XF[1] or 0)~"
+        "(_PR[1] or 0)~(_SS[1] or 0)~_st~(_MG[1] or 0)~pc~_ksd)&-1;"
+        "_DD=s;_DV=(v~_DD)&-1 end;"
+    )
+    semantic_step = "_ss_step(_ip,op,A,B,C)"
+    if semantic_step in transformed:
+        transformed = transformed.replace(
+            semantic_step, f"{semantic_step};_ds(op)", 1
+        )
+    else:
+        route_step = "_route_step(_ip,op,A,B,C)"
+        if route_step in transformed:
+            transformed = transformed.replace(
+                route_step, f"{route_step};_ds(op)", 1
+            )
+    anchors = (
+        _TAILCALL_FOR_ANCHOR,
+        "local _H=setmetatable(",
+        "local _dsm=setmetatable(",
+    )
+    positions = [transformed.find(anchor) for anchor in anchors]
+    positions = [position for position in positions if position >= 0]
+    if not positions:
+        raise RuntimeError("dispatch target hiding: dispatcher entry not found")
+    insert_at = min(positions)
+    transformed = transformed[:insert_at] + helpers + transformed[insert_at:]
+    return prefix + transformed + suffix
+
+
 def _ends_with_top_return(body: str) -> bool:
     """body의 마지막 *최상위(depth 0)* 문장이 return으로 시작하는지.
 
@@ -905,7 +986,7 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                 "        _PD[_rpos(5,i)]=nil; local share=_rmix(epoch~_RZ~"
                 "((i+3)*-3372029247567499371)); local p1,p2,p3,p4=_rpositions(i)\n"
                 "        regs[p1]=encoded-share; _RS[p2]=share; _RE[p3]=epoch; "
-                "_RT[p4]=kind; _RL[i]=true",
+                "_RT[p4]=kind; _RL[i]=true; _ss_value(i,encoded,epoch,kind)",
                 1,
             )
             if clone == before:
@@ -942,7 +1023,7 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "local op=_lo|(_hi<<7); local A=(_dw>>_SH_A)&0xFF; "
             "local B=(_dw>>_SH_B)&0x1FF; local C=(_dw>>_SH_C)&0x1FF; "
             "local Bx=(_dw>>_SH_C)&0x3FFFF; local sBx=Bx-131071; pc=pc+1; "
-            "_route_step(_ip,op,A,B,C)"
+            "_route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)"
         ),
         (
             "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
@@ -952,7 +1033,7 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "local A=(_dw>>_SH_A)&0xFF; local Bx=(_dw>>_SH_C)&0x3FFFF; "
             "local op=(_dw&0x7F)|(((_dw>>_SH_V)&0xFF)<<7); "
             "local sBx=Bx-131071; local _av=_avd[_ip]; pc=pc+1; "
-            "_route_step(_ip,op,A,B,C)"
+            "_route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)"
         ),
         (
             "_av_read(); local _ip=pc; local _dk=(_S[611] or 0)~(_XF[1] or 0); "
@@ -961,7 +1042,8 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "local A=(_dw>>_SH_A)&0xFF; local C=Bx&0x1FF; "
             "local B=(_dw>>_SH_B)&0x1FF; local op=(_dw&0x7F)|"
             "(((_dw>>_SH_V)&0xFF)<<7); local _av=_avd[_ip]; "
-            "_gsl=_gsd[_ip]; _gq=0; pc=pc+1; _route_step(_ip,op,A,B,C)"
+            "_gsl=_gsd[_ip]; _gq=0; pc=pc+1; _route_step(_ip,op,A,B,C); "
+            "_ss_step(_ip,op,A,B,C)"
         ),
     ]
     return vm_code[:start] + random.choice(layouts) + vm_code[end:]
@@ -1050,6 +1132,7 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
                         used_ops_list: list[set[int]],
                         fake_handlers: bool = True, mutate: bool = True,
                         dispatch: str = "ifelseif",
+                        dispatch_target_hiding: bool = False,
                         helper_variant_count: int = 3,
                         helper_diversity_rate: float = 0.35,
                         semantic_diversity_rate: float = 0.35) -> str:
@@ -1078,6 +1161,8 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
         # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)
         c = _apply_dispatch(c, _resolve_dispatch(dispatch))
         c = apply_execution_kit(c, helper_variant_count, helper_diversity_rate)
+        if dispatch_target_hiding:
+            c = apply_dispatch_target_hiding(c)
         c = c.replace("_NX", f"_NX[{k + 1}]")
         defs.append(c)
 

@@ -321,6 +321,7 @@ local _RP=__VM_AFFINE_POOL__
 local _MP=__VM_REGISTER_MAPS__
 local _PY=__VM_POLY_THRESHOLD__
 local _PTRACE=__VM_POLY_TRACE__
+local _SY=__VM_SEMANTIC_STATE__
 local _PN,_PX,_PE,_PBC,_PBH=0,0,0,0,0
 
 local function _vid(p)
@@ -374,6 +375,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                      ((_PY~=0 and _PN) or 0))&0x3FF),0}
     local _RL    = _fr and _fr[__VM_FR_LOGICAL_SLOTS__] or {}
     local _PR    = _fr and _fr[__VM_FR_ROUTE_STATE__]
+    local _SS    = _fr and _fr[__VM_FR_SEM_STATE__]
     local _seal_next
     local _pending_finish
     local _gsl, _gq
@@ -386,6 +388,32 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     if not _PR then
         _PR={_rmix(_PN~(_zz or 0)~(_IT.seed or 0)~
                    (proto.vm_id<<19)~#code),0}
+    end
+
+    if not _SS then
+        _SS={_rmix((_zz or 0)~(_IT.seed or 0)~(_IT.layout or 0)~
+                   (_IT.script or 0)~(proto.vm_id<<23)~#code~_ksd~
+                   ((_XF and _XF[2]) or 0)),0}
+    end
+
+    local function _ss_step(ip,op,a,b,c)
+        if not _SY then return end
+        local n=(_SS[2] or 0)+1
+        local x=_rmix((_SS[1] or 0)~(ip<<32)~(op<<24)~(a<<16)~
+                      (b<<7)~c~n~(_S[611] or 0)~(_XF[1] or 0)~
+                      ((_XF and _XF[2]) or 0)~(_PR[1] or 0)~
+                      ((_MG[1] or 0)<<11)~_st~_ksd)
+        _SS[1],_SS[2]=x,n
+        _XF[2]=_rmix((_XF[2] or 0)~x~op~ip)
+    end
+
+    local function _ss_value(slot,encoded,epoch,kind)
+        if not _SY then return end
+        local x=_rmix((_SS[1] or 0)~slot~encoded~epoch~(kind or 0)~
+                      ((_RX[1] or 0)<<1)~((_MG[1] or 0)<<17)~
+                      (_XF[2] or 0))
+        _SS[1]=x
+        _XF[2]=_rmix((_XF[2] or 0)~x~slot~epoch)
     end
 
     local function _route_step(ip,op,a,b,c)
@@ -444,7 +472,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rnext(slot,salt)
         _RX[1]=((_RX[1] or 0)-7046029254386353131+slot+(salt or 0))&-1
-        return _rmix(_RX[1]~_RZ)
+        return _rmix(_RX[1]~_RZ~(_SY and (_SS[1] or 0) or 0))
     end
 
     local function _rpos_at(kind,slot,generation)
@@ -487,6 +515,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _RE[p3]=epoch
         if kind~=nil then _RT[p4]=kind end
         _RL[slot]=true
+        _ss_value(slot,encoded,epoch,kind)
     end
 
     local function _rdecode(encoded,kind)
@@ -582,7 +611,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rmap_tick(salt)
         _MG[2]=(_MG[2] or 0)+1
-        if _MG[2]<=2 or (_MG[2]&1023)==0 then _rmap_rotate(salt) end
+        if _MG[2]<=2 or (_MG[2]&1023)==0 then
+            _rmap_rotate(salt~(_SY and (_SS[1] or 0) or 0))
+        end
     end
 
     local function _split_set(v)
@@ -714,6 +745,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_MAP_STATE__]=_MG,
                 [__VM_FR_LOGICAL_SLOTS__]=_RL,
                 [__VM_FR_ROUTE_STATE__]=_PR,
+                [__VM_FR_SEM_STATE__]=_SS,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
                 [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
@@ -1042,7 +1074,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     for i in setmetatable({},{__call=function(t)return t end}) do
         --<<FETCH>>
-        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C)
+        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
         --<<ENDFETCH>>
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,rget(B),nil,nil),_av,0))

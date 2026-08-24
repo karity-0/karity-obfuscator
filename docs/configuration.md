@@ -21,6 +21,8 @@
   - [pack](#pack)
 - [vm_options](#vm_options)
   - [dispatcher_type](#dispatcher_type)
+  - [dispatcher_target_hiding](#dispatcher_target_hiding)
+  - [semantic_state_threading](#semantic_state_threading)
   - [blob_form](#blob_form)
   - [vm_count](#vm_count)
   - [fake_handlers](#fake_handlers)
@@ -284,6 +286,22 @@ VM dispatcher shape.
 | `mixed` | randomly choose a dispatcher per VM |
 
 default: `ifelseif`
+
+---
+
+### dispatcher_target_hiding
+
+Mask fixed virtual-opcode targets and couple equality dispatch to live VM state.
+
+default: false
+
+---
+
+### semantic_state_threading
+
+Thread source-semantic instruction and value state through register representations, calls, and VM runtime state.
+
+default: false
 
 ---
 

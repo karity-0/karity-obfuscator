@@ -17,6 +17,8 @@
             ],
             "vm_options": {
                 "dispatcher_type": "ifelseif",
+                "dispatcher_target_hiding": false,
+                "semantic_state_threading": false,
                 "blob_form": "string",
                 "vm_count": 1,
                 "fake_handlers": false,
@@ -55,6 +57,8 @@
             ],
             "vm_options": {
                 "dispatcher_type": "ifelseif",
+                "dispatcher_target_hiding": false,
+                "semantic_state_threading": false,
                 "blob_form": "string",
                 "vm_count": 1,
                 "fake_handlers": false,
@@ -110,6 +114,8 @@
             ],
             "vm_options": {
                 "dispatcher_type": "mixed",
+                "dispatcher_target_hiding": true,
+                "semantic_state_threading": true,
                 "blob_form": "random",
                 "vm_count": 3,
                 "fake_handlers": true,
