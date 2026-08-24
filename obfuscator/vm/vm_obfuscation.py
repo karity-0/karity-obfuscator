@@ -367,6 +367,8 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,kval(consts[{bx}+1],proto),nil,nil),{av},1))"
     if op == 5:   # GETUPVAL
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,get_upvalue(upvals[{b}+1]),nil,nil),{av},5))"
+    if op == 28:  # LEN (must observe virtual-table sequence state)
+        return f"rset({a},_carry(_tlen(rget({b})),{av},28))"
     if op in _GRAPH_BINARY_SLOTS:
         linear = "1" if op == 13 else "-1" if op == 14 else "nil"
         return f"_arith2r({a},{b},{c},{av},{_GRAPH_BINARY_SLOTS[op]},{linear})"
@@ -476,20 +478,21 @@ def apply_defer_to_vm(vm_code: str,
 # ---------------------------------------------------------------------------
 _DIRECT_SEMANTIC_BODIES = {
     5:  " rset(A,_carry(get_upvalue(upvals[B+1]),_av,5))\n        ",
-    6:  " local _t=get_upvalue(upvals[B+1]); rset(A,_carry(_t[rget(C)],_av,6))\n        ",
-    7:  " local _t=rget(B); rset(A,_carry(_t[rget(C)],_av,7))\n        ",
-    8:  " local _t=get_upvalue(upvals[A+1]); _t[rget(B)]=rget(C); _touch(_av,8)\n        ",
-    10: " local _t=rget(A); _t[rget(B)]=rget(C); _touch(_av,10)\n        ",
-    11: " rset(A,_carry({},_av,11))\n        ",
-    12: " local _t=rget(B); rset(A+1,_carry(_t,_av,112)); rset(A,_carry(_t[rget(C)],_av,12))\n        ",
-    31: " if _carry(rget(B)==rget(C),_av,31)~=(A~=0) then pc=pc+1 end\n        ",
-    32: " if _carry(rget(B)<rget(C),_av,32)~=(A~=0) then pc=pc+1 end\n        ",
-    33: " if _carry(rget(B)<=rget(C),_av,33)~=(A~=0) then pc=pc+1 end\n        ",
-    34: " if _carry(not not rget(A),_av,34)~=(C~=0) then pc=pc+1 end\n        ",
-    35: " local _v=rget(B); if _carry(not not _v,_av,35)==(C~=0) then rset(A,_v) else pc=pc+1 end\n        ",
-    43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _t[_b+_i]=_v[_i] end; _touch(_av,43)\n        ",
+    6:  " local _t=get_upvalue(upvals[B+1]); rset(A,_carry(_tget(_t,rget(C)),_av,6))\n        ",
+    7:  " local _t=rget(B); rset(A,_carry(_tget(_t,rget(C)),_av,7))\n        ",
+    8:  " local _t=get_upvalue(upvals[A+1]); _tset(_t,rget(B),rget(C)); _touch(_av,8)\n        ",
+    10: " local _t=rget(A); _tset(_t,rget(B),rget(C)); _touch(_av,10)\n        ",
+    11: " rset(A,_carry(_tnew(),_av,11))\n        ",
+    12: " local _t=rget(B); rset(A+1,_carry(_t,_av,112)); rset(A,_carry(_tget(_t,rget(C)),_av,12))\n        ",
+    28: " rset(A,_carry(_tlen(rget(B)),_av,28))\n        ",
+    31: " if not _branch(_carry(rget(B)==rget(C),_av,31),A~=0,_av,31) then pc=pc+1 end\n        ",
+    32: " if not _branch(_carry(rget(B)<rget(C),_av,32),A~=0,_av,32) then pc=pc+1 end\n        ",
+    33: " if not _branch(_carry(rget(B)<=rget(C),_av,33),A~=0,_av,33) then pc=pc+1 end\n        ",
+    34: " if not _branch(_carry(not not rget(A),_av,34),C~=0,_av,34) then pc=pc+1 end\n        ",
+    35: " local _v=rget(B); if _branch(_carry(not not _v,_av,35),C~=0,_av,35) then rset(A,_v) else pc=pc+1 end\n        ",
+    43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _tset(_t,_b+_i,_v[_i]) end; _touch(_av,43)\n        ",
     44: " get_box(A); rset(A,_carry(make_closure(_subs[Bx+1]),_av,44))\n        ",
-    45: " local _n=B==0 and (_va.n or #_va) or B-1; for _i=1,_n do rset(A+_i-1,_va[_i]) end; _touch(_av,45); if B==0 then top=A+_n-1 end\n        ",
+    45: " local _n=B==0 and _acount(_va) or B-1; for _i=1,_n do rset(A+_i-1,_aget(_va,_i)) end; _touch(_av,45); if B==0 then top=A+_n-1 end\n        ",
 }
 
 

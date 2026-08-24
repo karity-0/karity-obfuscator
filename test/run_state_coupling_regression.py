@@ -46,6 +46,10 @@ def config(dispatcher: str, vm_count: int) -> dict:
             "dispatcher_type": dispatcher,
             "dispatcher_target_hiding": True,
             "semantic_state_threading": True,
+            "argument_virtualization": True,
+            "upvalue_virtualization": True,
+            "table_virtualization": True,
+            "branch_virtualization": True,
             "blob_form": "string",
             "vm_count": vm_count,
             "fake_handlers": False,
@@ -137,7 +141,10 @@ def main() -> int:
                         f"actual={(actual.returncode, actual.stdout, actual.stderr)!r}"
                     )
                 emitted = output.read_text(encoding="utf-8")
-                for helper in ("_ss_step", "_ss_value", "_ds"):
+                for helper in (
+                    "_ss_step", "_ss_value", "_ds", "_apack", "_tnew",
+                    "_branch",
+                ):
                     if f"local function {helper}" not in emitted:
                         raise AssertionError(
                             f"missing {helper} ({dispatcher}, {script_name})"

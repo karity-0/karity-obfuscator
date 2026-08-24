@@ -1260,12 +1260,44 @@ def _apply_handler_graphs(
     runtime_polymorphism_rate: float = 0.0,
     runtime_trace: bool = False,
     semantic_state_threading: bool = False,
+    argument_virtualization: bool = False,
+    upvalue_virtualization: bool = False,
+    table_virtualization: bool = False,
+    branch_virtualization: bool = False,
 ) -> str:
     threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
     vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
     vm_code = vm_code.replace("__VM_POLY_TRACE__", "true" if runtime_trace else "false")
     vm_code = vm_code.replace(
         "__VM_SEMANTIC_STATE__", "true" if semantic_state_threading else "false"
+    )
+    vm_code = vm_code.replace(
+        "__VM_ARGUMENT_VIRTUALIZATION__",
+        "true" if argument_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_UPVALUE_VIRTUALIZATION__",
+        "true" if upvalue_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_TABLE_VIRTUALIZATION__",
+        "true" if table_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_BRANCH_VIRTUALIZATION__",
+        "true" if branch_virtualization else "false",
+    )
+    for token in ("__VM_ARG_MASK__", "__VM_ARG_KEY__", "__VM_ARG_PAD__",
+                  "__VM_ARG_TAG__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    for token in ("__VM_UV_SEED__", "__VM_UV_NIL__", "__VM_UV_BIAS__",
+                  "__VM_UV_SHARE__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    for token in ("__VM_TABLE_SEED__", "__VM_TABLE_KEY__",
+                  "__VM_TABLE_SHARE__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    vm_code = vm_code.replace(
+        "__VM_BRANCH_SEED__", str(random.randint(0x10000, 0x7FFFFFFF))
     )
     slots: dict[str, int] = {}
     used_slots: set[int] = set()
@@ -1400,7 +1432,13 @@ def _apply_handler_graphs(
         "__VM_CF_TARGET__", "__VM_CF_A__", "__VM_CF_B__",
         "__VM_CF_C__", "__VM_CF_COUNT__",
         "__VM_CF_VALUE__", "__VM_CF_STEP__", "__VM_CF_LIMIT__",
-        "__VM_CF_TAKE__",
+        "__VM_CF_TAKE__", "__VM_AP_MARK__", "__VM_AP_SEED__",
+        "__VM_AP_COUNT__", "__VM_AP_DATA__",
+        "__VM_UV_LEFT__", "__VM_UV_RIGHT__", "__VM_UV_EPOCH__",
+        "__VM_UV_KIND__",
+        "__VM_TB_LEFT__", "__VM_TB_RIGHT__", "__VM_TB_KEYS__",
+        "__VM_TB_REVERSE__", "__VM_TB_SALT__", "__VM_TB_NEXT__",
+        "__VM_TB_EXPOSED__",
     ]
     field_slots = random.sample(range(3, 241), len(field_tokens))
     for token, slot in zip(field_tokens, field_slots):
@@ -1508,6 +1546,10 @@ _DEFAULT_VM_OPTIONS = {
     "dispatcher_type": "ifelseif",
     "dispatcher_target_hiding": False,
     "semantic_state_threading": False,
+    "argument_virtualization": False,
+    "upvalue_virtualization": False,
+    "table_virtualization": False,
+    "branch_virtualization": False,
     # 블롭 저장 형태: "string"(단일 문자열) | "table"(스크램블 청크 테이블) | "random"
     "blob_form": "random",
     "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
@@ -1731,6 +1773,18 @@ class VMPass(PostPass):
             runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
             semantic_state_threading=bool(
                 self.vm_options.get("semantic_state_threading", False)
+            ),
+            argument_virtualization=bool(
+                self.vm_options.get("argument_virtualization", False)
+            ),
+            upvalue_virtualization=bool(
+                self.vm_options.get("upvalue_virtualization", False)
+            ),
+            table_virtualization=bool(
+                self.vm_options.get("table_virtualization", False)
+            ),
+            branch_virtualization=bool(
+                self.vm_options.get("branch_virtualization", False)
             ),
         )
 

@@ -151,6 +151,22 @@ VM_OPTION_DOCS = {
         "description": "Thread source-semantic instruction and value state through register representations, calls, and VM runtime state.",
         "default": False,
     },
+    "argument_virtualization": {
+        "description": "Shuffle, pad, and state-mask VM call arguments instead of passing sequential argument arrays.",
+        "default": False,
+    },
+    "upvalue_virtualization": {
+        "description": "Store closed upvalues as affine shares and hidden reference-vault handles.",
+        "default": False,
+    },
+    "table_virtualization": {
+        "description": "Lower VM-created tables into split shadow storage until they cross a native boundary.",
+        "default": False,
+    },
+    "branch_virtualization": {
+        "description": "Seal comparison results in live-state control packets before selecting VM branches.",
+        "default": False,
+    },
     "blob_form": {
         "description": "How the encrypted bytecode blob is stored in the output.",
         "default": "random",
@@ -428,7 +444,9 @@ def _validate_vm_options(options: dict) -> None:
 
     for key in ("fake_handlers", "mutate_handlers", "junk_instructions",
                 "integrity_constants", "runtime_trace",
-                "dispatcher_target_hiding", "semantic_state_threading"):
+                "dispatcher_target_hiding", "semantic_state_threading",
+                "argument_virtualization", "upvalue_virtualization",
+                "table_virtualization", "branch_virtualization"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"vm_options.{key} must be true or false")

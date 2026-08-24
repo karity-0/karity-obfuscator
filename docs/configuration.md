@@ -23,6 +23,10 @@
   - [dispatcher_type](#dispatcher_type)
   - [dispatcher_target_hiding](#dispatcher_target_hiding)
   - [semantic_state_threading](#semantic_state_threading)
+  - [argument_virtualization](#argument_virtualization)
+  - [upvalue_virtualization](#upvalue_virtualization)
+  - [table_virtualization](#table_virtualization)
+  - [branch_virtualization](#branch_virtualization)
   - [blob_form](#blob_form)
   - [vm_count](#vm_count)
   - [fake_handlers](#fake_handlers)
@@ -300,6 +304,38 @@ default: false
 ### semantic_state_threading
 
 Thread source-semantic instruction and value state through register representations, calls, and VM runtime state.
+
+default: false
+
+---
+
+### argument_virtualization
+
+Shuffle, pad, and state-mask VM call arguments instead of passing sequential argument arrays.
+
+default: false
+
+---
+
+### upvalue_virtualization
+
+Store closed upvalues as affine shares and hidden reference-vault handles.
+
+default: false
+
+---
+
+### table_virtualization
+
+Lower VM-created tables into split shadow storage until they cross a native boundary.
+
+default: false
+
+---
+
+### branch_virtualization
+
+Seal comparison results in live-state control packets before selecting VM branches.
 
 default: false
 
