@@ -90,6 +90,12 @@ cross-frame ledger, so the operands cannot be consumed through a packet-local ke
 Load, table access, table assignment, comparison, arithmetic, closure creation,
 and vararg transfer semantics execute inside build-time compiled control and
 semantic graphs where supported.
+
+Build-specific error probes derive a source-line state without an explicit
+expected-line comparison. The state participates in the VM blob key, integrity
+constant programs, instruction routing, and semantic state.
+Removing line metadata through stripped-bytecode rehosting therefore changes the
+same runtime material used to decrypt and reconstruct protected values.
 """
 
 

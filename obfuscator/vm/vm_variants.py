@@ -10,6 +10,7 @@ per-run VM 다형성 변형 3종. 각 함수는 vm.lua 템플릿(마커/토큰 �
 keystream/tamper는 vm.lua 안에서만 완결되므로 마커 사이를 교체한다.
 """
 from __future__ import annotations
+import hashlib
 import random
 import re
 
@@ -110,7 +111,12 @@ def _render_kss() -> str:
         f"        local m=((i*{k1})~_ksd~(i>>{s1})~{k2})&0xFF\n"
         "        out[i]=(string.byte(s,i)~m)&0xFF\n"
         "    end\n"
-        "    return string.char(table.unpack(out))\n"
+        "    local chunks={}\n"
+        "    for i=1,#out,4096 do\n"
+        "        local last=i+4095; if last>#out then last=#out end\n"
+        "        chunks[#chunks+1]=string.char(table.unpack(out,i,last))\n"
+        "    end\n"
+        "    return table.concat(chunks)\n"
         "end"
     )
 
@@ -140,7 +146,10 @@ _TAMPER_C_POOL = [
     "setmetatable", "getmetatable", "ipairs", "next", "pcall",
 ]
 # 항상 포함(메커니즘 핵심): 체커 자기보호 + run이 실제로 의존하는 함수들.
-_TAMPER_ALWAYS = ["debug.getinfo", "string.dump", "debug.gethook"]
+_TAMPER_ALWAYS = [
+    "debug.getinfo", "string.dump", "debug.gethook",
+    "error", "pcall", "tostring", "tonumber", "string.match",
+]
 
 
 def _render_tamper() -> str:
@@ -164,6 +173,7 @@ def _render_tamper() -> str:
                'return ok and info~=nil and info.what=="C" end')
 
     pool = list(dict.fromkeys(_TAMPER_C_POOL))  # dedup, 순서 유지
+    pool = [fn for fn in pool if fn not in _TAMPER_ALWAYS]
     random.shuffle(pool)
     fns = list(_TAMPER_ALWAYS) + pool[:random.randint(3, 7)]
     random.shuffle(fns)
@@ -191,3 +201,90 @@ _TAMPER_RE = re.compile(r'--<<TAMPER>>.*?--<<ENDTAMPER>>', re.S)
 def apply_tamper(vm_code: str) -> str:
     """TAMPER 마커 사이(변조 검사 블록)를 랜덤 항목/순서/가중치/혼합식으로 재생성."""
     return _TAMPER_RE.sub(lambda _m: _render_tamper(), vm_code, count=1)
+
+
+# ---------------------------------------------------------------------------
+# 4. source-line state
+# ---------------------------------------------------------------------------
+_U32_MASK = 0xFFFFFFFF
+
+
+def _line_state_mix(lines: list[int], steps: list[tuple[int, int, int]]) -> int:
+    state = 0
+    for line, (mul, add, shift) in zip(lines, steps):
+        state = ((state ^ ((line * mul) & _U32_MASK)) + add) & _U32_MASK
+        state = (state ^ (state >> shift)) & _U32_MASK
+    return state
+
+
+def apply_line_state(vm_func_src: str, output_prefix: str = "") -> tuple[str, int, list[int]]:
+    """Inject line probes and compute the clean state from the final layout.
+
+    Runtime code never compares against a visible expected line. Observed line
+    values become `_LS`; the builder derives the same value for encryption and
+    integrity-constant encoding.
+    """
+    anchor = "return function(...)"
+    anchor_pos = vm_func_src.find(anchor)
+    if anchor_pos < 0:
+        raise ValueError("VM function source is missing its return-function anchor")
+
+    seed_bytes = hashlib.sha256(repr(random.getstate()).encode("utf-8")).digest()
+    rng = random.Random(int.from_bytes(seed_bytes, "big"))
+    probe_count = rng.randint(3, 5)
+    alphabet = "abcdefghijklmnopqrstuvwxyz"
+
+    def ident(tag: str) -> str:
+        tail = "".join(rng.choice(alphabet) for _ in range(8))
+        return f"_l{tag}{tail}"
+
+    parser_name = ident("p")
+    probe_names = [ident("f") for _ in range(probe_count)]
+    message_names = [ident("e") for _ in range(probe_count)]
+    value_names = [ident("v") for _ in range(probe_count)]
+    tokens = [f"K{rng.getrandbits(32):08x}" for _ in range(probe_count)]
+    fallbacks = [rng.getrandbits(24) | 1 for _ in range(probe_count)]
+    steps = [
+        (rng.getrandbits(32) | 1, rng.getrandbits(32), rng.randint(5, 17))
+        for _ in range(probe_count)
+    ]
+
+    block: list[str] = [""]
+    for probe_name, token in zip(probe_names, tokens):
+        block.extend([
+            f"local function {probe_name}()",
+            f'error("{token}")',
+            "end",
+        ])
+    block.extend([
+        f"local function {parser_name}(e,z)",
+        "local s=tostring(e)",
+        'return tonumber(string.match(s,":(%d+):")) or z',
+        "end",
+    ])
+    for probe_name, message_name in zip(probe_names, message_names):
+        block.append(f"local _,{message_name}=pcall({probe_name})")
+    for message_name, value_name, fallback in zip(message_names, value_names, fallbacks):
+        block.append(f"local {value_name}={parser_name}({message_name},{fallback})")
+    block.append("local _LS=0")
+    for value_name, (mul, add, shift) in zip(value_names, steps):
+        block.append(
+            f"_LS=((_LS~(({value_name}*0x{mul:08X})&0xFFFFFFFF))"
+            f"+0x{add:08X})&0xFFFFFFFF"
+        )
+        block.append(f"_LS=(_LS~(_LS>>{shift}))&0xFFFFFFFF")
+    block.append("")
+
+    insertion = "\n".join(block)
+    insert_at = anchor_pos + len(anchor)
+    result = vm_func_src[:insert_at] + insertion + vm_func_src[insert_at:]
+
+    prefix_lines = output_prefix.count("\n")
+    probe_lines: list[int] = []
+    for token in tokens:
+        marker_pos = result.find(f'error("{token}")')
+        if marker_pos < 0:
+            raise AssertionError("line probe marker disappeared during rendering")
+        probe_lines.append(prefix_lines + result[:marker_pos].count("\n") + 1)
+
+    return result, _line_state_mix(probe_lines, steps), probe_lines

@@ -142,6 +142,7 @@ IOP_XOR        = 7
 IOP_ADD        = 8
 IOP_MUL        = 9
 IOP_GET_SCRIPT_HASH = 10
+IOP_GET_LINE_STATE = 11
 
 PSEUDO_LOADIEXPR = 47
 PSEUDO_GET_SCRIPT_HASH = 48
@@ -701,6 +702,7 @@ def _integrity_sources(seed: int, integrity: dict, code_count: int, vm_id: int) 
         IOP_GET_VMID: vm_id & 0xFFFFFFFF,
         IOP_GET_CODELEN: code_count & 0xFFFFFFFF,
         IOP_GET_SCRIPT_HASH: integrity.get("script_hash", 0) & 0xFFFFFFFF,
+        IOP_GET_LINE_STATE: integrity.get("line_state", 0) & 0xFFFFFFFF,
     }
 
 
@@ -733,6 +735,7 @@ def _make_integrity_program() -> list[tuple[int, int | None]]:
         IOP_GET_VMID,
         IOP_GET_CODELEN,
         IOP_GET_SCRIPT_HASH,
+        IOP_GET_LINE_STATE,
     ]
     random.shuffle(sources)
 
@@ -969,6 +972,7 @@ def serialize(proto: Proto,
         "vm_count": len(vm_maps),
         "layout_hash": _layout_hash(layout),
         "script_hash": int((integrity_options or {}).get("script_hash", 0)),
+        "line_state": int((integrity_options or {}).get("line_state", 0)),
     }
     w.u32(integrity["layout_hash"])
     w.u16(integrity["vm_count"])
@@ -1191,15 +1195,24 @@ def deserialize(data: bytes) -> Proto:
     return _read_proto(r, acc_state)
 
 
-def patch_integrity_script_hash(data: bytes, new_hash: int) -> bytes:
+def patch_integrity_sources(data: bytes, new_hash: int, new_line_state: int) -> bytes:
     patched = bytearray(data)
     r = BinReader(data)
     seed = r.u16()
     layout_hash = r.u32()
     vm_count = r.u16()
     _skip_fake_pool(r)
-    _patch_proto_integrity(r, patched, seed, layout_hash, vm_count, 0, new_hash & 0xFFFFFFFF)
+    _patch_proto_integrity(
+        r, patched, seed, layout_hash, vm_count,
+        0, new_hash & 0xFFFFFFFF,
+        0, new_line_state & 0xFFFFFFFF,
+    )
     return bytes(patched)
+
+
+def patch_integrity_script_hash(data: bytes, new_hash: int) -> bytes:
+    """Backward-compatible wrapper for callers without source-line state."""
+    return patch_integrity_sources(data, new_hash, 0)
 
 
 def _skip_fake_pool(r: BinReader) -> None:
@@ -1256,6 +1269,8 @@ def _patch_proto_integrity(
     vm_count: int,
     old_hash: int,
     new_hash: int,
+    old_line_state: int,
+    new_line_state: int,
 ) -> None:
     r.u8(); r.u8(); r.u8()
     vm_id = r.u8()
@@ -1296,10 +1311,12 @@ def _patch_proto_integrity(
             old_sources = {
                 **sources_base,
                 "script_hash": old_hash,
+                "line_state": old_line_state,
             }
             new_sources = {
                 **sources_base,
                 "script_hash": new_hash,
+                "line_state": new_line_state,
             }
             old_mix = _eval_integrity_program(
                 program, _integrity_sources(seed, old_sources, code_count, vm_id)
@@ -1317,7 +1334,10 @@ def _patch_proto_integrity(
 
     proto_count = r.u32()
     for _ in range(proto_count):
-        _patch_proto_integrity(r, buf, seed, layout_hash, vm_count, old_hash, new_hash)
+        _patch_proto_integrity(
+            r, buf, seed, layout_hash, vm_count,
+            old_hash, new_hash, old_line_state, new_line_state,
+        )
 
 
 def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:

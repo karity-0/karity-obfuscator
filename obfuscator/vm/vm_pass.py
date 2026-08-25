@@ -18,7 +18,7 @@ from .serializer import (
     serialize,
     assign_vm_ids,
     collect_fuseable_pairs_for_vm,
-    patch_integrity_script_hash,
+    patch_integrity_sources,
 )
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
@@ -30,7 +30,7 @@ from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
-                          apply_keystream, apply_tamper)
+                          apply_keystream, apply_tamper, apply_line_state)
 from .junk_injection import inject_junk
 
 
@@ -153,7 +153,8 @@ _NUMERIC_DECODE = (
     "_b[_p+1]=_n&0xFF;_b[_p+2]=(_n>>8)&0xFF;"
     "_b[_p+3]=(_n>>16)&0xFF;_b[_p+4]=(_n>>24)&0xFF;_p=_p+4 end;"
     "while #_b>_L do _b[#_b]=nil end;"
-    "return string.char(table.unpack(_b))end)(blob)"
+    "local _o={};for _i=1,#_b,4096 do local _e=_i+4095;if _e>#_b then _e=#_b end;"
+    "_o[#_o+1]=string.char(table.unpack(_b,_i,_e))end;return table.concat(_o)end)(blob)"
 )
 
 
@@ -1794,6 +1795,18 @@ class VMPass(PostPass):
             ),
         )
 
+        _line_state_start = time.perf_counter()
+        vm_func_src, line_state, probe_lines = apply_line_state(
+            vm_func_src,
+            self.output_prefix,
+        )
+        self.last_profile.append({
+            "phase": "source_line_state",
+            "elapsed": round(time.perf_counter() - _line_state_start, 6),
+            "probe_count": len(probe_lines),
+            "probe_lines": probe_lines,
+        })
+
         _graph_elapsed = time.perf_counter() - _graph_start
         _graph_output_bytes = len(vm_func_src.encode("utf-8"))
 
@@ -1824,13 +1837,14 @@ class VMPass(PostPass):
         _phase_start = time.perf_counter()
         dump_bytes = _dump_function_stripped(vm_func_src, header)
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+        effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
         if self.vm_options.get("integrity_constants", False):
-            blob = patch_integrity_script_hash(blob, dump_crc)
+            blob = patch_integrity_sources(blob, effective_crc, line_state)
         self.last_profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         alphabet  = string.ascii_letters + string.digits
         rand_tail = ''.join(secrets.choice(alphabet) for _ in range(16))
-        _KEY = f"karityObfuscator/{format(dump_crc, '08x')}/{rand_tail}"
+        _KEY = f"karityObfuscator/{format(effective_crc, '08x')}/{rand_tail}"
 
         # 6. blob 암호화: nonce(8B) + ciphertext
         _phase_start = time.perf_counter()

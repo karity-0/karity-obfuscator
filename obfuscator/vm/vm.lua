@@ -62,7 +62,12 @@ local function kae_decrypt(blob, key)
     local RK=_kae_derive(blended,n)
     local pt={}
     for i=1,n do pt[i]=string.byte(blob,8+i)~RK[i] end
-    return string.char(table.unpack(pt))
+    local chunks={}
+    for i=1,#pt,4096 do
+        local last=i+4095; if last>#pt then last=#pt end
+        chunks[#chunks+1]=string.char(table.unpack(pt,i,last))
+    end
+    return table.concat(chunks)
 end
 
 ----------------------------------------
@@ -114,7 +119,12 @@ local function from_base36(s)
         i=i+7
     end
     while #bytes>length do bytes[#bytes]=nil end
-    return string.char(table.unpack(bytes))
+    local chunks={}
+    for j=1,#bytes,4096 do
+        local last=j+4095; if last>#bytes then last=#bytes end
+        chunks[#chunks+1]=string.char(table.unpack(bytes,j,last))
+    end
+    return table.concat(chunks)
 end
 
 local function make_reader(blob)
@@ -150,7 +160,7 @@ local function make_reader(blob)
 end
 
 local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4;local CTAG_IEXPR=5
-local _IT={seed=0,layout=0,vmc=1,script=0}
+local _IT={seed=0,layout=0,vmc=1,script=0,line=0}
 
 -- 런타임 내부 keystream: read_proto가 디코드 직후 code[i]를 메모리에서 한 번 더
 -- 마스킹하고, exec가 fetch 시점에 동일 마스크로 푼다. 따라서 메모리에 상주하는
@@ -175,7 +185,12 @@ local function _kss(s)
         local m=((i*0x6D)~_ksd~(i>>3))&0xFF
         out[i]=(string.byte(s,i)~m)&0xFF
     end
-    return string.char(table.unpack(out))
+    local chunks={}
+    for i=1,#out,4096 do
+        local last=i+4095; if last>#out then last=#out end
+        chunks[#chunks+1]=string.char(table.unpack(out,i,last))
+    end
+    return table.concat(chunks)
 end
 --<<ENDKSTREAM>>
 
@@ -274,6 +289,7 @@ local function _ieval(prog,proto)
         elseif op==5 then sp=sp+1; st[sp]=proto.vm_id&0xFFFFFFFF
         elseif op==6 then sp=sp+1; st[sp]=#proto.code&0xFFFFFFFF
         elseif op==10 then sp=sp+1; st[sp]=_IT.script&0xFFFFFFFF
+        elseif op==11 then sp=sp+1; st[sp]=_IT.line&0xFFFFFFFF
         else
             local b=st[sp]; local a=st[sp-1]; sp=sp-1
             if op==7 then st[sp]=(a~b)&0xFFFFFFFF
@@ -1516,7 +1532,8 @@ end
 
 local function run(blob,rand_tail,self_func)
     local dump=string.dump(self_func,true)
-    local crc=_crc32(dump)
+    local dump_crc=_crc32(dump)
+    local crc=(dump_crc~(_LS or 0))&0xFFFFFFFF
     -- anti-tamper: 변조 신호를 키에 섞는다. clean이면 _t==0 -> crc 불변
     -- -> 팩 타임 키와 일치. 변조 시 _t~=0 -> 키 교란 -> garbage(분기 없음, 패치 불가).
     -- 아래 블록(마커 사이)은 파이프라인이 per-run 랜덤화한다(검사 항목/순서/가중치/
@@ -1544,7 +1561,8 @@ local function run(blob,rand_tail,self_func)
     crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
     --<<ENDTAMPER>>
     _IT.script=crc
-    _ksd=crc
+    _IT.line=_LS or 0
+    _ksd=dump_crc
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
