@@ -224,15 +224,13 @@ def _loader_binding(loader_src: str) -> str:
 
 
 
-def _dump_loader_stripped(loader_src: str) -> bytes:
+def _dump_loader_stripped(loader_src: str, output_prefix: str = "") -> bytes:
     """Dump the final loader function in the exact runtime outer context."""
     if not _LUA or (isinstance(_LUA, Path) and not _LUA.exists()):
         raise FileNotFoundError("lua5.3 not found.")
 
-    from ..pipeline import Pipeline
-
     wrapped = (
-        f"{Pipeline.HEADER}"
+        f"{output_prefix}"
         f"{_loader_binding(loader_src)}"
         f'local _D="";'
         f"return _P"
@@ -1011,10 +1009,7 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 
 
 def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
-    from ..pipeline import Pipeline
-
     return (
-        f"{Pipeline.HEADER}"
         f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
         f"return _P(_D,_P)\n"
@@ -1024,8 +1019,13 @@ def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
 class PackerPass(PostPass):
     """Final self-keyed packer with cross-layer external-context coupling."""
 
-    def __init__(self, packer_output_passes: list[str] | None = None):
+    def __init__(
+        self,
+        packer_output_passes: list[str] | None = None,
+        output_prefix: str = "",
+    ):
         self.packer_output_passes = packer_output_passes or []
+        self.output_prefix = output_prefix
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
@@ -1058,7 +1058,7 @@ class PackerPass(PostPass):
             self.packer_output_passes,
         )
 
-        dump_hash = _fnv1a32(_dump_loader_stripped(loader_src))
+        dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix))
         state = _context_state(dump_hash, plan)
 
         if plan.is_vm:

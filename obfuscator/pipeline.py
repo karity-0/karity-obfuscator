@@ -6,6 +6,7 @@ from typing import Union
 from luaparser import ast
 
 from .passes.base import BasePass, PostPass, PrePass, Replacement
+from .passes.output_signature import DEFAULT_SIGNATURE, OutputSignaturePass
 from .profiling import ProfileRecord, Profiler
 from .verbosity import Verbosity
 
@@ -35,16 +36,21 @@ def _format_record(record: ProfileRecord) -> str:
 
 
 class Pipeline:
-    HEADER = "-- obfuscated using karity obfuscator!\n"
+    HEADER = DEFAULT_SIGNATURE
 
     def __init__(self, show_header: bool = True):
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
         self.show_header = show_header
+        self._output_signature: OutputSignaturePass | None = (
+            OutputSignaturePass() if show_header else None
+        )
 
-    def add(self, pass_: BasePass | PrePass) -> Pipeline:
-        if isinstance(pass_, PrePass):
+    def add(self, pass_: BasePass | PrePass | PostPass) -> Pipeline:
+        if isinstance(pass_, OutputSignaturePass):
+            self._output_signature = pass_
+        elif isinstance(pass_, PrePass):
             self._pre_passes.append(pass_)
         elif isinstance(pass_, PostPass):
             self._post_passes.append(pass_)
@@ -116,11 +122,21 @@ class Pipeline:
                     for detail in details:
                         print(f"  - {detail['phase']}: {detail['elapsed']:.3f}s")
 
-        if not self.show_header:
+        if self._output_signature is None:
             return script
-        if script.startswith(self.HEADER):
-            return script
-        return f"{self.HEADER}{script}"
+
+        before = _size(script)
+        start = time.perf_counter()
+        script = self._output_signature.run(script)
+        record = ProfileRecord(
+            "POST", self._output_signature.__class__.__name__,
+            time.perf_counter() - start, before, _size(script),
+        )
+        if profiler:
+            profiler.add(record)
+        if verbose >= Verbosity.NORMAL:
+            info_message("POST", self._output_signature, _format_record(record))
+        return script
 
     def _apply(self, src: str, replacements: list[Replacement]) -> str:
         if not replacements:

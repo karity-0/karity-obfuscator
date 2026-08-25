@@ -65,6 +65,37 @@
           </div>
         </details>
 
+        <details class="config-section" open>
+          <summary><span>Signature</span><span class="section-count" id="signature-mode-label">default</span></summary>
+          <div class="section-body signature-settings">
+            <div class="context-title">Mode</div>
+            <label class="choice-item"><input type="radio" name="signature-mode" value="default"><span>Default</span></label>
+            <label class="choice-item"><input type="radio" name="signature-mode" value="none"><span>None</span></label>
+            <label class="choice-item"><input type="radio" name="signature-mode" value="fake"><span>Fake signature</span></label>
+
+            <div id="signature-fake-options" class="nested-options">
+              <div class="context-title">Candidate sources</div>
+              <label class="choice-item"><input id="signature-well-known" type="checkbox"><span>Well-known samples</span></label>
+              <label class="choice-item"><input id="signature-generator" type="checkbox"><span>Use generator</span></label>
+              <div id="signature-generator-options" class="nested-options deep">
+                <div class="context-title">Generator patterns</div>
+                <label class="choice-item"><input class="signature-pattern" type="checkbox" value="Obfuscated using {name} obfuscator!"><span>Obfuscated using {name} obfuscator!</span></label>
+                <label class="choice-item"><input class="signature-pattern" type="checkbox" value="Protected with {name} V{version}"><span>Protected with {name} V{version}</span></label>
+                <label class="choice-item"><input class="signature-pattern" type="checkbox" value="{name} Lua Protection&#10;Build V{version}"><span>{name} Lua Protection / Build V{version}</span></label>
+                <label class="choice-item"><input class="signature-pattern" type="checkbox" value="Secured by {name}&#10;Version: {version}"><span>Secured by {name} / Version: {version}</span></label>
+                <label class="field-label" for="signature-custom-pattern">Custom pattern</label>
+                <input id="signature-custom-pattern" class="text-control" placeholder="{name} / {version}">
+              </div>
+            </div>
+
+            <label class="choice-item custom-choice"><input type="radio" name="signature-mode" value="custom"><span>Custom</span></label>
+            <div id="signature-custom-options" class="nested-options">
+              <label class="field-label" for="signature-custom">Comment text</label>
+              <textarea id="signature-custom" class="text-area-control" rows="3" placeholder="Comment markers are removed automatically"></textarea>
+            </div>
+          </div>
+        </details>
+
         <div id="vm-option-groups"></div>
       </div>
 

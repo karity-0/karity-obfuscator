@@ -122,6 +122,18 @@ button, select, input { -webkit-app-region: no-drag; }
 .enabled .toggle-dot::after { content: ""; position: absolute; left: 4px; top: 1px; width: 3px; height: 7px; border: solid #071012; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .toggle-name { min-width: 0; overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
 
+.signature-settings { padding-top: 10px; }
+.choice-item { display: flex; align-items: center; gap: 8px; padding: 6px 4px; color: var(--muted); font-size: 10.5px; cursor: pointer; }
+.choice-item input { accent-color: var(--violet); }
+.choice-item:has(input:checked) { color: var(--text); }
+.nested-options { margin: 5px 0 5px 12px; padding: 9px 10px; border-left: 1px solid var(--line-bright); background: rgba(255,255,255,.015); }
+.nested-options.deep { margin-left: 8px; }
+.nested-options.hidden { display: none; }
+.custom-choice { margin-top: 3px; }
+.text-control, .text-area-control { width: 100%; padding: 8px 9px; color: var(--text); border: 1px solid var(--line); border-radius: 7px; outline: none; background: #0a0f1a; font: 10px/1.45 var(--mono); }
+.text-area-control { resize: vertical; min-height: 58px; }
+.text-control:focus, .text-area-control:focus { border-color: var(--violet); box-shadow: 0 0 0 3px rgba(157,140,255,.09); }
+
 .option-row { display: grid; grid-template-columns: minmax(0,1fr) 122px; gap: 10px; align-items: center; padding: 9px 4px; border-bottom: 1px solid rgba(255,255,255,.035); }
 .option-row:last-child { border-bottom: 0; }
 .option-label { display: block; color: #aeb9cd; font-size: 11px; }

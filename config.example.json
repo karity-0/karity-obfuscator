@@ -1,5 +1,22 @@
 {
     "profile": "dev",
+    "signature": {
+        "mode": "default",
+        "fake": {
+            "sources": [
+                "well_known",
+                "generated"
+            ],
+            "generator_patterns": [
+                "Obfuscated using {name} obfuscator!",
+                "Protected with {name} V{version}",
+                "{name} Lua Protection\nBuild V{version}",
+                "Secured by {name}\nVersion: {version}"
+            ],
+            "custom_pattern": ""
+        },
+        "custom": ""
+    },
     "profiles": {
         "dev": {
             "passes": [

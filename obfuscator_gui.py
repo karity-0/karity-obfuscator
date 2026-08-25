@@ -71,6 +71,20 @@ def _complete_config(config: dict) -> dict:
     for key in CONFIG_PASS_LISTS:
         result.setdefault(key, [])
     result["vm_options"] = {**_default_vm_options(), **result.get("vm_options", {})}
+    result.setdefault("signature", {
+        "mode": "default",
+        "fake": {
+            "sources": ["well_known", "generated"],
+            "generator_patterns": [
+                "Obfuscated using {name} obfuscator!",
+                "Protected with {name} V{version}",
+                "{name} Lua Protection\nBuild V{version}",
+                "Secured by {name}\nVersion: {version}",
+            ],
+            "custom_pattern": "",
+        },
+        "custom": "",
+    })
     return result
 
 
@@ -261,8 +275,7 @@ class Api:
             validate_config(config)
             if payload.get("release_check"):
                 validate_release_config(config)
-            pipeline = build_pipeline_from_config(
-                config, Pipeline, show_header="vm" not in config["passes"])
+            pipeline = build_pipeline_from_config(config, Pipeline)
             profiler = Profiler()
             start = time.perf_counter()
             output = pipeline.run(script, verbose=0, profiler=profiler)

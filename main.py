@@ -31,8 +31,7 @@ def load_config(path: str = "config.json") -> dict:
 
 
 def build_pipeline(config: dict) -> Pipeline:
-    has_vm = "vm" in config.get("passes", [])
-    return build_pipeline_from_config(config, Pipeline, show_header=not has_vm)
+    return build_pipeline_from_config(config, Pipeline)
 
 
 def parse_args():

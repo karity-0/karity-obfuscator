@@ -1481,7 +1481,7 @@ def _obfuscate_vm_output(
     from ..profiling import Profiler
     from ..registry import PASS_REGISTRY
 
-    pipeline = Pipeline()
+    pipeline = Pipeline(show_header=False)
     applied_names: list[str] = []
 
     for name in pass_names:
@@ -1573,9 +1573,15 @@ _DEFAULT_VM_OPTIONS = {
 
 
 class VMPass(PostPass):
-    def __init__(self, vm_output_passes: list[str] | None = None, vm_options: dict | None = None):
+    def __init__(
+        self,
+        vm_output_passes: list[str] | None = None,
+        vm_options: dict | None = None,
+        output_prefix: str = "",
+    ):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
+        self.output_prefix = output_prefix
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
@@ -1812,11 +1818,7 @@ class VMPass(PostPass):
         })
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
-        from ..pipeline import Pipeline
-        header = ""
-        if vm_func_src.startswith(Pipeline.HEADER):
-            header = Pipeline.HEADER
-            vm_func_src = vm_func_src[len(header):]
+        header = self.output_prefix
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         _phase_start = time.perf_counter()
@@ -1847,7 +1849,6 @@ class VMPass(PostPass):
         vmf_body = vm_func_src[len("return "):]
 
         raw = (
-            f'{header}'
             f'local a="obfuscated using karity obfuscator"'
             f'local _vmf={vmf_body};'
             f'return (_vmf(1032,413,258,104,953,283,120))'

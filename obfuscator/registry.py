@@ -15,6 +15,11 @@ from __future__ import annotations
 import re
 
 from .vm import VMPass
+from .passes.output_signature import (
+    DEFAULT_GENERATOR_PATTERNS,
+    sanitize_generator_pattern,
+    strip_comment_tokens,
+)
 
 from .passes import (
     StringEncodePass,
@@ -30,6 +35,7 @@ from .passes import (
     AntiDebugPass,
     AntiDecompilePass,
     PackerPass,
+    OutputSignaturePass,
 )
 
 
@@ -111,6 +117,8 @@ CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
 VALID_BLOB_FORMS = {"string", "table", "numeric", "random"}
 OUTPUT_PASS_EXCLUDES = {"vm", "pack"}
+VALID_SIGNATURE_MODES = {"default", "none", "fake", "generated", "custom"}
+VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
 
 PASS_DESCRIPTIONS = {
     "remove_comment": "Removes comments from the source code before AST parsing.",
@@ -337,6 +345,7 @@ def validate_config(config: dict) -> None:
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
     _validate_vm_options(config.get("vm_options", {}))
+    _validate_signature(config.get("signature", {}))
 
 
 def validate_release_config(config: dict) -> None:
@@ -466,6 +475,44 @@ def _validate_vm_options(options: dict) -> None:
                 )
 
 
+def _validate_signature(signature: dict) -> None:
+    if not isinstance(signature, dict):
+        raise ConfigError("'signature' must be an object")
+    mode = signature.get("mode", "default")
+    if mode not in VALID_SIGNATURE_MODES:
+        values = ", ".join(sorted(VALID_SIGNATURE_MODES))
+        raise ConfigError(f"invalid signature.mode '{mode}'. expected: {values}")
+
+    custom = signature.get("custom", "")
+    if not isinstance(custom, str):
+        raise ConfigError("signature.custom must be a string")
+    if mode == "custom" and not strip_comment_tokens(custom):
+        raise ConfigError("signature.custom must contain comment text in custom mode")
+
+    fake = signature.get("fake", {})
+    if not isinstance(fake, dict):
+        raise ConfigError("signature.fake must be an object")
+    custom_pattern = fake.get("custom_pattern", signature.get("custom_pattern", ""))
+    if not isinstance(custom_pattern, str):
+        raise ConfigError("signature.fake.custom_pattern must be a string")
+    sources = fake.get("sources", ["well_known", "generated"])
+    if not isinstance(sources, list) or not all(isinstance(item, str) for item in sources):
+        raise ConfigError("signature.fake.sources must be a list of source names")
+    unknown = [item for item in sources if item not in VALID_SIGNATURE_SOURCES]
+    if unknown:
+        raise ConfigError(f"unknown signature source: {', '.join(unknown)}")
+    if mode == "fake" and not sources:
+        raise ConfigError("signature.fake.sources must select at least one source in fake mode")
+    patterns = fake.get("generator_patterns", list(DEFAULT_GENERATOR_PATTERNS))
+    if not isinstance(patterns, list) or not all(isinstance(item, str) for item in patterns):
+        raise ConfigError("signature.fake.generator_patterns must be a list of strings")
+    uses_generator = mode == "generated" or (mode == "fake" and "generated" in sources)
+    usable_patterns = [sanitize_generator_pattern(item) for item in patterns]
+    usable_custom_pattern = sanitize_generator_pattern(custom_pattern)
+    if uses_generator and not any(usable_patterns) and not usable_custom_pattern:
+        raise ConfigError("generated signatures require a generator pattern or custom pattern")
+
+
 def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = True):
     """
     config 예시:
@@ -478,20 +525,33 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     """
     validate_config(config)
 
-    pipeline                = pipeline_cls(show_header=show_header)
+    # Signature selection happens once so VM/packer integrity dumps can account
+    # for the exact number of lines that the final output pass will prepend.
+    signature_options       = config.get("signature", {}) if show_header else {"mode": "none"}
+    signature_pass          = OutputSignaturePass(signature_options)
+    pipeline                = pipeline_cls(show_header=False)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 
     vm_options              = config.get("vm_options", {})
+    has_packer              = "pack" in config.get("passes", [])
 
     for name in config.get("passes", []):
         info = PASS_REGISTRY.get(name)
 
         cls = info["cls"]
         if cls is VMPass:
-            pipeline.add(cls(vm_output_passes=vm_output_passes, vm_options=vm_options))
+            pipeline.add(cls(
+                vm_output_passes=vm_output_passes,
+                vm_options=vm_options,
+                output_prefix="" if has_packer else signature_pass.prefix,
+            ))
         elif cls is PackerPass:
-            pipeline.add(cls(packer_output_passes=packer_output_passes))
+            pipeline.add(cls(
+                packer_output_passes=packer_output_passes,
+                output_prefix=signature_pass.prefix,
+            ))
         else:
             pipeline.add(cls())
 
+    pipeline.add(signature_pass)
     return pipeline

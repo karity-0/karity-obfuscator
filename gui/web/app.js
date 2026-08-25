@@ -13,6 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
     backendLabel: $('backend-label'), tooltip: $('tooltip'), saveStatus: $('config-status'),
     run: $('run-btn'), open: $('open-file-btn'), clear: $('clear-input-btn'),
     copy: $('copy-output-btn'), saveOutput: $('save-output-btn'), saveConfig: $('save-config-btn'),
+    signatureModeLabel: $('signature-mode-label'), signatureFake: $('signature-fake-options'),
+    signatureGeneratorOptions: $('signature-generator-options'), signatureCustomOptions: $('signature-custom-options'),
+    signatureWellKnown: $('signature-well-known'), signatureGenerator: $('signature-generator'),
+    signatureCustomPattern: $('signature-custom-pattern'), signatureCustom: $('signature-custom'),
   };
 
   let api = null;
@@ -54,6 +58,17 @@ document.addEventListener('DOMContentLoaded', () => {
     state.config.vm_output_passes ||= [];
     state.config.packer_output_passes ||= [];
     state.config.vm_options ||= {};
+    state.config.signature ||= {
+      mode: 'default',
+      fake: { sources: ['well_known', 'generated'], generator_patterns: [
+        'Obfuscated using {name} obfuscator!', 'Protected with {name} V{version}',
+        '{name} Lua Protection\nBuild V{version}', 'Secured by {name}\nVersion: {version}'
+      ], custom_pattern: '' },
+      custom: ''
+    };
+    state.config.signature.fake ||= { sources: ['well_known', 'generated'], generator_patterns: [] };
+    state.config.signature.fake.sources ||= [];
+    state.config.signature.fake.generator_patterns ||= [];
     state.preset ||= 'custom';
     state.protection_level ||= 'custom';
   }
@@ -106,6 +121,29 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.saveOutput.addEventListener('click', saveOutput);
     ui.run.addEventListener('click', runObfuscation);
 
+    document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
+      input.addEventListener('change', event => {
+        state.config.signature.mode = event.target.value;
+        markPresetCustom(false);
+        renderSignature();
+      });
+    });
+    ui.signatureWellKnown.addEventListener('change', event => setSignatureSource('well_known', event.target.checked));
+    ui.signatureGenerator.addEventListener('change', event => setSignatureSource('generated', event.target.checked));
+    document.querySelectorAll('.signature-pattern').forEach(input => {
+      input.addEventListener('change', event => setGeneratorPattern(event.target.value, event.target.checked));
+    });
+    ui.signatureCustomPattern.addEventListener('input', event => {
+      event.target.value = stripCommentTokens(event.target.value);
+      state.config.signature.fake.custom_pattern = event.target.value;
+      markPresetCustom(false);
+    });
+    ui.signatureCustom.addEventListener('input', event => {
+      event.target.value = stripCommentTokens(event.target.value);
+      state.config.signature.custom = event.target.value;
+      markPresetCustom(false);
+    });
+
     document.addEventListener('mouseover', showTooltip);
     document.addEventListener('mousemove', moveTooltip);
     document.addEventListener('mouseout', hideTooltip);
@@ -119,7 +157,53 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.source.textContent = bootstrap.profile_source ? `profiles: ${bootstrap.profile_source}` : 'profiles unavailable';
     renderPasses();
     renderVmOptions();
+    renderSignature();
     updateOverview();
+  }
+
+  function stripCommentTokens(value) {
+    return String(value || '').replace(/--(?:\[(=*)\[)?|\](=*)\]/g, '').trimStart();
+  }
+
+  function renderSignature() {
+    const signature = state.config.signature;
+    const displayMode = signature.mode === 'generated' ? 'fake' : signature.mode;
+    document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
+      input.checked = input.value === displayMode;
+    });
+    const sources = signature.mode === 'generated' ? ['generated'] : signature.fake.sources;
+    ui.signatureWellKnown.checked = sources.includes('well_known');
+    ui.signatureGenerator.checked = sources.includes('generated');
+    ui.signatureFake.classList.toggle('hidden', displayMode !== 'fake');
+    ui.signatureGeneratorOptions.classList.toggle('hidden', displayMode !== 'fake' || !ui.signatureGenerator.checked);
+    ui.signatureCustomOptions.classList.toggle('hidden', displayMode !== 'custom');
+    document.querySelectorAll('.signature-pattern').forEach(input => {
+      input.checked = signature.fake.generator_patterns.includes(input.value);
+    });
+    ui.signatureCustomPattern.value = signature.fake.custom_pattern || signature.custom_pattern || '';
+    ui.signatureCustom.value = signature.custom || '';
+    ui.signatureModeLabel.textContent = signature.mode;
+  }
+
+  function setSignatureSource(source, enabled) {
+    if (state.config.signature.mode === 'generated') state.config.signature.mode = 'fake';
+    const sources = state.config.signature.fake.sources;
+    const index = sources.indexOf(source);
+    if (enabled && index < 0) sources.push(source);
+    if (!enabled && index >= 0) sources.splice(index, 1);
+    if (!sources.length) {
+      sources.push(source === 'well_known' ? 'generated' : 'well_known');
+    }
+    markPresetCustom(false);
+    renderSignature();
+  }
+
+  function setGeneratorPattern(pattern, enabled) {
+    const patterns = state.config.signature.fake.generator_patterns;
+    const index = patterns.indexOf(pattern);
+    if (enabled && index < 0) patterns.push(pattern);
+    if (!enabled && index >= 0) patterns.splice(index, 1);
+    markPresetCustom(false);
   }
 
   function renderPasses() {

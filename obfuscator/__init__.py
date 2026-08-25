@@ -13,4 +13,6 @@ from .passes import (
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,
+    OutputSignaturePass,
+    SignatureOptions,
 )
