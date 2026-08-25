@@ -6,12 +6,14 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
 from obfuscator import Pipeline, build_pipeline_from_config
+from obfuscator.passes import output_signature
 from obfuscator.passes.output_signature import OutputSignaturePass, strip_comment_tokens
 from obfuscator.registry import ConfigError, validate_config
 
@@ -57,6 +59,22 @@ def assert_runtime(passes: list[str], signature: dict) -> str:
 
 
 def main() -> int:
+    with (
+        patch.object(output_signature.random, "random", return_value=0.49),
+        patch.object(output_signature, "_generated_compound_name", return_value="Compound"),
+        patch.object(output_signature, "_generated_syllable_name", return_value="Syllable"),
+    ):
+        if output_signature._generated_name() != "Compound":
+            raise AssertionError("compound name generator did not receive its 50% branch")
+
+    with (
+        patch.object(output_signature.random, "random", return_value=0.5),
+        patch.object(output_signature, "_generated_compound_name", return_value="Compound"),
+        patch.object(output_signature, "_generated_syllable_name", return_value="Syllable"),
+    ):
+        if output_signature._generated_name() != "Syllable":
+            raise AssertionError("syllable name generator did not receive its 50% branch")
+
     if strip_comment_tokens("-- alpha --[[beta]] --[=[gamma]=]") != "alpha beta gamma":
         raise AssertionError("comment token stripping failed")
 

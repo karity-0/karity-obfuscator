@@ -16,14 +16,35 @@ DEFAULT_GENERATOR_PATTERNS = (
     "Secured by {name}\nVersion: {version}",
 )
 
-# These are intentionally kept as editable samples.  The pool can be replaced
-# with exact signatures without changing the selection/rendering code.
 WELL_KNOWN_SIGNATURES = (
-    ("This file was protected with Luraph Obfuscator", "line"),
-    ("MoonSec V3\nProtected Lua Script", "block"),
-    ("IronBrew 2 obfuscated script", "line"),
-    ("Protected by Synapse X", "line"),
-    ("WeAreDevs Lua protection", "line"),
+    ("AztupBrew(Fork of IronBrew2): obfuscation; Version 2.7.2", "block"),
+    ("IronBrew:tm: obfuscation; Version 2.7.2", "block"),
+    (
+    r""".____                  ________ ___.    _____                           __
+|    |    __ _______   \_____  \\_ |___/ ____\_ __  ______ ____ _____ _/  |_  ___________
+|    |   |  |  \__  \   /   |   \| __ \   __\  |  \/  ___// ___\\__  \\   __\/  _ \_  __ \
+|    |___|  |  // __ \_/    |    \ \_\ \  | |  |  /\___ \\  \___ / __ \|  | (  <_> )  | \/
+|_______ \____/(____  /\_______  /___  /__| |____//____  >\___  >____  /__|  \____/|__|
+        \/          \/         \/    \/                \/     \/     \/
+         \_Welcome to LuaObfuscator.com   (Alpha 0.10.9) ~  Much Love, Ferib""",
+    "block"
+    ),
+    ("This file was generated using Luraph Obfuscator v3", "line"),
+
+    ("Protected by Mnx Obfuscator | Public Enemy", "line"),
+
+    ("This file was protected with MoonSec V3", "line"),
+
+    ("This script was generated using the MoonVeil Obfuscator v1.4.5", "line"),
+
+    ("v1.0.0 https://no/wearedevs.lua/obfuscator", "line"),
+
+    ("This file was obfuscated using PSU Obfuscator 4.0.A", "line"),
+
+    ("Synapse Xen v1.1.2\nVM Hash: 1a23bafcf4d256aecd1204a7df4d22a1b4123521abbcfddea8ed0bc12425", "block"),
+
+    ("Obfuscated With Xemon", "line")
+
 )
 
 _COMMENT_TOKEN_RE = re.compile(r"--(?:\[(=*)\[)?|\](=*)\]")
@@ -53,11 +74,70 @@ def sanitize_generator_pattern(value: str) -> str:
     return value
 
 
-def _generated_name() -> str:
-    prefixes = ("Astra", "Nebula", "Eclipse", "Phantom", "Vanta", "Zenith", "Cipher")
-    cores = ("Guard", "Crypt", "Shield", "Lock", "Veil", "Sec", "Brew")
-    suffixes = ("", "X", "Pro", "Labs", "VM", "Lua")
+def _generated_compound_name() -> str:
+    prefixes = (
+        "Astra", "Nebula", "Eclipse", "Phantom", "Vanta", "Zenith", "Cipher",
+        "Nova", "Lunar", "Solar", "Void", "Shadow", "Spectra", "Nexus",
+        "Vertex", "Quantum", "Arcane", "Obsidian", "Crimson", "Silent",
+        "Hyper", "Omega", "Delta", "Alpha", "Vector", "Flux", "Hex",
+        "Aether", "Nyx", "Onyx", "Zero", "Dark", "Night", "Ghost",
+        "Iron", "Black", "Crystal", "Mystic", "Chaos", "Static",
+        "Polar", "Inferno", "Frost", "Storm", "Titan", "Cosmic",
+        "Neon", "Prism", "Echo", "Mirage", "Rift", "Pulse",
+        "Astro", "Dragon", "Turtle", "Unknown", "Binary", "Mythos"
+    )
+
+    cores = (
+        "Guard", "Crypt", "Shield", "Lock", "Veil", "Sec", "Brew",
+        "Protect", "Armor", "Vault", "Core", "Forge", "Mask", "Hide",
+        "Obfus", "Scramble", "Morph", "Shift", "Cloak", "Wrap",
+        "Byte", "Code", "Script", "Lua", "VM", "Virtual", "Hex",
+        "Cipher", "Encode", "Shadow", "Ghost", "Barrier", "Wall",
+        "Kernel", "Matrix", "Engine", "Layer", "Node", "Frame",
+        "Pulse", "Flux", "Nexus", "Sentinel", "Aegis", "Seal",
+        "Mist", "Brew", "Guard", "Protector", "Obfuscator",
+        "Defender", "Packer", "Pack", "Machine", "Obfuscation"
+    )
+
+    suffixes = (
+        "", "", "",
+        "X", "X2", "X3", "Pro", "Plus", "Prime", "Ultra",
+        "Labs", "Lab", "VM", "Lua", "Sec", "Dev", "Core",
+        "NX", "EX", "RX", "VX", "IX", "ium", "ify", "Ware",
+        "Works", "Tech", "Project", "Engine", "V2", "V3",
+        "Service"
+    )
     return f"{random.choice(prefixes)}{random.choice(cores)}{random.choice(suffixes)}"
+
+
+def _generated_syllable_name() -> str:
+    """Build a pronounceable brand-like name from 2-4 pseudo-syllables."""
+    onsets = (
+        "b", "c", "d", "f", "g", "h", "j", "k", "l", "m", "n",
+        "p", "qu", "r", "s", "t", "v", "w", "x", "z", "br", "cr",
+        "dr", "gr", "kr", "pr", "st", "tr", "vr",
+    )
+    nuclei = (
+        "a", "e", "i", "o", "u", "ae", "ai", "ia", "io", "oa",
+        "oi", "ou", "y",
+    )
+    codas = (
+        "", "", "", "n", "r", "s", "x", "l", "m", "th", "v",
+    )
+    suffixes = ("", "", "", "X", "Labs", "Sec", "VM", "ium", "ify")
+    syllable_count = random.choices((2, 3, 4), weights=(5, 4, 1), k=1)[0]
+    stem = "".join(
+        f"{random.choice(onsets)}{random.choice(nuclei)}{random.choice(codas)}"
+        for _ in range(syllable_count)
+    )
+    return f"{stem.capitalize()}{random.choice(suffixes)}"
+
+
+def _generated_name() -> str:
+    # Keep both families equally likely regardless of their internal pool sizes.
+    if random.random() < 0.5:
+        return _generated_compound_name()
+    return _generated_syllable_name()
 
 
 def _generated_version() -> str:
