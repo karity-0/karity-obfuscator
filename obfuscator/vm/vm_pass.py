@@ -24,7 +24,8 @@ from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              apply_split_to_vm, apply_fuse_to_vm,
                              apply_defer_to_vm, ALL_SPLIT_OPS, DEFER_OPS,
-                             apply_dispatch, apply_execution_kit,
+                             apply_dispatch, apply_dispatch_target_hiding,
+                             apply_execution_kit,
                              wire_exec_router, build_next_router_kit,
                              build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
@@ -1258,10 +1259,46 @@ def _apply_handler_graphs(
     graph_family_count: int = 8,
     runtime_polymorphism_rate: float = 0.0,
     runtime_trace: bool = False,
+    semantic_state_threading: bool = False,
+    argument_virtualization: bool = False,
+    upvalue_virtualization: bool = False,
+    table_virtualization: bool = False,
+    branch_virtualization: bool = False,
 ) -> str:
     threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
     vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
     vm_code = vm_code.replace("__VM_POLY_TRACE__", "true" if runtime_trace else "false")
+    vm_code = vm_code.replace(
+        "__VM_SEMANTIC_STATE__", "true" if semantic_state_threading else "false"
+    )
+    vm_code = vm_code.replace(
+        "__VM_ARGUMENT_VIRTUALIZATION__",
+        "true" if argument_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_UPVALUE_VIRTUALIZATION__",
+        "true" if upvalue_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_TABLE_VIRTUALIZATION__",
+        "true" if table_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_BRANCH_VIRTUALIZATION__",
+        "true" if branch_virtualization else "false",
+    )
+    for token in ("__VM_ARG_MASK__", "__VM_ARG_KEY__", "__VM_ARG_PAD__",
+                  "__VM_ARG_TAG__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    for token in ("__VM_UV_SEED__", "__VM_UV_NIL__", "__VM_UV_BIAS__",
+                  "__VM_UV_SHARE__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    for token in ("__VM_TABLE_SEED__", "__VM_TABLE_KEY__",
+                  "__VM_TABLE_SHARE__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    vm_code = vm_code.replace(
+        "__VM_BRANCH_SEED__", str(random.randint(0x10000, 0x7FFFFFFF))
+    )
     slots: dict[str, int] = {}
     used_slots: set[int] = set()
     for kind, (token, _, _) in _ARITH_SPECS.items():
@@ -1384,7 +1421,8 @@ def _apply_handler_graphs(
         "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
         "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
         "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_PENDING__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
-        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_FR_ROUTE_STATE__", "__VM_Q_KIND__",
+        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_FR_ROUTE_STATE__",
+        "__VM_FR_SEM_STATE__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
         "__VM_Q_FLOW__", "__VM_Q_BUDGET__", "__VM_Q_LEDGER__",
@@ -1394,7 +1432,13 @@ def _apply_handler_graphs(
         "__VM_CF_TARGET__", "__VM_CF_A__", "__VM_CF_B__",
         "__VM_CF_C__", "__VM_CF_COUNT__",
         "__VM_CF_VALUE__", "__VM_CF_STEP__", "__VM_CF_LIMIT__",
-        "__VM_CF_TAKE__",
+        "__VM_CF_TAKE__", "__VM_AP_MARK__", "__VM_AP_SEED__",
+        "__VM_AP_COUNT__", "__VM_AP_DATA__",
+        "__VM_UV_LEFT__", "__VM_UV_RIGHT__", "__VM_UV_EPOCH__",
+        "__VM_UV_KIND__",
+        "__VM_TB_LEFT__", "__VM_TB_RIGHT__", "__VM_TB_KEYS__",
+        "__VM_TB_REVERSE__", "__VM_TB_SALT__", "__VM_TB_NEXT__",
+        "__VM_TB_EXPOSED__",
     ]
     field_slots = random.sample(range(3, 241), len(field_tokens))
     for token, slot in zip(field_tokens, field_slots):
@@ -1500,6 +1544,12 @@ _DEFAULT_VM_OPTIONS = {
     # 디스패치 모양: "ifelseif" | "tailcall"(테이블+꼬리호출) | "bsearch"(op 이진탐색)
     #             | "mixed"(VM마다 랜덤)
     "dispatcher_type": "ifelseif",
+    "dispatcher_target_hiding": False,
+    "semantic_state_threading": False,
+    "argument_virtualization": False,
+    "upvalue_virtualization": False,
+    "table_virtualization": False,
+    "branch_virtualization": False,
     # 블롭 저장 형태: "string"(단일 문자열) | "table"(스크램블 청크 테이블) | "random"
     "blob_form": "random",
     "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
@@ -1633,12 +1683,19 @@ class VMPass(PostPass):
                 int(self.vm_options.get("helper_variant_count", 3)),
                 float(self.vm_options.get("helper_diversity_rate", 0.35)),
             )
+            if self.vm_options.get("dispatcher_target_hiding", False):
+                vm_code = apply_dispatch_target_hiding(vm_code)
             vm_code = wire_exec_router(vm_code, 0)
             vm_code = build_next_router_kit(vm_code, 1)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
                                           fake_handlers=fake, mutate=mut,
                                           dispatch=dispatch,
+                                          dispatch_target_hiding=bool(
+                                              self.vm_options.get(
+                                                  "dispatcher_target_hiding", False
+                                              )
+                                          ),
                                           helper_variant_count=int(
                                               self.vm_options.get("helper_variant_count", 3)
                                           ),
@@ -1648,6 +1705,18 @@ class VMPass(PostPass):
                                           semantic_diversity_rate=float(
                                               self.vm_options.get("semantic_diversity_rate", 0.35)
                                           ))
+
+        # Keep disabled profiles free of semantic-threading calls on the hot
+        # fetch/write paths.  The local helpers remain as cold template code,
+        # but no per-instruction function-call overhead survives.
+        if not self.vm_options.get("semantic_state_threading", False):
+            vm_code = vm_code.replace("; _ss_step(_ip,op,A,B,C)", "")
+            vm_code = vm_code.replace(
+                "\n        _ss_value(slot,encoded,epoch,kind)", ""
+            )
+            vm_code = vm_code.replace(
+                "; _ss_value(i,encoded,epoch,kind)", ""
+            )
 
         # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
         # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.
@@ -1702,6 +1771,21 @@ class VMPass(PostPass):
                 self.vm_options.get("runtime_polymorphism_rate", 0.2)
             ),
             runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
+            semantic_state_threading=bool(
+                self.vm_options.get("semantic_state_threading", False)
+            ),
+            argument_virtualization=bool(
+                self.vm_options.get("argument_virtualization", False)
+            ),
+            upvalue_virtualization=bool(
+                self.vm_options.get("upvalue_virtualization", False)
+            ),
+            table_virtualization=bool(
+                self.vm_options.get("table_virtualization", False)
+            ),
+            branch_virtualization=bool(
+                self.vm_options.get("branch_virtualization", False)
+            ),
         )
 
         _graph_elapsed = time.perf_counter() - _graph_start

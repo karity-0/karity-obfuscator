@@ -27,14 +27,10 @@ def _is_side_effect_free(node) -> bool:
     if t in _SAFE_LEAF_TYPES:
         return True
 
-    if t == "unary_expression":
-        # children: [op, operand]
-        return _is_side_effect_free(node.children[-1])
-
-    if t == "binary_expression":
-        # children: [left, op, right]
-        return _is_side_effect_free(node.children[0]) and \
-               _is_side_effect_free(node.children[-1])
+    if t in {"unary_expression", "binary_expression"}:
+        # Even identifier-only arithmetic may invoke Lua metamethods.  Without
+        # type proof, reordering these expressions is not semantics-preserving.
+        return False
 
     if t == "table_constructor":
         for f in _fields(node):
@@ -85,7 +81,9 @@ class TableObfuscationPass(BasePass):
 
     - 배열식 필드(`{1,2,3}`)는 `{[1]=1,[2]=2,[3]=3}` 형태로 명시적 인덱싱
     - record/bracket 필드는 `["key"]=value` / `[expr]=value` 형태로 통일
-    - 모든 key/value가 부수효과 없는 표현식이면 필드 순서를 셔플
+    - 모든 key/value가 부수효과 없는 리터럴만 변환하고 필드 순서를 셔플
+    - 호출/metamethod/index 접근이 섞인 테이블은 keyed-field 변환 자체가 Lua의
+      평가 순서를 바꿀 수 있으므로 원문을 보존
     """
     parser = "treesitter"
 
@@ -135,11 +133,10 @@ class TableObfuscationPass(BasePass):
                         break
                     entries.append(f"{key_text}={value_text}")
 
-            if bail:
+            if bail or not safe_to_shuffle:
                 continue
 
-            if safe_to_shuffle:
-                random.shuffle(entries)
+            random.shuffle(entries)
 
             new_text = "{" + ",".join(entries) + "}"
             rewritten[node.id] = new_text

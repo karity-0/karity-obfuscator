@@ -131,6 +131,12 @@ runtime work sparse.
 - Consumer-triggered delayed materialization across instructions
 - Per-execution rolling route state and runtime-polymorphic microtraces
 - Runtime-selected physical variants of straight-line bytecode blocks
+- State-coupled dispatcher targets without fixed virtual-opcode comparisons
+- Source-semantic state threaded through value writes, calls, and VM runtime state
+- Shuffled, padded, state-masked argument packets across entry, call, tail-call, and vararg paths
+- Closed-upvalue affine shares and hidden reference-vault handles across closure frames
+- VM-created table lowering into state-keyed split shadow storage until native escape
+- Branch decisions sealed in live-state control packets before target selection
 - Diverse table, upvalue, comparison, closure, and vararg handler implementations
 - Per-VM fetch/decode, register-access, semantic, flow, and continuation-router kits
 - Build-time call-site wiring instead of a single runtime helper selector
@@ -202,6 +208,12 @@ The most important performance controls are:
 | Option | Effect |
 |---|---|
 | `graph_execution_rate` | How often heavy compiled handler graphs execute |
+| `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
+| `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
+| `argument_virtualization` | Shuffles, pads, and masks VM arguments behind dynamic packet accessors |
+| `upvalue_virtualization` | Stores closed upvalues as affine shares or hidden reference handles |
+| `table_virtualization` | Lowers VM-created tables into split shadow storage until native escape |
+| `branch_virtualization` | Seals comparison results in live-state packets before branching |
 | `cross_instruction_rate` | Frequency of delayed cross-instruction materialization |
 | `runtime_polymorphism_rate` | Frequency of runtime-selected microtrace recipes |
 | `block_variant_rate` | Fraction of eligible blocks emitted with runtime variants |
@@ -230,6 +242,7 @@ Focused regressions cover high-risk VM subsystems:
 python test/run_number_obf_regression.py
 python test/run_packer_regression.py
 python test/run_runtime_poly_regression.py
+python test/run_state_coupling_regression.py
 python test/run_vm_choke_regression.py
 python test/run_gui_regression.py
 ```

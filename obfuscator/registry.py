@@ -143,6 +143,30 @@ VM_OPTION_DOCS = {
             ("mixed", "randomly choose a dispatcher per VM"),
         ],
     },
+    "dispatcher_target_hiding": {
+        "description": "Mask fixed virtual-opcode targets and couple equality dispatch to live VM state.",
+        "default": False,
+    },
+    "semantic_state_threading": {
+        "description": "Thread source-semantic instruction and value state through register representations, calls, and VM runtime state.",
+        "default": False,
+    },
+    "argument_virtualization": {
+        "description": "Shuffle, pad, and state-mask VM call arguments instead of passing sequential argument arrays.",
+        "default": False,
+    },
+    "upvalue_virtualization": {
+        "description": "Store closed upvalues as affine shares and hidden reference-vault handles.",
+        "default": False,
+    },
+    "table_virtualization": {
+        "description": "Lower VM-created tables into split shadow storage until they cross a native boundary.",
+        "default": False,
+    },
+    "branch_virtualization": {
+        "description": "Seal comparison results in live-state control packets before selecting VM branches.",
+        "default": False,
+    },
     "blob_form": {
         "description": "How the encrypted bytecode blob is stored in the output.",
         "default": "random",
@@ -418,7 +442,11 @@ def _validate_vm_options(options: dict) -> None:
             if not 0.0 <= float(value) <= 1.0:
                 raise ConfigError(f"vm_options.{key} must be between 0.0 and 1.0")
 
-    for key in ("fake_handlers", "mutate_handlers", "junk_instructions", "integrity_constants", "runtime_trace"):
+    for key in ("fake_handlers", "mutate_handlers", "junk_instructions",
+                "integrity_constants", "runtime_trace",
+                "dispatcher_target_hiding", "semantic_state_threading",
+                "argument_virtualization", "upvalue_virtualization",
+                "table_virtualization", "branch_virtualization"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"vm_options.{key} must be true or false")
