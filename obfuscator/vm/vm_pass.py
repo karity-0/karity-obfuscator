@@ -31,6 +31,7 @@ from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
                           apply_keystream, apply_tamper, apply_line_state)
+from .output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from .junk_injection import inject_junk
 
 
@@ -1477,65 +1478,77 @@ def _obfuscate_vm_output(
     script: str,
     pass_names: list[str],
 ) -> tuple[str, list[dict]]:
-    """VM 출력물에 passes 재적용 + pass별 profiling."""
+    """Run structural VM passes, shared literal emitters, then text post-passes."""
     from ..pipeline import Pipeline
     from ..profiling import Profiler
     from ..registry import PASS_REGISTRY
 
-    pipeline = Pipeline(show_header=False)
-    applied_names: list[str] = []
+    before: list[tuple[str, type]] = []
+    after: list[tuple[str, type]] = []
+    emitter_names: list[str] = []
 
     for name in pass_names:
+        if name in EMITTER_PASS_NAMES:
+            emitter_names.append(name)
+            continue
+
         info = PASS_REGISTRY.get(name)
         if info is None:
             continue
 
         cls = info["cls"]
-
-        # VM 재귀 적용 금지.
         if cls.__name__ == "VMPass":
             continue
+        (after if issubclass(cls, PostPass) else before).append((name, cls))
 
-        # function_obf는 exec/dispatcher 자체는 제외하고 cold helper에만 적용.
-        if cls.__name__ == "FunctionObfuscationPass":
-            pipeline.add(cls(skip_vm_dispatcher=True))
-        else:
-            pipeline.add(cls())
-
-        applied_names.append(name)
-
-    profiler = Profiler()
-    output = pipeline.run(script, profiler=profiler)
-
+    output = script
     details: list[dict] = []
 
-    # 현재 vm_output_passes는 BASE passes + 마지막 POST(minify) 구조라
-    # profiler.records와 적용 순서가 동일하다.
-    for index, record in enumerate(profiler.records):
-        data = record.as_dict()
+    def run_legacy(
+        source: str,
+        entries: list[tuple[str, type]],
+    ) -> tuple[str, list[dict]]:
+        if not entries:
+            return source, []
 
-        configured_name = (
-            applied_names[index]
-            if index < len(applied_names)
-            else record.name
-        )
+        pipeline = Pipeline(show_header=False)
+        names: list[str] = []
+        for configured_name, cls in entries:
+            if cls.__name__ == "FunctionObfuscationPass":
+                pipeline.add(cls(skip_vm_dispatcher=True))
+            else:
+                pipeline.add(cls())
+            names.append(configured_name)
 
-        details.append({
-            "phase": f"vm_output:{configured_name}",
-            "class": record.name,
-            "elapsed": data["elapsed"],
-            "input_bytes": data["input_bytes"],
-            "output_bytes": data["output_bytes"],
-            "delta_bytes": data["delta_bytes"],
-            **(
-                {"parser": data["parser"]}
-                if "parser" in data else {}
-            ),
-            **(
-                {"replacements": data["replacements"]}
-                if "replacements" in data else {}
-            ),
-        })
+        profiler = Profiler()
+        transformed = pipeline.run(source, profiler=profiler)
+        records: list[dict] = []
+        for index, record in enumerate(profiler.records):
+            data = record.as_dict()
+            configured_name = names[index] if index < len(names) else record.name
+            records.append({
+                "phase": f"vm_output:{configured_name}",
+                "class": record.name,
+                "elapsed": data["elapsed"],
+                "input_bytes": data["input_bytes"],
+                "output_bytes": data["output_bytes"],
+                "delta_bytes": data["delta_bytes"],
+                **({"parser": data["parser"]} if "parser" in data else {}),
+                **(
+                    {"replacements": data["replacements"]}
+                    if "replacements" in data else {}
+                ),
+            })
+        return transformed, records
+
+    output, legacy_details = run_legacy(output, before)
+    details.extend(legacy_details)
+
+    output, emitter_details = emit_vm_literals(output, emitter_names)
+    details.extend(emitter_details)
+
+    output, post_details = run_legacy(output, after)
+    details.extend(post_details)
 
     return output, details
 

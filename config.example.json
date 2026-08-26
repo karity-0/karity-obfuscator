@@ -121,10 +121,10 @@
             ],
             "vm_output_passes": [
                 "function_obf",
-                "number_obf",
                 "rename_obf",
                 "localize_globals",
                 "string_obf",
+                "number_obf",
                 "minify"
             ],
             "packer_output_passes": [
