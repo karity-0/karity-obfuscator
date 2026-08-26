@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from .base import Replacement
 from .ts_utils import parse as _ts_parse
 
 
@@ -94,6 +95,8 @@ def _collect_scopes_and_decls(ctx):
 
     scopes: list[_Scope] = [_Scope(0, None, None)]
     node_scope: dict[int, int] = {}
+    identifier_nodes: list[tuple[object, int]] = []
+    literal_nodes: list = []
 
     # stack entry:
     #   (node, current_scope, entering)
@@ -159,12 +162,20 @@ def _collect_scopes_and_decls(ctx):
                         if child.type == "identifier":
                             scopes[current_sid].names.add(text(child))
 
+        # Preserve the source-ordered nodes needed by the planning phase while
+        # this full AST traversal is already hot. The second phase can then
+        # inspect identifiers only instead of walking every syntax node again.
+        if typ == "identifier":
+            identifier_nodes.append((node, current_sid))
+        elif typ in {"number", "string", "true", "false"}:
+            literal_nodes.append(node)
+
         # DFS. 함수 node를 만난 경우 current_sid가 새 scope로 바뀌었으므로
         # 그 children은 자연스럽게 새 scope로 들어간다.
         for child in reversed(node.children):
             stack.append((child, current_sid))
 
-    return scopes, node_scope
+    return scopes, node_scope, identifier_nodes, literal_nodes
 
 
 def _build_scope_maps(scopes: list[_Scope]) -> None:
@@ -270,7 +281,11 @@ def _should_skip_identifier(node) -> bool:
     return False
 
 
-def _collect_identifier_replacements(ctx, scopes: list[_Scope], node_scope: dict[int, int]):
+def _collect_identifier_replacements(
+    ctx,
+    scopes: list[_Scope],
+    identifier_nodes: list[tuple[object, int]],
+):
     """
     AST를 두 번째 DFS하면서 현재 함수 scope의 rename map으로 identifier node만
     직접 치환한다.
@@ -283,23 +298,12 @@ def _collect_identifier_replacements(ctx, scopes: list[_Scope], node_scope: dict
     ce = ctx.ce
 
     replacements: list[tuple[int, int, str]] = []
-    stack: list[tuple[object, int]] = [(ctx.root, 0)]
-
-    while stack:
-        node, current_sid = stack.pop()
-        typ = node.type
-
-        if typ in _FUNC_TYPES:
-            current_sid = node_scope[node.id]
-
-        if typ == "identifier" and not _should_skip_identifier(node):
+    for node, current_sid in identifier_nodes:
+        if not _should_skip_identifier(node):
             original = text(node)
             renamed = scopes[current_sid].rename_map.get(original)
             if renamed is not None and renamed != original:
                 replacements.append((cs(node), ce(node), renamed))
-
-        for child in reversed(node.children):
-            stack.append((child, current_sid))
 
     return replacements
 
@@ -339,6 +343,31 @@ def rename_script_ts(script: str) -> str:
     return rename_with_ctx(_ts_parse(script))
 
 
+def rename_replacements_with_ctx(ctx) -> list[Replacement]:
+    """Return source-coordinate replacements for a pre-parsed context.
+
+    The VM output backend combines these replacements with global localization
+    and typed literal events, avoiding an intermediate render and reparse.
+    """
+    replacements, _ = rename_plan_with_ctx(ctx)
+    return replacements
+
+
+def rename_plan_with_ctx(ctx) -> tuple[list[Replacement], list]:
+    """Return rename replacements and literals from the same AST traversal."""
+    scopes, _node_scope, identifier_nodes, literal_nodes = (
+        _collect_scopes_and_decls(ctx)
+    )
+    _build_scope_maps(scopes)
+    replacements = [
+        Replacement(start=start, end=end, new_text=new_text)
+        for start, end, new_text in _collect_identifier_replacements(
+            ctx, scopes, identifier_nodes,
+        )
+    ]
+    return replacements, literal_nodes
+
+
 def rename_with_ctx(ctx) -> str:
     """
     Pipeline이 이미 만든 TSContext를 재사용하는 메인 진입점.
@@ -348,16 +377,9 @@ def rename_with_ctx(ctx) -> str:
 
     기존의 scope-pair O(S^2), segment regex 재스캔, 반복 문자열 재조립을 제거한다.
     """
-    scopes, node_scope = _collect_scopes_and_decls(ctx)
-    _build_scope_maps(scopes)
-
-    replacements = _collect_identifier_replacements(
-        ctx,
-        scopes,
-        node_scope,
-    )
+    replacements = rename_replacements_with_ctx(ctx)
 
     return _apply_replacements_once(
         ctx.script,
-        replacements,
+        [(item.start, item.end, item.new_text) for item in replacements],
     )

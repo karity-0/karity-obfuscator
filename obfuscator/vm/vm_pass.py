@@ -1486,10 +1486,14 @@ def _obfuscate_vm_output(
     before: list[tuple[str, type]] = []
     after: list[tuple[str, type]] = []
     emitter_names: list[str] = []
+    identifier_names: list[str] = []
 
     for name in pass_names:
         if name in EMITTER_PASS_NAMES:
             emitter_names.append(name)
+            continue
+        if name in {"rename_obf", "localize_globals"}:
+            identifier_names.append(name)
             continue
 
         info = PASS_REGISTRY.get(name)
@@ -1503,6 +1507,19 @@ def _obfuscate_vm_output(
 
     output = script
     details: list[dict] = []
+    shared_ctx = None
+
+    def apply_replacements(source: str, replacements) -> str:
+        if not replacements:
+            return source
+        parts: list[str] = []
+        pos = 0
+        for replacement in sorted(replacements, key=lambda item: item.start):
+            parts.append(source[pos:replacement.start])
+            parts.append(replacement.new_text)
+            pos = replacement.end + 1
+        parts.append(source[pos:])
+        return "".join(parts)
 
     def run_legacy(
         source: str,
@@ -1541,11 +1558,113 @@ def _obfuscate_vm_output(
             })
         return transformed, records
 
+    # FunctionObfuscationPass is commonly a no-op for the generated VM. Plan
+    # it on the same syntax tree used by the emitters so a no-op does not pay
+    # for a throwaway full-source parse. If it does transform the source, the
+    # later stages correctly parse the changed text again.
+    if (
+        before
+        and before[0][1].__name__ == "FunctionObfuscationPass"
+        and (identifier_names or emitter_names)
+    ):
+        from ..passes.ts_utils import parse as parse_ts
+
+        parse_start = time.perf_counter()
+        shared_ctx = parse_ts(output)
+        details.append({
+            "phase": "vm_output:source_parse",
+            "class": "VmOutputEmitter",
+            "elapsed": round(time.perf_counter() - parse_start, 6),
+            "input_bytes": len(output.encode("utf-8")),
+            "parser": "treesitter",
+            "parse_count": 1,
+        })
+
+        configured_name, cls = before.pop(0)
+        stage_start = time.perf_counter()
+        function_replacements = cls(skip_vm_dispatcher=True).run(
+            output, shared_ctx,
+        )
+        transformed = apply_replacements(output, function_replacements)
+        details.append({
+            "phase": f"vm_output:{configured_name}",
+            "class": cls.__name__,
+            "elapsed": round(time.perf_counter() - stage_start, 6),
+            "input_bytes": len(output.encode("utf-8")),
+            "output_bytes": len(transformed.encode("utf-8")),
+            "delta_bytes": len(transformed.encode("utf-8")) - len(output.encode("utf-8")),
+            "parser": "treesitter",
+            "replacements": len(function_replacements),
+            "backend": "shared_syntax_context",
+        })
+        output = transformed
+        if function_replacements:
+            shared_ctx = None
+
     output, legacy_details = run_legacy(output, before)
     details.extend(legacy_details)
+    if legacy_details:
+        shared_ctx = None
 
-    output, emitter_details = emit_vm_literals(output, emitter_names)
-    details.extend(emitter_details)
+    if identifier_names or emitter_names:
+        from ..passes.localize_globals import LocalizeGlobalsPass
+        from ..passes.rename_ts import rename_plan_with_ctx
+        if shared_ctx is None:
+            from ..passes.ts_utils import parse as parse_ts
+
+            parse_start = time.perf_counter()
+            shared_ctx = parse_ts(output)
+            details.append({
+                "phase": "vm_output:source_parse",
+                "class": "VmOutputEmitter",
+                "elapsed": round(time.perf_counter() - parse_start, 6),
+                "input_bytes": len(output.encode("utf-8")),
+                "parser": "treesitter",
+                "parse_count": 1,
+            })
+
+        planned_replacements = []
+        renamed_spans: set[tuple[int, int]] = set()
+        literal_nodes = None
+        if "rename_obf" in identifier_names:
+            stage_start = time.perf_counter()
+            rename_replacements, literal_nodes = rename_plan_with_ctx(shared_ctx)
+            planned_replacements.extend(rename_replacements)
+            renamed_spans.update(
+                (item.start, item.end) for item in rename_replacements
+            )
+            details.append({
+                "phase": "vm_output:rename_obf",
+                "class": "VmIdentifierEmitter",
+                "elapsed": round(time.perf_counter() - stage_start, 6),
+                "replacements": len(rename_replacements),
+                "backend": "structured_emitter",
+            })
+
+        if "localize_globals" in identifier_names:
+            stage_start = time.perf_counter()
+            localize_replacements = LocalizeGlobalsPass().replacements_with_ctx(
+                output,
+                shared_ctx,
+                renamed_spans,
+            )
+            planned_replacements.extend(localize_replacements)
+            details.append({
+                "phase": "vm_output:localize_globals",
+                "class": "VmIdentifierEmitter",
+                "elapsed": round(time.perf_counter() - stage_start, 6),
+                "replacements": len(localize_replacements),
+                "backend": "structured_emitter",
+            })
+
+        output, emitter_details = emit_vm_literals(
+            output,
+            emitter_names,
+            ctx=shared_ctx,
+            replacements=planned_replacements,
+            literal_nodes=literal_nodes,
+        )
+        details.extend(emitter_details)
 
     output, post_details = run_legacy(output, after)
     details.extend(post_details)

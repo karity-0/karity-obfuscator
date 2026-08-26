@@ -97,6 +97,21 @@ class LocalizeGlobalsPass(BasePass):
     parser = "treesitter"
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        return self.replacements_with_ctx(script, ctx)
+
+    def replacements_with_ctx(
+        self,
+        script: str,
+        ctx,
+        renamed_spans: set[tuple[int, int]] | None = None,
+    ) -> list[Replacement]:
+        """Plan localization against a shared pre-rename syntax context.
+
+        ``renamed_spans`` identifies local references that the rename stage will
+        replace. Skipping them preserves the old rename-then-localize behavior
+        when both plans are rendered together by the VM output backend.
+        """
+        renamed_spans = renamed_spans or set()
         # (lib, method) -> [(start,end), ...]    /    func -> [(start,end), ...]
         lib_spans: dict[tuple[str, str], list[tuple[int, int]]] = {}
         func_spans: dict[str, list[tuple[int, int]]] = {}
@@ -108,6 +123,8 @@ class LocalizeGlobalsPass(BasePass):
                 if (base is None or field is None
                         or base.type != "identifier" or field.type != "identifier"):
                     continue
+                if (ctx.cs(base), ctx.ce(base)) in renamed_spans:
+                    continue
                 lib = ctx.text(base)
                 if lib not in _KNOWN_LIBS:
                     continue
@@ -115,6 +132,8 @@ class LocalizeGlobalsPass(BasePass):
                     (ctx.cs(node), ctx.ce(node)))
 
             elif node.type == "identifier":
+                if (ctx.cs(node), ctx.ce(node)) in renamed_spans:
+                    continue
                 name = ctx.text(node)
                 if name not in _KNOWN_GLOBAL_FUNCS:
                     continue

@@ -91,12 +91,13 @@ Load, table access, table assignment, comparison, arithmetic, closure creation,
 and vararg transfer semantics execute inside build-time compiled control and
 semantic graphs where supported.
 
-Generated VM output lowers `string_obf`, `boolean_obf`, and `number_obf` through
-a shared structured emitter. Parser-backed structural passes run before literal
-expansion, Tree-sitter identifies the remaining literals once, and configured
-emitter stages keep generated literals typed for later stages. This preserves
-cross-pass layering such as string XOR operands flowing into number obfuscation
-without reparsing the expanded VM source after every literal pass.
+Generated VM output plans `function_obf`, `rename_obf`, `localize_globals`, and
+the `string_obf`/`boolean_obf`/`number_obf` literal stages from one shared
+Tree-sitter context when no structural rewrite invalidates it. Identifier and
+literal replacements are merged by a structured emitter, while generated
+literals remain typed for later stages. This preserves cross-pass layering such
+as string XOR operands flowing into number obfuscation without parsing and
+rendering the expanded VM source after every pass.
 
 Build-specific error probes derive a source-line state without an explicit
 expected-line comparison. The state participates in the VM blob key, integrity

@@ -17,9 +17,10 @@ from dataclasses import dataclass
 import tree_sitter as ts
 
 from ..passes.boolean_obfuscation import generate_rand_xor
+from ..passes.base import Replacement
 from ..passes.number_obfuscation import NumberObfuscationPass
 from ..passes.string_obfuscation import _CHUNK_SIZE, parse_lua_string
-from ..passes.ts_utils import _LANG, _PARSER
+from ..passes.ts_utils import _LANG, parse
 
 
 EMITTER_PASS_NAMES = frozenset({"number_obf", "string_obf", "boolean_obf"})
@@ -69,7 +70,14 @@ _GENERATED_NUMBER_RE = re.compile(
 def _append_raw(parts: list[Fragment], text: str) -> None:
     if not text:
         return
-    if parts and isinstance(parts[-1], Raw):
+    # Keep coalescing bounded. Identifier plans can create 80k+ adjacent raw
+    # fragments; repeatedly concatenating them into one ever-growing string is
+    # quadratic even though the final renderer already joins in linear time.
+    if (
+        parts
+        and isinstance(parts[-1], Raw)
+        and len(parts[-1].text) + len(text) <= 4096
+    ):
         parts[-1] = Raw(parts[-1].text + text)
     else:
         parts.append(Raw(text))
@@ -92,52 +100,143 @@ def _split_generated_numbers(expr: str) -> list[Fragment]:
     return parts
 
 
-def _node_text(data: bytes, node) -> str:
-    return data[node.start_byte:node.end_byte].decode("utf-8")
-
-
-def _inside_string_char(node, data: bytes) -> bool:
+def _inside_string_char(node, ctx, cache: dict[int, bool]) -> bool:
+    visited: list[int] = []
     current = node.parent
     while current is not None:
+        cached = cache.get(current.id)
+        if cached is not None:
+            for node_id in visited:
+                cache[node_id] = cached
+            return cached
+        visited.append(current.id)
         if current.type == "function_call":
-            return bool(
+            result = bool(
                 current.children
-                and _node_text(data, current.children[0]) == "string.char"
+                and ctx.text(current.children[0]) == "string.char"
             )
+            for node_id in visited:
+                cache[node_id] = result
+            return result
         if current.type in ("assignment_statement", "return_statement"):
+            for node_id in visited:
+                cache[node_id] = False
             return False
         current = current.parent
+    for node_id in visited:
+        cache[node_id] = False
     return False
 
 
-def _parse_fragments(source: str) -> tuple[list[Fragment], int]:
-    data = source.encode("utf-8")
-    tree = _PARSER.parse(data)
-    captures = ts.QueryCursor(_LITERAL_QUERY).captures(tree.root_node)
-    if isinstance(captures, dict):
-        literals = [node for nodes in captures.values() for node in nodes]
+def _parse_fragments(
+    source: str,
+    ctx,
+    replacements: list[Replacement],
+    literal_nodes: list | None = None,
+) -> tuple[list[Fragment], int]:
+    if literal_nodes is None:
+        captures = ts.QueryCursor(_LITERAL_QUERY).captures(ctx.root)
+        if isinstance(captures, dict):
+            literals = [node for nodes in captures.values() for node in nodes]
+        else:
+            literals = [node for node, _ in captures]
+        literals.sort(key=lambda node: node.start_byte)
     else:
-        literals = [node for node, _ in captures]
-    literals.sort(key=lambda node: node.start_byte)
+        literals = literal_nodes
+
+    # Identifier plans and AST captures are each source ordered. Keep them as
+    # two streams instead of allocating and sorting a combined 100k+ event
+    # array. Insertions sort before consuming replacements at the same offset.
+    replacement_events = sorted(
+        replacements,
+        key=lambda item: (item.start, 0 if item.end < item.start else 1),
+    )
+    replacement_ranges = [
+        (item.start, item.end)
+        for item in replacement_events
+        if item.end >= item.start
+    ]
+
+    literal_events: list[tuple[int, int, object]] = []
+    captured_count = 0
+    range_index = 0
+    for node in literals:
+        start, end = ctx.cs(node), ctx.ce(node)
+        while (
+            range_index < len(replacement_ranges)
+            and replacement_ranges[range_index][1] < start
+        ):
+            range_index += 1
+        if (
+            range_index < len(replacement_ranges)
+            and replacement_ranges[range_index][0] <= end
+        ):
+            continue
+        literal_events.append((start, end, node))
+        captured_count += 1
 
     parts: list[Fragment] = []
     pos = 0
-    for node in literals:
-        start = node.start_byte
-        end = node.end_byte
+    string_char_cache: dict[int, bool] = {}
+    replacement_index = 0
+    literal_index = 0
+    while (
+        replacement_index < len(replacement_events)
+        or literal_index < len(literal_events)
+    ):
+        if replacement_index >= len(replacement_events):
+            start, end, payload = literal_events[literal_index]
+            literal_index += 1
+        elif literal_index >= len(literal_events):
+            payload = replacement_events[replacement_index]
+            replacement_index += 1
+            start, end = payload.start, payload.end
+        else:
+            replacement = replacement_events[replacement_index]
+            literal_start, literal_end, literal = literal_events[literal_index]
+            replacement_key = (
+                replacement.start,
+                0 if replacement.end < replacement.start else 1,
+            )
+            if replacement_key < (literal_start, 2):
+                payload = replacement
+                replacement_index += 1
+                start, end = replacement.start, replacement.end
+            else:
+                start, end, payload = literal_start, literal_end, literal
+                literal_index += 1
+
         if start < pos:
+            raise RuntimeError(
+                f"overlapping VM output event at {start}:{end}, previous end={pos - 1}"
+            )
+        if start > pos:
+            parts.append(Raw(source[pos:start]))
+
+        if isinstance(payload, Replacement):
+            if payload.new_text:
+                parts.append(Raw(payload.new_text))
+            if end >= start:
+                pos = end + 1
+            else:
+                pos = start
             continue
-        _append_raw(parts, data[pos:start].decode("utf-8"))
-        token = data[start:end].decode("utf-8")
+
+        node = payload
+        token = source[start:end + 1]
         if node.type == "number":
-            parts.append(NumberLiteral(token, not _inside_string_char(node, data)))
+            parts.append(NumberLiteral(
+                token,
+                not _inside_string_char(node, ctx, string_char_cache),
+            ))
         elif node.type == "string":
             parts.append(StringLiteral(token))
         else:
             parts.append(BooleanLiteral(node.type == "true"))
-        pos = end
-    _append_raw(parts, data[pos:].decode("utf-8"))
-    return parts, len(literals)
+        pos = end + 1
+    if pos < len(source):
+        parts.append(Raw(source[pos:]))
+    return parts, captured_count
 
 
 def _emit_string(token: str) -> list[Fragment]:
@@ -191,22 +290,38 @@ def _render(parts: list[Fragment]) -> str:
 def emit_vm_literals(
     source: str,
     pass_names: list[str],
+    *,
+    ctx=None,
+    replacements: list[Replacement] | None = None,
+    literal_nodes: list | None = None,
 ) -> tuple[str, list[dict]]:
-    """Apply configured literal stages over one parsed VM fragment stream."""
+    """Apply identifier plans and literal stages over one syntax context."""
     stages = [name for name in pass_names if name in EMITTER_PASS_NAMES]
-    if not stages:
+    replacements = replacements or []
+    if not stages and not replacements:
         return source, []
 
     parse_start = time.perf_counter()
-    parts, literal_count = _parse_fragments(source)
+    parse_count = 0
+    if ctx is None:
+        ctx = parse(source)
+        parse_count = 1
+    parts, literal_count = _parse_fragments(
+        source, ctx, replacements, literal_nodes,
+    )
     details: list[dict] = [{
-        "phase": "vm_output:literal_parse",
+        "phase": (
+            "vm_output:literal_parse" if parse_count
+            else "vm_output:literal_capture"
+        ),
         "class": "VmLiteralEmitter",
         "elapsed": round(time.perf_counter() - parse_start, 6),
         "input_bytes": len(source.encode("utf-8")),
         "literal_count": literal_count,
         "parser": "treesitter",
-        "parse_count": 1,
+        "parse_count": parse_count,
+        "planned_replacements": len(replacements),
+        "capture_source": "rename_traversal" if literal_nodes is not None else "query",
     }]
 
     number_emitter = NumberObfuscationPass()

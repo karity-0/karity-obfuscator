@@ -38,6 +38,8 @@ def vm_config() -> dict:
     return {
         "passes": ["vm"],
         "vm_output_passes": [
+            "function_obf",
+            "rename_obf", "localize_globals",
             "string_obf", "boolean_obf", "number_obf", "minify",
         ],
         "packer_output_passes": [],
@@ -131,10 +133,29 @@ def main() -> int:
     parse_count = sum(
         detail.get("parse_count", 0)
         for detail in vm_details
-        if detail.get("phase") == "vm_output:literal_parse"
     )
     if parse_count != 1:
-        raise AssertionError(f"VM output literal parse count mismatch: {parse_count}")
+        raise AssertionError(f"VM output shared parse count mismatch: {parse_count}")
+    identifier_phases = {
+        detail.get("phase")
+        for detail in vm_details
+        if detail.get("class") == "VmIdentifierEmitter"
+    }
+    if identifier_phases != {
+        "vm_output:rename_obf", "vm_output:localize_globals",
+    }:
+        raise AssertionError(f"identifier emitter phases missing: {identifier_phases}")
+    function_details = [
+        detail for detail in vm_details
+        if detail.get("phase") == "vm_output:function_obf"
+    ]
+    if (
+        len(function_details) != 1
+        or function_details[0].get("backend") != "shared_syntax_context"
+    ):
+        raise AssertionError(
+            f"function pass did not reuse shared context: {function_details}"
+        )
 
     print(
         "vm-output-emitter-ok parse_count=1 "
