@@ -31,28 +31,23 @@ _LITERAL_QUERY = ts.Query(
 )
 
 
-@dataclass(frozen=True)
-class Raw:
-    text: str
-
-
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class NumberLiteral:
     token: str
     eligible: bool = True
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class StringLiteral:
     token: str
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class BooleanLiteral:
     value: bool
 
 
-Fragment = Raw | NumberLiteral | StringLiteral | BooleanLiteral
+Fragment = str | NumberLiteral | StringLiteral | BooleanLiteral
 
 
 _GENERATED_NUMBER_RE = re.compile(
@@ -81,12 +76,12 @@ def _append_raw(parts: list[Fragment], text: str) -> None:
     # quadratic even though the final renderer already joins in linear time.
     if (
         parts
-        and isinstance(parts[-1], Raw)
-        and len(parts[-1].text) + len(text) <= 4096
+        and isinstance(parts[-1], str)
+        and len(parts[-1]) + len(text) <= 4096
     ):
-        parts[-1] = Raw(parts[-1].text + text)
+        parts[-1] += text
     else:
-        parts.append(Raw(text))
+        parts.append(text)
 
 
 def _split_generated_numbers(expr: str) -> list[Fragment]:
@@ -176,49 +171,34 @@ def _parse_fragments(
         replacements,
         key=lambda item: (item.start, 0 if item.end < item.start else 1),
     )
-    replacement_ranges = [
-        (item.start, item.end)
-        for item in replacement_events
-        if item.end >= item.start
-    ]
-
-    literal_events: list[tuple[int, int, object]] = []
-    captured_count = 0
-    range_index = 0
-    for node in literals:
-        start, end = ctx.cs(node), ctx.ce(node)
-        while (
-            range_index < len(replacement_ranges)
-            and replacement_ranges[range_index][1] < start
-        ):
-            range_index += 1
-        if (
-            range_index < len(replacement_ranges)
-            and replacement_ranges[range_index][0] <= end
-        ):
-            continue
-        literal_events.append((start, end, node))
-        captured_count += 1
 
     parts: list[Fragment] = []
     pos = 0
+    captured_count = 0
     string_char_cache: dict[int, bool] = {}
     replacement_index = 0
     literal_index = 0
+    literal_event = None
     while (
         replacement_index < len(replacement_events)
-        or literal_index < len(literal_events)
+        or literal_event is not None
+        or literal_index < len(literals)
     ):
-        if replacement_index >= len(replacement_events):
-            start, end, payload = literal_events[literal_index]
+        if literal_event is None and literal_index < len(literals):
+            literal = literals[literal_index]
             literal_index += 1
-        elif literal_index >= len(literal_events):
+            literal_event = (ctx.cs(literal), ctx.ce(literal), literal)
+
+        if literal_event is None:
             payload = replacement_events[replacement_index]
             replacement_index += 1
             start, end = payload.start, payload.end
+        elif replacement_index >= len(replacement_events):
+            start, end, payload = literal_event
+            literal_event = None
         else:
             replacement = replacement_events[replacement_index]
-            literal_start, literal_end, literal = literal_events[literal_index]
+            literal_start, literal_end, literal = literal_event
             replacement_key = (
                 replacement.start,
                 0 if replacement.end < replacement.start else 1,
@@ -229,18 +209,24 @@ def _parse_fragments(
                 start, end = replacement.start, replacement.end
             else:
                 start, end, payload = literal_start, literal_end, literal
-                literal_index += 1
+                literal_event = None
 
         if start < pos:
+            # A consuming identifier/global replacement can cover a literal
+            # event. The old implementation filtered those through a second
+            # ranges list; skipping lazily avoids allocating that list and a
+            # second 300k+ literal event array.
+            if not isinstance(payload, Replacement):
+                continue
             raise RuntimeError(
                 f"overlapping VM output event at {start}:{end}, previous end={pos - 1}"
             )
         if start > pos:
-            parts.append(Raw(source[pos:start]))
+            parts.append(source[pos:start])
 
         if isinstance(payload, Replacement):
             if payload.new_text:
-                parts.append(Raw(payload.new_text))
+                parts.append(payload.new_text)
             if end >= start:
                 pos = end + 1
             else:
@@ -260,9 +246,10 @@ def _parse_fragments(
             parts.append(StringLiteral(token))
         else:
             parts.append(BooleanLiteral(node.type == "true"))
+        captured_count += 1
         pos = end + 1
     if pos < len(source):
-        parts.append(Raw(source[pos:]))
+        parts.append(source[pos:])
     return parts, captured_count
 
 
@@ -294,17 +281,17 @@ def _emit_boolean(value: bool) -> list[Fragment]:
     first, second, xor = generate_rand_xor()
     expected = xor if value else xor + 1
     return [
-        Raw("(("), NumberLiteral(str(first)), Raw("~"),
-        NumberLiteral(str(second)), Raw(")=="),
-        NumberLiteral(str(expected)), Raw(")"),
+        "((", NumberLiteral(str(first)), "~",
+        NumberLiteral(str(second)), ")==",
+        NumberLiteral(str(expected)), ")",
     ]
 
 
 def _render(parts: list[Fragment]) -> str:
     rendered: list[str] = []
     for part in parts:
-        if isinstance(part, Raw):
-            rendered.append(part.text)
+        if isinstance(part, str):
+            rendered.append(part)
         elif isinstance(part, NumberLiteral):
             rendered.append(part.token)
         elif isinstance(part, StringLiteral):
@@ -352,10 +339,14 @@ def emit_vm_literals(
     }]
 
     number_emitter = NumberObfuscationPass()
-    for name in stages:
+    for stage_index, name in enumerate(stages):
         stage_start = time.perf_counter()
         output: list[Fragment] = []
         replacements = 0
+        retokenize_generated_numbers = (
+            name == "number_obf"
+            and "number_obf" in stages[stage_index + 1:]
+        )
 
         for part in parts:
             if name == "string_obf" and isinstance(part, StringLiteral):
@@ -369,9 +360,15 @@ def emit_vm_literals(
                 and isinstance(part, NumberLiteral)
                 and part.eligible
             ):
-                output.extend(_split_generated_numbers(
-                    number_emitter.obfuscate_token(part.token)
-                ))
+                expression = number_emitter.obfuscate_token(part.token)
+                if retokenize_generated_numbers:
+                    output.extend(_split_generated_numbers(expression))
+                else:
+                    # The generated leaves only need to stay typed when a
+                    # later number stage will wrap them again. The terminal
+                    # stage can emit raw Lua directly, avoiding a regex scan
+                    # and several fragment allocations per replacement.
+                    _append_raw(output, expression)
                 replacements += 1
             else:
                 output.append(part)
@@ -383,6 +380,11 @@ def emit_vm_literals(
             "elapsed": round(time.perf_counter() - stage_start, 6),
             "replacements": replacements,
             "backend": "structured_emitter",
+            **(
+                {"retokenized_generated_numbers": retokenize_generated_numbers}
+                if name == "number_obf"
+                else {}
+            ),
         })
 
     render_start = time.perf_counter()

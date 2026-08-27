@@ -36,13 +36,25 @@ install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 |---|---|---:|---|
 | `dev` | Fast source-level iteration | No, by default | Fastest builds and easiest debugging |
 | `fast-vm` | VM behavior checks and routine protected builds | Single lightweight VM | Moderate output and runtime cost |
-| `max` | Release candidates requiring the full protection stack | Three diversified VMs | Largest output and longest build time |
+| `high` | Strong production-oriented protection | Two diversified VMs | High build and output cost; practical alternative to `max` |
+| `max` | Experimental research and extreme protection combinations | Three diversified VMs | Unbounded build time and output growth; not intended for routine production use |
 
 ```bash
 python main.py input.lua --profile dev
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --profile max --release-check
 ```
+
+`high` is the strongest preset intended for practical use. It enables the full
+source protection and packing stack with two diversified VMs, while avoiding
+the most explosive VM and packer output-pass combinations used by `max`.
+
+`max` is an experimental research profile. It deliberately combines the most
+aggressive stages and has no build-time or output-size target; very long builds
+are expected. Use `high`, `fast-vm`, or a tuned custom profile for routine
+protected builds. `--release-check` validates release-safety constraints, but
+does not turn `max` into the recommended production profile.
 
 The guiding performance rule is: **keep graph generation, execute heavy graphs
 sparsely**. Complex handlers and variants are compiled at build time where
@@ -203,6 +215,7 @@ python main.py input.lua -o protected.lua
 
 # Profiles and one-off overrides
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --passes string_obf,number_obf,minify
 python main.py input.lua --vm-option vm_count=2
 python main.py input.lua --vm-option graph_execution_rate=0.05
@@ -222,7 +235,8 @@ python main.py input.lua --profile max --release-check
 
 `--seed` exists for reproducible testing. Do not use a fixed seed for release
 artifacts. `--release-check` rejects reproducible seeds and weak release
-settings before writing the output.
+settings before writing the output. The `max` example above is an experimental
+full-stack validation run, not the recommended routine release workflow.
 
 ## GUI
 
@@ -234,7 +248,7 @@ The GUI exposes the same profile-based configuration used by the CLI.
 
 ![GUI](images/5.png)
 
-Choose a complete build preset (`dev`, `fast-vm`, or `max`) or apply an
+Choose a complete build preset (`dev`, `fast-vm`, `high`, or `max`) or apply an
 independent VM protection level (`Light` through `Maximum`). Every pass and VM
 option can also be edited directly; manual changes automatically switch the
 affected selector to `<Custom>`. VM controls are generated from the central
@@ -265,9 +279,10 @@ The most important performance controls are:
 | `semantic_diversity_rate` | Fraction of eligible aliases using alternate semantic lowering |
 | `vm_count` | Number of independent interpreters; strongly affects output and build size |
 
-Start with `fast-vm`. Increase one family at a time and profile the protected
-program's real workload. A high setting in every category is rarely the best
-performance/security balance.
+Start with `fast-vm`, then use `high` when the full protection and packing stack
+is required. Increase individual option families only after profiling the
+protected program's real workload. A maximum setting in every category is
+rarely the best performance/security balance.
 
 ## Testing
 
@@ -276,8 +291,14 @@ Run the semantic suite against the currently selected config:
 ```bash
 python test/run_test.py --profile dev
 python test/run_test.py --profile fast-vm --jobs 4
+python test/run_test.py --profile high --jobs 4
 python test/run_test.py 09_table 14_vm_call_machine
 ```
+
+Routine CI should test practical profiles and focused, deterministic VM
+regressions. Full `max` builds are research/nightly or pre-release checks; their
+build time and output size are not performance gates, although incorrect output
+is still a bug.
 
 Focused regressions cover high-risk VM subsystems:
 
