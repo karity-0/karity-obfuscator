@@ -26,6 +26,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y lua5.3
 
+      - name: Prepare config
+        run: |
+          cp config.example.json config.json
+
       - name: Check generated docs
         run: |
           python tools/generate_config_docs.py --check
@@ -40,5 +44,4 @@ jobs:
 
       - name: Run semantic suite
         run: |
-          cp config.example.json config.json
           python test/run_test.py --profile dev
