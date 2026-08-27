@@ -104,6 +104,59 @@
                 "semantic_diversity_rate": 0.2
             }
         },
+        "high": {
+            "passes": [
+                "anti_debug",
+                "anti_decompile",
+                "function_obf",
+                "boolean_obf",
+                "table_obf",
+                "string_obf",
+                "number_obf",
+                "rename_obf",
+                "localize_globals",
+                "minify",
+                "vm",
+                "pack"
+            ],
+            "vm_output_passes": [
+                "rename_obf",
+                "localize_globals",
+                "minify"
+            ],
+            "packer_output_passes": [
+                "function_obf",
+                "rename_obf",
+                "minify"
+            ],
+            "vm_options": {
+                "dispatcher_type": "mixed",
+                "dispatcher_target_hiding": true,
+                "semantic_state_threading": true,
+                "argument_virtualization": true,
+                "upvalue_virtualization": true,
+                "table_virtualization": true,
+                "branch_virtualization": true,
+                "blob_form": "random",
+                "vm_count": 2,
+                "fake_handlers": true,
+                "mutate_handlers": true,
+                "junk_instructions": true,
+                "junk_rate": 0.3,
+                "integrity_constants": true,
+                "integrity_constant_rate": 0.35,
+                "graph_execution_rate": 0.15,
+                "cross_instruction_rate": 0.4,
+                "runtime_polymorphism_rate": 0.35,
+                "runtime_trace": false,
+                "block_variant_rate": 0.18,
+                "block_variant_count": 3,
+                "block_variant_max_instructions": 8,
+                "helper_variant_count": 4,
+                "helper_diversity_rate": 0.7,
+                "semantic_diversity_rate": 0.75
+            }
+        },
         "max": {
             "passes": [
                 "anti_debug",

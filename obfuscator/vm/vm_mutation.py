@@ -4,7 +4,15 @@ import re
 
 _RETURN_RE      = re.compile(r'\breturn\b')
 _TOP_RETURN_RE  = re.compile(r'^\s*return\b')   # 라인 시작이 return (블록 최상위)
-_LOCAL_RE       = re.compile(r'\blocal\s+(\w+)\s*=')
+_LOCAL_RE       = re.compile(
+    r'\blocal\s+(?!function\b)'
+    r'((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)\s*='
+)
+_LOCAL_ONLY_RE  = re.compile(
+    r'\blocal\s+(?!function\b)'
+    r'((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)'
+    r'(?=\s*(?:;|\bend\b|$))'
+)
 _IND        = "        "
 
 
@@ -288,12 +296,20 @@ def _hoist_locals(lines: list[str]) -> tuple[list[str], list[str]]:
     transformed: list[str] = []
 
     for ln in lines:
-        for m in _LOCAL_RE.finditer(ln):
-            v = m.group(1)
-            if v not in hoisted:
-                hoist_decls.append(f"local {v}")
-                hoisted.add(v)
-        new_ln = re.sub(r'\blocal\s+(\w+)\s*=', r'\1=', ln)
+        for m in (*_LOCAL_RE.finditer(ln), *_LOCAL_ONLY_RE.finditer(ln)):
+            for raw_name in m.group(1).split(","):
+                v = raw_name.strip()
+                if v not in hoisted:
+                    hoist_decls.append(f"local {v}")
+                    hoisted.add(v)
+        new_ln = _LOCAL_RE.sub(lambda m: f"{m.group(1)}=", ln)
+        new_ln = _LOCAL_ONLY_RE.sub(
+            lambda m: (
+                f"{m.group(1)}="
+                + ",".join("nil" for _ in m.group(1).split(","))
+            ),
+            new_ln,
+        )
         transformed.append(new_ln)
 
     return hoist_decls, transformed
@@ -429,7 +445,11 @@ def mutate_handler_body(body: str, c: list[int]) -> str:
         return body
 
     # junk_ref: return 없는 핸들러에만 (변수 참조 junk)
-    local_vars = re.findall(r'\blocal\s+(\w+)\s*=', body)
+    local_vars = [
+        name.strip()
+        for match in _LOCAL_RE.finditer(body)
+        for name in match.group(1).split(",")
+    ]
     if local_vars and not has_return:
         pos = random.randint(0, len(real_lines))
         real_lines = real_lines[:pos] + \
