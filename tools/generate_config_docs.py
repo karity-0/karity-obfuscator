@@ -121,6 +121,15 @@ def render_pass(name: str, info: dict) -> list[str]:
     ]
     if name == "vm":
         lines.extend([VM_DETAILS, ""])
+
+    docs_path = info.get("docs")
+    if docs_path:
+        lines.extend([
+            f"See [`{name}` design and implementation notes]({docs_path}) "
+            "for architecture, trade-offs, and future work.",
+            "",
+        ])
+        
     return lines
 
 

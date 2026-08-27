@@ -64,6 +64,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": NumberObfuscationPass,
         "label": "Number Obfuscation",
         "group": "base",
+        "docs": "passes/numberObfuscation.md"
     },
     "table_obf": {
         "cls": TableObfuscationPass,
