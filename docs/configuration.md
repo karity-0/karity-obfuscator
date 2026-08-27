@@ -131,6 +131,8 @@ Obfuscates boolean literals.
 
 Obfuscates number literals.
 
+See [`number_obf` design and implementation notes](passes/numberObfuscation.md) for architecture, trade-offs, and future work.
+
 ## table_obf
 
 **label:** Table Obfuscation

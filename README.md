@@ -57,17 +57,60 @@ the VM stages are compiled.
 ```mermaid
 flowchart LR
     A[Lua 5.3 source] --> B[Source passes]
-    B --> C[Lua 5.3 bytecode]
-    C --> D[VM serializer]
-    D --> E[Opcode aliases<br/>split / fuse / delayed ops]
-    E --> F[Encrypted bytecode blob]
-    F --> G[Build-time VM compiler]
-    G --> H[Handler graphs<br/>execution kits / VM variants]
-    H --> I[VM output passes]
-    I --> J{Packer enabled?}
-    J -->|No| K[Protected Lua]
-    J -->|Yes| L[Compressed loader]
-    L --> K
+    B --> C{VM enabled?}
+
+    %% Non-VM path
+    C -->|No| P{Packer enabled?}
+
+    %% VM path
+    C -->|Yes| D[luac compile]
+    D --> E[Parse Lua 5.3 bytecode]
+
+    E --> F{junk_instructions?}
+    F -->|Yes| G[Inject junk instructions]
+    F -->|No| H[VM assignment and map generation]
+    G --> H
+
+    H --> I{vm_count > 1?}
+    I -->|No| J[Single-VM map set]
+    I -->|Yes| K[Assign prototypes across<br/>independent VM map sets]
+
+    J --> L[VM serialization]
+    K --> L
+
+    J --> M[Build-time VM specialization]
+    K --> M
+
+    M --> N[Opcode aliases / split / fuse / defer<br/>dispatcher / execution kits / VM variants]
+
+    N --> O{dispatcher_target_hiding?}
+    O -->|Yes| Q[Hide dispatcher targets]
+    O -->|No| R[Continue VM generation]
+    Q --> R
+
+    R --> S[Keystream / tamper / instruction-layout specialization]
+
+    S --> T[Handler / arithmetic / semantic / control graphs]
+    T --> U[Configured VM output passes]
+    U --> V[Line-state finalization]
+    V --> W[Dump finalized VM function<br/>derive integrity state]
+
+    L --> X{integrity_constants?}
+    W --> X
+
+    X -->|Yes| Y[Patch integrity-dependent<br/>serialized values]
+    X -->|No| Z[Use serialized VM blob]
+
+    Y --> AA[Encrypt serialized blob]
+    Z --> AA
+
+    AA --> AB[Assemble protected VM wrapper]
+    AB --> P
+
+    %% Final optional layer
+    P -->|No| AC[Protected Lua]
+    P -->|Yes| AD[Compressed / protected loader]
+    AD --> AC
 ```
 
 At runtime, one instruction can take different equivalent routes depending on
