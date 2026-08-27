@@ -66,6 +66,12 @@ _GENERATED_NUMBER_RE = re.compile(
     r"(?![A-Za-z0-9_])"
 )
 
+_EXACT_HEX64_RE = re.compile(r"0[xX][0-9A-Fa-f]{16}")
+_EXACT_GRAPH_REGION_RE = re.compile(
+    r"--\[\[KARITY_EXACT_BEGIN\]\].*?--\[\[KARITY_EXACT_END\]\]",
+    re.DOTALL,
+)
+
 
 def _append_raw(parts: list[Fragment], text: str) -> None:
     if not text:
@@ -134,6 +140,25 @@ def _parse_fragments(
     replacements: list[Replacement],
     literal_nodes: list | None = None,
 ) -> tuple[list[Fragment], int]:
+    exact_graph_ranges = [
+        (match.start(), match.end() - 1)
+        for match in _EXACT_GRAPH_REGION_RE.finditer(source)
+    ]
+    exact_graph_index = 0
+
+    def in_exact_graph(start: int, end: int) -> bool:
+        nonlocal exact_graph_index
+        while (
+            exact_graph_index < len(exact_graph_ranges)
+            and exact_graph_ranges[exact_graph_index][1] < start
+        ):
+            exact_graph_index += 1
+        return (
+            exact_graph_index < len(exact_graph_ranges)
+            and exact_graph_ranges[exact_graph_index][0] <= start
+            and end <= exact_graph_ranges[exact_graph_index][1]
+        )
+
     if literal_nodes is None:
         captures = ts.QueryCursor(_LITERAL_QUERY).captures(ctx.root)
         if isinstance(captures, dict):
@@ -227,7 +252,9 @@ def _parse_fragments(
         if node.type == "number":
             parts.append(NumberLiteral(
                 token,
-                not _inside_string_char(node, ctx, string_char_cache),
+                not _inside_string_char(node, ctx, string_char_cache)
+                and _EXACT_HEX64_RE.fullmatch(token) is None
+                and not in_exact_graph(start, end),
             ))
         elif node.type == "string":
             parts.append(StringLiteral(token))

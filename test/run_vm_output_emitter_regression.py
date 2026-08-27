@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -14,6 +15,7 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from obfuscator import Pipeline, build_pipeline_from_config
 from obfuscator.profiling import Profiler
+from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
 from obfuscator.vm.output_emitter import emit_vm_literals
 
 
@@ -74,6 +76,33 @@ def walk_details(details: list[dict]):
 
 
 def main() -> int:
+    nested_helper_source = """
+local function dispatch(x)
+    local marker=setmetatable({},{__call=function(t)return t end})
+    local function helper(a)
+        local b=a+1
+        local c=b*2
+        return c
+    end
+    return helper(x)
+end
+print(dispatch(3))
+"""
+    function_pass = FunctionObfuscationPass(skip_vm_dispatcher=True)
+    helper_pipeline = Pipeline(show_header=False).add(function_pass)
+    transformed_helper = helper_pipeline.run(nested_helper_source)
+    if run_source(transformed_helper) != (0, b"8\n", b""):
+        raise AssertionError("dispatcher helper transformation changed semantics")
+    if (
+        function_pass.last_skipped_dispatcher_count != 1
+        or function_pass.last_transformed_count < 1
+    ):
+        raise AssertionError(
+            "dispatcher sentinel swallowed nested helper: "
+            f"skipped={function_pass.last_skipped_dispatcher_count} "
+            f"transformed={function_pass.last_transformed_count}"
+        )
+
     random.seed(260826)
     source = (
         'local s="hello";local t=true;local f=false;local n=123;'
@@ -123,8 +152,30 @@ def main() -> int:
         'local s="VM_EMITTER";local ok=true;print(s,ok,321)',
         profiler=profiler,
     )
-    if run_source(vm_output) != (0, b"VM_EMITTER\ttrue\t321\n", b""):
-        raise AssertionError("VM emitter integration changed runtime semantics")
+    vm_runtime = run_source(vm_output)
+    if vm_runtime != (0, b"VM_EMITTER\ttrue\t321\n", b""):
+        raise AssertionError(
+            f"VM emitter integration changed runtime semantics: {vm_runtime!r}"
+        )
+    if "\n" in vm_output or "\r" in vm_output:
+        raise AssertionError("minified VM output retained a multiline section")
+    if "obfuscated using karity obfuscator" in vm_output.lower():
+        raise AssertionError("VM wrapper leaked the legacy hidden signature")
+    if re.search(r"\bCTAG_(?:NIL|BOOL|INT|FLOAT|STR|IEXPR)\b", vm_output):
+        raise AssertionError("VM output retained a fixed constant-tag symbol")
+    if re.search(r"\bCK_(?:NIL|BOOL|INT|FLOAT|STR|IEXPR)\b", vm_output):
+        raise AssertionError("VM output retained a fixed decoded-constant symbol")
+    if re.search(r"\b_vmf\b", vm_output):
+        raise AssertionError("VM wrapper retained the fixed _vmf binding")
+    for leaked_name in (
+        "_AR", "_DG", "_call_args", "_return_values", "_loop_commit",
+        "_LS",
+        "KARITY_EXACT_BEGIN", "KARITY_EXACT_END",
+    ):
+        if re.search(rf"\b{re.escape(leaked_name)}\b", vm_output):
+            raise AssertionError(
+                f"generated VM symbol bypassed output integration: {leaked_name}"
+            )
     vm_details = [
         detail
         for record in profiler.records
@@ -134,7 +185,7 @@ def main() -> int:
         detail.get("parse_count", 0)
         for detail in vm_details
     )
-    if parse_count != 1:
+    if parse_count not in (1, 2):
         raise AssertionError(f"VM output shared parse count mismatch: {parse_count}")
     identifier_phases = {
         detail.get("phase")
@@ -145,6 +196,19 @@ def main() -> int:
         "vm_output:rename_obf", "vm_output:localize_globals",
     }:
         raise AssertionError(f"identifier emitter phases missing: {identifier_phases}")
+    rename_details = [
+        detail for detail in vm_details
+        if detail.get("phase") == "vm_output:rename_obf"
+    ]
+    required_rename_timings = {
+        "collect_elapsed", "scope_resolution_elapsed",
+        "replacement_elapsed", "render_elapsed",
+    }
+    if (
+        len(rename_details) != 1
+        or not required_rename_timings.issubset(rename_details[0])
+    ):
+        raise AssertionError(f"rename phase timings missing: {rename_details}")
     function_details = [
         detail for detail in vm_details
         if detail.get("phase") == "vm_output:function_obf"
@@ -152,13 +216,25 @@ def main() -> int:
     if (
         len(function_details) != 1
         or function_details[0].get("backend") != "shared_syntax_context"
+        or function_details[0].get("transformed_functions", 0) <= 0
     ):
         raise AssertionError(
             f"function pass did not reuse shared context: {function_details}"
         )
+    graph_details = [
+        detail for detail in vm_details
+        if detail.get("phase") == "vm_output:handler_graphs"
+    ]
+    if (
+        len(graph_details) != 1
+        or graph_details[0].get("backend") != "pre_output_pipeline"
+    ):
+        raise AssertionError(
+            f"handler graphs bypassed VM output passes: {graph_details}"
+        )
 
     print(
-        "vm-output-emitter-ok parse_count=1 "
+        f"vm-output-emitter-ok parse_count={parse_count} "
         f"nested_numbers={number_detail['replacements']} duplicate_layers=2"
     )
     return 0

@@ -159,7 +159,8 @@ local function make_reader(blob)
     return r
 end
 
-local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4;local CTAG_IEXPR=5
+local CTAG_NIL=__VM_CTAG_NIL__;local CTAG_BOOL=__VM_CTAG_BOOL__;local CTAG_INT=__VM_CTAG_INT__;local CTAG_FLOAT=__VM_CTAG_FLOAT__;local CTAG_STR=__VM_CTAG_STR__;local CTAG_IEXPR=__VM_CTAG_IEXPR__
+local CK_NIL=__VM_CK_NIL__;local CK_BOOL=__VM_CK_BOOL__;local CK_INT=__VM_CK_INT__;local CK_FLOAT=__VM_CK_FLOAT__;local CK_STR=__VM_CK_STR__;local CK_IEXPR=__VM_CK_IEXPR__
 local _IT={seed=0,layout=0,vmc=1,script=0,line=0}
 
 -- 런타임 내부 keystream: read_proto가 디코드 직후 code[i]를 메모리에서 한 번 더
@@ -252,18 +253,18 @@ local function read_proto(r, acc_state)
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
-        if     tag==CTAG_NIL   then p.constants[i]={0}
-        elseif tag==CTAG_BOOL  then p.constants[i]={1,r.u8()~=0}
-        elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
-        elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
-        elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={4,_s and _kss(_s) or nil}
+        if     tag==CTAG_NIL   then p.constants[i]={CK_NIL}
+        elseif tag==CTAG_BOOL  then p.constants[i]={CK_BOOL,r.u8()~=0}
+        elseif tag==CTAG_INT   then p.constants[i]={CK_INT,r.i64()}
+        elseif tag==CTAG_FLOAT then p.constants[i]={CK_FLOAT,r.f64()}
+        elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={CK_STR,_s and _kss(_s) or nil}
         elseif tag==CTAG_IEXPR then
             local _e=r.i64(); local _pn=r.u8(); local _p={}
             for _j=1,_pn do
                 local _op=r.u8()
                 if _op==1 then _p[_j]={_op,r.u32()} else _p[_j]={_op} end
             end
-            p.constants[i]={5,_e,_p}
+            p.constants[i]={CK_IEXPR,_e,_p}
         else error("bad const tag "..tostring(tag)) end
     end
     n=r.u32(); p.upvalues={}
@@ -303,9 +304,9 @@ end
 
 local function kval(k,proto)
     if not k then return nil end
-    if k[1]==0 then return nil end
-    if k[1]==4 and k[2] then return _kss(k[2]) end
-    if k[1]==5 then
+    if k[1]==CK_NIL then return nil end
+    if k[1]==CK_STR and k[2] then return _kss(k[2]) end
+    if k[1]==CK_IEXPR then
         return k[2]~_ieval(k[3],proto)
     end
     return k[2]
@@ -734,7 +735,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     for _ci=1,256 do
         local _c=consts[_ci]
         if not _c then break end
-        if _c[1]==4 then
+        if _c[1]==CK_STR then
             if _c[2] then rset(255+_ci,_kss(_c[2])) end
         elseif _c[1]~=0 then
             rset(255+_ci,kval(_c,proto))
@@ -1079,7 +1080,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
         end
         local site=((pc-1)<<32)~tag
-        local bank=_DG[tag]
+        local route=((_DG[2][tag]~_DG[3][tag]~pc~(_S[611] or 0))&1)+1
+        local semantic=_DG[1][route]
+        local bank=semantic[1][semantic[2][tag]~semantic[3][tag]]
         local hit=_SC[site] or 0
         _SC[site]=hit+1
         local base=hit==0 and 1 or 2
@@ -1128,16 +1131,19 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _arith2(a,b,av,slot,desc)
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
+        local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
+        local arithmetic=_AR[1][route]
+        local semantic_index=arithmetic[3][slot]~arithmetic[4][slot]
         local graph,hit=_graph_for(desc)
         if graph then
             local pick=_poly_pick(4,slot~pc~0x41524932,base)
-            local bank=_AR[_int2(a,b)][slot]
+            local bank=arithmetic[_int2(a,b)][semantic_index]
             local out=graph(bank,pick,a,b,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
         local pick=_poly_pick(2,slot~pc~0x41524932,base)
-        local out=_AR[1][slot][pick](a,b)
+        local out=arithmetic[1][semantic_index][pick](a,b)
         if graph==false then
             out=_couple_direct(out,desc,hit)
             return out
@@ -1147,16 +1153,19 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _arith1(a,av,slot,desc)
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
+        local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
+        local arithmetic=_AR[1][route]
+        local semantic_index=arithmetic[3][slot]~arithmetic[4][slot]
         local graph,hit=_graph_for(desc)
         if graph then
             local pick=_poly_pick(4,slot~pc~0x41524931,base)
-            local bank=_AR[_int1(a)][slot]
+            local bank=arithmetic[_int1(a)][semantic_index]
             local out=graph(bank,pick,a,a,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
         local pick=_poly_pick(2,slot~pc~0x41524931,base)
-        local out=_AR[1][slot][pick](a)
+        local out=arithmetic[1][semantic_index][pick](a)
         if graph==false then
             out=_couple_direct(out,desc,hit)
             return out
@@ -1297,6 +1306,78 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
     end
 
+    local function _call_args(a,b,...)
+        local values={};local count=0
+        local last=(b==0 and top) or (b>1 and (a+b-1)) or a
+        for i=a+1,last do count=count+1;values[count]=rget(i) end
+        values.n=count
+        return values
+    end
+
+    local function _return_values(a,b,...)
+        if b==1 then return {},0 end
+        local result={};local count=(b==0 and (top-a+1)) or (b-1)
+        for i=1,count do result[i]=rget(a+i-1) end
+        return result,count
+    end
+
+    local function _native_call(fn,args,a,c,av,tail,tag,...)
+        local count=args.n
+        if not tail then _touch(av,tag) end
+        for i=1,count do args[i]=_texpose(args[i]) end
+        local result=table.pack(fn(table.unpack(args,1,count)))
+        if tail then return _leave(result,result.n,av,tag) end
+        if c==0 then
+            for i=1,result.n do rset(a+i-1,result[i]) end
+            top=a+result.n-1
+        elseif c>1 then
+            for i=1,c-1 do rset(a+i-1,result[i]) end
+        end
+    end
+
+    local function _jump(sbx,av,tag,...)
+        local key=(_S[611] or 0)~pc~sbx
+        local packet={[__VM_CF_KEY__]=key,
+                      [__VM_CF_TARGET__]=(pc+sbx)~key,
+                      [__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
+        packet=_flow(packet,av,tag)
+        return _cf(packet,__VM_CF_TARGET__,tag)
+    end
+
+    local function _loop_commit(q,a,tag,...)
+        local idx=q[__VM_CF_VALUE__]
+        rset(a,idx)
+        if q[__VM_CF_TAKE__] then
+            pc=_cf(q,__VM_CF_TARGET__,tag);rset(a+3,idx)
+        end
+    end
+
+    local function _forloop(a,sbx,av,tag,...)
+        local step=rget(a+2)
+        local limit=rget(a+1)
+        local key=(_S[611] or 0)~pc~a
+        local packet={[__VM_CF_KEY__]=key,
+                      [__VM_CF_TARGET__]=(pc+sbx)~key,
+                      [__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
+        packet[__VM_CF_VALUE__]=rget(a)
+        packet[__VM_CF_STEP__]=step
+        packet[__VM_CF_LIMIT__]=limit
+        packet=_flow(packet,av,tag)
+        local site=((pc-1)<<8)~__VM_LOOP_FORLOOP__
+        if not _LC[site] then
+            _LC[site]=true
+            packet=_LG[__VM_LOOP_FORLOOP__](packet,_S)
+        else
+            packet[__VM_CF_VALUE__]=packet[__VM_CF_VALUE__]+packet[__VM_CF_STEP__]
+            local value=packet[__VM_CF_VALUE__]
+            local delta=packet[__VM_CF_STEP__]
+            local bound=packet[__VM_CF_LIMIT__]
+            packet[__VM_CF_TAKE__]=
+                (delta>0 and value<=bound) or (delta<=0 and value>=bound)
+        end
+        _loop_commit(packet,a,tag)
+    end
+
     for i in setmetatable({},{__call=function(t)return t end}) do
         --<<FETCH>>
         _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
@@ -1337,10 +1418,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==29 then
             local t={}; for i=B,C do t[#t+1]=rget(i) end
             rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
-        elseif op==30 then
-            local k=(_S[611] or 0)~pc~sBx
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
-            q=_flow(q,_av,30); pc=_cf(q,__VM_CF_TARGET__,30)
+        elseif op==30 then pc=_jump(sBx,_av,30)
         elseif op==31 then if not _branch(_carry(_sem(__VM_CMP_EQ__,rget(B),rget(C),nil),_av,31),A~=0,_av,31) then pc=pc+1 end
         elseif op==32 then if not _branch(_carry(_sem(__VM_CMP_LT__,rget(B),rget(C),nil),_av,32),A~=0,_av,32) then pc=pc+1 end
         elseif op==33 then if not _branch(_carry(_sem(__VM_CMP_LE__,rget(B),rget(C),nil),_av,33),A~=0,_av,33) then pc=pc+1 end
@@ -1349,12 +1427,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             if _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(B),nil,nil),_av,35),C~=0,_av,35) then rset(A,rget(B)) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A)
+            local ca=_call_args(A,B)
+            local ca_n=ca.n
             local _vm=_VF[fn]
             if _vm then
                 ca.n=ca_n
@@ -1367,23 +1442,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 q[__VM_Q_CONT__]=_frame(A,C,_kk)
                 return _CG[__VM_ROUTE_ENTER__](_NX,q)
             else
-                _touch(_av,36)
-                for i=1,ca_n do ca[i]=_texpose(ca[i]) end
-                local res=table.pack(fn(table.unpack(ca,1,ca_n)))
-                if C==0 then
-                    for i=1,res.n do rset(A+i-1,res[i]) end; top=A+res.n-1
-                elseif C>1 then
-                    for i=1,C-1 do rset(A+i-1,res[i]) end
-                end
+                _native_call(fn,ca,A,C,_av,false,36)
             end
 
         elseif op==37 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A)
+            local ca=_call_args(A,B)
+            local ca_n=ca.n
             local _vm=_VF[fn]
             if _vm then
                 ca.n=ca_n
@@ -1395,43 +1460,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 return _CG[__VM_ROUTE_ENTER__](_NX,
                     _carry(q,_av,137))
             end
-            for i=1,ca_n do ca[i]=_texpose(ca[i]) end
-            local res=table.pack(fn(table.unpack(ca,1,ca_n)))
-            return _leave(res,res.n,_av,37)
+            return _native_call(fn,ca,A,C,_av,true,37)
 
         elseif op==38 then
-            if B==1 then return _leave({},0,_av,38)
-            elseif B==0 then
-                local r={}; local n=0
-                for i=A,top do n=n+1; r[n]=rget(i) end
-                return _leave(r,n,_av,38)
-            else
-                local n=B-1; local r={}
-                for i=A,A+n-1 do r[i-A+1]=rget(i) end
-                return _leave(r,n,_av,38)
-            end
+            local r,n=_return_values(A,B)
+            return _leave(r,n,_av,38)
 
-        elseif op==39 then
-            local step=rget(A+2); local limit=rget(A+1)
-            local k=(_S[611] or 0)~pc~A
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
-            q[__VM_CF_VALUE__]=rget(A); q[__VM_CF_STEP__]=step; q[__VM_CF_LIMIT__]=limit
-            q=_flow(q,_av,39)
-            local _ls=((pc-1)<<8)~__VM_LOOP_FORLOOP__
-            if not _LC[_ls] then
-                _LC[_ls]=true; q=_LG[__VM_LOOP_FORLOOP__](q,_S)
-            else
-                q[__VM_CF_VALUE__]=q[__VM_CF_VALUE__]+q[__VM_CF_STEP__]
-                local _lv=q[__VM_CF_VALUE__]
-                local _ld=q[__VM_CF_STEP__]
-                local _ll=q[__VM_CF_LIMIT__]
-                q[__VM_CF_TAKE__]=(_ld>0 and _lv<=_ll) or (_ld<=0 and _lv>=_ll)
-            end
-            local idx=q[__VM_CF_VALUE__]
-            rset(A,idx)
-            if q[__VM_CF_TAKE__] then
-                pc=_cf(q,__VM_CF_TARGET__,39); rset(A+3,idx)
-            end
+        elseif op==39 then _forloop(A,sBx,_av,39)
 
         elseif op==40 then
             local k=(_S[611] or 0)~pc~A
@@ -1583,11 +1618,12 @@ local function run(blob,rand_tail,self_func)
     local _fn=r.u32()
     for _=1,_fn do
         local _ft=r.u8()
-        if     _ft==1 then r.u8()
-        elseif _ft==2 then r.i64()
-        elseif _ft==3 then r.f64()
-        elseif _ft==4 then r.str()
-        elseif _ft==5 then
+        if     _ft==CTAG_NIL then
+        elseif _ft==CTAG_BOOL then r.u8()
+        elseif _ft==CTAG_INT then r.i64()
+        elseif _ft==CTAG_FLOAT then r.f64()
+        elseif _ft==CTAG_STR then r.str()
+        elseif _ft==CTAG_IEXPR then
             r.i64(); local _pn=r.u8()
             for _j=1,_pn do local _op=r.u8(); if _op==1 then r.u32() end end
         end

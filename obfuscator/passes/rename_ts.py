@@ -25,6 +25,7 @@ tree-sitter 기반 scope-aware identifier rename.
 """
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 
 from .base import Replacement
@@ -355,17 +356,40 @@ def rename_replacements_with_ctx(ctx) -> list[Replacement]:
 
 def rename_plan_with_ctx(ctx) -> tuple[list[Replacement], list]:
     """Return rename replacements and literals from the same AST traversal."""
+    replacements, literal_nodes, _profile = rename_plan_with_ctx_profiled(ctx)
+    return replacements, literal_nodes
+
+
+def rename_plan_with_ctx_profiled(ctx) -> tuple[list[Replacement], list, dict]:
+    """Return a rename plan plus timings for each linear planning phase."""
+    total_start = time.perf_counter()
+    collect_start = time.perf_counter()
     scopes, _node_scope, identifier_nodes, literal_nodes = (
         _collect_scopes_and_decls(ctx)
     )
+    collect_elapsed = time.perf_counter() - collect_start
+
+    scope_start = time.perf_counter()
     _build_scope_maps(scopes)
+    scope_elapsed = time.perf_counter() - scope_start
+
+    replacement_start = time.perf_counter()
     replacements = [
         Replacement(start=start, end=end, new_text=new_text)
         for start, end, new_text in _collect_identifier_replacements(
             ctx, scopes, identifier_nodes,
         )
     ]
-    return replacements, literal_nodes
+    replacement_elapsed = time.perf_counter() - replacement_start
+    return replacements, literal_nodes, {
+        "collect_elapsed": collect_elapsed,
+        "scope_resolution_elapsed": scope_elapsed,
+        "replacement_elapsed": replacement_elapsed,
+        "total_elapsed": time.perf_counter() - total_start,
+        "scope_count": len(scopes),
+        "identifier_count": len(identifier_nodes),
+        "literal_count": len(literal_nodes),
+    }
 
 
 def rename_with_ctx(ctx) -> str:

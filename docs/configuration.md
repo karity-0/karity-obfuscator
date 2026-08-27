@@ -193,8 +193,10 @@ Virtualizes Lua bytecode using the custom Lua 5.3 VM.
 
 Integer arithmetic, bitwise, shift, and unary handlers are generated from
 build-specific DAG IR and compiled ahead of time into specialized straight-line
-Lua handlers. Sparse selectors choose the compiled handler from the VM id,
-instruction position, and accumulated diffusion state.
+Lua handlers. Their semantic order is shuffled per build, and sparse opcode tags
+resolve dense banks through two independently emitted XOR-share tables instead of
+a central `selector -> obvious operation` map. Runtime state then chooses among
+equivalent compiled variants.
 
 Arithmetic occurrences carry compact descriptors (family id, site id, selector
 seed, state key, and diffusion policy) and share a build-specific compiled family
@@ -270,6 +272,12 @@ literal replacements are merged by a structured emitter, while generated
 literals remain typed for later stages. This preserves cross-pass layering such
 as string XOR operands flowing into number obfuscation without parsing and
 rendering the expanded VM source after every pass.
+
+Handler, arithmetic, semantic, call, control, and loop graph sources are inserted
+before that VM-output pipeline, so generated backend identifiers and literals are
+renamed, localized, obfuscated, and minified with the rest of the VM. Exact-width
+integer regions remain typed but bypass numeric rewriting where changing the
+literal representation would invalidate a compiled bitwise graph.
 
 Build-specific error probes derive a source-line state without an explicit
 expected-line comparison. The state participates in the VM blob key, integrity

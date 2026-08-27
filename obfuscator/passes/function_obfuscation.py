@@ -13,6 +13,7 @@
 from __future__ import annotations
 import random
 import re
+import time
 
 from .base import BasePass, Replacement
 from ..vm.vm_mutation import _zv, _new_state
@@ -1563,7 +1564,27 @@ def _transform_body(ctx, block, params: list[str], rich_junk: bool = True) -> st
         if _subtree_has_goto_or_label(stmt):
             return None
 
-    extra_hoist_names: list[str] = []
+    # Collect declarations from the original function scope before lowering
+    # branches into detached state blocks.  The textual block scan performed
+    # by _build_generic_cff is still useful as a fallback, but declarations
+    # following semicolon-separated statements inside an if branch can
+    # otherwise remain branch-local after flattening.  Once another state
+    # reads such a name Lua resolves it as a global (usually nil).
+    #
+    # Do not descend into nested functions: their locals belong to a different
+    # lexical scope and must not be hoisted into this function.
+    scope_local_names: set[str] = set()
+    pending = list(block.children)
+    while pending:
+        current = pending.pop()
+        if current.type in _FUNC_NODE_TYPES:
+            continue
+        if current.type == "variable_declaration":
+            scope_local_names.update(_scan_local_names(ctx.text(current)))
+            continue
+        pending.extend(current.children)
+
+    extra_hoist_names: list[str] = sorted(scope_local_names)
     blocks, entry = _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names)
 
     c: list[int] = [0]
@@ -1627,9 +1648,11 @@ class FunctionObfuscationPass(BasePass):
 
     def __init__(self, skip_vm_dispatcher: bool = False):
         self.skip_vm_dispatcher = skip_vm_dispatcher
+        self.last_transformed_count = 0
 
     def run(self, script: str, ctx) -> list[Replacement]:
         replacements: list[Replacement] = []
+        scan_start = time.perf_counter()
         # 이미 변환 대상으로 선택된 함수의 body(block) 범위들. 이 범위에 완전히
         # 포함되는 nested 함수는 건너뛴다 (outer 본문 텍스트에 nested 함수 정의가
         # 한 chunk로 포함돼 처리되므로, 이중 변환하면 Replacement가 겹쳐 깨짐).
@@ -1660,14 +1683,33 @@ class FunctionObfuscationPass(BasePass):
         # 직접 포함하는 함수 노드만 건너뛴다.
         skip_node_ids: set[int] = set()
         if self.skip_vm_dispatcher:
-            for node in func_nodes:
-                b = _block_of(node)
-                if b is None:
-                    continue
-                body_text = ctx.text(b)
-                if (_DISPATCH_SENTINEL.search(body_text)
-                        or _VM_HOT_LOOP_SENTINEL.search(body_text)):
-                    skip_node_ids.add(node.id)
+            sentinel_spans = [
+                (match.start(), match.end() - 1)
+                for pattern in (_DISPATCH_SENTINEL, _VM_HOT_LOOP_SENTINEL)
+                for match in pattern.finditer(script)
+            ]
+            function_spans = []
+            for candidate in func_nodes:
+                candidate_block = _block_of(candidate)
+                if candidate_block is not None:
+                    function_spans.append((
+                        ctx.cs(candidate_block), ctx.ce(candidate_block),
+                        candidate.id,
+                    ))
+            for start, end in sentinel_spans:
+                owners = [
+                    span for span in function_spans
+                    if span[0] <= start and end <= span[1]
+                ]
+                if owners:
+                    skip_node_ids.add(min(
+                        owners, key=lambda span: span[1] - span[0]
+                    )[2])
+
+        self.last_candidate_count = len(func_nodes)
+        self.last_skipped_dispatcher_count = len(skip_node_ids)
+        self.last_candidate_scan_elapsed = time.perf_counter() - scan_start
+        transform_start = time.perf_counter()
 
         for node in func_nodes:
             block = _block_of(node)
@@ -1676,13 +1718,25 @@ class FunctionObfuscationPass(BasePass):
             bstart, bend = ctx.cs(block), ctx.ce(block)
 
             if self.skip_vm_dispatcher and node.id in skip_node_ids:
-                # The execution-kit compiler already diversifies nested hot
-                # helpers. Claim this range so later nodes inside the exec are
-                # not flattened again by the VM-output pass.
-                claimed_ranges.append((bstart, bend))
                 # sentinel을 직접 포함하는 함수(wrapper/exec) 자체만 스킵.
                 # exec 내부의 헬퍼 클로저는 아래에서 정상 변환된다.
                 continue
+
+            if self.skip_vm_dispatcher:
+                # Handler-graph backends are emitted as functions inside dense
+                # table banks and already carry compiler-generated control
+                # flow. Running generic CFF over those closures is both
+                # redundant and unsafe for their integer-only paths. This does
+                # not exclude ordinary local helpers nested in the dispatcher.
+                ancestor = node.parent
+                in_table_bank = False
+                while ancestor is not None and ancestor.type not in _FUNC_NODE_TYPES:
+                    if ancestor.type == "table_constructor":
+                        in_table_bank = True
+                        break
+                    ancestor = ancestor.parent
+                if in_table_bank:
+                    continue
 
             params_node = ctx.first_child(node, "parameters")
             if params_node is None:
@@ -1718,4 +1772,6 @@ class FunctionObfuscationPass(BasePass):
                     new_text="...",
                 ))
 
+        self.last_transformed_count = len(claimed_ranges)
+        self.last_transform_elapsed = time.perf_counter() - transform_start
         return replacements
