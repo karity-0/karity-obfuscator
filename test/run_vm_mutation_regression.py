@@ -4,6 +4,7 @@ import random
 import shutil
 import subprocess
 import sys
+import os
 import tempfile
 from pathlib import Path
 
@@ -15,12 +16,18 @@ from obfuscator.vm.vm_mutation import mutate_handler_body
 
 
 def _lua_command() -> list[str]:
-    bundled = ROOT / "bin" / "lua.exe"
-    if bundled.exists():
-        return [str(bundled)]
-    system = shutil.which("lua")
+    local = ROOT / "bin" / ("lua.exe" if os.name == "nt" else "lua")
+    if local.exists():
+        return [str(local)]
+
+    system = (
+        shutil.which("lua5.3")
+        or shutil.which("lua53")
+        or shutil.which("lua")
+    )
     if system:
         return [system]
+
     raise RuntimeError("Lua interpreter not found")
 
 
