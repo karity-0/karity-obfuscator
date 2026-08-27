@@ -31,6 +31,7 @@ from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
                           apply_keystream, apply_tamper, apply_line_state)
+from .output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from .junk_injection import inject_junk
 
 
@@ -229,7 +230,12 @@ def _make_defer_map(used_vops: set[int],
     return {op: _new_unique_vop(used_vops) for op in sorted(defer_ops)}
 
 
-def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
+def _dump_function_stripped(
+    vm_func_src: str,
+    header: str,
+    decoy_name: str,
+    decoy_value: str,
+) -> bytes:
     """
     vm_func_src(= "return function(...) ... end")를 최종 출력과 동일한
     enclosing 컨텍스트(`header` 주석 + `local a="..."` 프리픽스) 안에서
@@ -242,8 +248,7 @@ def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
     dump와 런타임 dump가 바이트 단위로 일치한다.
     """
     wrapped = (
-        f'{header}'
-        f'local a="obfuscated using karity obfuscator"'
+        f'{header}local {decoy_name}="{decoy_value}"'
         f'{vm_func_src};'
     )
 
@@ -307,6 +312,10 @@ def _hex64() -> str:
 
 def _rand_lua_name(length: int = 7) -> str:
     return "_" + "".join(random.choices(_NAME_CHARS, k=length))
+
+
+def _exact_graph_source(source: str) -> str:
+    return "--[[KARITY_EXACT_BEGIN]]" + source + "--[[KARITY_EXACT_END]]"
 
 
 def _opaque_zero(x: str, y: str) -> str:
@@ -1310,25 +1319,59 @@ def _apply_handler_graphs(
                 slots[kind] = slot
                 break
 
-    native_entries: list[str] = []
-    graph_entries: list[str] = []
-    kinds = list(_ARITH_SPECS)
-    random.shuffle(kinds)
-    for kind in kinds:
-        _, operator, arity = _ARITH_SPECS[kind]
-        slot = slots[kind]
-        x, y = _rand_lua_name(), _rand_lua_name()
-        if arity == 1:
-            native = f"function({x})return {operator}{x} end"
-        else:
-            native = f"function({x},{y})return {x}{operator}{y} end"
-        native_entries.append(f"[{slot}]={{{native},{native}}}")
-        graph_entries.append(
-            f"[{slot}]={{{','.join(_compile_integer_graph_func(kind) for _ in range(4))}}}"
+    def arithmetic_bank() -> str:
+        native_entries: list[str] = []
+        graph_entries: list[str] = []
+        arithmetic_indices: dict[str, int] = {}
+        kinds = list(_ARITH_SPECS)
+        random.shuffle(kinds)
+        for dense_index, kind in enumerate(kinds, 1):
+            _, operator, arity = _ARITH_SPECS[kind]
+            arithmetic_indices[kind] = dense_index
+            x, y = _rand_lua_name(), _rand_lua_name()
+            if arity == 1:
+                native = f"function({x})return {operator}{x} end"
+            else:
+                native = f"function({x},{y})return {x}{operator}{y} end"
+            native_entries.append(f"{{{native},{native}}}")
+            graph_entries.append(
+                "{" + ",".join(
+                    _compile_integer_graph_func(kind) for _ in range(4)
+                ) + "}"
+            )
+
+        arithmetic_share_a: list[str] = []
+        arithmetic_share_b: list[str] = []
+        for kind in kinds:
+            share = random.randint(0x10000, 0x7FFFFFFF)
+            slot = slots[kind]
+            dense_index = arithmetic_indices[kind]
+            arithmetic_share_a.append(f'[{slot}]=tonumber("{share}")')
+            arithmetic_share_b.append(
+                f'[{slot}]=tonumber("{share ^ dense_index}")'
+            )
+        return (
+            "{{" + ",".join(native_entries)
+            + "},{" + ",".join(graph_entries)
+            + "},{" + ",".join(arithmetic_share_a)
+            + "},{" + ",".join(arithmetic_share_b) + "}}"
         )
 
-    bundle = "{{" + ",".join(native_entries) + "},{" + ",".join(graph_entries) + "}}"
-    vm_code = vm_code.replace("__VM_ARITH_BUNDLE__", bundle)
+    arithmetic_route_a: list[str] = []
+    arithmetic_route_b: list[str] = []
+    for slot in slots.values():
+        share = random.randint(0x10000, 0x7FFFFFFF)
+        route = random.getrandbits(1)
+        arithmetic_route_a.append(f'[{slot}]=tonumber("{share}")')
+        arithmetic_route_b.append(f'[{slot}]=tonumber("{share ^ route}")')
+    bundle = (
+        "{{" + arithmetic_bank() + "," + arithmetic_bank()
+        + "},{" + ",".join(arithmetic_route_a)
+        + "},{" + ",".join(arithmetic_route_b) + "}}"
+    )
+    vm_code = vm_code.replace(
+        "__VM_ARITH_BUNDLE__", _exact_graph_source(bundle)
+    )
     affine_pairs = []
     for _ in range(16):
         multiplier = random.getrandbits(64) | 1
@@ -1336,7 +1379,10 @@ def _apply_handler_graphs(
         signed_multiplier = multiplier if multiplier < (1 << 63) else multiplier - (1 << 64)
         signed_inverse = inverse if inverse < (1 << 63) else inverse - (1 << 64)
         affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
-    vm_code = vm_code.replace("__VM_AFFINE_POOL__", "{" + ",".join(affine_pairs) + "}")
+    vm_code = vm_code.replace(
+        "__VM_AFFINE_POOL__",
+        _exact_graph_source("{" + ",".join(affine_pairs) + "}"),
+    )
     register_maps: list[str] = []
     used_maps: set[tuple[int, int, int]] = set()
     while len(register_maps) < 5:
@@ -1349,13 +1395,18 @@ def _apply_handler_graphs(
             continue
         used_maps.add(spec)
         register_maps.append("{" + ",".join(map(str, spec)) + "}")
-    vm_code = vm_code.replace("__VM_REGISTER_MAPS__", "{" + ",".join(register_maps) + "}")
+    vm_code = vm_code.replace(
+        "__VM_REGISTER_MAPS__",
+        _exact_graph_source("{" + ",".join(register_maps) + "}"),
+    )
     for kind, (token, _, _) in _ARITH_SPECS.items():
         vm_code = vm_code.replace(token, str(slots[kind]))
     value_token = "__VM_VALUE_GRAPHS__"
     while value_token in vm_code:
         variants = ",".join(_compile_value_graph_func() for _ in range(2))
-        vm_code = vm_code.replace(value_token, "{" + variants + "}", 1)
+        vm_code = vm_code.replace(
+            value_token, _exact_graph_source("{" + variants + "}"), 1
+        )
 
     call_tags = random.sample(range(0x10000, 0x7FFFFFFF), 4)
     call_replacements = {
@@ -1368,18 +1419,24 @@ def _apply_handler_graphs(
         "{[" + str(call_tags[2]) + "]=" + _compile_call_route_func()
         + ",[" + str(call_tags[3]) + "]=" + _compile_call_route_func() + "}"
     )
-    vm_code = vm_code.replace("__VM_CALL_GRAPHS__", call_graph)
+    vm_code = vm_code.replace(
+        "__VM_CALL_GRAPHS__", _exact_graph_source(call_graph)
+    )
     control_graphs = "{" + ",".join(
         _compile_control_graph_func() for _ in range(2)
     ) + "}"
-    vm_code = vm_code.replace("__VM_CONTROL_GRAPHS__", control_graphs)
+    vm_code = vm_code.replace(
+        "__VM_CONTROL_GRAPHS__", _exact_graph_source(control_graphs)
+    )
     loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
     loop_graphs = (
         "{[" + str(loop_tags[0]) + "]=" + _compile_loop_ir_func("FORLOOP")
         + ",[" + str(loop_tags[1]) + "]=" + _compile_loop_ir_func("FORPREP")
         + ",[" + str(loop_tags[2]) + "]=" + _compile_loop_ir_func("TFORLOOP") + "}"
     )
-    vm_code = vm_code.replace("__VM_LOOP_GRAPHS__", loop_graphs)
+    vm_code = vm_code.replace(
+        "__VM_LOOP_GRAPHS__", _exact_graph_source(loop_graphs)
+    )
     vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
     vm_code = vm_code.replace("__VM_LOOP_FORPREP__", str(loop_tags[1]))
     vm_code = vm_code.replace("__VM_LOOP_TFORLOOP__", str(loop_tags[2]))
@@ -1389,11 +1446,40 @@ def _apply_handler_graphs(
         "MOD", "POW", "DIV", "IDIV", "NOT", "LEN", "CONCAT",
         "NEWTABLE", "SETLIST", "CLOSURE", "VARARG",
     )
-    semantic_graphs = "{" + ",".join(
-        f"[{tag}]={_compile_semantic_ir_func(kind)}"
-        for kind, tag in zip(semantic_kinds, data_tags)
-    ) + "}"
-    vm_code = vm_code.replace("__VM_SEMANTIC_GRAPHS__", semantic_graphs)
+    def semantic_bank() -> str:
+        semantic_order = list(zip(semantic_kinds, data_tags))
+        random.shuffle(semantic_order)
+        semantic_entries: list[str] = []
+        semantic_share_a: list[str] = []
+        semantic_share_b: list[str] = []
+        for dense_index, (kind, tag) in enumerate(semantic_order, 1):
+            share = random.randint(0x10000, 0x7FFFFFFF)
+            semantic_entries.append(_compile_semantic_ir_func(kind))
+            semantic_share_a.append(f'[{tag}]=tonumber("{share}")')
+            semantic_share_b.append(
+                f'[{tag}]=tonumber("{share ^ dense_index}")'
+            )
+        return (
+            "{{" + ",".join(semantic_entries)
+            + "},{" + ",".join(semantic_share_a)
+            + "},{" + ",".join(semantic_share_b) + "}}"
+        )
+
+    semantic_route_a: list[str] = []
+    semantic_route_b: list[str] = []
+    for tag in data_tags:
+        share = random.randint(0x10000, 0x7FFFFFFF)
+        route = random.getrandbits(1)
+        semantic_route_a.append(f'[{tag}]=tonumber("{share}")')
+        semantic_route_b.append(f'[{tag}]=tonumber("{share ^ route}")')
+    semantic_graphs = (
+        "{{" + semantic_bank() + "," + semantic_bank()
+        + "},{" + ",".join(semantic_route_a)
+        + "},{" + ",".join(semantic_route_b) + "}}"
+    )
+    vm_code = vm_code.replace(
+        "__VM_SEMANTIC_GRAPHS__", _exact_graph_source(semantic_graphs)
+    )
     for token, tag in zip((
         "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
         "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
@@ -1414,7 +1500,9 @@ def _apply_handler_graphs(
         _compile_occurrence_graph_func(random.randint(0x10000, 0x7FFFFFFF))
         for _ in range(graph_family_count)
     ) + "}"
-    vm_code = vm_code.replace("__VM_OCCURRENCE_GRAPHS__", occurrence_graphs)
+    vm_code = vm_code.replace(
+        "__VM_OCCURRENCE_GRAPHS__", _exact_graph_source(occurrence_graphs)
+    )
 
     field_tokens = [
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
@@ -1477,65 +1565,230 @@ def _obfuscate_vm_output(
     script: str,
     pass_names: list[str],
 ) -> tuple[str, list[dict]]:
-    """VM 출력물에 passes 재적용 + pass별 profiling."""
+    """Run structural VM passes, shared literal emitters, then text post-passes."""
     from ..pipeline import Pipeline
     from ..profiling import Profiler
     from ..registry import PASS_REGISTRY
 
-    pipeline = Pipeline(show_header=False)
-    applied_names: list[str] = []
+    before: list[tuple[str, type]] = []
+    after: list[tuple[str, type]] = []
+    emitter_names: list[str] = []
+    identifier_names: list[str] = []
 
     for name in pass_names:
+        if name in EMITTER_PASS_NAMES:
+            emitter_names.append(name)
+            continue
+        if name in {"rename_obf", "localize_globals"}:
+            identifier_names.append(name)
+            continue
+
         info = PASS_REGISTRY.get(name)
         if info is None:
             continue
 
         cls = info["cls"]
-
-        # VM 재귀 적용 금지.
         if cls.__name__ == "VMPass":
             continue
+        (after if issubclass(cls, PostPass) else before).append((name, cls))
 
-        # function_obf는 exec/dispatcher 자체는 제외하고 cold helper에만 적용.
-        if cls.__name__ == "FunctionObfuscationPass":
-            pipeline.add(cls(skip_vm_dispatcher=True))
-        else:
-            pipeline.add(cls())
-
-        applied_names.append(name)
-
-    profiler = Profiler()
-    output = pipeline.run(script, profiler=profiler)
-
+    output = script
     details: list[dict] = []
+    shared_ctx = None
 
-    # 현재 vm_output_passes는 BASE passes + 마지막 POST(minify) 구조라
-    # profiler.records와 적용 순서가 동일하다.
-    for index, record in enumerate(profiler.records):
-        data = record.as_dict()
+    def apply_replacements(source: str, replacements) -> str:
+        if not replacements:
+            return source
+        parts: list[str] = []
+        pos = 0
+        for replacement in sorted(replacements, key=lambda item: item.start):
+            parts.append(source[pos:replacement.start])
+            parts.append(replacement.new_text)
+            pos = replacement.end + 1
+        parts.append(source[pos:])
+        return "".join(parts)
 
-        configured_name = (
-            applied_names[index]
-            if index < len(applied_names)
-            else record.name
-        )
+    def run_legacy(
+        source: str,
+        entries: list[tuple[str, type]],
+    ) -> tuple[str, list[dict]]:
+        if not entries:
+            return source, []
 
+        pipeline = Pipeline(show_header=False)
+        names: list[str] = []
+        for configured_name, cls in entries:
+            if cls.__name__ == "FunctionObfuscationPass":
+                pipeline.add(cls(skip_vm_dispatcher=True))
+            else:
+                pipeline.add(cls())
+            names.append(configured_name)
+
+        profiler = Profiler()
+        transformed = pipeline.run(source, profiler=profiler)
+        records: list[dict] = []
+        for index, record in enumerate(profiler.records):
+            data = record.as_dict()
+            configured_name = names[index] if index < len(names) else record.name
+            records.append({
+                "phase": f"vm_output:{configured_name}",
+                "class": record.name,
+                "elapsed": data["elapsed"],
+                "input_bytes": data["input_bytes"],
+                "output_bytes": data["output_bytes"],
+                "delta_bytes": data["delta_bytes"],
+                **({"parser": data["parser"]} if "parser" in data else {}),
+                **(
+                    {"replacements": data["replacements"]}
+                    if "replacements" in data else {}
+                ),
+            })
+        return transformed, records
+
+    # FunctionObfuscationPass is commonly a no-op for the generated VM. Plan
+    # it on the same syntax tree used by the emitters so a no-op does not pay
+    # for a throwaway full-source parse. If it does transform the source, the
+    # later stages correctly parse the changed text again.
+    if (
+        before
+        and before[0][1].__name__ == "FunctionObfuscationPass"
+        and (identifier_names or emitter_names)
+    ):
+        from ..passes.ts_utils import parse as parse_ts
+
+        parse_start = time.perf_counter()
+        shared_ctx = parse_ts(output)
+        details.append({
+            "phase": "vm_output:source_parse",
+            "class": "VmOutputEmitter",
+            "elapsed": round(time.perf_counter() - parse_start, 6),
+            "input_bytes": len(output.encode("utf-8")),
+            "parser": "treesitter",
+            "parse_count": 1,
+        })
+
+        configured_name, cls = before.pop(0)
+        stage_start = time.perf_counter()
+        function_pass = cls(skip_vm_dispatcher=True)
+        function_replacements = function_pass.run(output, shared_ctx)
+        transformed = apply_replacements(output, function_replacements)
         details.append({
             "phase": f"vm_output:{configured_name}",
-            "class": record.name,
-            "elapsed": data["elapsed"],
-            "input_bytes": data["input_bytes"],
-            "output_bytes": data["output_bytes"],
-            "delta_bytes": data["delta_bytes"],
-            **(
-                {"parser": data["parser"]}
-                if "parser" in data else {}
+            "class": cls.__name__,
+            "elapsed": round(time.perf_counter() - stage_start, 6),
+            "input_bytes": len(output.encode("utf-8")),
+            "output_bytes": len(transformed.encode("utf-8")),
+            "delta_bytes": len(transformed.encode("utf-8")) - len(output.encode("utf-8")),
+            "parser": "treesitter",
+            "replacements": len(function_replacements),
+            "candidate_functions": function_pass.last_candidate_count,
+            "skipped_dispatchers": function_pass.last_skipped_dispatcher_count,
+            "transformed_functions": function_pass.last_transformed_count,
+            "candidate_scan_elapsed": round(
+                function_pass.last_candidate_scan_elapsed, 6,
             ),
-            **(
-                {"replacements": data["replacements"]}
-                if "replacements" in data else {}
+            "transform_elapsed": round(
+                function_pass.last_transform_elapsed, 6,
             ),
+            "backend": "shared_syntax_context",
         })
+        output = transformed
+        if function_replacements:
+            shared_ctx = None
+
+    output, legacy_details = run_legacy(output, before)
+    details.extend(legacy_details)
+    if legacy_details:
+        shared_ctx = None
+
+    if identifier_names or emitter_names:
+        from ..passes.localize_globals import LocalizeGlobalsPass
+        from ..passes.rename_ts import rename_plan_with_ctx_profiled
+        if shared_ctx is None:
+            from ..passes.ts_utils import parse as parse_ts
+
+            parse_start = time.perf_counter()
+            shared_ctx = parse_ts(output)
+            details.append({
+                "phase": "vm_output:source_parse",
+                "class": "VmOutputEmitter",
+                "elapsed": round(time.perf_counter() - parse_start, 6),
+                "input_bytes": len(output.encode("utf-8")),
+                "parser": "treesitter",
+                "parse_count": 1,
+            })
+
+        planned_replacements = []
+        renamed_spans: set[tuple[int, int]] = set()
+        literal_nodes = None
+        rename_detail = None
+        if "rename_obf" in identifier_names:
+            stage_start = time.perf_counter()
+            rename_replacements, literal_nodes, rename_profile = (
+                rename_plan_with_ctx_profiled(shared_ctx)
+            )
+            planned_replacements.extend(rename_replacements)
+            renamed_spans.update(
+                (item.start, item.end) for item in rename_replacements
+            )
+            rename_detail = {
+                "phase": "vm_output:rename_obf",
+                "class": "VmIdentifierEmitter",
+                "elapsed": round(time.perf_counter() - stage_start, 6),
+                "replacements": len(rename_replacements),
+                "backend": "structured_emitter",
+                "collect_elapsed": round(rename_profile["collect_elapsed"], 6),
+                "scope_resolution_elapsed": round(
+                    rename_profile["scope_resolution_elapsed"], 6,
+                ),
+                "replacement_elapsed": round(
+                    rename_profile["replacement_elapsed"], 6,
+                ),
+                "scope_count": rename_profile["scope_count"],
+                "identifier_count": rename_profile["identifier_count"],
+                "literal_count": rename_profile["literal_count"],
+            }
+            details.append(rename_detail)
+
+        if "localize_globals" in identifier_names:
+            stage_start = time.perf_counter()
+            localize_replacements = LocalizeGlobalsPass().replacements_with_ctx(
+                output,
+                shared_ctx,
+                renamed_spans,
+            )
+            planned_replacements.extend(localize_replacements)
+            details.append({
+                "phase": "vm_output:localize_globals",
+                "class": "VmIdentifierEmitter",
+                "elapsed": round(time.perf_counter() - stage_start, 6),
+                "replacements": len(localize_replacements),
+                "backend": "structured_emitter",
+            })
+
+        output, emitter_details = emit_vm_literals(
+            output,
+            emitter_names,
+            ctx=shared_ctx,
+            replacements=planned_replacements,
+            literal_nodes=literal_nodes,
+        )
+        if rename_detail is not None:
+            render_detail = next(
+                (
+                    item for item in emitter_details
+                    if item.get("phase") == "vm_output:literal_render"
+                ),
+                None,
+            )
+            rename_detail["render_elapsed"] = (
+                render_detail.get("elapsed", 0.0) if render_detail else 0.0
+            )
+            rename_detail["render_backend"] = "shared_identifier_literal_render"
+        details.extend(emitter_details)
+
+    output, post_details = run_legacy(output, after)
+    details.extend(post_details)
 
     return output, details
 
@@ -1636,6 +1889,11 @@ class VMPass(PostPass):
         # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
         _phase_start = time.perf_counter()
         instr_layout = make_instr_layout()
+        constant_tag_names = ("nil", "bool", "int", "float", "str", "iexpr")
+        constant_tag_values = random.sample(range(0x20, 0x100), 6)
+        constant_tags = dict(zip(constant_tag_names, constant_tag_values))
+        constant_kind_values = random.sample(range(0x1000, 0x100000), 6)
+        constant_kinds = dict(zip(constant_tag_names, constant_kind_values))
         graph_sites: set[int] = set()
         graph_family_count = 8
         blob = serialize(
@@ -1664,6 +1922,7 @@ class VMPass(PostPass):
             block_variant_max_instructions=int(
                 self.vm_options.get("block_variant_max_instructions", 6)
             ),
+            constant_tags=constant_tags,
         )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
@@ -1671,6 +1930,13 @@ class VMPass(PostPass):
         _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(_load_vm())
+        for name in constant_tag_names:
+            vm_code = vm_code.replace(
+                f"__VM_CTAG_{name.upper()}__", str(constant_tags[name])
+            )
+            vm_code = vm_code.replace(
+                f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
+            )
         if n == 1:
             vop_map, split_map, fuse_map, defer_map = vm_maps[0]
             vm_code = apply_vop_to_vm(
@@ -1761,12 +2027,8 @@ class VMPass(PostPass):
         )
 
         # VM output passes 자체를 세분화해서 측정.
-        vm_func_src, vm_output_details = _obfuscate_vm_output(
-            vm_func_src,
-            self.vm_output_passes,
-        )
-
-        # handler graph는 vm_output_passes와 별개의 후처리이므로 따로 측정.
+        # Handler graphs are generated before VM output passes so identifiers,
+        # literals, and whitespace in those backends join the same pipeline.
         _graph_start = time.perf_counter()
         _graph_input_bytes = len(vm_func_src.encode("utf-8"))
 
@@ -1795,22 +2057,9 @@ class VMPass(PostPass):
             ),
         )
 
-        _line_state_start = time.perf_counter()
-        vm_func_src, line_state, probe_lines = apply_line_state(
-            vm_func_src,
-            self.output_prefix,
-        )
-        self.last_profile.append({
-            "phase": "source_line_state",
-            "elapsed": round(time.perf_counter() - _line_state_start, 6),
-            "probe_count": len(probe_lines),
-            "probe_lines": probe_lines,
-        })
-
         _graph_elapsed = time.perf_counter() - _graph_start
         _graph_output_bytes = len(vm_func_src.encode("utf-8"))
-
-        vm_output_details.append({
+        graph_detail = {
             "phase": "vm_output:handler_graphs",
             "class": "_apply_handler_graphs",
             "elapsed": round(_graph_elapsed, 6),
@@ -1819,6 +2068,34 @@ class VMPass(PostPass):
             "delta_bytes": _graph_output_bytes - _graph_input_bytes,
             "graph_sites": len(graph_sites),
             "graph_families": graph_family_count,
+            "backend": "pre_output_pipeline",
+        }
+
+        vm_func_src, vm_output_details = _obfuscate_vm_output(
+            vm_func_src,
+            self.vm_output_passes,
+        )
+        vm_func_src = vm_func_src.replace(
+            "--[[KARITY_EXACT_BEGIN]]", "",
+        ).replace("--[[KARITY_EXACT_END]]", "")
+        vm_output_details.insert(0, graph_detail)
+
+        _line_state_start = time.perf_counter()
+        line_finalizer = None
+        if "minify" in self.vm_output_passes:
+            from ..passes.minify import MinifyPass
+            line_finalizer = MinifyPass().run
+        vm_func_src, line_state, probe_lines = apply_line_state(
+            vm_func_src,
+            self.output_prefix,
+            finalizer=line_finalizer,
+            output_passes=self.vm_output_passes,
+        )
+        self.last_profile.append({
+            "phase": "source_line_state",
+            "elapsed": round(time.perf_counter() - _line_state_start, 6),
+            "probe_count": len(probe_lines),
+            "probe_lines": probe_lines,
         })
 
         self.last_profile.append({
@@ -1835,11 +2112,24 @@ class VMPass(PostPass):
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         _phase_start = time.perf_counter()
-        dump_bytes = _dump_function_stripped(vm_func_src, header)
+        wrapper_alphabet = string.ascii_letters
+        decoy_name = secrets.choice(wrapper_alphabet)
+        vmf_name = "_" + "".join(
+            secrets.choice(wrapper_alphabet) for _ in range(3)
+        )
+        decoy_value = "".join(
+            secrets.choice(wrapper_alphabet)
+            for _ in range(34)
+        )
+        dump_bytes = _dump_function_stripped(
+            vm_func_src, header, decoy_name, decoy_value,
+        )
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
         effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
         if self.vm_options.get("integrity_constants", False):
-            blob = patch_integrity_sources(blob, effective_crc, line_state)
+            blob = patch_integrity_sources(
+                blob, effective_crc, line_state, constant_tags,
+            )
         self.last_profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         alphabet  = string.ascii_letters + string.digits
@@ -1863,10 +2153,10 @@ class VMPass(PostPass):
         vmf_body = vm_func_src[len("return "):]
 
         raw = (
-            f'local a="obfuscated using karity obfuscator"'
-            f'local _vmf={vmf_body};'
-            f'return (_vmf(1032,413,258,104,953,283,120))'
-            f'({lua_blob},"{rand_tail}",_vmf)\n'
+            f'local {decoy_name}="{decoy_value}"'
+            f'local {vmf_name}={vmf_body};'
+            f'return ({vmf_name}(1032,413,258,104,953,283,120))'
+            f'({lua_blob},"{rand_tail}",{vmf_name})'
         )
 
         return raw

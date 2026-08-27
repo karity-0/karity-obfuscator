@@ -77,6 +77,20 @@ def main() -> int:
         raise AssertionError(f"line probes were not distributed: {probe_lines}")
     if str(probe_lines[0]) in rendered and "expected" in rendered.lower():
         raise AssertionError("line-state source exposed an expected-line comparison")
+    if "_LS" in rendered:
+        raise AssertionError("line-state source retained the fixed state identifier")
+
+    random.seed(16017)
+    late_rendered, _, _ = apply_line_state(
+        "return function(...) return _LS end",
+        output_passes=[
+            "rename_obf", "localize_globals", "string_obf",
+            "boolean_obf", "number_obf",
+        ],
+    )
+    for leaked in ("_LS", "error(", "pcall(", "tostring(", "tonumber(", "string.match("):
+        if leaked in late_rendered:
+            raise AssertionError(f"late line-state emitter leaked {leaked!r}")
 
     with tempfile.TemporaryDirectory(prefix="karity-line-state-") as raw_temp:
         temp = Path(raw_temp)

@@ -208,8 +208,15 @@ def test_vm_pack_semantics(ctx: Path):
 def test_single_signature_header(ctx: Path):
     source = ctx / "header.lua"
     output = ctx / "header_pack.lua"
+    config_path = ctx / "header_config.json"
     make_semantic_source(source)
-    build(source, output, config=ARGS.config, timeout=ARGS.timeout, vm=True)
+    config = json.loads(Path(ARGS.config).read_text(encoding="utf-8"))
+    config["signature"] = {
+        "mode": "custom",
+        "custom": "obfuscated using karity obfuscator!",
+    }
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    build(source, output, config=config_path, timeout=ARGS.timeout, vm=True)
 
     text = output.read_text(encoding="utf-8")
     if not text.startswith(HEADER + "\n"):

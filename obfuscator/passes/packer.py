@@ -7,7 +7,7 @@ The packer is intentionally the outer runtime component rather than another VM:
 - builds an external context table outside the packed payload
 - couples packed code to that context through state-derived slot routing
 - for VM output, externalizes the VM call constants and reconstructs rand_tail
-  through the packer auth graph without modifying _vmf itself
+  through the packer auth graph without modifying the captured VM function
 - for non-VM output, conservatively externalizes safe top-level functions /
   literal constants and selected reference proxies
 """
@@ -83,8 +83,8 @@ _BARE_REF_PROXY_EXPRESSIONS = {
 }
 
 _VM_TAIL_RE = re.compile(
-    r"return\s*\(_vmf\((?P<args>[^)]*)\)\)"
-    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",_vmf\)\s*$",
+    r"return\s*\((?P<vmf>[A-Za-z_]\w*)\((?P<args>[^)]*)\)\)"
+    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)\)\s*$",
     re.S,
 )
 
@@ -587,7 +587,8 @@ def _alloc_plan(script: str) -> ContextPlan:
         vm_args = [part.strip() for part in vm_match.group("args").split(",")]
         vm_tail = vm_match.group("tail")
 
-        # The VM path intentionally keeps `_vmf` untouched.  External Context
+        # The VM path intentionally keeps the captured VM function untouched.
+        # External Context
         # only supplies runtime primitives/state plus the VM call constants
         # and tail reconstruction inputs.
         slot_names = [
@@ -721,8 +722,8 @@ def _alloc_plan(script: str) -> ContextPlan:
         vm_args = [x.strip() for x in vm_match.group("args").split(",")]
         vm_tail = vm_match.group("tail")
 
-        # Never touch inside _vmf. Generic extraction/ref-proxying would change
-        # its stripped dump and invalidate existing VM integrity.
+        # Never touch inside the captured VM function. Generic extraction or
+        # ref-proxying would change its stripped dump and invalidate integrity.
         funcs = []
         selected_constants = []
         refs = {}
@@ -992,15 +993,16 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     tail_enc = base64.b64encode(
         _auth_xor(plan.vm_tail.encode("ascii"), state)
     ).decode("ascii")
+    vmf_name = m.group("vmf")
 
     replacement = (
-        f"return (_vmf({','.join(encoded_args)}))"
-        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),_vmf)"
+        f"return ({vmf_name}({','.join(encoded_args)}))"
+        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name})"
     )
     body = script[:m.start()] + replacement + script[m.end():]
 
-    # Keep this prefix on the current source line. _vmf itself is byte-for-byte
-    # untouched and its line number is not shifted, preserving the VM dump CRC.
+    # Keep this prefix on the current source line. The captured VM function is
+    # byte-for-byte untouched and its line is not shifted, preserving dump CRC.
     prefix = (
         "local __KCTX,__KSTATEF,__KDECODE=...;"
         "local __KSTATE=__KSTATEF(__KCTX);"
