@@ -217,12 +217,19 @@ def _line_state_mix(lines: list[int], steps: list[tuple[int, int, int]]) -> int:
     return state
 
 
-def apply_line_state(vm_func_src: str, output_prefix: str = "") -> tuple[str, int, list[int]]:
+def apply_line_state(
+    vm_func_src: str,
+    output_prefix: str = "",
+    finalizer=None,
+    output_passes: list[str] | None = None,
+) -> tuple[str, int, list[int]]:
     """Inject line probes and compute the clean state from the final layout.
 
     Runtime code never compares against a visible expected line. Observed line
-    values become `_LS`; the builder derives the same value for encryption and
-    integrity-constant encoding.
+    values become a per-build local state; the builder derives the same value
+    for encryption and integrity-constant encoding.  The block is generated
+    after the large VM output pipeline, so it uses the small structured literal
+    emitter directly instead of reparsing the complete VM source.
     """
     anchor = "return function(...)"
     anchor_pos = vm_func_src.find(anchor)
@@ -239,6 +246,7 @@ def apply_line_state(vm_func_src: str, output_prefix: str = "") -> tuple[str, in
         return f"_l{tag}{tail}"
 
     parser_name = ident("p")
+    state_name = ident("s")
     probe_names = [ident("f") for _ in range(probe_count)]
     message_names = [ident("e") for _ in range(probe_count)]
     value_names = [ident("v") for _ in range(probe_count)]
@@ -249,40 +257,94 @@ def apply_line_state(vm_func_src: str, output_prefix: str = "") -> tuple[str, in
         for _ in range(probe_count)
     ]
 
-    block: list[str] = [""]
+    selected_passes = list(output_passes or [])
+    localize = "localize_globals" in selected_passes
+    if localize:
+        env_name = ident("g")
+        error_name = ident("r")
+        pcall_name = ident("c")
+        tostring_name = ident("t")
+        tonumber_name = ident("n")
+        match_name = ident("m")
+        string_name = ident("q")
+        block: list[str] = [
+            f"local {env_name}=_ENV",
+            f'local {error_name}={env_name}["error"]',
+            f'local {pcall_name}={env_name}["pcall"]',
+            f'local {tostring_name}={env_name}["tostring"]',
+            f'local {tonumber_name}={env_name}["tonumber"]',
+            f'local {string_name}={env_name}["string"]',
+            f'local {match_name}={string_name}["match"]',
+        ]
+    else:
+        error_name = "error"
+        pcall_name = "pcall"
+        tostring_name = "tostring"
+        tonumber_name = "tonumber"
+        match_name = "string.match"
+        block = []
+
     for probe_name, token in zip(probe_names, tokens):
-        block.extend([
-            f"local function {probe_name}()",
-            f'error("{token}")',
-            "end",
-        ])
-    block.extend([
-        f"local function {parser_name}(e,z)",
-        "local s=tostring(e)",
-        'return tonumber(string.match(s,":(%d+):")) or z',
-        "end",
-    ])
+        # Keep each declaration on one source line.  The declaration position
+        # remains a stable marker even when its string literal is lowered.
+        block.append(
+            f'local function {probe_name}() {error_name}("{token}") end'
+        )
+    parser_value_name = ident("x")
+    block.append(
+        f"local function {parser_name}(e,z) local {parser_value_name}="
+        f"{tostring_name}(e) return {tonumber_name}("
+        f'{match_name}({parser_value_name},":(%d+):")) or z end'
+    )
     for probe_name, message_name in zip(probe_names, message_names):
-        block.append(f"local _,{message_name}=pcall({probe_name})")
+        block.append(f"local _,{message_name}={pcall_name}({probe_name})")
     for message_name, value_name, fallback in zip(message_names, value_names, fallbacks):
         block.append(f"local {value_name}={parser_name}({message_name},{fallback})")
-    block.append("local _LS=0")
+    block.append(f"local {state_name}=0")
     for value_name, (mul, add, shift) in zip(value_names, steps):
         block.append(
-            f"_LS=((_LS~(({value_name}*0x{mul:08X})&0xFFFFFFFF))"
+            f"{state_name}=(({state_name}~(({value_name}*0x{mul:08X})&0xFFFFFFFF))"
             f"+0x{add:08X})&0xFFFFFFFF"
         )
-        block.append(f"_LS=(_LS~(_LS>>{shift}))&0xFFFFFFFF")
-    block.append("")
+        block.append(
+            f"{state_name}=({state_name}~({state_name}>>{shift}))&0xFFFFFFFF"
+        )
 
-    insertion = "\n".join(block)
+    block_source = "\n".join(block)
+    literal_passes = [
+        name for name in selected_passes
+        if name in {"number_obf", "string_obf", "boolean_obf"}
+    ]
+    if literal_passes:
+        from .output_emitter import emit_vm_literals
+
+        # Line-state generation intentionally owns a private PRNG so adding
+        # this late stage cannot perturb the main pipeline's random sequence.
+        global_random_state = random.getstate()
+        try:
+            random.setstate(rng.getstate())
+            block_source, _ = emit_vm_literals(block_source, literal_passes)
+            rng.setstate(random.getstate())
+        finally:
+            random.setstate(global_random_state)
+
+    vm_func_src = re.sub(r"\b_LS\b", state_name, vm_func_src)
+    anchor_pos = vm_func_src.find(anchor)
+    if finalizer is not None:
+        # The large VM source has already passed through the finalizer.  Only
+        # this late fragment is new; minifying the complete multi-megabyte VM
+        # again was the remaining max-profile hot-path duplication.
+        block_source = finalizer(block_source)
+        insertion = " " + block_source + " "
+    else:
+        insertion = "\n" + block_source + "\n"
     insert_at = anchor_pos + len(anchor)
     result = vm_func_src[:insert_at] + insertion + vm_func_src[insert_at:]
 
     prefix_lines = output_prefix.count("\n")
     probe_lines: list[int] = []
-    for token in tokens:
-        marker_pos = result.find(f'error("{token}")')
+    for probe_name in probe_names:
+        marker_pos = result.find(f"function {probe_name}")
         if marker_pos < 0:
             raise AssertionError("line probe marker disappeared during rendering")
         probe_lines.append(prefix_lines + result[:marker_pos].count("\n") + 1)
