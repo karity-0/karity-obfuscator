@@ -16,3 +16,5 @@ from .passes import (
     OutputSignaturePass,
     SignatureOptions,
 )
+
+__version__ = "1.0.0"

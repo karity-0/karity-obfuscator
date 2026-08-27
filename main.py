@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from obfuscator import Pipeline, build_pipeline_from_config
+from obfuscator import Pipeline, build_pipeline_from_config, __version__
 from obfuscator.profiling import Profiler
 from obfuscator.registry import (
     ConfigError,
@@ -57,6 +57,7 @@ def parse_args():
     parser.add_argument("--list-profiles", action="store_true", help="print profiles in the config")
     parser.add_argument("--seed", type=int, help="seed python's random module for reproducible builds")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="print debug info")
+    parser.add_argument("--version", action="version", version=f"Karity Obfuscator {__version__}",)
     return parser.parse_args()
 
 
