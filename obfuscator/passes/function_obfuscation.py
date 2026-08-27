@@ -25,6 +25,14 @@ from ..vm.vm_mutation import _zv, _new_state
 _TABLE_THRESHOLD  = 160
 _VARS_PER_TABLE   = 160
 
+# Lua 5.3 reserved words. These can never be variable identifiers.
+# Text-level pooling must therefore never collect or substitute them.
+_LUA_KEYWORDS = {
+    "and", "break", "do", "else", "elseif", "end", "false", "for",
+    "function", "goto", "if", "in", "local", "nil", "not", "or",
+    "repeat", "return", "then", "true", "until", "while",
+}
+
 # 문자열 리터럴(' 또는 ")을 구간으로 분리하기 위한 정규식.
 # 식별자 치환 시 문자열 내부 텍스트는 건드리지 않기 위해 사용한다.
 _STRING_LIT_RE = re.compile(
@@ -38,7 +46,12 @@ _STRING_LIT_RE = re.compile(
 # 이름이 같다고 해서 `function(_T1.t)`처럼 치환되면 문법 오류가 된다.
 # 괄호 안(파라미터 목록)만 보호하고, 함수 본문은 보호 대상이 아니므로
 # 본문 안의 `t`(다른 의미의 변수)는 정상적으로 치환된다.
-_FUNC_PARAMS_SPAN_RE = re.compile(r'\bfunction\s*\([^)]*\)')
+_FUNC_PARAMS_SPAN_RE = re.compile(
+    r'\bfunction'
+    r'(?:\s+[A-Za-z_]\w*(?:[.:][A-Za-z_]\w*)*)?'
+    r'\s*'
+    r'\(([^)]*)\)'
+)
 
 # 위 두 종류의 "보호 구간"을 한 번에 찾기 위한 결합 정규식.
 _PROTECTED_RE = re.compile(
@@ -66,6 +79,16 @@ def _strip_protected(text: str) -> str:
     (스캔/위치 보존 전용 용도 - 길이가 바뀌면 안 되는 컨텍스트에서 사용).
     """
     return _PROTECTED_RE.sub(lambda m: ' ' * len(m.group(0)), text)
+
+def _strip_strings_only(text: str) -> str:
+    """문자열 리터럴만 같은 길이의 공백으로 마스킹한다.
+
+    함수 본문 경계 탐색처럼 `function` 키워드 자체를 세어야 하는 스캐너에서
+    `_strip_protected()`를 쓰면 `function(...)` 시그니처까지 지워져 nested
+    function의 depth가 깨질 수 있으므로 이 helper를 별도로 사용한다.
+    """
+    return _STRING_LIT_RE.sub(lambda m: ' ' * len(m.group(0)), text)
+
 
 
 def _replace_idents_outside_strings(text: str, mapping: dict[str, str]) -> str:
@@ -122,7 +145,7 @@ def _subst_var_refs(text: str, mapping: dict[str, str], protected_re: re.Pattern
             while j < L and (text[j].isalnum() or text[j] == '_'):
                 j += 1
             ident = text[i:j]
-            if ident in mapping:
+            if ident in mapping and ident not in _LUA_KEYWORDS:
                 k = i - 1
                 while k >= 0 and text[k] in ' \t\r\n':
                     k -= 1
@@ -161,20 +184,66 @@ def _subst_var_refs(text: str, mapping: dict[str, str], protected_re: re.Pattern
 # 모으고 해당 `local` 키워드를 안전하게 제거하기 위해 전체 텍스트에 대해
 # 위치 무관하게 매치한다.
 _LOCAL_DECL_RE = re.compile(
-    r'\blocal\s+((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)(\s*=)?'
+    r'\blocal\s+(?!function\b)'
+    r'((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)(\s*=)?'
+)
+
+_FOR_BINDING_RE = re.compile(
+    r'\bfor\s+'
+    r'([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)'
+    r'\s*(?:=|\bin\b)'
 )
 
 
-def _scan_local_names(text: str) -> set[str]:
-    """text 안의 모든 `local NAME[,NAME...]` 선언에서 이름만 수집한다
-    (텍스트는 변경하지 않음). 보호 구간(문자열 리터럴,
-    `function(...)` 파라미터 목록) 내부는 무시한다.
+def _scan_for_binding_names(text: str) -> set[str]:
+    """numeric/generic for가 선언하는 lexical local 이름을 수집한다.
+
+    보호 구간을 공백으로 마스킹한 뒤 전체 텍스트를 regex로 스캔하면,
+    보호 구간 양옆의 토큰이 가짜로 이어질 수 있다. 예를 들어 어떤
+    `function(...)` 시그니처가 통째로 공백이 되면서 앞의 `for`와 뒤쪽
+    identifier가 하나의 문법 구조처럼 보일 수 있다.
+
+    따라서 보호 구간 사이의 실제 code chunk를 각각 독립적으로 스캔한다.
     """
     names: set[str] = set()
-    code_only = _strip_protected(text)
-    for m in _LOCAL_DECL_RE.finditer(code_only):
-        for name in m.group(1).split(','):
-            names.add(name.strip())
+
+    def _collect(part: str) -> str:
+        for m in _FOR_BINDING_RE.finditer(part):
+            for name in m.group(1).split(','):
+                name = name.strip()
+                if name and name not in _LUA_KEYWORDS:
+                    names.add(name)
+        return part
+
+    _apply_outside_protected(text, _collect)
+    return names
+
+
+def _scan_local_names(text: str) -> set[str]:
+    """text 안의 실제 `local NAME[,NAME...]` 선언 이름만 수집한다.
+
+    중요: 보호 구간을 공백으로 바꾼 하나의 문자열에서 regex를 돌리지 않는다.
+    `local function foo(...)`의 function 시그니처가 마스킹되면:
+
+        local                  while ...
+
+    같은 가짜 토큰 연결이 생겨 `while`/`local` 같은 Lua keyword가 local
+    이름으로 오인될 수 있기 때문이다.
+
+    보호 구간 사이의 code chunk를 독립적으로 스캔하면 이런 cross-boundary
+    오탐이 구조적으로 불가능하다.
+    """
+    names: set[str] = set()
+
+    def _collect(part: str) -> str:
+        for m in _LOCAL_DECL_RE.finditer(part):
+            for name in m.group(1).split(','):
+                name = name.strip()
+                if name and name not in _LUA_KEYWORDS:
+                    names.add(name)
+        return part
+
+    _apply_outside_protected(text, _collect)
     return names
 
 
@@ -800,7 +869,7 @@ def _find_function_body_end(text: str, body_start: int) -> int:
     repeat...until은 `do`를 쓰지 않지만 `repeat`(+1)/`until`(-1)로
     동일하게 균형이 맞는다.
     """
-    masked = _strip_protected(text)
+    masked = _strip_strings_only(text)
     # `do`는 `for`/`while` 뒤에 오는 경우 별도로 depth를 늘리면 이중 계산이
     # 되므로, `function`/`if`/`for`/`while`/`repeat`만 +1, `end`/`until`만 -1로
     # 계산하고 단독 `do ... end` 블록(예: `do local x=1 end`)은 `do`가 +1,
@@ -848,8 +917,7 @@ def _rename_colliding_params(text: str, pooled_names: set[str]) -> str:
         m = _FUNC_PARAMS_SPAN_RE.search(text, pos)
         if not m:
             break
-        param_text = text[m.start():m.end()][len('function'):].strip()
-        param_text = param_text[1:-1]  # strip surrounding ()
+        param_text = m.group(1)
         params = [p.strip() for p in param_text.split(',')]
         params = [p for p in params if p and p != '...']
         colliding = [p for p in params if p in pooled_names]
@@ -889,7 +957,8 @@ def _build_var_tables(names: list[str]) -> tuple[list[str], dict[str, str]]:
     """
     table_decls: list[str] = []
     name_to_ref: dict[str, str] = {}
-    for idx, name in enumerate(names):
+    safe_names = [name for name in names if name not in _LUA_KEYWORDS]
+    for idx, name in enumerate(safe_names):
         tbl_idx = idx // _VARS_PER_TABLE
         tbl = f"_T{tbl_idx}"
         if tbl_idx == len(table_decls):
@@ -1345,51 +1414,150 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
 
     # 4) hoist 대상(real_names ∪ extra_hoist_names) + CFF가 생성한 zv
     #    (sv1/sv2/junk 전부) 총 개수로 테이블화 여부를 결정한다.
-    pooled_names = set(hoist_names) | set(zv_names)
-    use_tables = len(pooled_names) > _TABLE_THRESHOLD
+    all_hoisted_names = set(hoist_names) | set(zv_names)
+    use_tables = len(all_hoisted_names) > _TABLE_THRESHOLD
+
+    # ------------------------------------------------------------------
+    # Lua for-control variable 보호
+    #
+    # Lua:
+    #
+    #   for i = 1, n do ... end
+    #   for k, v in pairs(t) do ... end
+    #
+    # 의 i/k/v는 assignment target이 아니라 새로운 lexical local 선언이다.
+    #
+    # 따라서 text-level pooling으로
+    #
+    #   i -> _T0.i
+    #
+    # 를 적용하면:
+    #
+    #   for _T0.i = 1, n do
+    #
+    # 가 되어 syntax error:
+    #
+    #   '=' or 'in' expected near '.'
+    #
+    # 가 발생한다.
+    #
+    # Header만 치환에서 제외하는 것도 충분하지 않다. 예를 들어
+    #
+    #   for i=1,n do
+    #       out[i] = ...
+    #   end
+    #
+    # 에서 header의 i만 남기고 body의 i를 `_T0.i`로 바꾸면 서로 다른
+    # 변수가 되어 semantics가 깨진다.
+    #
+    # 따라서 for binder와 이름이 충돌하는 hoist local은 테이블화하지 않고
+    # 실제 Lua local로 유지한다. 원래 분기 안의 local 선언은 아래에서
+    # 제거하고 함수 prologue에 `local name`으로 다시 hoist한다.
+    # ------------------------------------------------------------------
+
+    emitted_text = "\n".join(lines)
+    for_binding_names = _scan_for_binding_names(emitted_text)
+
+    # 이 이름들은 CFF scope 간 공유가 필요한 hoisted local이면서 동시에
+    # 어디선가 for의 lexical binder로 사용되는 이름이다.
+    #
+    # table field로 바꾸지 않고 실제 function-scope local로 유지한다.
+    lexical_hoist_names = all_hoisted_names & for_binding_names
+
+    # 실제 table field로 변환할 이름들.
+    table_pool_names = all_hoisted_names - lexical_hoist_names
 
     prologue: list[str] = []
+
     if use_tables:
-        table_decls, name_to_ref = _build_var_tables(list(pooled_names))
+        # for binder와 충돌하지 않는 local들만 table slot으로 보낸다.
+        table_decls, name_to_ref = _build_var_tables(list(table_pool_names))
         prologue.extend(table_decls)
     else:
-        # 비-테이블 모드: hoist 선언(`local NAME`)은 strip 단계에서 declare-only로
-        # 같이 제거되므로 여기서 붙이지 않고, strip 이후에 본문 앞에 붙인다(아래).
         name_to_ref = {}
 
-    # sv1/sv2 초기화 `local {sv}=...`는 위 emit에 이미 포함돼 있다. 테이블
-    # 모드에서는 sv1/sv2도 pooled_names에 속하므로 아래 strip+substitute가
-    # `_Tn.sv1=...`로 일괄 변환하고, 비-테이블 모드에서는 hoist 대상이 아니라
-    # state-local(`local sv1`)로 그대로 남는다.
+    # sv1/sv2 초기화 `local {sv}=...`는 emitter output에 이미 포함돼 있다.
+    #
+    # table mode:
+    #   table_pool_names에 속하는 local은
+    #       local x=...
+    #           ↓
+    #       x=...
+    #           ↓
+    #       _T0.x=...
+    #
+    # lexical_hoist_names는
+    #       local i=...
+    #           ↓ strip
+    #       i=...
+    #
+    # 로 만든 후 맨 앞에 별도의 `local i`를 붙인다.
+    #
+    # 이렇게 해야 CFF의 서로 다른 state에서도 동일한 outer local을
+    # 공유하면서, `for i=...`가 만드는 loop-local은 자연스럽게 outer i를
+    # shadow한다.
     body = ("\n" + _IND).join(prologue + lines)
 
     if use_tables:
-        # pooled_names에 해당하는 모든 `local` 선언(real chunk 내부의
-        # `local x=...`/`local x`, dead/live state의 `local _zN=...`,
-        # 위에서 작성한 `local {sv}=...` 전부)을 일괄적으로 strip한 뒤,
-        # 동일한 이름의 모든 참조를 테이블 필드로 치환한다.
-        # only_names로 제한하므로 `local _T0={}` 같은 테이블 선언 자체는
-        # 영향받지 않는다.
+        # 실제 table substitution 대상과 충돌하는 nested function parameter만
+        # rename하면 된다.
         #
-        # 치환은 chunk 전체 텍스트에 대한 식별자 단위 일괄 치환이므로,
-        # `function(t)...end`처럼 pooled_names와 이름이 겹치는 파라미터가
-        # 있으면 본문의 파라미터 참조까지 `_Tn.t`로 치환되어 파라미터
-        # 바인딩이 깨진다. 충돌하는 파라미터를 먼저 고유한 이름으로
-        # 바꿔 이런 충돌을 제거한다.
-        body = _rename_colliding_params(body, pooled_names)
-        _, body = _collect_and_strip_locals(body, only_names=pooled_names)
-        body = _replace_idents_outside_strings(body, name_to_ref)
+        # lexical_hoist_names는 table substitution을 하지 않으므로
+        # parameter와 같은 이름이어도 여기서 rename할 이유가 없다.
+        body = _rename_colliding_params(body, table_pool_names)
+
+        # 모든 CFF-hoisted local 선언을 제거한다.
+        #
+        # table_pool_names:
+        #     이후 `_Tn.name`으로 치환됨.
+        #
+        # lexical_hoist_names:
+        #     이후 function prologue에 실제 `local name` 선언을 추가함.
+        #
+        # 이렇게 하지 않고 lexical_hoist_names의 원래 local 선언을
+        # state 내부에 남겨두면 CFF 분기 사이에서 scope가 끊어진다.
+        _, body = _collect_and_strip_locals(
+            body,
+            only_names=all_hoisted_names,
+        )
+
+        # table에 들어가는 이름만 field reference로 치환.
+        body = _replace_idents_outside_strings(
+            body,
+            name_to_ref,
+        )
+
+        # for binder 이름과 충돌한 hoisted local은 실제 function local로 유지.
+        #
+        # 중요:
+        # 이 선언은 _collect_and_strip_locals() 이후에 붙여야 한다.
+        # 이전에 붙이면 위 strip 단계가 이 선언까지 다시 지워버린다.
+        if lexical_hoist_names:
+            lexical_decl = (
+                "local "
+                + ",".join(sorted(lexical_hoist_names))
+            )
+            body = lexical_decl + "\n" + body
+
     else:
-        # real chunk 본문 안의 `local NAME=...`(→`NAME=...`) / `local NAME`(→제거)을
-        # strip한다 (제거 안 하면 분기 내부에서 shadow되어 분기 간 상태 공유 불가).
-        # hoist 선언(`local NAME`)도 declare-only라 이 strip에 같이 지워지므로,
-        # strip을 먼저 끝낸 뒤 hoist 선언을 본문 앞에 붙인다. 이렇게 해야 hoist된
-        # local이 while 앞에 실제로 선언되어 분기 간 공유되고, 누락 시 전역으로
-        # 새지 않는다. zv(`_zN`)는 hoist 대상이 아니라 state-local로 그대로 둔다.
-        _, body = _collect_and_strip_locals(body, only_names=set(hoist_names))
+        # 비-table mode에서는 기존 방식 그대로.
+        #
+        # real chunk 본문 안의 `local NAME=...` -> `NAME=...`
+        # `local NAME` -> 제거
+        #
+        # 한 뒤 function scope 맨 앞에서 한 번 hoist한다.
+        _, body = _collect_and_strip_locals(
+            body,
+            only_names=set(hoist_names),
+        )
+
         if hoist_names:
-            decls = ("\n" + _IND).join(f"local {n}" for n in hoist_names)
-            body = decls + "\n" + _IND + body
+            body = (
+                "local "
+                + ",".join(hoist_names)
+                + "\n"
+                + body
+            )
 
     return body
 
@@ -1775,3 +1943,110 @@ class FunctionObfuscationPass(BasePass):
         self.last_transformed_count = len(claimed_ranges)
         self.last_transform_elapsed = time.perf_counter() - transform_start
         return replacements
+
+if __name__ == "__main__":
+    # --- function_obfuscation lexical-pooling smoke tests ---
+    # 이 테스트는 전체 obfuscation pipeline을 돌리는 게 아니라, table-pooling의
+    # 텍스트 치환이 Lua의 lexical binder 문법을 깨뜨리지 않는지만 빠르게 확인한다.
+    def _assert_no_pooled_binders(label: str, out: str) -> None:
+        bad_for = re.search(
+            r'\bfor\s+_T\d+\.[A-Za-z_]\w*\s*(?:=|\bin\b)',
+            out,
+        )
+        bad_param = re.search(
+            r'\bfunction(?:\s+[A-Za-z_]\w*(?:[.:][A-Za-z_]\w*)*)?'
+            r'\s*\([^)]*_T\d+\.[A-Za-z_]\w*',
+            out,
+        )
+        if bad_for:
+            raise AssertionError(
+                f"{label}: pooled field leaked into for binder: {bad_for.group(0)!r}"
+            )
+        if bad_param:
+            raise AssertionError(
+                f"{label}: pooled field leaked into function parameter: "
+                f"{bad_param.group(0)!r}"
+            )
+
+    # anonymous function parameter collision
+    _src = "local x=1; local f=function(x)return x+1 end; return x+f(2)"
+    _out = _rename_colliding_params(_src, {"x"})
+    assert "function(_p0)" in _out, _out
+    assert "return _p0+1" in _out, _out
+    _assert_no_pooled_binders("anonymous-param", _out)
+
+    # named local function parameter collision
+    _src = "local function bits(n) return n+1 end; local n=3; return bits(n)"
+    _out = _rename_colliding_params(_src, {"n"})
+    assert re.search(r'local function bits\(_p\d+\)', _out), _out
+    assert re.search(r'return _p\d+\+1', _out), _out
+    _assert_no_pooled_binders("local-function-param", _out)
+
+    # dotted / method-style named function parameter collision
+    _src = (
+        "function obj.method(x,y) return x+y end "
+        "function obj:other(y) return y end"
+    )
+    _out = _rename_colliding_params(_src, {"x", "y"})
+    assert re.search(r'function obj\.method\(_p\d+,_p\d+\)', _out), _out
+    assert re.search(r'function obj:other\(_p\d+\)', _out), _out
+    _assert_no_pooled_binders("named-method-param", _out)
+
+    # local declaration scanner must never treat Lua keyword `function` as a local name.
+    _locals = _scan_local_names(
+        "local function foo(a) return a end; local x=1; local y,z=2,3"
+    )
+    assert "function" not in _locals, _locals
+    assert {"x", "y", "z"} <= _locals, _locals
+
+    # for-control variables are lexical binders and must be discoverable for exclusion.
+    _for_names = _scan_for_binding_names(
+        "for i=1,n do end; for k,v in pairs(t) do end"
+    )
+    assert {"i", "k", "v"} <= _for_names, _for_names
+
+    # Regression: protected function signatures must not bridge `local`
+    # to the first keyword/token in the nested function body.
+    _locals = _scan_local_names(
+        "local function foo(a)\n"
+        "    while a do\n"
+        "        local x=1\n"
+        "        break\n"
+        "    end\n"
+        "end\n"
+        "local y=2"
+    )
+    assert _locals == {"x", "y"}, _locals
+    assert not (_locals & _LUA_KEYWORDS), _locals
+
+    # Same regression with another local declaration immediately after
+    # a protected named-function signature.
+    _locals = _scan_local_names(
+        "local function foo(a)\n"
+        "local z=1\n"
+        "end"
+    )
+    assert _locals == {"z"}, _locals
+
+    # Reserved words must never be substituted even if a corrupted mapping
+    # is deliberately supplied.
+    _guarded = _subst_var_refs(
+        "local x=1 while x<2 do x=x+1 end",
+        {
+            "local": "_T0.local",
+            "while": "_T0.while",
+            "x": "_T0.x",
+        },
+        _STRING_LIT_RE,
+    )
+    assert "_T0.local" not in _guarded, _guarded
+    assert "_T0.while" not in _guarded, _guarded
+    assert "_T0.x" in _guarded, _guarded
+
+    # Table builder also discards impossible keyword names defensively.
+    _decls, _mapping = _build_var_tables(["x", "local", "while", "y"])
+    assert "local" not in _mapping and "while" not in _mapping, _mapping
+    assert {"x", "y"} <= set(_mapping), _mapping
+
+    print("function_obfuscation smoke tests: OK")
+
