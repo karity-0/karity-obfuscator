@@ -39,7 +39,10 @@ def parse_args():
     parser.add_argument("input", nargs="?", help="input lua script")
     parser.add_argument("-o", "--output", help="output lua script")
     parser.add_argument("-c", "--config", default="config.json", help="config json path")
-    parser.add_argument("--profile", help="config profile name")
+    parser.add_argument(
+        "--profile",
+        help="config profile name; 'max' is experimental and has no build-time or output-size target",
+    )
     parser.add_argument("--passes", help="override top-level passes with a comma-separated list")
     parser.add_argument("--vm-output-passes", help="override vm_output_passes with a comma-separated list")
     parser.add_argument("--packer-output-passes", help="override packer_output_passes with a comma-separated list")
@@ -114,7 +117,13 @@ def print_profiles(config: dict) -> None:
     selected = config.get("profile")
     for name in names:
         marker = " *" if name == selected else ""
-        print(f"{name}{marker}")
+        if name == "high":
+            note = " (recommended for strong practical builds)"
+        elif name == "max":
+            note = " (experimental; research/extreme builds)"
+        else:
+            note = ""
+        print(f"{name}{marker}{note}")
 
 
 def read_script(path: str) -> str:

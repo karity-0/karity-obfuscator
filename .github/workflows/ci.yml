@@ -40,6 +40,7 @@ jobs:
           python test/run_packer_regression.py
           python test/run_runtime_poly_regression.py
           python test/run_state_coupling_regression.py
+          python test/run_vm_mutation_regression.py
           python test/run_vm_output_emitter_regression.py
 
       - name: Run semantic suite
