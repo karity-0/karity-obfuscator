@@ -33,6 +33,7 @@
                 "minify"
             ],
             "vm_options": {
+                "backend": "karity",
                 "dispatcher_type": "ifelseif",
                 "dispatcher_target_hiding": false,
                 "semantic_state_threading": false,
@@ -77,6 +78,7 @@
                 "minify"
             ],
             "vm_options": {
+                "backend": "karity",
                 "dispatcher_type": "ifelseif",
                 "dispatcher_target_hiding": false,
                 "semantic_state_threading": false,
@@ -130,6 +132,7 @@
                 "minify"
             ],
             "vm_options": {
+                "backend": "karity",
                 "dispatcher_type": "mixed",
                 "dispatcher_target_hiding": true,
                 "semantic_state_threading": true,
@@ -191,6 +194,7 @@
                 "minify"
             ],
             "vm_options": {
+                "backend": "karity",
                 "dispatcher_type": "mixed",
                 "dispatcher_target_hiding": true,
                 "semantic_state_threading": true,

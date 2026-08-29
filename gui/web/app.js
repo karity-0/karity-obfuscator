@@ -104,7 +104,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updateOverview();
         return;
       }
+      const backend = state.config.vm_options.backend ?? 'karity';
       state.config.vm_options = clone(bootstrap.protection_levels[name]);
+      state.config.vm_options.backend = backend;
       state.protection_level = name;
       state.preset = 'custom';
       renderAll();
@@ -301,7 +303,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function setVmOption(name, value, rerender = true) {
     state.config.vm_options[name] = value;
-    markPresetCustom(true);
+    markPresetCustom(name !== 'backend');
     if (rerender) renderAll();
     else updateOverview();
   }
@@ -314,8 +316,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function inferLevel() {
-    const options = JSON.stringify(state.config.vm_options);
-    return Object.keys(bootstrap.protection_levels).find(name => JSON.stringify(bootstrap.protection_levels[name]) === options) || 'custom';
+    const comparable = options => {
+      const result = clone(options);
+      delete result.backend;
+      return JSON.stringify(result);
+    };
+    const options = comparable(state.config.vm_options);
+    return Object.keys(bootstrap.protection_levels).find(name => comparable(bootstrap.protection_levels[name]) === options) || 'custom';
   }
 
   function updateOverview() {

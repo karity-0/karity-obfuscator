@@ -21,6 +21,7 @@
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
+  - [backend](#backend)
   - [dispatcher_type](#dispatcher_type)
   - [dispatcher_target_hiding](#dispatcher_target_hiding)
   - [semantic_state_threading](#semantic_state_threading)
@@ -205,6 +206,22 @@ Reduces script size by removing unnecessary whitespace.
 
 Virtualizes Lua bytecode using the custom Lua 5.3 VM.
 
+`vm_options.backend` selects only the VM runtime execution model, independently
+from the build profile. Both backends use the current compiler, instruction
+layout, serializer/blob protection, dispatcher selection, integrity checks, and
+output pipeline. `karity` remains the implicit choice when the option is omitted.
+`classic` uses direct register storage and straightforward opcode handlers;
+`default` is accepted as an alias for `classic`.
+
+The remaining implementation notes in this section describe Karity's hardened
+runtime model. In classic mode, runtime graph execution, encoded/dynamic register
+mapping, cross-instruction continuations, runtime polymorphism, and handler/block
+semantic variants are disabled. Controls outside that runtime layer—including
+current dispatchers, fake and mutated handlers, junk instructions, blob form,
+VM count, target hiding, integrity protection, and output passes—remain active.
+Release validation therefore checks shared protections for both modes and checks
+graph/variant rates only for the Karity runtime that implements them.
+
 Integer arithmetic, bitwise, shift, and unary handlers are generated from
 build-specific DAG IR and compiled ahead of time into specialized straight-line
 Lua handlers. Their semantic order is shuffled per build, and sparse opcode tags
@@ -332,13 +349,27 @@ Compresses and wraps the final output in a self-extracting loader.
 
 ## vm_options
 
+### backend
+
+VM runtime execution model. Missing values select the current karity runtime.
+
+| Value | Description |
+|---|---|
+| `karity` | hardened graph and encoded-register runtime |
+| `classic` | direct-register and direct-handler runtime on the current VM pipeline |
+| `default` | compatibility alias for classic |
+
+default: `karity`
+
+---
+
 ### dispatcher_type
 
 VM dispatcher shape.
 
 | Value | Description |
 |---|---|
-| `ifelseif` | classic if/elseif dispatcher |
+| `ifelseif` | if/elseif chain dispatcher |
 | `tailcall` | function table + tail-call dispatcher |
 | `table` | alias for the function-table tail-call dispatcher |
 | `bsearch` | nested binary-search if/else tree over the opcode |

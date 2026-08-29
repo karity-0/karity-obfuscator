@@ -31,6 +31,7 @@ PROJECT_CONFIG_PATH = ROOT_DIR / "config.json"
 EXAMPLE_CONFIG_PATH = ROOT_DIR / "config.example.json"
 
 _OPTION_GROUPS = {
+    "backend": "Execution",
     "dispatcher_type": "Execution", "blob_form": "Execution", "vm_count": "Execution",
     "fake_handlers": "Handlers", "mutate_handlers": "Handlers",
     "junk_instructions": "Handlers", "junk_rate": "Handlers",
@@ -45,6 +46,7 @@ _OPTION_GROUPS = {
 }
 
 _OPTION_LABELS = {
+    "backend": "VM runtime",
     "dispatcher_type": "Dispatcher", "blob_form": "Blob representation", "vm_count": "VM count",
     "fake_handlers": "Fake handlers", "mutate_handlers": "Handler mutation",
     "junk_instructions": "Junk instructions", "junk_rate": "Junk rate",

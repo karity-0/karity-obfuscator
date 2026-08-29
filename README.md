@@ -217,6 +217,7 @@ python main.py input.lua -o protected.lua
 python main.py input.lua --profile fast-vm
 python main.py input.lua --profile high
 python main.py input.lua --passes string_obf,number_obf,minify
+python main.py input.lua --vm-option backend=classic
 python main.py input.lua --vm-option vm_count=2
 python main.py input.lua --vm-option graph_execution_rate=0.05
 
@@ -260,10 +261,21 @@ Copy `config.example.json` to `config.json`, then adjust profiles instead of
 editing pass lists for every build. CLI values supplied with `--vm-option`
 override the selected profile for that invocation.
 
+VM runtime architecture is independent from protection level. Both modes retain
+the current compiler, serializer/blob protection, dispatcher selection,
+integrity checks, and output pipeline. `backend=karity` selects the hardened
+graph/encoded-register runtime and is used when the option is omitted.
+`backend=classic` selects direct registers and straightforward opcode handlers;
+`backend=default` is a compatibility alias for `classic`.
+Release checks apply the shared dispatcher, integrity, mutation, and VM-count
+requirements to both modes, and apply graph/variant-rate requirements only to
+the Karity runtime that implements them.
+
 The most important performance controls are:
 
 | Option | Effect |
 |---|---|
+| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, or the `default` alias |
 | `graph_execution_rate` | How often heavy compiled handler graphs execute |
 | `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
 | `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
