@@ -129,7 +129,7 @@ PASS_DESCRIPTIONS = {
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
     "table_obf": "Obfuscates table variables.",
-    "function_obf": "Obfuscates functions using control-flow flattening and junk blocks.",
+    "function_obf": "Recursively transforms SOURCE function boundaries with safe helper inlining, split helper closures, control-flow flattening, and junk blocks.",
     "rename_obf": "Renames local identifiers.",
     "localize_globals": "Converts global variable accesses to local aliases where possible.",
     "minify": "Reduces script size by removing unnecessary whitespace.",
@@ -355,6 +355,7 @@ def validate_config(config: dict) -> None:
 
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
+    _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_signature(config.get("signature", {}))
 
@@ -431,6 +432,78 @@ def _reject_nested_output_passes(config: dict, key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
         raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
+
+
+def _validate_function_obf_options(options: dict) -> None:
+    if not isinstance(options, dict):
+        raise ConfigError("'function_obf_options' must be an object")
+    allowed = {
+        "boundary_mode", "nested", "nested_max_depth",
+        "loop_split", "loop_unroll", "loop_unroll_max_iterations",
+        "loop_unroll_rate",
+        "loop_max_generated_blocks", "loop_max_expansion_ratio",
+        "loop_max_depth",
+    }
+    unknown = sorted(set(options) - allowed)
+    if unknown:
+        raise ConfigError(
+            "unknown function_obf_options: " + ", ".join(unknown)
+        )
+
+    boundary_mode = options.get("boundary_mode")
+    if boundary_mode is not None and boundary_mode not in {"mixed", "split", "cff"}:
+        raise ConfigError(
+            "function_obf_options.boundary_mode must be 'mixed', 'split', or 'cff'"
+        )
+    nested = options.get("nested")
+    if nested is not None and not isinstance(nested, bool):
+        raise ConfigError("function_obf_options.nested must be a boolean")
+    max_depth = options.get("nested_max_depth")
+    if max_depth is not None and (
+        not isinstance(max_depth, int)
+        or isinstance(max_depth, bool)
+        or not 0 <= max_depth <= 16
+    ):
+        raise ConfigError(
+            "function_obf_options.nested_max_depth must be an integer between 0 and 16"
+        )
+    for key in ("loop_split", "loop_unroll"):
+        value = options.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ConfigError(f"function_obf_options.{key} must be a boolean")
+    for key, minimum, maximum in (
+        ("loop_unroll_max_iterations", 0, 32),
+        ("loop_max_generated_blocks", 1, 1024),
+        ("loop_max_depth", 0, 16),
+    ):
+        value = options.get(key)
+        if value is not None and (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not minimum <= value <= maximum
+        ):
+            raise ConfigError(
+                f"function_obf_options.{key} must be an integer between "
+                f"{minimum} and {maximum}"
+            )
+    ratio = options.get("loop_max_expansion_ratio")
+    if ratio is not None and (
+        not isinstance(ratio, (int, float))
+        or isinstance(ratio, bool)
+        or not 1.0 <= float(ratio) <= 256.0
+    ):
+        raise ConfigError(
+            "function_obf_options.loop_max_expansion_ratio must be between 1 and 256"
+        )
+    unroll_rate = options.get("loop_unroll_rate")
+    if unroll_rate is not None and (
+        not isinstance(unroll_rate, (int, float))
+        or isinstance(unroll_rate, bool)
+        or not 0.0 <= float(unroll_rate) <= 1.0
+    ):
+        raise ConfigError(
+            "function_obf_options.loop_unroll_rate must be between 0.0 and 1.0"
+        )
 
 
 def _validate_vm_options(options: dict) -> None:
@@ -551,6 +624,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     pipeline                = pipeline_cls(show_header=False)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 
+    function_obf_options    = config.get("function_obf_options", {})
     vm_options              = config.get("vm_options", {})
     has_packer              = "pack" in config.get("passes", [])
 
@@ -569,6 +643,8 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 packer_output_passes=packer_output_passes,
                 output_prefix=signature_pass.prefix,
             ))
+        elif cls is FunctionObfuscationPass:
+            pipeline.add(cls(**function_obf_options))
         else:
             pipeline.add(cls())
 
