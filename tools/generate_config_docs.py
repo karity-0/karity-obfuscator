@@ -19,6 +19,22 @@ from obfuscator.registry import (  # noqa: E402
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
 
 VM_DETAILS = """\
+`vm_options.backend` selects only the VM runtime execution model, independently
+from the build profile. Both backends use the current compiler, instruction
+layout, serializer/blob protection, dispatcher selection, integrity checks, and
+output pipeline. `karity` remains the implicit choice when the option is omitted.
+`classic` uses direct register storage and straightforward opcode handlers;
+`default` is accepted as an alias for `classic`.
+
+The remaining implementation notes in this section describe Karity's hardened
+runtime model. In classic mode, runtime graph execution, encoded/dynamic register
+mapping, cross-instruction continuations, runtime polymorphism, and handler/block
+semantic variants are disabled. Controls outside that runtime layer—including
+current dispatchers, fake and mutated handlers, junk instructions, blob form,
+VM count, target hiding, integrity protection, and output passes—remain active.
+Release validation therefore checks shared protections for both modes and checks
+graph/variant rates only for the Karity runtime that implements them.
+
 Integer arithmetic, bitwise, shift, and unary handlers are generated from
 build-specific DAG IR and compiled ahead of time into specialized straight-line
 Lua handlers. Their semantic order is shuffled per build, and sparse opcode tags
@@ -137,6 +153,15 @@ def render_pass(name: str, info: dict) -> list[str]:
     ]
     if name == "vm":
         lines.extend([VM_DETAILS, ""])
+
+    docs_path = info.get("docs")
+    if docs_path:
+        lines.extend([
+            f"See [`{name}` design and implementation notes]({docs_path}) "
+            "for architecture, trade-offs, and future work.",
+            "",
+        ])
+        
     return lines
 
 
@@ -182,9 +207,21 @@ def render() -> str:
         "```bash",
         "python main.py input.lua --profile dev",
         "python main.py input.lua --profile fast-vm",
+        "python main.py input.lua --profile high",
         "python main.py input.lua --profile max",
         "python main.py input.lua --profile max --release-check",
         "```",
+        "",
+        "`high` is the strongest preset intended for practical use. It enables the full",
+        "source protection and packing stack with two diversified VMs while avoiding",
+        "the most explosive output-pass combinations used by `max`.",
+        "",
+        "`max` is an experimental research profile for extreme protection combinations.",
+        "It has no build-time or output-size target and is not intended for routine",
+        "production use. Prefer `high`, `fast-vm`, or a tuned custom profile for practical",
+        "builds.",
+        "`--release-check` validates release-safety constraints; it does not make `max`",
+        "the recommended production profile.",
         "",
         "`--seed` is for reproducible test builds. `--release-check` rejects seeded",
         "builds and weak VM settings before writing release output.",

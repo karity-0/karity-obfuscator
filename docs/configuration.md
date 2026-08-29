@@ -21,6 +21,7 @@
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
+  - [backend](#backend)
   - [dispatcher_type](#dispatcher_type)
   - [dispatcher_target_hiding](#dispatcher_target_hiding)
   - [semantic_state_threading](#semantic_state_threading)
@@ -54,9 +55,21 @@ without manually editing pass lists.
 ```bash
 python main.py input.lua --profile dev
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --profile max
 python main.py input.lua --profile max --release-check
 ```
+
+`high` is the strongest preset intended for practical use. It enables the full
+source protection and packing stack with two diversified VMs while avoiding
+the most explosive output-pass combinations used by `max`.
+
+`max` is an experimental research profile for extreme protection combinations.
+It has no build-time or output-size target and is not intended for routine
+production use. Prefer `high`, `fast-vm`, or a tuned custom profile for practical
+builds.
+`--release-check` validates release-safety constraints; it does not make `max`
+the recommended production profile.
 
 `--seed` is for reproducible test builds. `--release-check` rejects seeded
 builds and weak VM settings before writing release output.
@@ -131,6 +144,8 @@ Obfuscates boolean literals.
 
 Obfuscates number literals.
 
+See [`number_obf` design and implementation notes](passes/numberObfuscation.md) for architecture, trade-offs, and future work.
+
 ## table_obf
 
 **label:** Table Obfuscation
@@ -190,6 +205,22 @@ Reduces script size by removing unnecessary whitespace.
 **type:** passes
 
 Virtualizes Lua bytecode using the custom Lua 5.3 VM.
+
+`vm_options.backend` selects only the VM runtime execution model, independently
+from the build profile. Both backends use the current compiler, instruction
+layout, serializer/blob protection, dispatcher selection, integrity checks, and
+output pipeline. `karity` remains the implicit choice when the option is omitted.
+`classic` uses direct register storage and straightforward opcode handlers;
+`default` is accepted as an alias for `classic`.
+
+The remaining implementation notes in this section describe Karity's hardened
+runtime model. In classic mode, runtime graph execution, encoded/dynamic register
+mapping, cross-instruction continuations, runtime polymorphism, and handler/block
+semantic variants are disabled. Controls outside that runtime layer—including
+current dispatchers, fake and mutated handlers, junk instructions, blob form,
+VM count, target hiding, integrity protection, and output passes—remain active.
+Release validation therefore checks shared protections for both modes and checks
+graph/variant rates only for the Karity runtime that implements them.
 
 Integer arithmetic, bitwise, shift, and unary handlers are generated from
 build-specific DAG IR and compiled ahead of time into specialized straight-line
@@ -318,13 +349,27 @@ Compresses and wraps the final output in a self-extracting loader.
 
 ## vm_options
 
+### backend
+
+VM runtime execution model. Missing values select the current karity runtime.
+
+| Value | Description |
+|---|---|
+| `karity` | hardened graph and encoded-register runtime |
+| `classic` | direct-register and direct-handler runtime on the current VM pipeline |
+| `default` | compatibility alias for classic |
+
+default: `karity`
+
+---
+
 ### dispatcher_type
 
 VM dispatcher shape.
 
 | Value | Description |
 |---|---|
-| `ifelseif` | classic if/elseif dispatcher |
+| `ifelseif` | if/elseif chain dispatcher |
 | `tailcall` | function table + tail-call dispatcher |
 | `table` | alias for the function-table tail-call dispatcher |
 | `bsearch` | nested binary-search if/else tree over the opcode |

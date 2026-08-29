@@ -49,6 +49,7 @@ if not _LUAC or (isinstance(_LUAC, Path) and not _LUAC.exists()):
     raise FileNotFoundError("luac5.3 not found.")
 
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
+_CLASSIC_EXEC_PATH = Path(__file__).parent / "runtimes" / "classic_exec.lua"
 
 
 def _compile(script: str) -> bytes:
@@ -298,12 +299,60 @@ def _dump_function_stripped(
                 os.unlink(p)
 
 
-def _load_vm() -> str:
+def _load_vm(backend: str = "karity") -> str:
     src = _VM_LUA_PATH.read_text(encoding="utf-8")
     cutoff = src.find("\nif arg and arg[0]")
     if cutoff != -1:
         src = src[:cutoff]
+    if backend == "classic":
+        classic_exec = _CLASSIC_EXEC_PATH.read_text(encoding="utf-8")
+        start = src.index("local exec, _EX, _NX")
+        end_marker = "--<<ENDNEXT_ROUTER>>"
+        end = src.index(end_marker, start) + len(end_marker)
+        src = src[:start] + classic_exec + src[end:]
+
+        run_start_marker = "--<<RUN_ENTRY>>"
+        run_end_marker = "--<<ENDRUN_ENTRY>>"
+        run_start = src.index(run_start_marker)
+        run_end = src.index(run_end_marker, run_start) + len(run_end_marker)
+        direct_entry = (
+            "_EX[proto.vm_id+1](proto,{env_box},table.pack())"
+        )
+        src = src[:run_start] + direct_entry + src[run_end:]
     return src
+
+
+_CLASSIC_SEMANTIC_TOKENS = (
+    "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
+    "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
+    "__VM_CMP_TRUTH__", "__VM_OP_MOD__", "__VM_OP_POW__",
+    "__VM_OP_DIV__", "__VM_OP_IDIV__", "__VM_OP_NOT__",
+    "__VM_OP_LEN__", "__VM_OP_CONCAT__", "__VM_OP_NEWTABLE__",
+    "__VM_OP_SETLIST__", "__VM_OP_CLOSURE__", "__VM_OP_VARARG__",
+)
+
+
+def _apply_classic_runtime_tokens(vm_code: str) -> str:
+    """Resolve current transform tokens without generating Karity graphs."""
+    semantic_tags = random.sample(range(0x10000, 0x7FFFFFFF),
+                                  len(_CLASSIC_SEMANTIC_TOKENS))
+    for token, value in zip(_CLASSIC_SEMANTIC_TOKENS, semantic_tags):
+        vm_code = vm_code.replace(token, str(value))
+
+    slot_tokens = tuple(spec[0] for spec in _ARITH_SPECS.values())
+    slot_values = random.sample(range(0x10000, 0x7FFFFFFF), len(slot_tokens))
+    for token, value in zip(slot_tokens, slot_values):
+        vm_code = vm_code.replace(token, str(value))
+
+    unresolved = sorted(
+        token for token in set(re.findall(r"__VM_[A-Z0-9_]+__", vm_code))
+        if token != "__VM_HOT_LOOP__"
+    )
+    if unresolved:
+        raise RuntimeError(
+            "classic runtime has unresolved VM tokens: " + ", ".join(unresolved)
+        )
+    return vm_code
 
 
 def _hex64() -> str:
@@ -1826,7 +1875,7 @@ _DEFAULT_VM_OPTIONS = {
 }
 
 
-class VMPass(PostPass):
+class VMBuildPipeline(PostPass):
     def __init__(
         self,
         vm_output_passes: list[str] | None = None,
@@ -1835,11 +1884,25 @@ class VMPass(PostPass):
     ):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
+        self.backend = self.vm_options.pop("backend", "karity")
         self.output_prefix = output_prefix
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
         self.last_profile = []
+        classic_runtime = self.backend == "classic"
+        graph_execution_rate = 0.0 if classic_runtime else float(
+            self.vm_options.get("graph_execution_rate", 0.1)
+        )
+        cross_instruction_rate = 0.0 if classic_runtime else float(
+            self.vm_options.get("cross_instruction_rate", 0.2)
+        )
+        block_variant_rate = 0.0 if classic_runtime else float(
+            self.vm_options.get("block_variant_rate", 0.08)
+        )
+        semantic_diversity_rate = 0.0 if classic_runtime else float(
+            self.vm_options.get("semantic_diversity_rate", 0.35)
+        )
         # 1. luac 컴파일
         _phase_start = time.perf_counter()
         luac_bytes = _compile(script)
@@ -1872,14 +1935,16 @@ class VMPass(PostPass):
             split_map  = _make_split_map(used_vops, split_ops)
             fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
             fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
-            defer_ops  = DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+            defer_ops = set() if classic_runtime else (
+                DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+            )
             defer_map  = _make_defer_map(used_vops, defer_ops)
             vm_maps.append((vop_map, split_map, fuse_map, defer_map))
             used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
             if self.vm_options.get("integrity_constants", False):
                 for pseudo_op in range(47, _LUA_OP_COUNT):
                     used_ops.update(vop_map[pseudo_op])
-            if float(self.vm_options.get("block_variant_rate", 0.08)) > 0.0:
+            if block_variant_rate > 0.0:
                 for pseudo_op in (58, 59):
                     used_ops.update(vop_map[pseudo_op])
             used_ops_list.append(used_ops)
@@ -1906,16 +1971,10 @@ class VMPass(PostPass):
                 "enabled": self.vm_options.get("integrity_constants", False),
                 "rate": self.vm_options.get("integrity_constant_rate", 0.25),
             },
-            graph_execution_rate=float(
-                self.vm_options.get("graph_execution_rate", 0.1)
-            ),
-            cross_instruction_rate=float(
-                self.vm_options.get("cross_instruction_rate", 0.2)
-            ),
+            graph_execution_rate=graph_execution_rate,
+            cross_instruction_rate=cross_instruction_rate,
             graph_family_count=graph_family_count,
-            block_variant_rate=float(
-                self.vm_options.get("block_variant_rate", 0.08)
-            ),
+            block_variant_rate=block_variant_rate,
             block_variant_count=int(
                 self.vm_options.get("block_variant_count", 3)
             ),
@@ -1929,7 +1988,7 @@ class VMPass(PostPass):
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
         _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
-        vm_code = _rename_vm_keys(_load_vm())
+        vm_code = _rename_vm_keys(_load_vm(self.backend))
         for name in constant_tag_names:
             vm_code = vm_code.replace(
                 f"__VM_CTAG_{name.upper()}__", str(constant_tags[name])
@@ -1941,7 +2000,7 @@ class VMPass(PostPass):
             vop_map, split_map, fuse_map, defer_map = vm_maps[0]
             vm_code = apply_vop_to_vm(
                 vm_code, vop_map,
-                float(self.vm_options.get("semantic_diversity_rate", 0.35)),
+                semantic_diversity_rate,
             )
             vm_code = prune_and_inject_handlers(vm_code, used_ops_list[0],
                                                 fake_handlers=fake, mutate=mut)
@@ -1951,15 +2010,17 @@ class VMPass(PostPass):
             # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
             # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
             vm_code = apply_dispatch(vm_code, dispatch)
-            vm_code = apply_execution_kit(
-                vm_code,
-                int(self.vm_options.get("helper_variant_count", 3)),
-                float(self.vm_options.get("helper_diversity_rate", 0.35)),
-            )
+            if not classic_runtime:
+                vm_code = apply_execution_kit(
+                    vm_code,
+                    int(self.vm_options.get("helper_variant_count", 3)),
+                    float(self.vm_options.get("helper_diversity_rate", 0.35)),
+                )
             if self.vm_options.get("dispatcher_target_hiding", False):
                 vm_code = apply_dispatch_target_hiding(vm_code)
-            vm_code = wire_exec_router(vm_code, 0)
-            vm_code = build_next_router_kit(vm_code, 1)
+            if not classic_runtime:
+                vm_code = wire_exec_router(vm_code, 0)
+                vm_code = build_next_router_kit(vm_code, 1)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
                                           fake_handlers=fake, mutate=mut,
@@ -1975,14 +2036,13 @@ class VMPass(PostPass):
                                           helper_diversity_rate=float(
                                               self.vm_options.get("helper_diversity_rate", 0.35)
                                           ),
-                                          semantic_diversity_rate=float(
-                                              self.vm_options.get("semantic_diversity_rate", 0.35)
-                                          ))
+                                          semantic_diversity_rate=semantic_diversity_rate,
+                                          classic_runtime=classic_runtime)
 
         # Keep disabled profiles free of semantic-threading calls on the hot
         # fetch/write paths.  The local helpers remain as cold template code,
         # but no per-instruction function-call overhead survives.
-        if not self.vm_options.get("semantic_state_threading", False):
+        if classic_runtime or not self.vm_options.get("semantic_state_threading", False):
             vm_code = vm_code.replace("; _ss_step(_ip,op,A,B,C)", "")
             vm_code = vm_code.replace(
                 "\n        _ss_value(slot,encoded,epoch,kind)", ""
@@ -2032,43 +2092,55 @@ class VMPass(PostPass):
         _graph_start = time.perf_counter()
         _graph_input_bytes = len(vm_func_src.encode("utf-8"))
 
-        vm_func_src = _apply_handler_graphs(
-            vm_func_src,
-            graph_sites,
-            graph_family_count,
-            runtime_polymorphism_rate=float(
-                self.vm_options.get("runtime_polymorphism_rate", 0.2)
-            ),
-            runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
-            semantic_state_threading=bool(
-                self.vm_options.get("semantic_state_threading", False)
-            ),
-            argument_virtualization=bool(
-                self.vm_options.get("argument_virtualization", False)
-            ),
-            upvalue_virtualization=bool(
-                self.vm_options.get("upvalue_virtualization", False)
-            ),
-            table_virtualization=bool(
-                self.vm_options.get("table_virtualization", False)
-            ),
-            branch_virtualization=bool(
-                self.vm_options.get("branch_virtualization", False)
-            ),
-        )
+        if classic_runtime:
+            vm_func_src = _apply_classic_runtime_tokens(vm_func_src)
+        else:
+            vm_func_src = _apply_handler_graphs(
+                vm_func_src,
+                graph_sites,
+                graph_family_count,
+                runtime_polymorphism_rate=float(
+                    self.vm_options.get("runtime_polymorphism_rate", 0.2)
+                ),
+                runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
+                semantic_state_threading=bool(
+                    self.vm_options.get("semantic_state_threading", False)
+                ),
+                argument_virtualization=bool(
+                    self.vm_options.get("argument_virtualization", False)
+                ),
+                upvalue_virtualization=bool(
+                    self.vm_options.get("upvalue_virtualization", False)
+                ),
+                table_virtualization=bool(
+                    self.vm_options.get("table_virtualization", False)
+                ),
+                branch_virtualization=bool(
+                    self.vm_options.get("branch_virtualization", False)
+                ),
+            )
 
         _graph_elapsed = time.perf_counter() - _graph_start
         _graph_output_bytes = len(vm_func_src.encode("utf-8"))
         graph_detail = {
-            "phase": "vm_output:handler_graphs",
-            "class": "_apply_handler_graphs",
+            "phase": (
+                "vm_output:classic_runtime" if classic_runtime
+                else "vm_output:handler_graphs"
+            ),
+            "class": (
+                "_apply_classic_runtime_tokens" if classic_runtime
+                else "_apply_handler_graphs"
+            ),
             "elapsed": round(_graph_elapsed, 6),
             "input_bytes": _graph_input_bytes,
             "output_bytes": _graph_output_bytes,
             "delta_bytes": _graph_output_bytes - _graph_input_bytes,
-            "graph_sites": len(graph_sites),
-            "graph_families": graph_family_count,
-            "backend": "pre_output_pipeline",
+            "graph_sites": 0 if classic_runtime else len(graph_sites),
+            "graph_families": 0 if classic_runtime else graph_family_count,
+            "backend": (
+                "classic_runtime" if classic_runtime
+                else "pre_output_pipeline"
+            ),
         }
 
         vm_func_src, vm_output_details = _obfuscate_vm_output(
@@ -2160,3 +2232,33 @@ class VMPass(PostPass):
         )
 
         return raw
+
+
+class VMPass(PostPass):
+    """Select and run one VM implementation without coupling it to profiles."""
+
+    def __init__(
+        self,
+        vm_output_passes: list[str] | None = None,
+        vm_options: dict | None = None,
+        output_prefix: str = "",
+    ):
+        from .backend import normalize_vm_backend
+
+        options = dict(vm_options or {})
+        self.backend = normalize_vm_backend(options.pop("backend", None))
+        self.vm_options = {"backend": self.backend, **options}
+        self.vm_output_passes = vm_output_passes or []
+        self.output_prefix = output_prefix
+        self.last_profile: list[dict] = []
+
+        self._backend = VMBuildPipeline(
+            vm_output_passes=self.vm_output_passes,
+            vm_options={"backend": self.backend, **options},
+            output_prefix=output_prefix,
+        )
+
+    def run(self, script: str) -> str:
+        output = self._backend.run(script)
+        self.last_profile = getattr(self._backend, "last_profile", [])
+        return output

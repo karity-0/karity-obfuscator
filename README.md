@@ -36,13 +36,25 @@ install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 |---|---|---:|---|
 | `dev` | Fast source-level iteration | No, by default | Fastest builds and easiest debugging |
 | `fast-vm` | VM behavior checks and routine protected builds | Single lightweight VM | Moderate output and runtime cost |
-| `max` | Release candidates requiring the full protection stack | Three diversified VMs | Largest output and longest build time |
+| `high` | Strong production-oriented protection | Two diversified VMs | High build and output cost; practical alternative to `max` |
+| `max` | Experimental research and extreme protection combinations | Three diversified VMs | Unbounded build time and output growth; not intended for routine production use |
 
 ```bash
 python main.py input.lua --profile dev
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --profile max --release-check
 ```
+
+`high` is the strongest preset intended for practical use. It enables the full
+source protection and packing stack with two diversified VMs, while avoiding
+the most explosive VM and packer output-pass combinations used by `max`.
+
+`max` is an experimental research profile. It deliberately combines the most
+aggressive stages and has no build-time or output-size target; very long builds
+are expected. Use `high`, `fast-vm`, or a tuned custom profile for routine
+protected builds. `--release-check` validates release-safety constraints, but
+does not turn `max` into the recommended production profile.
 
 The guiding performance rule is: **keep graph generation, execute heavy graphs
 sparsely**. Complex handlers and variants are compiled at build time where
@@ -57,17 +69,60 @@ the VM stages are compiled.
 ```mermaid
 flowchart LR
     A[Lua 5.3 source] --> B[Source passes]
-    B --> C[Lua 5.3 bytecode]
-    C --> D[VM serializer]
-    D --> E[Opcode aliases<br/>split / fuse / delayed ops]
-    E --> F[Encrypted bytecode blob]
-    F --> G[Build-time VM compiler]
-    G --> H[Handler graphs<br/>execution kits / VM variants]
-    H --> I[VM output passes]
-    I --> J{Packer enabled?}
-    J -->|No| K[Protected Lua]
-    J -->|Yes| L[Compressed loader]
-    L --> K
+    B --> C{VM enabled?}
+
+    %% Non-VM path
+    C -->|No| P{Packer enabled?}
+
+    %% VM path
+    C -->|Yes| D[luac compile]
+    D --> E[Parse Lua 5.3 bytecode]
+
+    E --> F{junk_instructions?}
+    F -->|Yes| G[Inject junk instructions]
+    F -->|No| H[VM assignment and map generation]
+    G --> H
+
+    H --> I{vm_count > 1?}
+    I -->|No| J[Single-VM map set]
+    I -->|Yes| K[Assign prototypes across<br/>independent VM map sets]
+
+    J --> L[VM serialization]
+    K --> L
+
+    J --> M[Build-time VM specialization]
+    K --> M
+
+    M --> N[Opcode aliases / split / fuse / defer<br/>dispatcher / execution kits / VM variants]
+
+    N --> O{dispatcher_target_hiding?}
+    O -->|Yes| Q[Hide dispatcher targets]
+    O -->|No| R[Continue VM generation]
+    Q --> R
+
+    R --> S[Keystream / tamper / instruction-layout specialization]
+
+    S --> T[Handler / arithmetic / semantic / control graphs]
+    T --> U[Configured VM output passes]
+    U --> V[Line-state finalization]
+    V --> W[Dump finalized VM function<br/>derive integrity state]
+
+    L --> X{integrity_constants?}
+    W --> X
+
+    X -->|Yes| Y[Patch integrity-dependent<br/>serialized values]
+    X -->|No| Z[Use serialized VM blob]
+
+    Y --> AA[Encrypt serialized blob]
+    Z --> AA
+
+    AA --> AB[Assemble protected VM wrapper]
+    AB --> P
+
+    %% Final optional layer
+    P -->|No| AC[Protected Lua]
+    P -->|Yes| AD[Compressed / protected loader]
+    AD --> AC
 ```
 
 At runtime, one instruction can take different equivalent routes depending on
@@ -160,7 +215,9 @@ python main.py input.lua -o protected.lua
 
 # Profiles and one-off overrides
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --passes string_obf,number_obf,minify
+python main.py input.lua --vm-option backend=classic
 python main.py input.lua --vm-option vm_count=2
 python main.py input.lua --vm-option graph_execution_rate=0.05
 
@@ -179,7 +236,8 @@ python main.py input.lua --profile max --release-check
 
 `--seed` exists for reproducible testing. Do not use a fixed seed for release
 artifacts. `--release-check` rejects reproducible seeds and weak release
-settings before writing the output.
+settings before writing the output. The `max` example above is an experimental
+full-stack validation run, not the recommended routine release workflow.
 
 ## GUI
 
@@ -191,7 +249,7 @@ The GUI exposes the same profile-based configuration used by the CLI.
 
 ![GUI](images/5.png)
 
-Choose a complete build preset (`dev`, `fast-vm`, or `max`) or apply an
+Choose a complete build preset (`dev`, `fast-vm`, `high`, or `max`) or apply an
 independent VM protection level (`Light` through `Maximum`). Every pass and VM
 option can also be edited directly; manual changes automatically switch the
 affected selector to `<Custom>`. VM controls are generated from the central
@@ -203,10 +261,21 @@ Copy `config.example.json` to `config.json`, then adjust profiles instead of
 editing pass lists for every build. CLI values supplied with `--vm-option`
 override the selected profile for that invocation.
 
+VM runtime architecture is independent from protection level. Both modes retain
+the current compiler, serializer/blob protection, dispatcher selection,
+integrity checks, and output pipeline. `backend=karity` selects the hardened
+graph/encoded-register runtime and is used when the option is omitted.
+`backend=classic` selects direct registers and straightforward opcode handlers;
+`backend=default` is a compatibility alias for `classic`.
+Release checks apply the shared dispatcher, integrity, mutation, and VM-count
+requirements to both modes, and apply graph/variant-rate requirements only to
+the Karity runtime that implements them.
+
 The most important performance controls are:
 
 | Option | Effect |
 |---|---|
+| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, or the `default` alias |
 | `graph_execution_rate` | How often heavy compiled handler graphs execute |
 | `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
 | `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
@@ -222,9 +291,10 @@ The most important performance controls are:
 | `semantic_diversity_rate` | Fraction of eligible aliases using alternate semantic lowering |
 | `vm_count` | Number of independent interpreters; strongly affects output and build size |
 
-Start with `fast-vm`. Increase one family at a time and profile the protected
-program's real workload. A high setting in every category is rarely the best
-performance/security balance.
+Start with `fast-vm`, then use `high` when the full protection and packing stack
+is required. Increase individual option families only after profiling the
+protected program's real workload. A maximum setting in every category is
+rarely the best performance/security balance.
 
 ## Testing
 
@@ -233,8 +303,14 @@ Run the semantic suite against the currently selected config:
 ```bash
 python test/run_test.py --profile dev
 python test/run_test.py --profile fast-vm --jobs 4
+python test/run_test.py --profile high --jobs 4
 python test/run_test.py 09_table 14_vm_call_machine
 ```
+
+Routine CI should test practical profiles and focused, deterministic VM
+regressions. Full `max` builds are research/nightly or pre-release checks; their
+build time and output size are not performance gates, although incorrect output
+is still a bug.
 
 Focused regressions cover high-risk VM subsystems:
 

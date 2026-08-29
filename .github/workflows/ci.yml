@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install Lua
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.3
+
+      - name: Prepare config
+        run: |
+          cp config.example.json config.json
+
+      - name: Check generated docs
+        run: |
+          python tools/generate_config_docs.py --check
+
+      - name: Run core regressions
+        run: |
+          python test/run_number_obf_regression.py
+          python test/run_packer_regression.py
+          python test/run_runtime_poly_regression.py
+          python test/run_state_coupling_regression.py
+          python test/run_vm_mutation_regression.py
+          python test/run_vm_output_emitter_regression.py
+
+      - name: Run semantic suite
+        run: |
+          python test/run_test.py --profile dev

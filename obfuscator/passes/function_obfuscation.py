@@ -11,6 +11,8 @@
    함수, 본문이 비어있거나 너무 단순한 함수는 안전하게 skip한다.
 """
 from __future__ import annotations
+from bisect import bisect_left
+from dataclasses import dataclass
 import random
 import re
 import time
@@ -25,6 +27,14 @@ from ..vm.vm_mutation import _zv, _new_state
 _TABLE_THRESHOLD  = 160
 _VARS_PER_TABLE   = 160
 
+# Lua 5.3 reserved words. These can never be variable identifiers.
+# Text-level pooling must therefore never collect or substitute them.
+_LUA_KEYWORDS = {
+    "and", "break", "do", "else", "elseif", "end", "false", "for",
+    "function", "goto", "if", "in", "local", "nil", "not", "or",
+    "repeat", "return", "then", "true", "until", "while",
+}
+
 # 문자열 리터럴(' 또는 ")을 구간으로 분리하기 위한 정규식.
 # 식별자 치환 시 문자열 내부 텍스트는 건드리지 않기 위해 사용한다.
 _STRING_LIT_RE = re.compile(
@@ -38,7 +48,12 @@ _STRING_LIT_RE = re.compile(
 # 이름이 같다고 해서 `function(_T1.t)`처럼 치환되면 문법 오류가 된다.
 # 괄호 안(파라미터 목록)만 보호하고, 함수 본문은 보호 대상이 아니므로
 # 본문 안의 `t`(다른 의미의 변수)는 정상적으로 치환된다.
-_FUNC_PARAMS_SPAN_RE = re.compile(r'\bfunction\s*\([^)]*\)')
+_FUNC_PARAMS_SPAN_RE = re.compile(
+    r'\bfunction'
+    r'(?:\s+[A-Za-z_]\w*(?:[.:][A-Za-z_]\w*)*)?'
+    r'\s*'
+    r'\(([^)]*)\)'
+)
 
 # 위 두 종류의 "보호 구간"을 한 번에 찾기 위한 결합 정규식.
 _PROTECTED_RE = re.compile(
@@ -66,6 +81,16 @@ def _strip_protected(text: str) -> str:
     (스캔/위치 보존 전용 용도 - 길이가 바뀌면 안 되는 컨텍스트에서 사용).
     """
     return _PROTECTED_RE.sub(lambda m: ' ' * len(m.group(0)), text)
+
+def _strip_strings_only(text: str) -> str:
+    """문자열 리터럴만 같은 길이의 공백으로 마스킹한다.
+
+    함수 본문 경계 탐색처럼 `function` 키워드 자체를 세어야 하는 스캐너에서
+    `_strip_protected()`를 쓰면 `function(...)` 시그니처까지 지워져 nested
+    function의 depth가 깨질 수 있으므로 이 helper를 별도로 사용한다.
+    """
+    return _STRING_LIT_RE.sub(lambda m: ' ' * len(m.group(0)), text)
+
 
 
 def _replace_idents_outside_strings(text: str, mapping: dict[str, str]) -> str:
@@ -122,7 +147,7 @@ def _subst_var_refs(text: str, mapping: dict[str, str], protected_re: re.Pattern
             while j < L and (text[j].isalnum() or text[j] == '_'):
                 j += 1
             ident = text[i:j]
-            if ident in mapping:
+            if ident in mapping and ident not in _LUA_KEYWORDS:
                 k = i - 1
                 while k >= 0 and text[k] in ' \t\r\n':
                     k -= 1
@@ -161,20 +186,66 @@ def _subst_var_refs(text: str, mapping: dict[str, str], protected_re: re.Pattern
 # 모으고 해당 `local` 키워드를 안전하게 제거하기 위해 전체 텍스트에 대해
 # 위치 무관하게 매치한다.
 _LOCAL_DECL_RE = re.compile(
-    r'\blocal\s+((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)(\s*=)?'
+    r'\blocal\s+(?!function\b)'
+    r'((?:[A-Za-z_]\w*\s*,\s*)*[A-Za-z_]\w*)(\s*=)?'
+)
+
+_FOR_BINDING_RE = re.compile(
+    r'\bfor\s+'
+    r'([A-Za-z_]\w*(?:\s*,\s*[A-Za-z_]\w*)*)'
+    r'\s*(?:=|\bin\b)'
 )
 
 
-def _scan_local_names(text: str) -> set[str]:
-    """text 안의 모든 `local NAME[,NAME...]` 선언에서 이름만 수집한다
-    (텍스트는 변경하지 않음). 보호 구간(문자열 리터럴,
-    `function(...)` 파라미터 목록) 내부는 무시한다.
+def _scan_for_binding_names(text: str) -> set[str]:
+    """numeric/generic for가 선언하는 lexical local 이름을 수집한다.
+
+    보호 구간을 공백으로 마스킹한 뒤 전체 텍스트를 regex로 스캔하면,
+    보호 구간 양옆의 토큰이 가짜로 이어질 수 있다. 예를 들어 어떤
+    `function(...)` 시그니처가 통째로 공백이 되면서 앞의 `for`와 뒤쪽
+    identifier가 하나의 문법 구조처럼 보일 수 있다.
+
+    따라서 보호 구간 사이의 실제 code chunk를 각각 독립적으로 스캔한다.
     """
     names: set[str] = set()
-    code_only = _strip_protected(text)
-    for m in _LOCAL_DECL_RE.finditer(code_only):
-        for name in m.group(1).split(','):
-            names.add(name.strip())
+
+    def _collect(part: str) -> str:
+        for m in _FOR_BINDING_RE.finditer(part):
+            for name in m.group(1).split(','):
+                name = name.strip()
+                if name and name not in _LUA_KEYWORDS:
+                    names.add(name)
+        return part
+
+    _apply_outside_protected(text, _collect)
+    return names
+
+
+def _scan_local_names(text: str) -> set[str]:
+    """text 안의 실제 `local NAME[,NAME...]` 선언 이름만 수집한다.
+
+    중요: 보호 구간을 공백으로 바꾼 하나의 문자열에서 regex를 돌리지 않는다.
+    `local function foo(...)`의 function 시그니처가 마스킹되면:
+
+        local                  while ...
+
+    같은 가짜 토큰 연결이 생겨 `while`/`local` 같은 Lua keyword가 local
+    이름으로 오인될 수 있기 때문이다.
+
+    보호 구간 사이의 code chunk를 독립적으로 스캔하면 이런 cross-boundary
+    오탐이 구조적으로 불가능하다.
+    """
+    names: set[str] = set()
+
+    def _collect(part: str) -> str:
+        for m in _LOCAL_DECL_RE.finditer(part):
+            for name in m.group(1).split(','):
+                name = name.strip()
+                if name and name not in _LUA_KEYWORDS:
+                    names.add(name)
+        return part
+
+    _apply_outside_protected(text, _collect)
     return names
 
 
@@ -209,6 +280,669 @@ def _collect_and_strip_locals(text: str, only_names: set[str] | None = None) -> 
 
     new_text = _apply_outside_protected(text, lambda part: _LOCAL_DECL_RE.sub(_strip_match, part))
     return stripped_names, new_text
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: AST lexical-binding resolver
+# ---------------------------------------------------------------------------
+#
+# 이전 table pooling은 식별자 *문자열*을 identity로 사용했다. 따라서 서로 다른
+# lexical scope의 `local v`가 모두 같은 `_Tn.v`로 합쳐질 수 있었고, nested
+# function의 per-call local까지 바깥 table field가 되어 semantics가 깨졌다.
+#
+# 여기서는 CFF를 만들기 전에 tree-sitter AST에서 각 local binding에 고유한
+# alpha-name을 부여한다. 이후 text-level CFF/pooling은 이 고유 이름만 보므로
+# 같은 철자의 서로 다른 binding을 절대 합치지 않는다.
+#
+# 더 중요한 점은 모든 local을 hoist하지 않는다는 것이다.
+# `_compile_stmts_to_blocks()`가 실제로 분해하는 범위(root block + if/elseif/else
+# branch)에서 선언된 binding만 poolable/hoist 대상으로 표시한다.
+#
+# while/for/repeat/do 및 nested function은 CFF에서 하나의 opaque statement로
+# 유지되므로, 그 안에서 선언된 local은 원래 lexical scope에 그대로 남는다.
+# nested function이 바깥 binding을 capture하는 경우에는 resolver가 그 참조만
+# 바깥 binding의 alpha-name으로 바꾸므로, 이후 table mapping이 정확한 upvalue
+# reference만 `_Tn._bN`으로 연결한다.
+
+
+@dataclass(frozen=True)
+class _LexBinding:
+    original: str
+    alpha: str
+    kind: str
+    poolable: bool
+    owner_function_id: int
+
+
+@dataclass
+class _LexicalPlan:
+    replacements: list[tuple[int, int, str]]
+    starts: list[int]
+    root_param_names: list[str]
+    poolable_names: list[str]
+    bindings: list[_LexBinding]
+
+
+class _LexScope:
+    __slots__ = ("parent", "names")
+
+    def __init__(self, parent: "_LexScope | None" = None):
+        self.parent = parent
+        self.names: dict[str, _LexBinding] = {}
+
+    def bind(self, binding: _LexBinding) -> None:
+        self.names[binding.original] = binding
+
+    def resolve(self, name: str) -> _LexBinding | None:
+        scope: _LexScope | None = self
+        while scope is not None:
+            hit = scope.names.get(name)
+            if hit is not None:
+                return hit
+            scope = scope.parent
+        return None
+
+
+def _ts_field_children(node, field_name: str) -> list:
+    out = []
+    for i, child in enumerate(node.children):
+        if node.field_name_for_child(i) == field_name:
+            out.append(child)
+    return out
+
+
+def _ts_field_name(parent, child) -> str | None:
+    cid = getattr(child, "id", None)
+    for i, candidate in enumerate(parent.children):
+        if candidate is child or (
+            cid is not None and getattr(candidate, "id", None) == cid
+        ):
+            return parent.field_name_for_child(i)
+    return None
+
+
+def _binding_prefix(script: str) -> str:
+    prefix = "__KLB"
+    while prefix in script:
+        prefix += "X"
+    return prefix
+
+
+class _LexicalPlanner:
+    def __init__(self, ctx, root_function):
+        self.ctx = ctx
+        self.root_function = root_function
+        self.prefix = _binding_prefix(ctx.script)
+        self.counter = 0
+        self.replacement_by_span: dict[tuple[int, int], str] = {}
+        self.bindings: list[_LexBinding] = []
+        self.poolable_names: list[str] = []
+        self.root_param_names: list[str] = []
+
+    def _owner_id(self, node) -> int:
+        return int(getattr(node, "id", id(node)))
+
+    def _new_binding(
+        self,
+        name: str,
+        kind: str,
+        poolable: bool,
+        owner_function,
+        decl_node=None,
+        *,
+        fixed_alpha: str | None = None,
+    ) -> _LexBinding:
+        if fixed_alpha is None:
+            alpha = f"{self.prefix}{self.counter}"
+            self.counter += 1
+        else:
+            alpha = fixed_alpha
+
+        binding = _LexBinding(
+            original=name,
+            alpha=alpha,
+            kind=kind,
+            poolable=poolable,
+            owner_function_id=self._owner_id(owner_function),
+        )
+        self.bindings.append(binding)
+
+        if poolable and alpha not in self.poolable_names:
+            self.poolable_names.append(alpha)
+
+        if decl_node is not None and alpha != name:
+            self._record(decl_node, alpha)
+
+        return binding
+
+    def _record(self, node, replacement: str) -> None:
+        s = self.ctx.cs(node)
+        e = self.ctx.ce(node) + 1
+        key = (s, e)
+        previous = self.replacement_by_span.get(key)
+        if previous is not None and previous != replacement:
+            raise RuntimeError(
+                "lexical binding resolver produced conflicting replacement "
+                f"at {s}:{e}: {previous!r} vs {replacement!r}"
+            )
+        self.replacement_by_span[key] = replacement
+
+    def _record_reference(self, node, scope: _LexScope) -> None:
+        name = self.ctx.text(node)
+        binding = scope.resolve(name)
+        if binding is not None and binding.alpha != name:
+            self._record(node, binding.alpha)
+
+    def _identifier_is_reference(self, node) -> bool:
+        parent = node.parent
+        if parent is None:
+            return True
+
+        field = _ts_field_name(parent, node)
+
+        if parent.type == "dot_index_expression" and field == "field":
+            return False
+        if parent.type == "method_index_expression" and field == "method":
+            return False
+
+        if parent.type == "field" and field == "name":
+            ptxt = self.ctx.text(parent).lstrip()
+            if not ptxt.startswith("["):
+                return False
+
+        if parent.type in ("attribute", "goto_statement", "label_statement"):
+            return False
+
+        if parent.type == "parameters":
+            return False
+
+        return True
+
+    def _walk_generic(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+        cff_visible: bool,
+    ) -> None:
+        typ = node.type
+
+        if typ == "identifier":
+            if self._identifier_is_reference(node):
+                self._record_reference(node, scope)
+            return
+
+        if typ == "function_definition":
+            self._walk_function(node, scope, is_root=False)
+            return
+
+        if typ == "function_declaration":
+            self._walk_function_declaration(
+                node, scope, owner_function, cff_visible
+            )
+            return
+        if typ == "variable_declaration":
+            self._walk_variable_declaration(
+                node, scope, owner_function, cff_visible
+            )
+            return
+
+        if typ in ("string", "string_content", "comment", "comment_content"):
+            return
+
+        for child in node.children:
+            if child.is_named:
+                self._walk_generic(
+                    child, scope, owner_function, cff_visible
+                )
+
+    def _declaration_names(self, varlist) -> list:
+        """`variable_list`가 선언하는 identifier들을 source order로 반환.
+
+        tree-sitter-lua의 `variable_list`는 변수 이름에 `name:` field를 붙이지
+        않고 positional named child로 둔다. 따라서 field 기반으로 읽으면
+        `local x`, `local a,b`, `for k,v in ...` 선언을 전부 놓친다.
+        """
+        if varlist is None:
+            return []
+
+        return [
+            child
+            for child in varlist.children
+            if child.is_named and child.type == "identifier"
+        ]
+
+    def _walk_variable_declaration(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+        cff_visible: bool,
+    ) -> None:
+        assignment = next(
+            (c for c in node.children if c.type == "assignment_statement"),
+            None,
+        )
+
+        if assignment is not None:
+            exprlist = next(
+                (c for c in assignment.children if c.type == "expression_list"),
+                None,
+            )
+            if exprlist is not None:
+                self._walk_generic(
+                    exprlist, scope, owner_function, cff_visible
+                )
+            varlist = next(
+                (c for c in assignment.children if c.type == "variable_list"),
+                None,
+            )
+        else:
+            varlist = next(
+                (c for c in node.children if c.type == "variable_list"),
+                None,
+            )
+
+        decl_names = self._declaration_names(varlist)
+
+        # `local` declaration인데 identifier를 못 읽으면 조용히 계속하지 않는다.
+        # 이 상태로 CFF를 만들면 선언 state 밖의 reference가 global/nil로 바뀌어
+        # 문법검사는 통과하고 런타임에서만 깨진다.
+        if varlist is not None and not decl_names:
+            vtxt = self.ctx.text(varlist).strip()
+            if re.search(r"[A-Za-z_]\\w*", vtxt):
+                raise RuntimeError(
+                    "function_obf lexical resolver could not read "
+                    f"local variable_list: {vtxt!r}"
+                )
+
+        pending: list[_LexBinding] = []
+        for name_node in decl_names:
+            name = self.ctx.text(name_node)
+            pending.append(self._new_binding(
+                name,
+                kind="local",
+                poolable=cff_visible,
+                owner_function=owner_function,
+                decl_node=name_node,
+            ))
+
+        for binding in pending:
+            scope.bind(binding)
+
+    def _walk_function_target(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+    ) -> None:
+        if node is None:
+            return
+        if node.type == "identifier":
+            self._record_reference(node, scope)
+            return
+
+        if node.type in ("dot_index_expression", "method_index_expression"):
+            table_node = node.child_by_field_name("table")
+            if table_node is not None:
+                self._walk_generic(
+                    table_node, scope, owner_function, False
+                )
+            return
+
+        self._walk_generic(node, scope, owner_function, False)
+
+    def _walk_function_declaration(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+        cff_visible: bool,
+    ) -> None:
+        name_node = node.child_by_field_name("name")
+        is_local = (
+            bool(node.children)
+            and node.children[0].type == "local"
+        )
+
+        if is_local and name_node is not None and name_node.type == "identifier":
+            binding = self._new_binding(
+                self.ctx.text(name_node),
+                kind="local_function",
+                poolable=cff_visible,
+                owner_function=owner_function,
+                decl_node=name_node,
+            )
+            scope.bind(binding)
+        else:
+            self._walk_function_target(
+                name_node, scope, owner_function
+            )
+
+        self._walk_function(node, scope, is_root=False)
+
+    def _walk_function(
+        self,
+        node,
+        outer_scope: _LexScope,
+        *,
+        is_root: bool,
+    ) -> None:
+        fscope = _LexScope(outer_scope)
+
+        name_node = (
+            node.child_by_field_name("name")
+            if node.type == "function_declaration"
+            else None
+        )
+
+        if name_node is not None and name_node.type == "method_index_expression":
+            fscope.bind(self._new_binding(
+                "self",
+                kind="implicit_param",
+                poolable=False,
+                owner_function=node,
+                fixed_alpha="self",
+            ))
+
+        params = node.child_by_field_name("parameters")
+        if params is not None:
+            for pnode in _ts_field_children(params, "name"):
+                if pnode.type != "identifier":
+                    continue
+                binding = self._new_binding(
+                    self.ctx.text(pnode),
+                    kind="param",
+                    poolable=False,
+                    owner_function=node,
+                    decl_node=pnode,
+                )
+                fscope.bind(binding)
+                if is_root:
+                    self.root_param_names.append(binding.alpha)
+
+        body = node.child_by_field_name("body")
+        if body is not None:
+            self._walk_block(
+                body,
+                fscope,
+                owner_function=node,
+                cff_visible=is_root,
+            )
+
+    def _walk_if(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+        cff_visible: bool,
+    ) -> None:
+        cond = node.child_by_field_name("condition")
+        if cond is not None:
+            self._walk_generic(
+                cond, scope, owner_function, cff_visible
+            )
+
+        consequence = node.child_by_field_name("consequence")
+        if consequence is not None:
+            self._walk_block(
+                consequence,
+                _LexScope(scope),
+                owner_function,
+                cff_visible,
+            )
+
+        for alt in _ts_field_children(node, "alternative"):
+            if alt.type == "elseif_statement":
+                acond = alt.child_by_field_name("condition")
+                if acond is not None:
+                    self._walk_generic(
+                        acond, scope, owner_function, cff_visible
+                    )
+                abody = alt.child_by_field_name("consequence")
+                if abody is not None:
+                    self._walk_block(
+                        abody,
+                        _LexScope(scope),
+                        owner_function,
+                        cff_visible,
+                    )
+            elif alt.type == "else_statement":
+                abody = alt.child_by_field_name("body")
+                if abody is not None:
+                    self._walk_block(
+                        abody,
+                        _LexScope(scope),
+                        owner_function,
+                        cff_visible,
+                    )
+
+    def _walk_for(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+    ) -> None:
+        clause = node.child_by_field_name("clause")
+        body = node.child_by_field_name("body")
+
+        if clause is None:
+            if body is not None:
+                self._walk_block(
+                    body, _LexScope(scope), owner_function, False
+                )
+            return
+
+        loop_scope = _LexScope(scope)
+
+        if clause.type == "for_numeric_clause":
+            for fname in ("start", "end", "step"):
+                expr = clause.child_by_field_name(fname)
+                if expr is not None:
+                    self._walk_generic(
+                        expr, scope, owner_function, False
+                    )
+
+            name_node = clause.child_by_field_name("name")
+            if name_node is not None and name_node.type == "identifier":
+                binding = self._new_binding(
+                    self.ctx.text(name_node),
+                    kind="for",
+                    poolable=False,
+                    owner_function=owner_function,
+                    decl_node=name_node,
+                )
+                loop_scope.bind(binding)
+
+        elif clause.type == "for_generic_clause":
+            exprlist = next(
+                (c for c in clause.children if c.type == "expression_list"),
+                None,
+            )
+            if exprlist is not None:
+                self._walk_generic(
+                    exprlist, scope, owner_function, False
+                )
+
+            varlist = next(
+                (c for c in clause.children if c.type == "variable_list"),
+                None,
+            )
+            binder_nodes = self._declaration_names(varlist)
+            if varlist is not None and not binder_nodes:
+                vtxt = self.ctx.text(varlist).strip()
+                if re.search(r"[A-Za-z_]\\w*", vtxt):
+                    raise RuntimeError(
+                        "function_obf lexical resolver could not read "
+                        f"generic-for variable_list: {vtxt!r}"
+                    )
+
+            pending = []
+            for name_node in binder_nodes:
+                pending.append(self._new_binding(
+                    self.ctx.text(name_node),
+                    kind="for",
+                    poolable=False,
+                    owner_function=owner_function,
+                    decl_node=name_node,
+                ))
+            for binding in pending:
+                loop_scope.bind(binding)
+
+        if body is not None:
+            self._walk_block(
+                body, loop_scope, owner_function, False
+            )
+
+    def _walk_statement(
+        self,
+        node,
+        scope: _LexScope,
+        owner_function,
+        cff_visible: bool,
+    ) -> None:
+        typ = node.type
+
+        if typ == "variable_declaration":
+            self._walk_variable_declaration(
+                node, scope, owner_function, cff_visible
+            )
+            return
+
+        if typ == "function_declaration":
+            self._walk_function_declaration(
+                node, scope, owner_function, cff_visible
+            )
+            return
+
+        if typ == "if_statement":
+            self._walk_if(
+                node, scope, owner_function, cff_visible
+            )
+            return
+
+        if typ == "for_statement":
+            self._walk_for(node, scope, owner_function)
+            return
+
+        if typ == "while_statement":
+            cond = node.child_by_field_name("condition")
+            if cond is not None:
+                self._walk_generic(
+                    cond, scope, owner_function, False
+                )
+            body = node.child_by_field_name("body")
+            if body is not None:
+                self._walk_block(
+                    body, _LexScope(scope), owner_function, False
+                )
+            return
+
+        if typ == "repeat_statement":
+            repeat_scope = _LexScope(scope)
+            body = node.child_by_field_name("body")
+            if body is not None:
+                self._walk_block(
+                    body, repeat_scope, owner_function, False
+                )
+            cond = node.child_by_field_name("condition")
+            if cond is not None:
+                self._walk_generic(
+                    cond, repeat_scope, owner_function, False
+                )
+            return
+
+        if typ == "do_statement":
+            body = node.child_by_field_name("body")
+            if body is not None:
+                self._walk_block(
+                    body, _LexScope(scope), owner_function, False
+                )
+            return
+
+        self._walk_generic(
+            node, scope, owner_function, cff_visible
+        )
+
+    def _walk_block(
+        self,
+        block,
+        scope: _LexScope,
+        owner_function,
+        cff_visible: bool,
+    ) -> None:
+        for stmt in _block_stmts(self.ctx, block):
+            self._walk_statement(
+                stmt, scope, owner_function, cff_visible
+            )
+
+    def build(self) -> _LexicalPlan:
+        outer = _LexScope(None)
+        self._walk_function(
+            self.root_function,
+            outer,
+            is_root=True,
+        )
+
+        replacements = [
+            (s, e, value)
+            for (s, e), value in self.replacement_by_span.items()
+        ]
+        replacements.sort(key=lambda item: item[0])
+
+        return _LexicalPlan(
+            replacements=replacements,
+            starts=[item[0] for item in replacements],
+            root_param_names=list(self.root_param_names),
+            poolable_names=list(self.poolable_names),
+            bindings=list(self.bindings),
+        )
+
+
+def _build_lexical_plan(ctx, function_node) -> _LexicalPlan:
+    return _LexicalPlanner(ctx, function_node).build()
+
+
+def _rewrite_range_with_plan(
+    ctx,
+    start: int,
+    end_exclusive: int,
+    plan: _LexicalPlan,
+) -> str:
+    if not plan.replacements:
+        return ctx.script[start:end_exclusive]
+
+    idx = bisect_left(plan.starts, start)
+    out: list[str] = []
+    pos = start
+
+    while idx < len(plan.replacements):
+        rs, re_, replacement = plan.replacements[idx]
+        if rs >= end_exclusive:
+            break
+
+        if rs < start or re_ > end_exclusive:
+            raise RuntimeError(
+                "lexical replacement crosses requested source range: "
+                f"{rs}:{re_} outside {start}:{end_exclusive}"
+            )
+
+        out.append(ctx.script[pos:rs])
+        out.append(replacement)
+        pos = re_
+        idx += 1
+
+    out.append(ctx.script[pos:end_exclusive])
+    return "".join(out)
+
+
+def _rewrite_node_with_plan(ctx, node, plan: _LexicalPlan) -> str:
+    return _rewrite_range_with_plan(
+        ctx,
+        ctx.cs(node),
+        ctx.ce(node) + 1,
+        plan,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -800,7 +1534,7 @@ def _find_function_body_end(text: str, body_start: int) -> int:
     repeat...until은 `do`를 쓰지 않지만 `repeat`(+1)/`until`(-1)로
     동일하게 균형이 맞는다.
     """
-    masked = _strip_protected(text)
+    masked = _strip_strings_only(text)
     # `do`는 `for`/`while` 뒤에 오는 경우 별도로 depth를 늘리면 이중 계산이
     # 되므로, `function`/`if`/`for`/`while`/`repeat`만 +1, `end`/`until`만 -1로
     # 계산하고 단독 `do ... end` 블록(예: `do local x=1 end`)은 `do`가 +1,
@@ -848,8 +1582,7 @@ def _rename_colliding_params(text: str, pooled_names: set[str]) -> str:
         m = _FUNC_PARAMS_SPAN_RE.search(text, pos)
         if not m:
             break
-        param_text = text[m.start():m.end()][len('function'):].strip()
-        param_text = param_text[1:-1]  # strip surrounding ()
+        param_text = m.group(1)
         params = [p.strip() for p in param_text.split(',')]
         params = [p for p in params if p and p != '...']
         colliding = [p for p in params if p in pooled_names]
@@ -881,20 +1614,34 @@ def _rename_colliding_params(text: str, pooled_names: set[str]) -> str:
 
 
 def _build_var_tables(names: list[str]) -> tuple[list[str], dict[str, str]]:
-    """names를 _VARS_PER_TABLE개씩 묶어 테이블에 배정한다.
+    """고유 lexical alpha-name들을 table slot에 배정한다.
 
-    반환: (table_decl_lines, name_to_ref)
-      table_decl_lines: ["local _T1={}", "local _T2={}", ...]
-      name_to_ref: {"foo": "_T1.foo", "_z3": "_T1._z3", ...}
+    Phase 2에서는 names의 각 항목이 이미 하나의 lexical binding identity다.
+    table field 이름도 source variable 이름을 재사용하지 않고 `_bN` slot으로
+    만들어, name-based identity가 다시 의미를 갖지 않게 한다.
+
+    반환:
+      table_decl_lines: ["local _T0={}", "local _T1={}", ...]
+      name_to_ref: {"__KLB0": "_T0._b0", "__KLB1": "_T0._b1", ...}
     """
     table_decls: list[str] = []
     name_to_ref: dict[str, str] = {}
-    for idx, name in enumerate(names):
+
+    safe_names = [
+        name for name in names
+        if name not in _LUA_KEYWORDS
+    ]
+
+    for idx, name in enumerate(safe_names):
         tbl_idx = idx // _VARS_PER_TABLE
+        slot_idx = idx % _VARS_PER_TABLE
         tbl = f"_T{tbl_idx}"
+
         if tbl_idx == len(table_decls):
             table_decls.append(f"local {tbl}={{}}")
-        name_to_ref[name] = f"{tbl}.{name}"
+
+        name_to_ref[name] = f"{tbl}._b{slot_idx}"
+
     return table_decls, name_to_ref
 
 
@@ -1289,9 +2036,10 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     것으로, state 갱신을 `if cond then sv=then else sv=else end` 형태로 emit해
     조건 분기 자체를 평탄화한다.
 
-    extra_hoist_names: `local function NAME(...)`에서 미리 추출한 이름들.
-    `local NAME` 형태로 while 루프 앞에 선언해, 어느 분기에서 `NAME=function...`
-    형태로 할당해도 다른 분기에서 NAME을 참조할 수 있게 한다.
+    extra_hoist_names: Phase-2 AST resolver가 CFF로 실제 분해되는 scope에서
+    수집한 lexical binding의 고유 alpha-name들. direct `local function`은
+    prelift 과정에서도 이 목록에 보강된다. opaque loop/nested-function 내부
+    local은 포함하지 않는다.
 
     hoist되는 local 변수 + CFF 자체가 생성하는 내부 변수(zv)의 총 개수가
     `_TABLE_THRESHOLD`를 넘으면, 개별 `local` 슬롯 대신 테이블 필드
@@ -1299,21 +2047,19 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     한도를 회피한다. 이 변환은 거대한 VM dispatcher처럼 hoist 대상이
     매우 많은 경우에만 활성화되며, 일반적인 작은 함수는 영향이 없다.
     """
-    # 1) 각 블록 body에 등장하는 local 선언 이름들을 모은다 (텍스트는 아직 그대로).
-    #    `then local x=...`처럼 줄 중간에 등장하는 선언도 잡기 위해 블록 lines를
-    #    한 텍스트로 합쳐 위치 무관하게 스캔한다. branch 블록의 조건식은 새 local을
-    #    만들지 않으므로(기존 hoist/param 참조) lines만 스캔하면 충분하다.
-    #    `function(...)` 파라미터 목록 내부의 이름은 _scan_local_names가
-    #    보호 구간으로 처리해 자동으로 제외된다(파라미터는 local 선언이 아님).
-    real_names: set[str] = set()
-    for blk in blocks:
-        real_names |= _scan_local_names("\n".join(blk["lines"]))
-
-    hoist_names = list(real_names)
-    for name in (extra_hoist_names or []):
-        if name not in real_names:
-            hoist_names.append(name)
-            real_names.add(name)
+    # Phase 2에서는 hoist 대상이 AST resolver에서 이미 확정되어 있다.
+    # emitted text를 다시 `_scan_local_names()`로 훑으면 nested function/opaque loop
+    # 내부 local까지 바깥 scope local로 오인해 hoist하는 옛 버그가 되살아난다.
+    #
+    # extra_hoist_names:
+    #   - root function / flattened if branch에서 선언된 고유 alpha binding
+    #   - prelift된 direct local function binding
+    #
+    # opaque statement 내부 local은 의도적으로 포함되지 않는다.
+    hoist_names = list(dict.fromkeys(
+        extra_hoist_names or []
+    ))
+    real_names: set[str] = set(hoist_names)
 
     zv_start = c[0]
 
@@ -1345,51 +2091,150 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
 
     # 4) hoist 대상(real_names ∪ extra_hoist_names) + CFF가 생성한 zv
     #    (sv1/sv2/junk 전부) 총 개수로 테이블화 여부를 결정한다.
-    pooled_names = set(hoist_names) | set(zv_names)
-    use_tables = len(pooled_names) > _TABLE_THRESHOLD
+    all_hoisted_names = set(hoist_names) | set(zv_names)
+    use_tables = len(all_hoisted_names) > _TABLE_THRESHOLD
+
+    # ------------------------------------------------------------------
+    # Lua for-control variable 보호
+    #
+    # Lua:
+    #
+    #   for i = 1, n do ... end
+    #   for k, v in pairs(t) do ... end
+    #
+    # 의 i/k/v는 assignment target이 아니라 새로운 lexical local 선언이다.
+    #
+    # 따라서 text-level pooling으로
+    #
+    #   i -> _T0.i
+    #
+    # 를 적용하면:
+    #
+    #   for _T0.i = 1, n do
+    #
+    # 가 되어 syntax error:
+    #
+    #   '=' or 'in' expected near '.'
+    #
+    # 가 발생한다.
+    #
+    # Header만 치환에서 제외하는 것도 충분하지 않다. 예를 들어
+    #
+    #   for i=1,n do
+    #       out[i] = ...
+    #   end
+    #
+    # 에서 header의 i만 남기고 body의 i를 `_T0.i`로 바꾸면 서로 다른
+    # 변수가 되어 semantics가 깨진다.
+    #
+    # 따라서 for binder와 이름이 충돌하는 hoist local은 테이블화하지 않고
+    # 실제 Lua local로 유지한다. 원래 분기 안의 local 선언은 아래에서
+    # 제거하고 함수 prologue에 `local name`으로 다시 hoist한다.
+    # ------------------------------------------------------------------
+
+    emitted_text = "\n".join(lines)
+    for_binding_names = _scan_for_binding_names(emitted_text)
+
+    # 이 이름들은 CFF scope 간 공유가 필요한 hoisted local이면서 동시에
+    # 어디선가 for의 lexical binder로 사용되는 이름이다.
+    #
+    # table field로 바꾸지 않고 실제 function-scope local로 유지한다.
+    lexical_hoist_names = all_hoisted_names & for_binding_names
+
+    # 실제 table field로 변환할 이름들.
+    table_pool_names = all_hoisted_names - lexical_hoist_names
 
     prologue: list[str] = []
+
     if use_tables:
-        table_decls, name_to_ref = _build_var_tables(list(pooled_names))
+        # for binder와 충돌하지 않는 local들만 table slot으로 보낸다.
+        table_decls, name_to_ref = _build_var_tables(list(table_pool_names))
         prologue.extend(table_decls)
     else:
-        # 비-테이블 모드: hoist 선언(`local NAME`)은 strip 단계에서 declare-only로
-        # 같이 제거되므로 여기서 붙이지 않고, strip 이후에 본문 앞에 붙인다(아래).
         name_to_ref = {}
 
-    # sv1/sv2 초기화 `local {sv}=...`는 위 emit에 이미 포함돼 있다. 테이블
-    # 모드에서는 sv1/sv2도 pooled_names에 속하므로 아래 strip+substitute가
-    # `_Tn.sv1=...`로 일괄 변환하고, 비-테이블 모드에서는 hoist 대상이 아니라
-    # state-local(`local sv1`)로 그대로 남는다.
+    # sv1/sv2 초기화 `local {sv}=...`는 emitter output에 이미 포함돼 있다.
+    #
+    # table mode:
+    #   table_pool_names에 속하는 local은
+    #       local x=...
+    #           ↓
+    #       x=...
+    #           ↓
+    #       _T0.x=...
+    #
+    # lexical_hoist_names는
+    #       local i=...
+    #           ↓ strip
+    #       i=...
+    #
+    # 로 만든 후 맨 앞에 별도의 `local i`를 붙인다.
+    #
+    # 이렇게 해야 CFF의 서로 다른 state에서도 동일한 outer local을
+    # 공유하면서, `for i=...`가 만드는 loop-local은 자연스럽게 outer i를
+    # shadow한다.
     body = ("\n" + _IND).join(prologue + lines)
 
     if use_tables:
-        # pooled_names에 해당하는 모든 `local` 선언(real chunk 내부의
-        # `local x=...`/`local x`, dead/live state의 `local _zN=...`,
-        # 위에서 작성한 `local {sv}=...` 전부)을 일괄적으로 strip한 뒤,
-        # 동일한 이름의 모든 참조를 테이블 필드로 치환한다.
-        # only_names로 제한하므로 `local _T0={}` 같은 테이블 선언 자체는
-        # 영향받지 않는다.
+        # 실제 table substitution 대상과 충돌하는 nested function parameter만
+        # rename하면 된다.
         #
-        # 치환은 chunk 전체 텍스트에 대한 식별자 단위 일괄 치환이므로,
-        # `function(t)...end`처럼 pooled_names와 이름이 겹치는 파라미터가
-        # 있으면 본문의 파라미터 참조까지 `_Tn.t`로 치환되어 파라미터
-        # 바인딩이 깨진다. 충돌하는 파라미터를 먼저 고유한 이름으로
-        # 바꿔 이런 충돌을 제거한다.
-        body = _rename_colliding_params(body, pooled_names)
-        _, body = _collect_and_strip_locals(body, only_names=pooled_names)
-        body = _replace_idents_outside_strings(body, name_to_ref)
+        # lexical_hoist_names는 table substitution을 하지 않으므로
+        # parameter와 같은 이름이어도 여기서 rename할 이유가 없다.
+        body = _rename_colliding_params(body, table_pool_names)
+
+        # 모든 CFF-hoisted local 선언을 제거한다.
+        #
+        # table_pool_names:
+        #     이후 `_Tn.name`으로 치환됨.
+        #
+        # lexical_hoist_names:
+        #     이후 function prologue에 실제 `local name` 선언을 추가함.
+        #
+        # 이렇게 하지 않고 lexical_hoist_names의 원래 local 선언을
+        # state 내부에 남겨두면 CFF 분기 사이에서 scope가 끊어진다.
+        _, body = _collect_and_strip_locals(
+            body,
+            only_names=all_hoisted_names,
+        )
+
+        # table에 들어가는 이름만 field reference로 치환.
+        body = _replace_idents_outside_strings(
+            body,
+            name_to_ref,
+        )
+
+        # for binder 이름과 충돌한 hoisted local은 실제 function local로 유지.
+        #
+        # 중요:
+        # 이 선언은 _collect_and_strip_locals() 이후에 붙여야 한다.
+        # 이전에 붙이면 위 strip 단계가 이 선언까지 다시 지워버린다.
+        if lexical_hoist_names:
+            lexical_decl = (
+                "local "
+                + ",".join(sorted(lexical_hoist_names))
+            )
+            body = lexical_decl + "\n" + body
+
     else:
-        # real chunk 본문 안의 `local NAME=...`(→`NAME=...`) / `local NAME`(→제거)을
-        # strip한다 (제거 안 하면 분기 내부에서 shadow되어 분기 간 상태 공유 불가).
-        # hoist 선언(`local NAME`)도 declare-only라 이 strip에 같이 지워지므로,
-        # strip을 먼저 끝낸 뒤 hoist 선언을 본문 앞에 붙인다. 이렇게 해야 hoist된
-        # local이 while 앞에 실제로 선언되어 분기 간 공유되고, 누락 시 전역으로
-        # 새지 않는다. zv(`_zN`)는 hoist 대상이 아니라 state-local로 그대로 둔다.
-        _, body = _collect_and_strip_locals(body, only_names=set(hoist_names))
+        # 비-table mode에서는 기존 방식 그대로.
+        #
+        # real chunk 본문 안의 `local NAME=...` -> `NAME=...`
+        # `local NAME` -> 제거
+        #
+        # 한 뒤 function scope 맨 앞에서 한 번 hoist한다.
+        _, body = _collect_and_strip_locals(
+            body,
+            only_names=set(hoist_names),
+        )
+
         if hoist_names:
-            decls = ("\n" + _IND).join(f"local {n}" for n in hoist_names)
-            body = decls + "\n" + _IND + body
+            body = (
+                "local "
+                + ",".join(hoist_names)
+                + "\n"
+                + body
+            )
 
     return body
 
@@ -1430,48 +2275,39 @@ def _subtree_has_goto_or_label(node) -> bool:
 
 
 def _prelift_local_function_stmt(ctx, stmt, text: str) -> tuple[str | None, str]:
-    """`local function NAME(...) ... end` statement를 `NAME=function(...) ... end`로
-    재작성하고, NAME을 반환한다 (해당 타입이 아니면 (None, text) 그대로 반환).
+    """alpha-renamed `local function NAME(...) ... end`를 prelift한다.
 
-    `local function`은 자기 자신을 참조(재귀)할 수 있도록 선언과 동시에
-    스코프에 들어가는 특수 형태라, CFF로 여러 if/elseif 분기에 흩어지면
-    선언된 분기를 벗어나는 즉시 스코프 밖으로 사라진다. 이를 일반
-    `local NAME` 선언으로 hoist 가능한 형태(`NAME=function...`)로 미리
-    변환해두면 이후 local-pooling 단계가 처리할 수 있다.
-
-    `function r.u8()` / `function obj:method()`처럼 점/메서드 표기 이름은
-    local-function이 아니므로 prelift 대상이 아니다(불투명 chunk로 유지).
+    Phase-2 lexical resolver가 declaration name을 이미 고유 alpha-name으로
+    바꿨으므로, 반환되는 NAME도 rewritten text에서 읽는다.
     """
     if not _is_local_func(stmt):
         return None, text
 
-    name_node = ctx.first_child(stmt, "identifier")
-    if name_node is None:
+    m = re.match(
+        r'^\s*local\s+function\s+([A-Za-z_]\w*)',
+        text,
+    )
+    if m is None:
         return None, text
-    name = ctx.text(name_node)
-    # text는 "local function NAME(...) ... end" 형태. 첫 '(' 위치부터
-    # 그대로 이어 붙여 "NAME=function(...) ... end"로 재작성한다.
-    paren_pos = text.index('(')
+
+    name = m.group(1)
+    paren_pos = text.find("(", m.end())
+    if paren_pos < 0:
+        return None, text
+
     return name, f"{name}=function{text[paren_pos:]}"
 
 
-def _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names: list[str]) -> tuple[list[dict], int]:
+def _compile_stmts_to_blocks(
+    ctx,
+    stmts,
+    extra_hoist_names: list[str],
+    lexical_plan: _LexicalPlan | None = None,
+) -> tuple[list[dict], int]:
     """문장열을 상태 머신 블록 전이 그래프로 컴파일한다.
 
-    `if_statement`을 만나면 조건을 평가하는 branch 블록 + then/else 본문을 각각
-    sub-블록열로 재귀 컴파일해, `if/else` 구조 자체를 상태 머신에 흡수한다
-    (합류점 = if 다음 문장의 블록). `elseif`는 else 자리의 if로 재귀한다.
-
-    while/for/repeat/do 등 다른 복합문은 통째로 불투명 goto 블록으로 둔다:
-    루프 내부의 `break`가 CFF 디스패치 while로 새면 안 되고, 루프는 한 chunk로
-    유지하는 편이 안전하다. (직선 흐름의 if는 그 안에 break가 문법상 올 수 없어
-    흡수해도 안전하고, goto/label 있는 함수는 호출부에서 이미 통째로 skip한다.)
-
-    각 문장(모든 중첩 레벨)에 `local function NAME` prelift를 적용해, 여러
-    상태로 흩어져도 NAME이 함수 스코프 hoist 대상으로 남게 한다.
-
-    반환: (blocks, entry_id). 각 블록 dict는 `_build_generic_cff` 참고.
-    entry_id는 실행 시작 블록 id (0=종료).
+    lexical_plan이 있으면 statement/condition을 source에서 꺼낼 때
+    AST-resolved alpha rename을 먼저 적용한다.
     """
     blocks: list[dict] = []
     counter = [0]
@@ -1480,61 +2316,97 @@ def _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names: list[str]) -> tuple[
         counter[0] += 1
         return counter[0]
 
+    def _text(node) -> str:
+        if node is None:
+            return ""
+        if lexical_plan is None:
+            return ctx.text(node)
+        return _rewrite_node_with_plan(ctx, node, lexical_plan)
+
     def _stmts_of(block_node) -> list:
-        # 본문이 비어 있는 `if c then end`/`elseif c then end`/`else end`는
-        # tree-sitter가 consequence/body 필드를 주지 않아 None이 온다 → 빈 블록.
         return _block_stmts(ctx, block_node) if block_node is not None else []
 
     def _stmt_lines(stmt) -> list[str]:
-        text = ctx.text(stmt).strip()
-        name, text = _prelift_local_function_stmt(ctx, stmt, text)
-        if name is not None:
+        stmt_text = _text(stmt).strip()
+        name, stmt_text = _prelift_local_function_stmt(
+            ctx, stmt, stmt_text
+        )
+        if name is not None and name not in extra_hoist_names:
             extra_hoist_names.append(name)
-        return [ln.strip() for ln in text.splitlines() if ln.strip()]
+        return [
+            ln.strip()
+            for ln in stmt_text.splitlines()
+            if ln.strip()
+        ]
 
     def _branch(cond: str, then_entry: int, else_entry: int) -> int:
-        # 조건식은 원문 그대로(줄바꿈 포함) 유지한다 — 조건 끝의 줄-주석이나
-        # 여러 줄 조건은 update emit 시 `(cond\n)` 로 감싸 안전하게 처리한다.
         bid = _new_id()
-        blocks.append({"id": bid, "lines": [], "kind": "branch",
-                       "cond": cond, "t": then_entry, "e": else_entry})
+        blocks.append({
+            "id": bid,
+            "lines": [],
+            "kind": "branch",
+            "cond": cond,
+            "t": then_entry,
+            "e": else_entry,
+        })
         return bid
 
     def _compile_if(node, after_id: int) -> int:
-        # tree-sitter-lua는 elseif를 중첩이 아니라 if_statement의 형제
-        # `alternative` 필드로 평탄하게 나열한다: [elseif_statement...] + [else_statement?].
-        # 따라서 alternative 자식을 순서대로 모두 수집해 직접 체인을 만든다.
-        alts = [ch for i, ch in enumerate(node.children)
-                if node.field_name_for_child(i) == "alternative"]
-        elseifs = [a for a in alts if a.type == "elseif_statement"]
-        else_node = next((a for a in alts if a.type == "else_statement"), None)
+        alts = [
+            ch for i, ch in enumerate(node.children)
+            if node.field_name_for_child(i) == "alternative"
+        ]
+        elseifs = [
+            a for a in alts
+            if a.type == "elseif_statement"
+        ]
+        else_node = next(
+            (a for a in alts if a.type == "else_statement"),
+            None,
+        )
 
-        # 체인의 최종 else 진입점 (else 없으면 if 다음 문장으로 합류).
         if else_node is not None:
-            chain = _compile_seq(_stmts_of(else_node.child_by_field_name("body")), after_id)
+            chain = _compile_seq(
+                _stmts_of(
+                    else_node.child_by_field_name("body")
+                ),
+                after_id,
+            )
         else:
             chain = after_id
 
-        # elseif들을 뒤에서 앞으로 감싸 else 체인을 구성.
         for ei in reversed(elseifs):
-            ei_cond = ctx.text(ei.child_by_field_name("condition")).strip()
-            ei_then = _compile_seq(_stmts_of(ei.child_by_field_name("consequence")), after_id)
+            cond_node = ei.child_by_field_name("condition")
+            ei_cond = _text(cond_node).strip()
+            ei_then = _compile_seq(
+                _stmts_of(
+                    ei.child_by_field_name("consequence")
+                ),
+                after_id,
+            )
             chain = _branch(ei_cond, ei_then, chain)
 
-        # 최상위 if.
-        cond = ctx.text(node.child_by_field_name("condition")).strip()
-        then_entry = _compile_seq(_stmts_of(node.child_by_field_name("consequence")), after_id)
+        cond_node = node.child_by_field_name("condition")
+        cond = _text(cond_node).strip()
+        then_entry = _compile_seq(
+            _stmts_of(
+                node.child_by_field_name("consequence")
+            ),
+            after_id,
+        )
         return _branch(cond, then_entry, chain)
 
     def _compile_seq(stmt_list, after_id: int) -> int:
-        # 뒤에서 앞으로 컴파일 → 각 블록의 후속 id를 바로 알 수 있다.
         next_id = after_id
         for stmt in reversed(stmt_list):
             if stmt.type == "if_statement":
                 next_id = _compile_if(stmt, next_id)
             else:
                 bid = _new_id()
-                blk = {"id": bid, "lines": _stmt_lines(stmt)}
+                blk = {
+                    "id": bid,
+                    "lines": _stmt_lines(stmt),
+                }
                 if stmt.type == "return_statement":
                     blk["kind"] = "return"
                 else:
@@ -1548,14 +2420,14 @@ def _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names: list[str]) -> tuple[
     return blocks, entry
 
 
-def _transform_body(ctx, block, params: list[str], rich_junk: bool = True) -> str | None:
-    """함수 본문(block 노드)을 변환. 변환 불가능하면 None.
+def _transform_body(
+    ctx,
+    function_node,
+    block,
+    rich_junk: bool = True,
+) -> str | None:
+    """함수 본문을 Phase-2 lexical binding 보존 상태로 CFF 변환."""
 
-    top-level 문장열을 블록 전이 그래프로 컴파일(`_compile_stmts_to_blocks`)한 뒤
-    state machine으로 평탄화한다. `if/else`는 조건 branch 블록으로 흡수되어
-    분기 구조 자체가 평탄화되고, 루프/nested function 본문은 불투명 블록으로
-    한 단위로만 다뤄진다.
-    """
     stmts = _block_stmts(ctx, block)
     if not stmts:
         return None
@@ -1564,53 +2436,59 @@ def _transform_body(ctx, block, params: list[str], rich_junk: bool = True) -> st
         if _subtree_has_goto_or_label(stmt):
             return None
 
-    # Collect declarations from the original function scope before lowering
-    # branches into detached state blocks.  The textual block scan performed
-    # by _build_generic_cff is still useful as a fallback, but declarations
-    # following semicolon-separated statements inside an if branch can
-    # otherwise remain branch-local after flattening.  Once another state
-    # reads such a name Lua resolves it as a global (usually nil).
-    #
-    # Do not descend into nested functions: their locals belong to a different
-    # lexical scope and must not be hoisted into this function.
-    scope_local_names: set[str] = set()
-    pending = list(block.children)
-    while pending:
-        current = pending.pop()
-        if current.type in _FUNC_NODE_TYPES:
-            continue
-        if current.type == "variable_declaration":
-            scope_local_names.update(_scan_local_names(ctx.text(current)))
-            continue
-        pending.extend(current.children)
+    lexical_plan = _build_lexical_plan(ctx, function_node)
 
-    extra_hoist_names: list[str] = sorted(scope_local_names)
-    blocks, entry = _compile_stmts_to_blocks(ctx, stmts, extra_hoist_names)
+    # CFF가 실제로 분해하는 root/if scope local만 hoist 대상.
+    # loop/do/repeat/nested-function local은 plan.poolable_names에 없다.
+    extra_hoist_names: list[str] = list(
+        lexical_plan.poolable_names
+    )
+
+    blocks, entry = _compile_stmts_to_blocks(
+        ctx,
+        stmts,
+        extra_hoist_names,
+        lexical_plan=lexical_plan,
+    )
 
     c: list[int] = [0]
+    params = list(lexical_plan.root_param_names)
 
     prefix_lines: list[str] = []
     if params:
-        prefix_lines.append(f"local {','.join(params)}=...")
+        prefix_lines.append(
+            f"local {','.join(params)}=..."
+        )
 
-    # 너무 단순한 본문(단일 simple/return 문, 분기 없음)은 CFF가 무의미하니
-    # vararg 언팩만 적용한다. branch 블록이 하나라도 있으면(조건 흡수 대상)
-    # side-effect 있는 조건이 사라지지 않도록 CFF 경로로 보낸다.
+    # 단일 simple/return statement는 CFF 없이 alpha-renaming + vararg unpack만.
     if len(blocks) == 1 and blocks[0]["kind"] != "branch":
         lines = blocks[0]["lines"]
+
+        # direct local function은 compiler가 prelift했으므로 simple path에서는
+        # 원래 local-function syntax로 복원한다.
         if extra_hoist_names:
             restored = []
             for ln in lines:
                 m = re.match(r'^(\w+)=function', ln)
                 if m and m.group(1) in extra_hoist_names:
-                    restored.append(f"local function {m.group(1)}{ln[len(m.group(0)):]}")
+                    restored.append(
+                        f"local function {m.group(1)}"
+                        f"{ln[len(m.group(0)):]}"
+                    )
                 else:
                     restored.append(ln)
             lines = restored
+
         return "\n".join(prefix_lines + lines)
 
-    cff = _build_generic_cff(blocks, entry, c, extra_hoist_names, rich_junk=rich_junk,
-                             param_names=params)
+    cff = _build_generic_cff(
+        blocks,
+        entry,
+        c,
+        extra_hoist_names,
+        rich_junk=rich_junk,
+        param_names=params,
+    )
     return "\n".join(prefix_lines + [cff])
 
 
@@ -1756,7 +2634,12 @@ class FunctionObfuscationPass(BasePass):
             # VM 재난독화(skip_vm_dispatcher)에서는 rich junk을 끈다: 함수 정의/
             # 루프/다양한 연산자가 든 가짜 흐름이 VM 템플릿을 이후 패스와 함께
             # 재난독화할 때(localize_globals 등) 깨질 수 있어, 보수적 흐름만 쓴다.
-            new_body = _transform_body(ctx, block, params, rich_junk=not self.skip_vm_dispatcher)
+            new_body = _transform_body(
+                ctx,
+                node,
+                block,
+                rich_junk=not self.skip_vm_dispatcher,
+            )
             if new_body is None:
                 continue
 
@@ -1775,3 +2658,283 @@ class FunctionObfuscationPass(BasePass):
         self.last_transformed_count = len(claimed_ranges)
         self.last_transform_elapsed = time.perf_counter() - transform_start
         return replacements
+
+if __name__ == "__main__":
+    # --- function_obfuscation lexical-pooling smoke tests ---
+    # 이 테스트는 전체 obfuscation pipeline을 돌리는 게 아니라, table-pooling의
+    # 텍스트 치환이 Lua의 lexical binder 문법을 깨뜨리지 않는지만 빠르게 확인한다.
+    def _assert_no_pooled_binders(label: str, out: str) -> None:
+        bad_for = re.search(
+            r'\bfor\s+_T\d+\.[A-Za-z_]\w*\s*(?:=|\bin\b)',
+            out,
+        )
+        bad_param = re.search(
+            r'\bfunction(?:\s+[A-Za-z_]\w*(?:[.:][A-Za-z_]\w*)*)?'
+            r'\s*\([^)]*_T\d+\.[A-Za-z_]\w*',
+            out,
+        )
+        if bad_for:
+            raise AssertionError(
+                f"{label}: pooled field leaked into for binder: {bad_for.group(0)!r}"
+            )
+        if bad_param:
+            raise AssertionError(
+                f"{label}: pooled field leaked into function parameter: "
+                f"{bad_param.group(0)!r}"
+            )
+
+    # anonymous function parameter collision
+    _src = "local x=1; local f=function(x)return x+1 end; return x+f(2)"
+    _out = _rename_colliding_params(_src, {"x"})
+    assert "function(_p0)" in _out, _out
+    assert "return _p0+1" in _out, _out
+    _assert_no_pooled_binders("anonymous-param", _out)
+
+    # named local function parameter collision
+    _src = "local function bits(n) return n+1 end; local n=3; return bits(n)"
+    _out = _rename_colliding_params(_src, {"n"})
+    assert re.search(r'local function bits\(_p\d+\)', _out), _out
+    assert re.search(r'return _p\d+\+1', _out), _out
+    _assert_no_pooled_binders("local-function-param", _out)
+
+    # dotted / method-style named function parameter collision
+    _src = (
+        "function obj.method(x,y) return x+y end "
+        "function obj:other(y) return y end"
+    )
+    _out = _rename_colliding_params(_src, {"x", "y"})
+    assert re.search(r'function obj\.method\(_p\d+,_p\d+\)', _out), _out
+    assert re.search(r'function obj:other\(_p\d+\)', _out), _out
+    _assert_no_pooled_binders("named-method-param", _out)
+
+    # local declaration scanner must never treat Lua keyword `function` as a local name.
+    _locals = _scan_local_names(
+        "local function foo(a) return a end; local x=1; local y,z=2,3"
+    )
+    assert "function" not in _locals, _locals
+    assert {"x", "y", "z"} <= _locals, _locals
+
+    # for-control variables are lexical binders and must be discoverable for exclusion.
+    _for_names = _scan_for_binding_names(
+        "for i=1,n do end; for k,v in pairs(t) do end"
+    )
+    assert {"i", "k", "v"} <= _for_names, _for_names
+
+    # Regression: protected function signatures must not bridge `local`
+    # to the first keyword/token in the nested function body.
+    _locals = _scan_local_names(
+        "local function foo(a)\n"
+        "    while a do\n"
+        "        local x=1\n"
+        "        break\n"
+        "    end\n"
+        "end\n"
+        "local y=2"
+    )
+    assert _locals == {"x", "y"}, _locals
+    assert not (_locals & _LUA_KEYWORDS), _locals
+
+    # Same regression with another local declaration immediately after
+    # a protected named-function signature.
+    _locals = _scan_local_names(
+        "local function foo(a)\n"
+        "local z=1\n"
+        "end"
+    )
+    assert _locals == {"z"}, _locals
+
+    # Reserved words must never be substituted even if a corrupted mapping
+    # is deliberately supplied.
+    _guarded = _subst_var_refs(
+        "local x=1 while x<2 do x=x+1 end",
+        {
+            "local": "_T0.local",
+            "while": "_T0.while",
+            "x": "_T0.x",
+        },
+        _STRING_LIT_RE,
+    )
+    assert "_T0.local" not in _guarded, _guarded
+    assert "_T0.while" not in _guarded, _guarded
+    assert "_T0.x" in _guarded, _guarded
+
+    # Table builder also discards impossible keyword names defensively.
+    _decls, _mapping = _build_var_tables(["x", "local", "while", "y"])
+    assert "local" not in _mapping and "while" not in _mapping, _mapping
+    assert {"x", "y"} <= set(_mapping), _mapping
+
+    # Phase-2 AST lexical binding regression:
+    # same spelling in root / if branch / nested function must become distinct
+    # bindings, while only root/flattened-if bindings are poolable.
+    from .ts_utils import parse as _ts_parse
+
+    _lex_src = """
+return function(c)
+    local v = c
+
+    if c then
+        local v = 99
+        c = v
+    end
+
+    local function decode(e)
+        local v = e
+        v = v ~ 1
+        return v
+    end
+
+    return decode(c) ~ v
+end
+"""
+    _lex_ctx = _ts_parse(_lex_src)
+    _lex_fn = next(
+        n for n in _lex_ctx.walk()
+        if n.type == "function_definition"
+    )
+    _lex_block = _lex_fn.child_by_field_name("body")
+    _lex_plan = _build_lexical_plan(_lex_ctx, _lex_fn)
+
+    _v_bindings = [
+        b for b in _lex_plan.bindings
+        if b.original == "v"
+    ]
+    assert len(_v_bindings) == 3, _v_bindings
+    assert len({b.alpha for b in _v_bindings}) == 3, _v_bindings
+
+    _pool_v = [b for b in _v_bindings if b.poolable]
+    _nested_v = [b for b in _v_bindings if not b.poolable]
+    assert len(_pool_v) == 2, _v_bindings
+    assert len(_nested_v) == 1, _v_bindings
+    assert _nested_v[0].alpha not in _lex_plan.poolable_names
+
+    _rewritten = _rewrite_node_with_plan(
+        _lex_ctx, _lex_block, _lex_plan
+    )
+    for _b in _v_bindings:
+        assert _b.alpha in _rewritten, (_b, _rewritten)
+
+    _decode_binding = next(
+        b for b in _lex_plan.bindings
+        if b.original == "decode"
+    )
+    assert _decode_binding.poolable
+
+    # Local shadowing RHS: `local x=x`의 RHS x는 새 binding이 아니라 parameter.
+    _shadow_src = """
+return function(x)
+    local x = x
+    return x
+end
+"""
+    _shadow_ctx = _ts_parse(_shadow_src)
+    _shadow_fn = next(
+        n for n in _shadow_ctx.walk()
+        if n.type == "function_definition"
+    )
+    _shadow_plan = _build_lexical_plan(
+        _shadow_ctx, _shadow_fn
+    )
+    _xb = [
+        b for b in _shadow_plan.bindings
+        if b.original == "x"
+    ]
+    assert len(_xb) == 2 and _xb[0].alpha != _xb[1].alpha, _xb
+
+    _shadow_block = _shadow_fn.child_by_field_name("body")
+    _shadow_text = _rewrite_node_with_plan(
+        _shadow_ctx, _shadow_block, _shadow_plan
+    )
+    assert (
+        f"local {_xb[1].alpha} = {_xb[0].alpha}"
+        in _shadow_text
+    ), _shadow_text
+
+    # tree-sitter-lua grammar regression:
+    # variable_list의 변수들은 positional identifier child다.
+    _locals_src = """
+return function(seed)
+    local x = seed
+    local a,b = x,2
+    if seed then
+        local y = a+b
+        x = y
+    end
+    return x
+end
+"""
+    _locals_ctx = _ts_parse(_locals_src)
+    _locals_fn = next(
+        n for n in _locals_ctx.walk()
+        if n.type == "function_definition"
+    )
+    _locals_plan = _build_lexical_plan(
+        _locals_ctx, _locals_fn
+    )
+    _local_bindings = [
+        b for b in _locals_plan.bindings
+        if b.kind == "local"
+    ]
+    _local_originals = [b.original for b in _local_bindings]
+    assert _local_originals.count("x") == 1, _local_originals
+    assert _local_originals.count("a") == 1, _local_originals
+    assert _local_originals.count("b") == 1, _local_originals
+    assert _local_originals.count("y") == 1, _local_originals
+    assert all(b.poolable for b in _local_bindings), _local_bindings
+
+    # generic-for 역시 variable_list positional children을 사용하지만
+    # loop binder는 CFF-hoisted local이 아니어야 한다.
+    _for_src = """
+return function(t)
+    local sum = 0
+    for k,v in pairs(t) do
+        sum = sum + k + v
+    end
+    return sum
+end
+"""
+    _for_ctx = _ts_parse(_for_src)
+    _for_fn = next(
+        n for n in _for_ctx.walk()
+        if n.type == "function_definition"
+    )
+    _for_plan = _build_lexical_plan(
+        _for_ctx, _for_fn
+    )
+    _for_bindings = [
+        b for b in _for_plan.bindings
+        if b.kind == "for"
+    ]
+    assert [b.original for b in _for_bindings] == ["k", "v"], _for_bindings
+    assert not any(b.poolable for b in _for_bindings), _for_bindings
+
+    # separate CFF statements 사이에서 ordinary local binding identity가
+    # 유지되는지 확인.
+    _cross_src = """
+return function(t)
+    local x = t
+    local y = x
+    return y[1]
+end
+"""
+    _cross_ctx = _ts_parse(_cross_src)
+    _cross_fn = next(
+        n for n in _cross_ctx.walk()
+        if n.type == "function_definition"
+    )
+    _cross_block = _cross_fn.child_by_field_name("body")
+    _cross_plan = _build_lexical_plan(
+        _cross_ctx, _cross_fn
+    )
+    _cross_text = _rewrite_node_with_plan(
+        _cross_ctx, _cross_block, _cross_plan
+    )
+    _cross_locals = [
+        b for b in _cross_plan.bindings
+        if b.kind == "local"
+    ]
+    assert len(_cross_locals) == 2, _cross_locals
+    for _b in _cross_locals:
+        assert _b.alpha in _cross_text, (_b, _cross_text)
+
+    print("function_obfuscation smoke tests: OK")
+

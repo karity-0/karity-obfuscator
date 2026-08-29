@@ -31,6 +31,8 @@ WELL_KNOWN_SIGNATURES = (
     ),
     ("This file was generated using Luraph Obfuscator v3", "line"),
 
+    ("This file was protected using Luraph Obfuscator v14.5", "block"),
+
     ("Protected by Mnx Obfuscator | Public Enemy", "line"),
 
     ("This file was protected with MoonSec V3", "line"),

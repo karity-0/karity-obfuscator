@@ -15,6 +15,7 @@ from __future__ import annotations
 import re
 
 from .vm import VMPass
+from .vm.backend import normalize_vm_backend
 from .passes.output_signature import (
     DEFAULT_GENERATOR_PATTERNS,
     sanitize_generator_pattern,
@@ -64,6 +65,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": NumberObfuscationPass,
         "label": "Number Obfuscation",
         "group": "base",
+        "docs": "passes/numberObfuscation.md"
     },
     "table_obf": {
         "cls": TableObfuscationPass,
@@ -138,11 +140,20 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS = {
+    "backend": {
+        "description": "VM runtime execution model. Missing values select the current karity runtime.",
+        "default": "karity",
+        "values": [
+            ("karity", "hardened graph and encoded-register runtime"),
+            ("classic", "direct-register and direct-handler runtime on the current VM pipeline"),
+            ("default", "compatibility alias for classic"),
+        ],
+    },
     "dispatcher_type": {
         "description": "VM dispatcher shape.",
         "default": "ifelseif",
         "values": [
-            ("ifelseif", "classic if/elseif dispatcher"),
+            ("ifelseif", "if/elseif chain dispatcher"),
             ("tailcall", "function table + tail-call dispatcher"),
             ("table", "alias for the function-table tail-call dispatcher"),
             ("bsearch", "nested binary-search if/else tree over the opcode"),
@@ -353,6 +364,7 @@ def validate_release_config(config: dict) -> None:
     errors: list[str] = []
     passes = config.get("passes", [])
     vm_options = config.get("vm_options", {})
+    backend = normalize_vm_backend(vm_options.get("backend"))
 
     required_passes = ("vm", "anti_debug", "anti_decompile")
     for name in required_passes:
@@ -376,32 +388,34 @@ def validate_release_config(config: dict) -> None:
     if float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
         errors.append("vm_options.integrity_constant_rate should be > 0.0")
 
-    if float(vm_options.get("graph_execution_rate", 0.0)) <= 0.0:
-        errors.append("vm_options.graph_execution_rate should be > 0.0")
+    if backend == "karity":
+        if float(vm_options.get("graph_execution_rate", 0.0)) <= 0.0:
+            errors.append("vm_options.graph_execution_rate should be > 0.0")
 
-    if float(vm_options.get("cross_instruction_rate", 0.0)) <= 0.0:
-        errors.append("vm_options.cross_instruction_rate should be > 0.0")
+        if float(vm_options.get("cross_instruction_rate", 0.0)) <= 0.0:
+            errors.append("vm_options.cross_instruction_rate should be > 0.0")
 
-    if float(vm_options.get("runtime_polymorphism_rate", 0.0)) <= 0.0:
-        errors.append("vm_options.runtime_polymorphism_rate should be > 0.0")
+        if float(vm_options.get("runtime_polymorphism_rate", 0.0)) <= 0.0:
+            errors.append("vm_options.runtime_polymorphism_rate should be > 0.0")
 
     if vm_options.get("runtime_trace") is True:
         errors.append("vm_options.runtime_trace must be false for release builds")
 
-    if float(vm_options.get("block_variant_rate", 0.0)) <= 0.0:
-        errors.append("vm_options.block_variant_rate should be > 0.0")
+    if backend == "karity":
+        if float(vm_options.get("block_variant_rate", 0.0)) <= 0.0:
+            errors.append("vm_options.block_variant_rate should be > 0.0")
 
-    if int(vm_options.get("helper_variant_count", 0)) < 2:
-        errors.append("vm_options.helper_variant_count should be >= 2")
+        if int(vm_options.get("helper_variant_count", 0)) < 2:
+            errors.append("vm_options.helper_variant_count should be >= 2")
 
-    if float(vm_options.get("helper_diversity_rate", 0.0)) <= 0.0:
-        errors.append("vm_options.helper_diversity_rate should be > 0.0")
+        if float(vm_options.get("helper_diversity_rate", 0.0)) <= 0.0:
+            errors.append("vm_options.helper_diversity_rate should be > 0.0")
 
-    if float(vm_options.get("semantic_diversity_rate", 0.0)) <= 0.0:
-        errors.append("vm_options.semantic_diversity_rate should be > 0.0")
+        if float(vm_options.get("semantic_diversity_rate", 0.0)) <= 0.0:
+            errors.append("vm_options.semantic_diversity_rate should be > 0.0")
 
-    if int(vm_options.get("block_variant_count", 0)) < 2:
-        errors.append("vm_options.block_variant_count should be >= 2")
+        if int(vm_options.get("block_variant_count", 0)) < 2:
+            errors.append("vm_options.block_variant_count should be >= 2")
 
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
@@ -422,6 +436,11 @@ def _reject_nested_output_passes(config: dict, key: str) -> None:
 def _validate_vm_options(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'vm_options' must be an object")
+
+    try:
+        normalize_vm_backend(options.get("backend"))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
 
     dispatcher = options.get("dispatcher_type")
     if dispatcher is not None:

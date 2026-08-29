@@ -121,6 +121,11 @@ print(dispatch(3))
             "number emitter did not consume string/boolean generated literals: "
             f"{number_detail}"
         )
+    if number_detail.get("retokenized_generated_numbers") is not False:
+        raise AssertionError(
+            "terminal number emitter unnecessarily retokenized generated leaves: "
+            f"{number_detail}"
+        )
     actual = run_source(emitted)
     expected = (0, b"hello\ttrue\tfalse\t123\n", b"")
     if actual != expected:
@@ -135,6 +140,14 @@ print(dispatch(3))
     ]
     if len(number_layers) != 2 or number_layers[1]["replacements"] <= 1:
         raise AssertionError(f"number emitter stages did not layer: {number_layers}")
+    if [
+        detail.get("retokenized_generated_numbers")
+        for detail in number_layers
+    ] != [True, False]:
+        raise AssertionError(
+            "number emitter did not limit retokenization to non-terminal stages: "
+            f"{number_layers}"
+        )
     if run_source(layered) != (0, b"7\n", b""):
         raise AssertionError("layered number emitter changed semantics")
 
