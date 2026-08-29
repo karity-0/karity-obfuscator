@@ -1630,9 +1630,11 @@ local function run(blob,rand_tail,self_func)
     end
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
+    --<<RUN_ENTRY>>
     _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
          [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]=_apack({},0,crc)})
+    --<<ENDRUN_ENTRY>>
     if _PTRACE then
         io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
                         " blocks:",_PBC," blocktrace:",

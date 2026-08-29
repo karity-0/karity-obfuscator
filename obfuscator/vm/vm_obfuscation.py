@@ -1138,7 +1138,8 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
                         dispatch_target_hiding: bool = False,
                         helper_variant_count: int = 3,
                         helper_diversity_rate: float = 0.35,
-                        semantic_diversity_rate: float = 0.35) -> str:
+                        semantic_diversity_rate: float = 0.35,
+                        classic_runtime: bool = False) -> str:
     """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립.
 
     dispatch: "ifelseif"(전부 if-elseif) | "tailcall"(전부 테이블+꼬리호출) |
@@ -1163,10 +1164,12 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
         c = c.replace("exec = function", f"_ex{k} = function", 1)
         # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)
         c = _apply_dispatch(c, _resolve_dispatch(dispatch))
-        c = apply_execution_kit(c, helper_variant_count, helper_diversity_rate)
+        if not classic_runtime:
+            c = apply_execution_kit(c, helper_variant_count, helper_diversity_rate)
         if dispatch_target_hiding:
             c = apply_dispatch_target_hiding(c)
-        c = c.replace("_NX", f"_NX[{k + 1}]")
+        if not classic_runtime:
+            c = c.replace("_NX", f"_NX[{k + 1}]")
         defs.append(c)
 
     # 마커 영역 → N벌 정의로 치환
@@ -1175,5 +1178,6 @@ def build_exec_variants(vm_code: str, n: int, vm_maps: list,
     names = ",".join(f"_ex{k}" for k in range(n))
     vm_code = vm_code.replace("local exec, _EX", f"local {names}, _EX", 1)
     vm_code = vm_code.replace("_EX={exec}", "_EX={" + names + "}", 1)
-    vm_code = build_next_router_kit(vm_code, n)
+    if not classic_runtime:
+        vm_code = build_next_router_kit(vm_code, n)
     return vm_code

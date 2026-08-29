@@ -19,6 +19,22 @@ from obfuscator.registry import (  # noqa: E402
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
 
 VM_DETAILS = """\
+`vm_options.backend` selects only the VM runtime execution model, independently
+from the build profile. Both backends use the current compiler, instruction
+layout, serializer/blob protection, dispatcher selection, integrity checks, and
+output pipeline. `karity` remains the implicit choice when the option is omitted.
+`classic` uses direct register storage and straightforward opcode handlers;
+`default` is accepted as an alias for `classic`.
+
+The remaining implementation notes in this section describe Karity's hardened
+runtime model. In classic mode, runtime graph execution, encoded/dynamic register
+mapping, cross-instruction continuations, runtime polymorphism, and handler/block
+semantic variants are disabled. Controls outside that runtime layer—including
+current dispatchers, fake and mutated handlers, junk instructions, blob form,
+VM count, target hiding, integrity protection, and output passes—remain active.
+Release validation therefore checks shared protections for both modes and checks
+graph/variant rates only for the Karity runtime that implements them.
+
 Integer arithmetic, bitwise, shift, and unary handlers are generated from
 build-specific DAG IR and compiled ahead of time into specialized straight-line
 Lua handlers. Their semantic order is shuffled per build, and sparse opcode tags
