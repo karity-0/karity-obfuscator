@@ -1,6 +1,5 @@
 local exec, _EX
-local _PTRACE=false
-local _PN,_PX,_PE,_PBC,_PBH=0,0,0,0,0
+local _PN,_PE=0,0
 local function _pmix(x)
     x=(x~(x>>30))*-4658895280553007687
     x=(x~(x>>27))*-7723592293110705685

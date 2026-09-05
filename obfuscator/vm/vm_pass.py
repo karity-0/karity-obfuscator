@@ -34,6 +34,7 @@ from .vm_variants import (make_instr_layout, apply_instr_layout,
                           apply_keystream, apply_tamper, apply_line_state)
 from .output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from .junk_injection import inject_junk
+from .runtime_trace import apply_runtime_trace
 
 
 if platform.system() == "Windows":
@@ -1324,7 +1325,6 @@ def _apply_handler_graphs(
     graph_sites: set[int] | None = None,
     graph_family_count: int = 8,
     runtime_polymorphism_rate: float = 0.0,
-    runtime_trace: bool = False,
     semantic_state_threading: bool = False,
     argument_virtualization: bool = False,
     upvalue_virtualization: bool = False,
@@ -1333,7 +1333,6 @@ def _apply_handler_graphs(
 ) -> str:
     threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
     vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
-    vm_code = vm_code.replace("__VM_POLY_TRACE__", "true" if runtime_trace else "false")
     vm_code = vm_code.replace(
         "__VM_SEMANTIC_STATE__", "true" if semantic_state_threading else "false"
     )
@@ -2040,7 +2039,10 @@ class VMBuildPipeline(PostPass):
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
         _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
-        vm_code = _rename_vm_keys(_load_vm(self.backend, mov_kits))
+        vm_code = _rename_vm_keys(apply_runtime_trace(
+            _load_vm(self.backend, mov_kits),
+            enabled=self.backend == "karity" and bool(self.vm_options.get("runtime_trace", False)),
+        ))
         for name in constant_tag_names:
             vm_code = vm_code.replace(
                 f"__VM_CTAG_{name.upper()}__", str(constant_tags[name])
@@ -2156,7 +2158,6 @@ class VMBuildPipeline(PostPass):
                 runtime_polymorphism_rate=float(
                     self.vm_options.get("runtime_polymorphism_rate", 0.2)
                 ),
-                runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
                 semantic_state_threading=bool(
                     self.vm_options.get("semantic_state_threading", False)
                 ),

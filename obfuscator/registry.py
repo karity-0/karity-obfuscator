@@ -243,7 +243,7 @@ VM_OPTION_DOCS = {
         "range": "0.0 to 1.0",
     },
     "runtime_trace": {
-        "description": "Emit the final runtime route hash to stderr for diagnostics. Keep disabled in normal and release builds.",
+        "description": "Emit the final runtime route hash to stderr for diagnostics (karity backend only). When false, all trace instrumentation is removed during generation. Keep disabled in normal and release builds.",
         "default": False,
     },
     "block_variant_rate": {

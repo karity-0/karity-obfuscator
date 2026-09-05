@@ -585,7 +585,7 @@ default: `0.2`
 
 ### runtime_trace
 
-Emit the final runtime route hash to stderr for diagnostics. Keep disabled in normal and release builds.
+Emit the final runtime route hash to stderr for diagnostics (karity backend only). When false, all trace instrumentation is removed during generation. Keep disabled in normal and release builds.
 
 default: false
 
