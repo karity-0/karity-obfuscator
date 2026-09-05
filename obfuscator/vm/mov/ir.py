@@ -20,8 +20,10 @@ class Host(IntEnum):
     PREPARE = 1
     COMMIT = 2
     COPY = 3
-    TEST = 4
+    READ_TRUTH = 4
     CLOSE = 5
+    DIVZERO = 6
+    COMMIT_TRUTH = 7
 
 
 @dataclass(frozen=True)

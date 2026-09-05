@@ -1,6 +1,7 @@
 -- MOV runtime fragments. Host Lua handlers are wired by mov/builder.py.
 --<<SHARED>>
 local _mov_kits
+local _mov_div_steps=__MOV_DIV_STEPS__
 local _mov_closures=setmetatable({},{__mode="k"})
 local function _mov_uint(r)
     local __VM_HOT_LOOP__=true
@@ -15,15 +16,16 @@ local function _mov_uint(r)
     error("invalid MOV field")
 end
 local function _mov_read(r, root)
-    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==4,"bad MOV version")
+    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==5,"bad MOV version")
     _mov_kits={}
     for vm=1,r.u16() do
-        local kit={banks={},encode={},decode={},nonzero={}}
+        local kit={banks={},encode={},decode={},nonzero={},sign={}}
         _mov_kits[vm]=kit
         for i=0,15 do
             local digit=r.u8()
             assert(digit<16 and kit.decode[digit]==nil,"bad MOV alphabet")
             kit.encode[i]=digit; kit.decode[digit]=i; kit.nonzero[digit]=i~=0
+            kit.sign[digit]=i>=8
         end
         for k=1,r.u8() do
             local count=r.u8()
@@ -103,6 +105,15 @@ end
                [24]=_mov_banks[8],[25]=_mov_banks[1],
                [27]=_mkit.nonzero,[28]=_mencode,[29]=_mdecode,[30]=true}
     for i=0,15 do _ms[32+i]=i end
+    _ms[162]=_mov_banks[2]; _ms[163]=false; _ms[164]=_mkit.sign
+    _ms[165]=_mov_div_steps; _ms[173]=64
+    _ms[168]={[false]={[false]=false,[true]=true},[true]={[false]=true,[true]=false}}
+    _ms[172]={[0]=true,[1]=false}
+    _ms[175]={[false]=true,[true]=false}
+    local _mexpected={
+        [0]={[false]=true,[true]=false},
+        [1]={[false]=false,[true]=true},
+    }
     local _mzero,_mones={},{}
     for i=0,15 do _mzero[i]=_mencode[0]; _mones[i]=_mencode[15] end
     local _mbank={[13]=1,[14]=2,[15]=8,[20]=3,[21]=4,[22]=5,[23]=9,[24]=10,[25]=2,[26]=5,
@@ -131,6 +142,7 @@ end
             local ip=q[3]
             local op,A,B,C=decode(code[ip],_ksm(ip))
             _ma=A; _mresume=_mentry[ip+1]
+            _ms[170]=op==16
             local x,y
             if op==25 then x=_mzero; y=_mov_digits(B)
             elseif op==26 then x=_mov_digits(B); y=_mones
@@ -179,12 +191,20 @@ end
             local op,A,B,C=decode(code[ip],_ksm(ip))
             local value
             if op==34 then value=rget(A) else value=rget(B) end
-            _ms[11]=(not not value)==(C~=0)
-            if op==35 and _ms[11] then _mov_copy(A,B) end
+            -- Classify the native value at the representation boundary.
+            -- NOT and expected-truth comparison happen in lookup microcode.
+            _ms[11]=value~=nil and value~=false
+            _ms[174]=_mexpected[C]
+            _ma=A; _mresume=_mentry[ip+1]
             _ms[19]=_mentry[ip+1]; _ms[20]=_mentry[ip+2]
         elseif kind==__MOV_HOST__ and q[2]==5 then
             local op,A=decode(code[q[3]],_ksm(q[3]))
             _mov_close(A-1)
+        elseif kind==__MOV_HOST__ and q[2]==6 then
+            if _ms[170] then error("attempt to perform 'n%0'") end
+            error("attempt to divide by zero")
+        elseif kind==__MOV_HOST__ and q[2]==7 then
+            rset(_ma,_ms[11]); _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==0 then
             pc=q[3]
             if pc>#code then error("MOV instruction pointer out of range") end

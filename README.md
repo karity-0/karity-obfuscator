@@ -274,13 +274,21 @@ requirements to both modes, and apply graph/variant-rate requirements only to
 the Karity runtime that implements them.
 
 `backend=mov` is an experimental MOV-inspired backend. It lowers integer
-`ADD/SUB/MUL/UNM`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
-4-bit lookup microcode. Boolean tests and jumps select microcode addresses;
+`ADD/SUB/MUL/UNM/MOD/IDIV`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
+4-bit lookup microcode. Signed floor division and modulo use a 64-step restoring
+division recipe, including minimum-integer overflow and divisor-sign correction.
+`NOT` and expected-truth tests use boolean lookup after native-value classification;
+tests and jumps select microcode addresses;
 jumps close captured locals before leaving their scope. Integer results stay in
 encoded digit storage until a host operation needs a Lua value. Floating-point
-and mixed-type operations, division/modulo/power, metamethods, tables and
+and mixed-type operations, `/`, power, metamethods, tables and
 calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
 implementation. The original operand words remain available to host fallbacks.
+MOV-only remains the target; this implementation does not yet meet it. In
+particular, floating-point and string operations and Lua object/call semantics
+still need host execution. Function-table indirection is not counted as MOV
+lowering. Regression tests reject native integer arithmetic, division, comparison
+and boolean fallbacks to verify that the implemented lookup paths really run.
 All host opcodes enter through one function-table call. Each VM shuffles the
 handler table and uses a distinct XOR key for its entries; native arithmetic
 fallbacks also use function lookup instead of slot-comparison chains. These

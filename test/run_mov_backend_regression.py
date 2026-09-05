@@ -19,6 +19,9 @@ from obfuscator.registry import (
 from obfuscator.vm import VMPass
 from obfuscator.vm.mov.builder import build_runtime
 from obfuscator.vm.mov.layout import make_kits
+from obfuscator.vm.mov.division import divide
+from obfuscator.vm.mov.ir import Host, Op
+from obfuscator.vm.mov.lower import lower
 from run_vm_backend_regression import lua_executable, options
 
 
@@ -84,6 +87,15 @@ def main() -> int:
     keys = re.findall(r"_mov_host\[op~(\d+)\]", runtime)
     assert len(keys) == 3 and len(set(keys)) == 3
     assert runtime.count("local _mov_host={") == 3
+    recipe = []
+    divide(recipe)
+    assert {i.a for i in recipe if i.op == Op.HOST} == {Host.COMMIT, Host.DIVZERO}
+    assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT, Op.HOST) for i in recipe)
+    for opcode in (27, 34, 35):
+        program = lower([opcode])
+        site = program.code[:program.entries[1] - 1]
+        assert any(i.op == Op.LOOKUP for i in site)
+        assert not any(i.op == Op.HOST and i.a == Host.EXEC for i in site)
     base = options("mov")
     validate_config({"passes": ["vm"], "vm_options": base})
     for count in (2, 3):
@@ -107,6 +119,8 @@ def main() -> int:
     fixtures.append(focused)
     cross_vm = ROOT / "test" / "fixtures" / "mov_cross_vm.lua"
     fixtures.append(cross_vm)
+    division = ROOT / "test" / "fixtures" / "mov_division.lua"
+    fixtures.append(division)
     for i, source in enumerate(fixtures):
         check(source, base, ["rename_obf", "minify"], 7100 + i)
     for i, form in enumerate(("table", "numeric", "string")):
@@ -117,12 +131,16 @@ def main() -> int:
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
     def forbid_integer_fallbacks(classic, opcodes):
-        for op in (31, 32, 33):
+        for op in (27, 34, 35):
+            marker = f"elseif op=={op} then"
+            assert marker in classic
+            classic = classic.replace(marker, marker + ' error("native boolean fallback");')
+        for op in (16, 19, 31, 32, 33):
             marker = f"elseif op=={op} then"
             assert marker in classic
             classic = classic.replace(marker, marker + """
                 if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
-                    error("native integer comparison fallback") end;""")
+                    error("native integer comparison/division fallback") end;""")
         runtime = build_runtime(classic, opcodes)
         assert "local function _arith2(a,b,av,slot)" in runtime
         assert "local function _arith1(a,av,slot)" in runtime
@@ -142,9 +160,15 @@ def main() -> int:
         return runtime
     with patch("obfuscator.vm.mov.builder.build_runtime", forbid_integer_fallbacks):
         check(focused, {**base, "vm_count": 3}, [], 9000)
+        check(division, {**base, "vm_count": 3, "blob_form": "table",
+                         "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 9701)
     check(ROOT / "test" / "scripts" / "14_vm_call_machine.lua", {**base, "vm_count": 2},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9100)
+    check(division, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 9702)
     check_cli("fast-vm", ["--seed", "9300"])
     check_cli("fast-vm", ["--seed", "9300", "--passes", "vm,pack"])
     check_cli("high", ["--release-check"])

@@ -117,3 +117,14 @@ local dy,dv=coroutine.resume(division)
 assert(dy and dv=="divide")
 dy,dv=coroutine.resume(division,8)
 assert(dy and dv==11)
+
+local function truth(value)
+    local x=value and "true" or "false"
+    local y=value or "default"
+    return not value,x,y==value
+end
+print("truth nil",truth(nil))
+print("truth false",truth(false))
+for _,value in ipairs({true,0,"",{},function() end,0/0}) do
+    print("truth value",truth(value))
+end
