@@ -2,9 +2,9 @@ name: CI
 
 on:
   push:
-    branches: [main, dev]
+    branches: [main, dev, future]
   pull_request:
-    branches: [main, dev]
+    branches: [main, dev, future]
 
 jobs:
   test:
@@ -40,6 +40,8 @@ jobs:
           python test/run_packer_regression.py
           python test/run_runtime_poly_regression.py
           python test/run_runtime_trace_regression.py
+          python test/run_vm_backend_regression.py
+          python test/run_mov_backend_regression.py
           python test/run_state_coupling_regression.py
           python test/run_vm_mutation_regression.py
           python test/run_vm_output_emitter_regression.py
