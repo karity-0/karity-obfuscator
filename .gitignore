@@ -18,4 +18,5 @@ config.json
 obf_gui_config.json
 
 README.md.old
-idea.md
+idea*.md
+note*.md
