@@ -1,6 +1,7 @@
 """Lower relocated Lua instructions; share expanded recipes within a prototype."""
 from .ir import Host, Instruction as I, Op, Program
 from .division import divide
+from .float_compare import compare as compare_floats
 
 # Integer arithmetic, including MOD/IDIV, bitwise operations and comparisons.
 LOWERED = frozenset((13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26, 31, 32, 33))
@@ -100,6 +101,11 @@ def lower(code: list[int], vm_id: int = 0) -> Program:
             _multiply(out)
             continue
         comparison = kind == "compare"
+        if comparison:
+            branch = len(out)
+            out.append(I(Op.SELECT, 176, branch + 2))
+            compare_floats(out)
+            out[branch] = I(Op.SELECT, 176, branch + 2, len(out) + 1)
         for digit in range(16):
             if comparison and digit == 15:
                 out.append(I(Op.MOVE, 5, 16))  # signed most significant digit

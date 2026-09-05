@@ -32,14 +32,17 @@ BAND/BOR/BXOR/SHL/SHR/BNOT and EQ/LT/LE lower into nibble lookup microcode;
 Signed MOD/IDIV use a shared 64-step restoring-division recipe with Lua floor
 correction, integer wraparound and explicit zero-divisor errors. NOT and
 expected-truth tests use boolean lookup after native-value classification.
+Float/float EQ/LT/LE bitcast binary64 values into encoded nibbles, then use
+lookup-generated ordering keys, NaN classification and signed-zero equality.
 TEST/TESTSET and JMP select microcode addresses, with captured locals closed
 before scope-exiting jumps. Integer results retain encoded digit storage across MOV
-operations. Other operations (including `/`, power, floats, coercions,
+operations. Other operations (including `/`, power, floating-point arithmetic, coercions,
 metamethods and native calls) cross explicit Lua host boundaries. Original operand
 words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
-MOV-only is the target, not the current completion status: floating-point,
-string and Lua object/call semantics still use host execution. Native fallback
-traps in the regression suite verify the implemented integer and boolean paths.
+MOV-only is the target, not the current completion status: floating-point
+arithmetic, mixed integer/float comparisons, strings and Lua object/call semantics
+still use host execution. Native fallback traps in the regression suite verify
+the implemented integer, boolean and float/float comparison paths.
 Host opcodes share one indirect function-table call, with shuffled entries and
 a distinct XOR key per VM. Native arithmetic fallback also uses function lookup.
 The host functions still contain inspectable Lua operations; dispatch indirection

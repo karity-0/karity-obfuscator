@@ -22,6 +22,7 @@ from obfuscator.vm.mov.layout import make_kits
 from obfuscator.vm.mov.division import divide
 from obfuscator.vm.mov.ir import Host, Op
 from obfuscator.vm.mov.lower import lower
+from obfuscator.vm.mov.float_compare import compare as compare_floats
 from run_vm_backend_regression import lua_executable, options
 
 
@@ -91,6 +92,9 @@ def main() -> int:
     divide(recipe)
     assert {i.a for i in recipe if i.op == Op.HOST} == {Host.COMMIT, Host.DIVZERO}
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT, Op.HOST) for i in recipe)
+    float_recipe = []
+    compare_floats(float_recipe)
+    assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in float_recipe)
     for opcode in (27, 34, 35):
         program = lower([opcode])
         site = program.code[:program.entries[1] - 1]
@@ -121,6 +125,8 @@ def main() -> int:
     fixtures.append(cross_vm)
     division = ROOT / "test" / "fixtures" / "mov_division.lua"
     fixtures.append(division)
+    floats = ROOT / "test" / "fixtures" / "mov_float_compare.lua"
+    fixtures.append(floats)
     for i, source in enumerate(fixtures):
         check(source, base, ["rename_obf", "minify"], 7100 + i)
     for i, form in enumerate(("table", "numeric", "string")):
@@ -130,7 +136,13 @@ def main() -> int:
         check(cross_vm, opts, ["rename_obf", "minify"], 8200 + i)
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
-    def forbid_integer_fallbacks(classic, opcodes):
+    def forbid_native_fallbacks(classic, opcodes):
+        for op in (31, 32, 33):
+            marker = f"elseif op=={op} then"
+            assert marker in classic
+            classic = classic.replace(marker, marker + """
+                if math.type(rget(B))=="float" and math.type(rget(C))=="float" then
+                    error("native float comparison fallback") end;""")
         for op in (27, 34, 35):
             marker = f"elseif op=={op} then"
             assert marker in classic
@@ -158,21 +170,27 @@ def main() -> int:
             if math.type(a)=="integer" then error("native integer unary fallback") end""",
         )
         return runtime
-    with patch("obfuscator.vm.mov.builder.build_runtime", forbid_integer_fallbacks):
+    with patch("obfuscator.vm.mov.builder.build_runtime", forbid_native_fallbacks):
         check(focused, {**base, "vm_count": 3}, [], 9000)
         check(division, {**base, "vm_count": 3, "blob_form": "table",
                          "integrity_constants": True, "integrity_constant_rate": 1.0},
               ["rename_obf", "minify"], 9701)
+        check(floats, {**base, "vm_count": 3, "blob_form": "table",
+                       "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 9801)
     check(ROOT / "test" / "scripts" / "14_vm_call_machine.lua", {**base, "vm_count": 2},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9100)
     check(division, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9702)
+    check(floats, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 9802)
     check_cli("fast-vm", ["--seed", "9300"])
     check_cli("fast-vm", ["--seed", "9300", "--passes", "vm,pack"])
     check_cli("high", ["--release-check"])
-    print(f"mov-backend-regression-ok fixtures={len(fixtures)} protected_variants=6 multi_vm=ok integer_fallback_trap=ok output_passes=ok cli_packer_release=ok")
+    print(f"mov-backend-regression-ok fixtures={len(fixtures)} protected_variants=6 multi_vm=ok lookup_fallback_traps=ok output_passes=ok cli_packer_release=ok")
     return 0
 
 
