@@ -1432,7 +1432,7 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
         elif tag == CTAG_FLOAT:
             constants.append(r.f64())
         elif tag == CTAG_STR:
-            constants.append(r.string())
+            constants.append(r.string() or "")
         elif tag == CTAG_IEXPR:
             constants.append(r.i64())
             prog_len = r.u8()

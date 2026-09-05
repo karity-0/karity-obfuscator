@@ -257,7 +257,7 @@ local function read_proto(r, acc_state)
         elseif tag==CTAG_BOOL  then p.constants[i]={CK_BOOL,r.u8()~=0}
         elseif tag==CTAG_INT   then p.constants[i]={CK_INT,r.i64()}
         elseif tag==CTAG_FLOAT then p.constants[i]={CK_FLOAT,r.f64()}
-        elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={CK_STR,_s and _kss(_s) or nil}
+        elseif tag==CTAG_STR   then local _s=r.str() or ""; p.constants[i]={CK_STR,_kss(_s)}
         elseif tag==CTAG_IEXPR then
             local _e=r.i64(); local _pn=r.u8(); local _p={}
             for _j=1,_pn do

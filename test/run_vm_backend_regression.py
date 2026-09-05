@@ -135,7 +135,9 @@ def main() -> int:
     if VMPass(vm_options={"backend": "default"}).backend != "classic":
         raise AssertionError("default alias must resolve to classic")
 
-    source = "local x=20+22; local t={x,3}; print(t[1]+t[2])"
+    source = ('local empty=""; assert(type(empty)=="string" and #empty==0); '
+              'local seen=0; for _,v in ipairs({1,empty,3}) do seen=seen+1 end; '
+              'assert(seen==3); local x=20+22; local t={x,3}; print(t[1]+t[2])')
     cases = [("karity", "ifelseif")] + [
         ("classic", dispatcher)
         for dispatcher in (
