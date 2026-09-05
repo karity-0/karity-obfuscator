@@ -5,6 +5,7 @@ import random
 from .ir import Op
 from .layout import VMKit
 from .float_compare import tables as float_tables
+from .mixed_compare import tables as mixed_tables
 
 
 def _native_arithmetic(runtime: str) -> str:
@@ -102,6 +103,7 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     for vm_id, kit in enumerate(kits, 1):
         definition = body.replace("exec = function", f"_mov_dispatch[{vm_id}] = function", 1)
         definition = definition.replace("--<<FLOAT_TABLES>>", float_tables(kit.encode))
+        definition = definition.replace("--<<MIXED_TABLES>>", mixed_tables(kit.encode))
         key = host_keys[vm_id - 1]
         order = random.sample(list(blocks), len(blocks))
         bank = "local _mov_host={\n" + "\n".join(

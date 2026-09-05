@@ -23,6 +23,7 @@ from obfuscator.vm.mov.division import divide
 from obfuscator.vm.mov.ir import Host, Op
 from obfuscator.vm.mov.lower import lower
 from obfuscator.vm.mov.float_compare import compare as compare_floats
+from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from run_vm_backend_regression import lua_executable, options
 
 
@@ -95,6 +96,9 @@ def main() -> int:
     float_recipe = []
     compare_floats(float_recipe)
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in float_recipe)
+    mixed_recipe = []
+    compare_mixed(mixed_recipe)
+    assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in mixed_recipe)
     for opcode in (27, 34, 35):
         program = lower([opcode])
         site = program.code[:program.entries[1] - 1]
@@ -127,6 +131,8 @@ def main() -> int:
     fixtures.append(division)
     floats = ROOT / "test" / "fixtures" / "mov_float_compare.lua"
     fixtures.append(floats)
+    mixed = ROOT / "test" / "fixtures" / "mov_mixed_compare.lua"
+    fixtures.append(mixed)
     for i, source in enumerate(fixtures):
         check(source, base, ["rename_obf", "minify"], 7100 + i)
     for i, form in enumerate(("table", "numeric", "string")):
@@ -141,8 +147,8 @@ def main() -> int:
             marker = f"elseif op=={op} then"
             assert marker in classic
             classic = classic.replace(marker, marker + """
-                if math.type(rget(B))=="float" and math.type(rget(C))=="float" then
-                    error("native float comparison fallback") end;""")
+                if type(rget(B))=="number" and type(rget(C))=="number" then
+                    error("native numeric comparison fallback") end;""")
         for op in (27, 34, 35):
             marker = f"elseif op=={op} then"
             assert marker in classic
@@ -178,6 +184,9 @@ def main() -> int:
         check(floats, {**base, "vm_count": 3, "blob_form": "table",
                        "integrity_constants": True, "integrity_constant_rate": 1.0},
               ["rename_obf", "minify"], 9801)
+        check(mixed, {**base, "vm_count": 3, "blob_form": "table",
+                      "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 9901)
     check(ROOT / "test" / "scripts" / "14_vm_call_machine.lua", {**base, "vm_count": 2},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9100)
@@ -187,6 +196,9 @@ def main() -> int:
     check(floats, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9802)
+    check(mixed, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 9902)
     check_cli("fast-vm", ["--seed", "9300"])
     check_cli("fast-vm", ["--seed", "9300", "--passes", "vm,pack"])
     check_cli("high", ["--release-check"])

@@ -34,15 +34,18 @@ correction, integer wraparound and explicit zero-divisor errors. NOT and
 expected-truth tests use boolean lookup after native-value classification.
 Float/float EQ/LT/LE bitcast binary64 values into encoded nibbles, then use
 lookup-generated ordering keys, NaN classification and signed-zero equality.
+Mixed integer/float EQ/LT/LE build exact 80-bit ordering keys through lookup
+normalization, with a shared exponent and 63 fraction bits. No integer-to-float
+conversion occurs, preserving precision beyond 2^53 and at the signed 64-bit limits.
 TEST/TESTSET and JMP select microcode addresses, with captured locals closed
 before scope-exiting jumps. Integer results retain encoded digit storage across MOV
 operations. Other operations (including `/`, power, floating-point arithmetic, coercions,
 metamethods and native calls) cross explicit Lua host boundaries. Original operand
 words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
 MOV-only is the target, not the current completion status: floating-point
-arithmetic, mixed integer/float comparisons, strings and Lua object/call semantics
+arithmetic, strings and Lua object/call semantics
 still use host execution. Native fallback traps in the regression suite verify
-the implemented integer, boolean and float/float comparison paths.
+the implemented integer, boolean and all numeric comparison paths.
 Host opcodes share one indirect function-table call, with shuffled entries and
 a distinct XOR key per VM. Native arithmetic fallback also uses function lookup.
 The host functions still contain inspectable Lua operations; dispatch indirection

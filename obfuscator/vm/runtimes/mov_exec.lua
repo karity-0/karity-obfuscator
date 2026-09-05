@@ -16,7 +16,7 @@ local function _mov_uint(r)
     error("invalid MOV field")
 end
 local function _mov_read(r, root)
-    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==6,"bad MOV version")
+    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==7,"bad MOV version")
     _mov_kits={}
     for vm=1,r.u16() do
         local kit={banks={},encode={},decode={},nonzero={},sign={}}
@@ -117,6 +117,7 @@ end
     _ms[172]={[0]=true,[1]=false}
     _ms[175]={[false]=true,[true]=false}
     --<<FLOAT_TABLES>>
+    --<<MIXED_TABLES>>
     local _mexpected={
         [0]={[false]=true,[true]=false},
         [1]={[false]=false,[true]=true},
@@ -155,9 +156,16 @@ end
             elseif op==26 then x=_mov_digits(B); y=_mones
             else x=_mov_digits(B); y=_mov_digits(C) end
             _ms[176]=false
-            if op>=31 and math.type(rget(B))=="float" and math.type(rget(C))=="float" then
-                x=_mov_float_digits(rget(B)); y=_mov_float_digits(rget(C))
-                _ms[176]=true
+            _ms[192]=false
+            if op>=31 then
+                local left,right=math.type(rget(B)),math.type(rget(C))
+                if left and right then
+                    _ms[198]=left=="float"; _ms[199]=right=="float"
+                    if _ms[198] then x=_mov_float_digits(rget(B)) end
+                    if _ms[199] then y=_mov_float_digits(rget(C)) end
+                    _ms[176]=_ms[198] and _ms[199]
+                    _ms[192]=_ms[198]~=_ms[199]
+                end
             end
             _ms[11]=x~=nil and y~=nil
             if _ms[11] then

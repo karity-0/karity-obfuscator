@@ -279,19 +279,22 @@ the Karity runtime that implements them.
 division recipe, including minimum-integer overflow and divisor-sign correction.
 Float/float `EQ/LT/LE` bitcast binary64 values and compare lookup-generated
 ordering keys; NaN classification and signed-zero equality also use lookup.
+Mixed integer/float comparisons build exact 80-bit ordering keys with a shared
+exponent and 63 fraction bits. Integers are normalized through lookup shifts,
+without rounding them to binary64, preserving distinctions beyond `2^53`.
 `NOT` and expected-truth tests use boolean lookup after native-value classification;
 tests and jumps select microcode addresses;
 jumps close captured locals before leaving their scope. Integer results stay in
 encoded digit storage until a host operation needs a Lua value. Floating-point arithmetic
-and mixed-type operations, `/`, power, metamethods, tables and
+and mixed-type arithmetic, `/`, power, metamethods, tables and
 calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
 implementation. The original operand words remain available to host fallbacks.
 MOV-only remains the target; this implementation does not yet meet it. In
-particular, floating-point arithmetic, mixed integer/float comparisons, string
+particular, floating-point arithmetic, string
 operations and Lua object/call semantics
 still need host execution. Function-table indirection is not counted as MOV
 lowering. Regression tests reject native integer arithmetic, division, comparison
-and boolean fallbacks, plus float/float comparison fallbacks, to verify that the
+and boolean fallbacks, plus all numeric comparison fallbacks, to verify that the
 implemented lookup paths really run.
 All host opcodes enter through one function-table call. Each VM shuffles the
 handler table and uses a distinct XOR key for its entries; native arithmetic
