@@ -20,11 +20,40 @@ OUTPUT = ROOT_DIR / "docs" / "configuration.md"
 
 VM_DETAILS = """\
 `vm_options.backend` selects only the VM runtime execution model, independently
-from the build profile. Both backends use the current compiler, instruction
+from the build profile. Karity and classic use the current compiler, instruction
 layout, serializer/blob protection, dispatcher selection, integrity checks, and
 output pipeline. `karity` remains the implicit choice when the option is omitted.
 `classic` uses direct register storage and straightforward opcode handlers;
 `default` is accepted as an alias for `classic`.
+
+`mov` is an experimental hybrid backend. Use it with
+`--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM,
+BAND/BOR/BXOR/SHL/SHR/BNOT and EQ/LT/LE lower into nibble lookup microcode;
+TEST/TESTSET and JMP select microcode addresses, with captured locals closed
+before scope-exiting jumps. Integer results retain encoded digit storage across MOV
+operations. Other operations (including division/modulo/power, floats, coercions,
+metamethods and native calls) cross explicit Lua host boundaries. Original operand
+words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
+Multiple MOV interpreters use independent instruction IDs and digit codebooks.
+Prototypes follow the shared vm_count assignment and calls/upvalues/tail-call
+transitions cross representations through Lua values. The versioned microcode
+extension is covered by shared blob encryption and integrity binding, and is
+generated after instruction relocation. Common arithmetic recipes are linked
+once into each VM's tape and shared across prototypes; call frames keep private
+scratch storage and continuation addresses.
+
+MOV retains junk insertion, integrity constants, blob forms, source/output passes
+and packing. Each VM uses its own fixed microcode dispatcher with randomized IDs;
+dispatcher_type, dispatcher_target_hiding, fake_handlers, mutate_handlers and
+Karity graph/state/representation controls do not apply. Legacy split/fuse/defer
+and block variants are disabled. The mov_lowering profile entry lists unsupported
+controls and reports effective VM counts, lowered sites, expanded/stored
+micro-instructions, shared recipes and extension bytes. MOV release-check
+validates shared source protections, VM count,
+junk insertion, integrity and blob form, excluding unused legacy dispatcher/
+handler and Karity graph options. Use `--profile high --vm-option backend=mov
+--release-check` for the complete profile and release validation.
+Lookup microcode adds runtime and output overhead; measure actual workloads.
 
 The remaining implementation notes in this section describe Karity's hardened
 runtime model. In classic mode, runtime graph execution, encoded/dynamic register

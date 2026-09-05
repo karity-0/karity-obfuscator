@@ -17,6 +17,7 @@ from ..parser import Lua53Parser
 from .serializer import (
     serialize,
     assign_vm_ids,
+    iter_protos,
     collect_fuseable_pairs_for_vm,
     patch_integrity_sources,
 )
@@ -299,13 +300,16 @@ def _dump_function_stripped(
                 os.unlink(p)
 
 
-def _load_vm(backend: str = "karity") -> str:
+def _load_vm(backend: str = "karity", mov_kits: list | None = None) -> str:
     src = _VM_LUA_PATH.read_text(encoding="utf-8")
     cutoff = src.find("\nif arg and arg[0]")
     if cutoff != -1:
         src = src[:cutoff]
-    if backend == "classic":
+    if backend in ("classic", "mov"):
         classic_exec = _CLASSIC_EXEC_PATH.read_text(encoding="utf-8")
+        if backend == "mov":
+            from .mov.builder import build_runtime
+            classic_exec = build_runtime(classic_exec, mov_kits)
         start = src.index("local exec, _EX, _NX")
         end_marker = "--<<ENDNEXT_ROUTER>>"
         end = src.index(end_marker, start) + len(end_marker)
@@ -319,6 +323,9 @@ def _load_vm(backend: str = "karity") -> str:
             "_EX[proto.vm_id+1](proto,{env_box},table.pack())"
         )
         src = src[:run_start] + direct_entry + src[run_end:]
+        if backend == "mov":
+            src = src.replace("local proto=read_proto(r,acc_state)",
+                              "local proto=read_proto(r,acc_state); _mov_read(r,proto)")
     return src
 
 
@@ -1890,17 +1897,20 @@ class VMBuildPipeline(PostPass):
 
     def run(self, script: str) -> str:
         self.last_profile = []
-        classic_runtime = self.backend == "classic"
-        graph_execution_rate = 0.0 if classic_runtime else float(
+        mov_runtime = self.backend == "mov"
+        direct_runtime = self.backend in ("classic", "mov")
+        mov_kits = None
+        relocated_code = [] if mov_runtime else None
+        graph_execution_rate = 0.0 if direct_runtime else float(
             self.vm_options.get("graph_execution_rate", 0.1)
         )
-        cross_instruction_rate = 0.0 if classic_runtime else float(
+        cross_instruction_rate = 0.0 if direct_runtime else float(
             self.vm_options.get("cross_instruction_rate", 0.2)
         )
-        block_variant_rate = 0.0 if classic_runtime else float(
+        block_variant_rate = 0.0 if direct_runtime else float(
             self.vm_options.get("block_variant_rate", 0.08)
         )
-        semantic_diversity_rate = 0.0 if classic_runtime else float(
+        semantic_diversity_rate = 0.0 if direct_runtime else float(
             self.vm_options.get("semantic_diversity_rate", 0.35)
         )
         # 1. luac 컴파일
@@ -1925,20 +1935,29 @@ class VMBuildPipeline(PostPass):
         _phase_start = time.perf_counter()
         vm_count = max(1, int(self.vm_options.get("vm_count", 1)))
         vm_assign, n = assign_vm_ids(proto, vm_count)
+        if mov_runtime:
+            from .mov.layout import make_kits
+            mov_kits = make_kits(n)
 
         used_vops: set[int] = set()
         vm_maps: list = []
         used_ops_list: list[set[int]] = []
         for k in range(n):
-            vop_map    = _make_vop_map(used_vops)
-            split_ops  = ALL_SPLIT_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
-            split_map  = _make_split_map(used_vops, split_ops)
-            fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
-            fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
-            defer_ops = set() if classic_runtime else (
-                DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
-            )
-            defer_map  = _make_defer_map(used_vops, defer_ops)
+            if mov_runtime:
+                # Original words serve only explicit host boundaries. MOV has
+                # its own randomized ISA and performs lowering after relocation.
+                vop_map = {op: [op] for op in range(_LUA_OP_COUNT)}
+                split_map, fuse_map, defer_map = {}, {}, {}
+            else:
+                vop_map = _make_vop_map(used_vops)
+                split_ops = ALL_SPLIT_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+                split_map = _make_split_map(used_vops, split_ops)
+                fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
+                fuse_map = _make_fuse_map(used_vops, fuse_pairs)
+                defer_ops = set() if direct_runtime else (
+                    DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+                )
+                defer_map = _make_defer_map(used_vops, defer_ops)
             vm_maps.append((vop_map, split_map, fuse_map, defer_map))
             used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
             if self.vm_options.get("integrity_constants", False):
@@ -1982,13 +2001,46 @@ class VMBuildPipeline(PostPass):
                 self.vm_options.get("block_variant_max_instructions", 6)
             ),
             constant_tags=constant_tags,
+            relocated_code=relocated_code,
         )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
+        if mov_runtime:
+            from .mov.lower import lower
+            from .mov.serializer import serialize as serialize_mov
+            _mov_start = time.perf_counter()
+            proto_ids = [vm_assign[id(p)] for p in iter_protos(proto)]
+            if len(proto_ids) != len(relocated_code):
+                raise RuntimeError("MOV relocated prototype count mismatch")
+            programs = [lower(code, vm_id) for code, vm_id in zip(relocated_code, proto_ids)]
+            storage_stats = {}
+            extension = serialize_mov(programs, mov_kits, storage_stats)
+            blob += extension
+            self.last_profile.append({
+                "phase": "mov_lowering",
+                "elapsed": round(time.perf_counter() - _mov_start, 6),
+                "prototypes": len(programs),
+                "effective_vms": n,
+                "vm_prototypes": [proto_ids.count(i) for i in range(n)],
+                "digit_encoding": "per_vm_permutation",
+                "lowered_sites": sum(p.lowered_sites for p in programs),
+                "micro_instructions": sum(len(p.code) for p in programs),
+                "extension_bytes": len(extension),
+                **storage_stats,
+                "dispatcher": "mov_microcode",
+                "unsupported_options": [
+                    "dispatcher_type", "dispatcher_target_hiding", "fake_handlers",
+                    "mutate_handlers", "graph_execution_rate", "cross_instruction_rate",
+                    "runtime_polymorphism_rate", "runtime_trace", "block_variant_rate",
+                    "helper_variant_count", "helper_diversity_rate", "semantic_diversity_rate",
+                    "semantic_state_threading", "argument_virtualization",
+                    "upvalue_virtualization", "table_virtualization", "branch_virtualization",
+                ],
+            })
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
         _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
-        vm_code = _rename_vm_keys(_load_vm(self.backend))
+        vm_code = _rename_vm_keys(_load_vm(self.backend, mov_kits))
         for name in constant_tag_names:
             vm_code = vm_code.replace(
                 f"__VM_CTAG_{name.upper()}__", str(constant_tags[name])
@@ -1996,7 +2048,9 @@ class VMBuildPipeline(PostPass):
             vm_code = vm_code.replace(
                 f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
             )
-        if n == 1:
+        if mov_runtime:
+            pass  # MOV uses its own instruction stream and dispatcher.
+        elif n == 1:
             vop_map, split_map, fuse_map, defer_map = vm_maps[0]
             vm_code = apply_vop_to_vm(
                 vm_code, vop_map,
@@ -2010,7 +2064,7 @@ class VMBuildPipeline(PostPass):
             # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
             # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
             vm_code = apply_dispatch(vm_code, dispatch)
-            if not classic_runtime:
+            if not direct_runtime:
                 vm_code = apply_execution_kit(
                     vm_code,
                     int(self.vm_options.get("helper_variant_count", 3)),
@@ -2018,7 +2072,7 @@ class VMBuildPipeline(PostPass):
                 )
             if self.vm_options.get("dispatcher_target_hiding", False):
                 vm_code = apply_dispatch_target_hiding(vm_code)
-            if not classic_runtime:
+            if not direct_runtime:
                 vm_code = wire_exec_router(vm_code, 0)
                 vm_code = build_next_router_kit(vm_code, 1)
         else:
@@ -2037,12 +2091,12 @@ class VMBuildPipeline(PostPass):
                                               self.vm_options.get("helper_diversity_rate", 0.35)
                                           ),
                                           semantic_diversity_rate=semantic_diversity_rate,
-                                          classic_runtime=classic_runtime)
+                                          classic_runtime=direct_runtime)
 
         # Keep disabled profiles free of semantic-threading calls on the hot
         # fetch/write paths.  The local helpers remain as cold template code,
         # but no per-instruction function-call overhead survives.
-        if classic_runtime or not self.vm_options.get("semantic_state_threading", False):
+        if direct_runtime or not self.vm_options.get("semantic_state_threading", False):
             vm_code = vm_code.replace("; _ss_step(_ip,op,A,B,C)", "")
             vm_code = vm_code.replace(
                 "\n        _ss_value(slot,encoded,epoch,kind)", ""
@@ -2092,7 +2146,7 @@ class VMBuildPipeline(PostPass):
         _graph_start = time.perf_counter()
         _graph_input_bytes = len(vm_func_src.encode("utf-8"))
 
-        if classic_runtime:
+        if direct_runtime:
             vm_func_src = _apply_classic_runtime_tokens(vm_func_src)
         else:
             vm_func_src = _apply_handler_graphs(
@@ -2124,21 +2178,21 @@ class VMBuildPipeline(PostPass):
         _graph_output_bytes = len(vm_func_src.encode("utf-8"))
         graph_detail = {
             "phase": (
-                "vm_output:classic_runtime" if classic_runtime
+                f"vm_output:{self.backend}_runtime" if direct_runtime
                 else "vm_output:handler_graphs"
             ),
             "class": (
-                "_apply_classic_runtime_tokens" if classic_runtime
+                "_apply_classic_runtime_tokens" if direct_runtime
                 else "_apply_handler_graphs"
             ),
             "elapsed": round(_graph_elapsed, 6),
             "input_bytes": _graph_input_bytes,
             "output_bytes": _graph_output_bytes,
             "delta_bytes": _graph_output_bytes - _graph_input_bytes,
-            "graph_sites": 0 if classic_runtime else len(graph_sites),
-            "graph_families": 0 if classic_runtime else graph_family_count,
+            "graph_sites": 0 if direct_runtime else len(graph_sites),
+            "graph_families": 0 if direct_runtime else graph_family_count,
             "backend": (
-                "classic_runtime" if classic_runtime
+                f"{self.backend}_runtime" if direct_runtime
                 else "pre_output_pipeline"
             ),
         }

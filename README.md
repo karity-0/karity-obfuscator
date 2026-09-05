@@ -218,6 +218,8 @@ python main.py input.lua --profile fast-vm
 python main.py input.lua --profile high
 python main.py input.lua --passes string_obf,number_obf,minify
 python main.py input.lua --vm-option backend=classic
+python main.py input.lua --profile fast-vm --vm-option backend=mov
+python main.py input.lua --profile high --vm-option backend=mov --release-check
 python main.py input.lua --vm-option vm_count=2
 python main.py input.lua --vm-option graph_execution_rate=0.05
 
@@ -261,7 +263,7 @@ Copy `config.example.json` to `config.json`, then adjust profiles instead of
 editing pass lists for every build. CLI values supplied with `--vm-option`
 override the selected profile for that invocation.
 
-VM runtime architecture is independent from protection level. Both modes retain
+VM runtime architecture is independent from protection level. Karity and classic retain
 the current compiler, serializer/blob protection, dispatcher selection,
 integrity checks, and output pipeline. `backend=karity` selects the hardened
 graph/encoded-register runtime and is used when the option is omitted.
@@ -271,11 +273,37 @@ Release checks apply the shared dispatcher, integrity, mutation, and VM-count
 requirements to both modes, and apply graph/variant-rate requirements only to
 the Karity runtime that implements them.
 
+`backend=mov` is an experimental MOV-inspired backend. It lowers integer
+`ADD/SUB/MUL/UNM`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
+4-bit lookup microcode. Boolean tests and jumps select microcode addresses;
+jumps close captured locals before leaving their scope. Integer results stay in
+encoded digit storage until a host operation needs a Lua value. Floating-point
+and mixed-type operations, division/modulo/power, metamethods, tables and
+calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
+implementation. The original operand words remain available to host fallbacks.
+
+Start with `--profile fast-vm --vm-option backend=mov`. Multiple MOV interpreters
+use distinct instruction IDs and digit codebooks, with prototypes assigned by
+`vm_count` as in the other backends. Calls, shared upvalues and tail-call frame
+transitions preserve Lua values across these representations. Each interpreter
+uses a fixed microcode dispatcher; legacy dispatcher selection/target
+hiding, fake/mutated/split/fused handlers, and Karity graph/representation options
+do not apply. Junk insertion, integrity constants, all blob forms, source/output
+passes and packing remain available. Arithmetic recipes are stored once per VM
+and shared across prototypes, while scratch slots and continuations remain private
+to each call frame. `--profile high --vm-option backend=mov
+--release-check` checks the shared source, VM-count, junk, integrity and blob
+requirements; unused legacy dispatcher/handler and Karity graph options are
+excluded from MOV release validation. Profiling records effective VM counts,
+unsupported controls, lowered sites, stored micro-instructions and shared recipe
+counts in `mov_lowering`. Lookup tables and
+microcode increase output size and runtime cost; benchmark the intended workload.
+
 The most important performance controls are:
 
 | Option | Effect |
 |---|---|
-| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, or the `default` alias |
+| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, experimental lookup `mov`, or the `default` alias |
 | `graph_execution_rate` | How often heavy compiled handler graphs execute |
 | `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
 | `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
@@ -321,6 +349,7 @@ python test/run_runtime_poly_regression.py
 python test/run_state_coupling_regression.py
 python test/run_vm_choke_regression.py
 python test/run_gui_regression.py
+python test/run_mov_backend_regression.py
 ```
 
 For a deterministic build during diagnosis, pass `--seed`. Compare the source

@@ -954,7 +954,8 @@ def serialize(proto: Proto,
               block_variant_rate: float = 0.0,
               block_variant_count: int = 3,
               block_variant_max_instructions: int = 6,
-              constant_tags: dict[str, int] | None = None) -> bytes:
+              constant_tags: dict[str, int] | None = None,
+              relocated_code: list[list[int]] | None = None) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map, defer_map).
 
     vm_assign = {id(proto): vm_id}.
@@ -997,7 +998,7 @@ def serialize(proto: Proto,
                  graph_sites if graph_sites is not None else set(), seed, integrity,
                  graph_execution_rate, cross_instruction_rate,
                  graph_family_count, block_variant_rate, block_variant_count,
-                 block_variant_max_instructions, constant_tag_values)
+                 block_variant_max_instructions, constant_tag_values, relocated_code)
     return w.data()
 
 
@@ -1008,9 +1009,15 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                  graph_family_count: int, block_variant_rate: float,
                  block_variant_count: int,
                  block_variant_max_instructions: int,
-                 constant_tags: tuple[int, ...]):
+                 constant_tags: tuple[int, ...],
+                 relocated_code: list[list[int]] | None = None):
     vm_id = vm_assign.get(id(proto), 0)
     vop_map, split_map, fuse_map, defer_map = vm_maps[vm_id]
+    if relocated_code is not None and (split_map or fuse_map or defer_map or block_variant_rate):
+        raise ValueError("relocated code capture requires unsplit, unfused instructions")
+    captured: list[int] = []
+    if relocated_code is not None:
+        relocated_code.append(captured)
 
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
@@ -1059,12 +1066,16 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         emit_op = emit_raw & 0x3F
         if unit[0] == "iexpr_stream":
             for pseudo_raw in _as_iexpr_stream(raw, temp0, temp1):
+                if relocated_code is not None:
+                    captured.append(pseudo_raw)
                 pseudo_op = pseudo_raw & 0x3F
                 _emit_instr(w, pseudo_raw, _rand_alias(vop_map, pseudo_op), acc_state)
                 emitted_av.append(())
                 emitted_sites.append(())
                 physical += 1
         elif unit[0] == "normal":
+            if relocated_code is not None:
+                captured.append(emit_raw)
             _emit_instr(w, emit_raw, _rand_alias(vop_map, emit_op), acc_state)
             emitted_av.append(add_slots.get(i, ()))
             desc = graph_descriptor(emit_op)
@@ -1197,7 +1208,7 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                      integrity, graph_execution_rate, cross_instruction_rate,
                      graph_family_count, block_variant_rate,
                      block_variant_count, block_variant_max_instructions,
-                     constant_tags)
+                     constant_tags, relocated_code)
 
 
 # ---------------------------------------------------------------------------

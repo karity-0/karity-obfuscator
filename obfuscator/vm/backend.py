@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-VM_BACKENDS = ("karity", "classic")
+VM_BACKENDS = ("karity", "classic", "mov")
 VM_BACKEND_ALIASES = {"default": "classic"}
 
 

@@ -146,6 +146,7 @@ VM_OPTION_DOCS = {
         "values": [
             ("karity", "hardened graph and encoded-register runtime"),
             ("classic", "direct-register and direct-handler runtime on the current VM pipeline"),
+            ("mov", "experimental multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback"),
             ("default", "compatibility alias for classic"),
         ],
     },
@@ -376,7 +377,10 @@ def validate_release_config(config: dict) -> None:
     if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2:
         errors.append("vm_options.vm_count should be >= 2 for release builds")
 
-    for key in ("fake_handlers", "mutate_handlers", "junk_instructions"):
+    required_vm_flags = ("junk_instructions",) if backend == "mov" else (
+        "fake_handlers", "mutate_handlers", "junk_instructions",
+    )
+    for key in required_vm_flags:
         if vm_options.get(key) is not True:
             errors.append(f"vm_options.{key} must be true")
 
@@ -421,7 +425,9 @@ def validate_release_config(config: dict) -> None:
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
-    if vm_options.get("dispatcher_type") != "mixed":
+    # MOV always emits independent instruction IDs and digit alphabets per VM;
+    # its dispatcher does not implement the legacy dispatcher/handler options.
+    if backend != "mov" and vm_options.get("dispatcher_type") != "mixed":
         errors.append("vm_options.dispatcher_type should be 'mixed'")
 
     if errors:
