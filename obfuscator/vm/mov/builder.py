@@ -1,8 +1,34 @@
 """Wire the MOV executor to the existing Lua host semantics and blob wrapper."""
 from pathlib import Path
+import random
 
 from .ir import Op
 from .layout import VMKit
+
+
+def _native_arithmetic(runtime: str) -> str:
+    """Native fallback uses function lookup, never a slot comparison chain."""
+    binary = dict(ADD="+", SUB="-", MUL="*", BAND="&", BOR="|",
+                  BXOR="~", SHL="<<", SHR=">>")
+    unary = dict(UNM="-", BNOT="~")
+    declarations = []
+    for name, operators, args in (("binary", binary, "a,b"), ("unary", unary, "a")):
+        entries = []
+        for slot in random.sample(list(operators), len(operators)):
+            operator = operators[slot]
+            expr = f"a{operator}b" if name == "binary" else f"{operator}a"
+            entries.append(f"[__VM_SLOT_{slot}__]=function({args}) return {expr} end")
+        declarations.append(f"local _mov_{name}={{" + ",".join(entries) + "}")
+    start = runtime.index("    local function _arith2(a,b,av,slot)")
+    end = runtime.index("    local function _arith2r(", start)
+    return runtime[:start] + "\n".join(declarations) + """
+    local function _arith2(a,b,av,slot)
+        return _mov_binary[slot](a,b)
+    end
+    local function _arith1(a,av,slot)
+        return _mov_unary[slot](a)
+    end
+""" + runtime[end:]
 
 
 def build_runtime(classic: str, kits: list[VMKit]) -> str:
@@ -13,7 +39,7 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
 
     # Reuse host handlers, not the classic fetch/dispatch loop. They are reached
     # only by explicit HOST records (including non-integer arithmetic fallback).
-    from ..vm_obfuscation import _find_chain
+    from ..vm_obfuscation import _find_chain, _parse_handler_blocks
     a, b = _find_chain(classic)
     handlers = classic[a:b]
     # A VM tail call returns a frame transition, consumed by the outer
@@ -35,10 +61,18 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B""",
     )
-    loop = section("LOOP", "END").replace("--<<HOST_HANDLERS>>", handlers)
+    # Every host opcode crosses the same indirect call boundary. Keep frame
+    # state in closure upvalues; a returned packet exits the interpreter only
+    # for RETURN/TAILCALL, while ordinary handlers return nil.
+    blocks = _parse_handler_blocks(handlers)
+    if set(blocks) != set(range(60)):
+        raise ValueError("unexpected MOV host handler set")
+    host_dispatch = """local result=_mov_host[op~__MOV_HOST_KEY__](A,B,C,Bx,sBx,_av)
+            if result then return result end"""
+    loop = section("LOOP", "END").replace("--<<HOST_HANDLERS>>", host_dispatch)
     loop_start = classic.index("    for i in setmetatable(")
     loop_end = classic.index("    return {r={},n=0}", b)
-    runtime = classic[:loop_start] + section("FRAME", "LOOP") + loop + classic[loop_end:]
+    runtime = classic[:loop_start] + section("FRAME", "LOOP") + "\n--<<HOST_BANK>>\n" + loop + classic[loop_end:]
     reg_start = runtime.index("    --<<RGET>>")
     reg_end = runtime.index("    --<<ENDRSET>>") + len("    --<<ENDRSET>>")
     runtime = runtime[:reg_start] + section("REGISTERS", "FRAME") + runtime[reg_end:]
@@ -60,8 +94,18 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     end = runtime.index("--<<ENDEXEC>>")
     body = runtime[start:end]
     definitions = []
+    host_keys = random.sample(range(0x100, 0x10000), len(kits))
     for vm_id, kit in enumerate(kits, 1):
         definition = body.replace("exec = function", f"_mov_dispatch[{vm_id}] = function", 1)
+        key = host_keys[vm_id - 1]
+        order = random.sample(list(blocks), len(blocks))
+        bank = "local _mov_host={\n" + "\n".join(
+            f"[{op ^ key}]=function(A,B,C,Bx,sBx,_av)\n{blocks[op]}\nend,"
+            for op in order
+        ) + "\n}"
+        definition = definition.replace("--<<HOST_BANK>>", bank)
+        definition = definition.replace("__MOV_HOST_KEY__", str(key))
+        definition = _native_arithmetic(definition)
         for op in Op:
             definition = definition.replace(f"__MOV_{op.name}__", str(kit.opcodes[op]))
         definitions.append(definition)

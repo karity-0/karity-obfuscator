@@ -34,6 +34,12 @@ before scope-exiting jumps. Integer results retain encoded digit storage across 
 operations. Other operations (including division/modulo/power, floats, coercions,
 metamethods and native calls) cross explicit Lua host boundaries. Original operand
 words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
+Host opcodes share one indirect function-table call, with shuffled entries and
+a distinct XOR key per VM. Native arithmetic fallback also uses function lookup.
+The host functions still contain inspectable Lua operations; dispatch indirection
+does not turn those operations into lookup microcode. Per-frame handler closures
+preserve recursion, coroutine suspension and return/tail-call packets, at the
+cost of additional closure allocation.
 Multiple MOV interpreters use independent instruction IDs and digit codebooks.
 Prototypes follow the shared vm_count assignment and calls/upvalues/tail-call
 transitions cross representations through Lua values. The versioned microcode

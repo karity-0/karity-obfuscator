@@ -281,6 +281,12 @@ encoded digit storage until a host operation needs a Lua value. Floating-point
 and mixed-type operations, division/modulo/power, metamethods, tables and
 calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
 implementation. The original operand words remain available to host fallbacks.
+All host opcodes enter through one function-table call. Each VM shuffles the
+handler table and uses a distinct XOR key for its entries; native arithmetic
+fallbacks also use function lookup instead of slot-comparison chains. These
+tables obscure the ordered opcode dispatcher, but their Lua operations remain
+inspectable. Handler closures are allocated per call frame to preserve recursive
+calls, coroutine suspension, and return/tail-call packets.
 
 Start with `--profile fast-vm --vm-option backend=mov`. Multiple MOV interpreters
 use distinct instruction IDs and digit codebooks, with prototypes assigned by

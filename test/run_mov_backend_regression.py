@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import json
 import subprocess
 import sys
@@ -17,6 +18,7 @@ from obfuscator.registry import (
 )
 from obfuscator.vm import VMPass
 from obfuscator.vm.mov.builder import build_runtime
+from obfuscator.vm.mov.layout import make_kits
 from run_vm_backend_regression import lua_executable, options
 
 
@@ -71,6 +73,17 @@ def check(source: Path, opts: dict, passes: list[str], seed: int) -> None:
 
 
 def main() -> int:
+    classic = (ROOT / "obfuscator/vm/runtimes/classic_exec.lua").read_text(encoding="utf-8")
+    runtime = build_runtime(classic, make_kits(3))
+    dispatches = runtime.split("and q[2]==0 then")[1:]
+    assert len(dispatches) == 3
+    for dispatch in dispatches:
+        dispatch = dispatch.split('else error("bad MOV instruction")', 1)[0]
+        assert not re.search(r"(?:if|elseif)\s+op==\d+\s+then", dispatch)
+    assert "if slot==" not in runtime
+    keys = re.findall(r"_mov_host\[op~(\d+)\]", runtime)
+    assert len(keys) == 3 and len(set(keys)) == 3
+    assert runtime.count("local _mov_host={") == 3
     base = options("mov")
     validate_config({"passes": ["vm"], "vm_options": base})
     for count in (2, 3):
@@ -104,7 +117,15 @@ def main() -> int:
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
     def forbid_integer_fallbacks(classic, opcodes):
+        for op in (31, 32, 33):
+            marker = f"elseif op=={op} then"
+            assert marker in classic
+            classic = classic.replace(marker, marker + """
+                if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
+                    error("native integer comparison fallback") end;""")
         runtime = build_runtime(classic, opcodes)
+        assert "local function _arith2(a,b,av,slot)" in runtime
+        assert "local function _arith1(a,av,slot)" in runtime
         runtime = runtime.replace(
             "local function _arith2(a,b,av,slot)",
             """local function _arith2(a,b,av,slot)
@@ -118,11 +139,6 @@ def main() -> int:
             """local function _arith1(a,av,slot)
             if math.type(a)=="integer" then error("native integer unary fallback") end""",
         )
-        for op in (31, 32, 33):
-            marker = f"elseif op=={op} then"
-            runtime = runtime.replace(marker, marker + """
-                if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
-                    error("native integer comparison fallback") end;""")
         return runtime
     with patch("obfuscator.vm.mov.builder.build_runtime", forbid_integer_fallbacks):
         check(focused, {**base, "vm_count": 3}, [], 9000)

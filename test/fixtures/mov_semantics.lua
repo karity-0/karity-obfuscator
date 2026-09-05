@@ -91,3 +91,29 @@ local ok1,v1=coroutine.resume(co)
 local ok2,v2=coroutine.resume(co,5)
 assert(ok1 and v1==23 and ok2 and v2==27)
 print("mov semantics ok")
+
+-- All native fallback operators must retain coercion and metamethod ordering
+-- across the indirect host call boundary, including coroutine suspension.
+local events={}
+local hostmt={}
+for _,name in ipairs({"__mod","__pow","__div","__idiv","__len","__concat"}) do
+    local event=name
+    hostmt[event]=function(a,b)
+        events[#events+1]=event
+        return 9
+    end
+end
+local ha,hb=setmetatable({},hostmt),setmetatable({},hostmt)
+print(ha%hb,ha^hb,ha/hb,ha//hb,#ha,ha..hb,not ha)
+assert(table.concat(events,",")=="__mod,__pow,__div,__idiv,__len,__concat")
+local function divs(a,b) return a%b,a^b,a/b,a//b end
+print("native fallback",divs("7","2"))
+local yielding=setmetatable({}, {__div=function(a,b)
+    local resumed=coroutine.yield("divide")
+    return resumed+b
+end})
+local division=coroutine.create(function() return yielding/3 end)
+local dy,dv=coroutine.resume(division)
+assert(dy and dv=="divide")
+dy,dv=coroutine.resume(division,8)
+assert(dy and dv==11)
