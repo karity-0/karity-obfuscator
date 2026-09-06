@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 
 from .vm import VMPass
-from .vm.backend import normalize_vm_backend
+from .vm.backend import normalize_vm_backend, unsupported_vm_options
 from .passes.output_signature import (
     DEFAULT_GENERATOR_PATTERNS,
     sanitize_generator_pattern,
@@ -76,6 +76,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": FunctionObfuscationPass,
         "label": "Function Obfuscation",
         "group": "base",
+        "docs": "passes/functionObfuscation.md",
     },
     "rename_obf": {
         "cls": RenameObfuscationPass,
@@ -86,6 +87,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": LocalizeGlobalsPass,
         "label": "Localize Globals",
         "group": "base",
+        "docs": "passes/localizeGlobals.md",
     },
     "minify": {
         "cls": MinifyPass,
@@ -96,11 +98,13 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": VMPass,
         "label": "VM",
         "group": "post",
+        "docs": "backends.md",
     },
     "anti_debug": {
         "cls": AntiDebugPass,
         "label": "Anti-Debug Wrapper",
         "group": "pre",
+        "docs": "passes/antiDebug.md",
     },
     "anti_decompile": {
         "cls": AntiDecompilePass,
@@ -111,6 +115,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": PackerPass,
         "label": "Packer (deflate + load)",
         "group": "post",
+        "docs": "passes/packer.md",
     },
 }
 
@@ -129,7 +134,7 @@ PASS_DESCRIPTIONS = {
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
     "table_obf": "Obfuscates table variables.",
-    "function_obf": "Obfuscates functions using control-flow flattening and junk blocks.",
+    "function_obf": "Recursively transforms SOURCE function boundaries with safe helper inlining, split helper closures, control-flow flattening, and junk blocks.",
     "rename_obf": "Renames local identifiers.",
     "localize_globals": "Converts global variable accesses to local aliases where possible.",
     "minify": "Reduces script size by removing unnecessary whitespace.",
@@ -146,7 +151,8 @@ VM_OPTION_DOCS = {
         "values": [
             ("karity", "hardened graph and encoded-register runtime"),
             ("classic", "direct-register and direct-handler runtime on the current VM pipeline"),
-            ("default", "compatibility alias for classic"),
+            ("mov", "supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback"),
+            ("default", "alias for karity (the default runtime)"),
         ],
     },
     "dispatcher_type": {
@@ -242,7 +248,7 @@ VM_OPTION_DOCS = {
         "range": "0.0 to 1.0",
     },
     "runtime_trace": {
-        "description": "Emit the final runtime route hash to stderr for diagnostics. Keep disabled in normal and release builds.",
+        "description": "Emit the final runtime route hash to stderr for diagnostics (karity backend only). When false, all trace instrumentation is removed during generation. Keep disabled in normal and release builds.",
         "default": False,
     },
     "block_variant_rate": {
@@ -342,6 +348,22 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
     return resolved
 
 
+def config_warnings(config: dict) -> list[str]:
+    """Valid but unsupported controls are retained and ignored, never coerced.
+
+    Report once at the UI/CLI boundary, rather than during repeated validation.
+    Explicitly supplied controls are reported even when their value is false.
+    """
+    if "vm" not in config.get("passes", []):
+        return []
+    options = config.get("vm_options", {})
+    backend = normalize_vm_backend(options.get("backend"))
+    ignored = sorted(unsupported_vm_options(backend).intersection(options))
+    if not ignored:
+        return []
+    return [f"backend={backend}: unsupported VM options are ignored: {', '.join(ignored)}"]
+
+
 def validate_config(config: dict) -> None:
     for key in CONFIG_PASS_LISTS:
         value = config.get(key, [])
@@ -355,6 +377,7 @@ def validate_config(config: dict) -> None:
 
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
+    _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_signature(config.get("signature", {}))
 
@@ -375,7 +398,10 @@ def validate_release_config(config: dict) -> None:
     if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2:
         errors.append("vm_options.vm_count should be >= 2 for release builds")
 
-    for key in ("fake_handlers", "mutate_handlers", "junk_instructions"):
+    required_vm_flags = ("junk_instructions",) if backend == "mov" else (
+        "fake_handlers", "mutate_handlers", "junk_instructions",
+    )
+    for key in required_vm_flags:
         if vm_options.get(key) is not True:
             errors.append(f"vm_options.{key} must be true")
 
@@ -420,7 +446,9 @@ def validate_release_config(config: dict) -> None:
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
-    if vm_options.get("dispatcher_type") != "mixed":
+    # MOV always emits independent instruction IDs and digit alphabets per VM;
+    # its dispatcher does not implement the legacy dispatcher/handler options.
+    if backend != "mov" and vm_options.get("dispatcher_type") != "mixed":
         errors.append("vm_options.dispatcher_type should be 'mixed'")
 
     if errors:
@@ -433,9 +461,84 @@ def _reject_nested_output_passes(config: dict, key: str) -> None:
         raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
 
 
+def _validate_function_obf_options(options: dict) -> None:
+    if not isinstance(options, dict):
+        raise ConfigError("'function_obf_options' must be an object")
+    allowed = {
+        "boundary_mode", "nested", "nested_max_depth",
+        "loop_split", "loop_unroll", "loop_unroll_max_iterations",
+        "loop_unroll_rate",
+        "loop_max_generated_blocks", "loop_max_expansion_ratio",
+        "loop_max_depth",
+    }
+    unknown = sorted(set(options) - allowed)
+    if unknown:
+        raise ConfigError(
+            "unknown function_obf_options: " + ", ".join(unknown)
+        )
+
+    boundary_mode = options.get("boundary_mode")
+    if boundary_mode is not None and boundary_mode not in {"mixed", "split", "cff"}:
+        raise ConfigError(
+            "function_obf_options.boundary_mode must be 'mixed', 'split', or 'cff'"
+        )
+    nested = options.get("nested")
+    if nested is not None and not isinstance(nested, bool):
+        raise ConfigError("function_obf_options.nested must be a boolean")
+    max_depth = options.get("nested_max_depth")
+    if max_depth is not None and (
+        not isinstance(max_depth, int)
+        or isinstance(max_depth, bool)
+        or not 0 <= max_depth <= 16
+    ):
+        raise ConfigError(
+            "function_obf_options.nested_max_depth must be an integer between 0 and 16"
+        )
+    for key in ("loop_split", "loop_unroll"):
+        value = options.get(key)
+        if value is not None and not isinstance(value, bool):
+            raise ConfigError(f"function_obf_options.{key} must be a boolean")
+    for key, minimum, maximum in (
+        ("loop_unroll_max_iterations", 0, 32),
+        ("loop_max_generated_blocks", 1, 1024),
+        ("loop_max_depth", 0, 16),
+    ):
+        value = options.get(key)
+        if value is not None and (
+            not isinstance(value, int)
+            or isinstance(value, bool)
+            or not minimum <= value <= maximum
+        ):
+            raise ConfigError(
+                f"function_obf_options.{key} must be an integer between "
+                f"{minimum} and {maximum}"
+            )
+    ratio = options.get("loop_max_expansion_ratio")
+    if ratio is not None and (
+        not isinstance(ratio, (int, float))
+        or isinstance(ratio, bool)
+        or not 1.0 <= float(ratio) <= 256.0
+    ):
+        raise ConfigError(
+            "function_obf_options.loop_max_expansion_ratio must be between 1 and 256"
+        )
+    unroll_rate = options.get("loop_unroll_rate")
+    if unroll_rate is not None and (
+        not isinstance(unroll_rate, (int, float))
+        or isinstance(unroll_rate, bool)
+        or not 0.0 <= float(unroll_rate) <= 1.0
+    ):
+        raise ConfigError(
+            "function_obf_options.loop_unroll_rate must be between 0.0 and 1.0"
+        )
+
+
 def _validate_vm_options(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'vm_options' must be an object")
+    unknown = sorted(set(options) - set(VM_OPTION_DOCS))
+    if unknown:
+        raise ConfigError(f"unknown vm_options: {', '.join(unknown)}")
 
     try:
         normalize_vm_backend(options.get("backend"))
@@ -551,6 +654,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     pipeline                = pipeline_cls(show_header=False)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 
+    function_obf_options    = config.get("function_obf_options", {})
     vm_options              = config.get("vm_options", {})
     has_packer              = "pack" in config.get("passes", [])
 
@@ -569,6 +673,8 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 packer_output_passes=packer_output_passes,
                 output_prefix=signature_pass.prefix,
             ))
+        elif cls is FunctionObfuscationPass:
+            pipeline.add(cls(**function_obf_options))
         else:
             pipeline.add(cls())
 

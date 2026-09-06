@@ -257,7 +257,7 @@ local function read_proto(r, acc_state)
         elseif tag==CTAG_BOOL  then p.constants[i]={CK_BOOL,r.u8()~=0}
         elseif tag==CTAG_INT   then p.constants[i]={CK_INT,r.i64()}
         elseif tag==CTAG_FLOAT then p.constants[i]={CK_FLOAT,r.f64()}
-        elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={CK_STR,_s and _kss(_s) or nil}
+        elseif tag==CTAG_STR   then local _s=r.str() or ""; p.constants[i]={CK_STR,_kss(_s)}
         elseif tag==CTAG_IEXPR then
             local _e=r.i64(); local _pn=r.u8(); local _p={}
             for _j=1,_pn do
@@ -337,13 +337,15 @@ local _DG=__VM_SEMANTIC_GRAPHS__
 local _RP=__VM_AFFINE_POOL__
 local _MP=__VM_REGISTER_MAPS__
 local _PY=__VM_POLY_THRESHOLD__
-local _PTRACE=__VM_POLY_TRACE__
 local _SY=__VM_SEMANTIC_STATE__
 local _AY=__VM_ARGUMENT_VIRTUALIZATION__
 local _UY=__VM_UPVALUE_VIRTUALIZATION__
 local _TY=__VM_TABLE_VIRTUALIZATION__
 local _BY=__VM_BRANCH_VIRTUALIZATION__
-local _PN,_PX,_PE,_PBC,_PBH=0,0,0,0,0
+local _PN,_PE=0,0
+--<<RUNTIME_TRACE>>
+local _PX,_PBC,_PBH=0,0,0
+--<<ENDRUNTIME_TRACE>>
 
 local function _vid(p)
     return p.vm_id
@@ -496,7 +498,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                  (a<<16)~(b<<7)~c~n~(_MG[1]<<3)~(_RX[1] or 0))&-1
         x=(x~(x<<13)~(x>>7)~(x<<17))&-1
         _PR[1],_PR[2]=x,n
-        if _PTRACE then _PX=_rmix(_PX~x~ip~(op<<11)~n) end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~ip~(op<<11)~n)
+        --<<ENDRUNTIME_TRACE>>
     end
 
     local function _poly_gate(salt)
@@ -512,7 +516,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if _poly_gate(salt)>=_PY then return baseline end
         local x=_poly_word(salt)
         local pick=((x>>16)%count)+1
-        if _PTRACE then _PX=_rmix(_PX~x~pick~salt) end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~pick~salt)
+        --<<ENDRUNTIME_TRACE>>
         return pick
     end
 
@@ -521,18 +527,20 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if _poly_gate(salt)>=_PY then return true end
         local x=_poly_word(salt)
         local lazy=((x>>16)&1)==0
-        if _PTRACE then
-            _PX=_rmix(_PX~x~(lazy and 0x4C415A59 or 0x4E4F5721))
-        end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~(lazy and 0x4C415A59 or 0x4E4F5721))
+        --<<ENDRUNTIME_TRACE>>
         return lazy
     end
 
     local function _poly_route(route,salt)
         local x=_poly_word(salt~#route~0x424C4F43)
         local pick=((x>>16)%#route)+1
-        if _PTRACE then _PX=_rmix(_PX~x~pick~salt~0x524F5554) end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~pick~salt~0x524F5554)
         _PBC=_PBC+1
         _PBH=_pmix(_PBH~x~pick~route[pick]~_PBC)
+        --<<ENDRUNTIME_TRACE>>
         _PR[1]=(_PR[1]~x~route[pick])&-1
         return route[pick]
     end
@@ -1611,8 +1619,10 @@ local function run(blob,rand_tail,self_func)
     local _clock=math.floor(((os.clock and os.clock()) or 0)*1000000000)
     local _wall=(os.time and os.time()) or 0
     _PN=_pmix(_aa~_af~_clock~(_wall<<21)~crc~seed~_PE)
+    --<<RUNTIME_TRACE>>
     _PX=_pmix(_PN~seed~crc)
     _PBC=0; _PBH=_pmix(_PN~0x424C4F434B)
+    --<<ENDRUNTIME_TRACE>>
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
     local _fn=r.u32()
@@ -1635,11 +1645,11 @@ local function run(blob,rand_tail,self_func)
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
          [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]=_apack({},0,crc)})
     --<<ENDRUN_ENTRY>>
-    if _PTRACE then
-        io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
-                        " blocks:",_PBC," blocktrace:",
-                        string.format("%016x",_PBH),"\n")
-    end
+    --<<RUNTIME_TRACE>>
+    io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
+                    " blocks:",_PBC," blocktrace:",
+                    string.format("%016x",_PBH),"\n")
+    --<<ENDRUNTIME_TRACE>>
 end
 
 if arg and arg[0] and arg[0]:match("vm") then

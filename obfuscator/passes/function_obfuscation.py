@@ -2019,10 +2019,165 @@ def _emit_dispatch_closure(blocks, entry_id, c, param_vars, rich_junk, hoist_nam
     return lines
 
 
+def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names,
+                         boundary_stats=None):
+    """일부 state block을 여러 helper closure로 분리한 평면 디스패처.
+
+    helper는 outer 함수의 state/hoisted local을 upvalue로 공유한다. 원본 return
+    block은 outer dispatcher에 남겨야 다중 반환과 trailing nil을 그대로 보존할
+    수 있으므로 inline case로 emit하고, 나머지 real/dead block만 helper bank와
+    outer inline case 사이에 무작위로 분산한다.
+
+    helper들을 호출할 때 loop 진입 시점의 state snapshot을 넘긴다. 먼저 호출된
+    helper가 state를 다음 값으로 바꾸더라도 뒤 helper가 같은 iteration에서 다음
+    원본 block까지 연속 실행하지 않게 하는 의미 보존 장치다.
+    """
+    sv = _zv(c)
+    ht = _zv(c)
+    enc = _Affine()
+    live = list(param_vars) + [(sv, "int")]
+
+    used: set[int] = {0}
+    sid: dict[int, int] = {0: 0}
+    for blk in blocks:
+        blk["s"] = _new_state(used)
+        sid[blk["id"]] = blk["s"]
+    entry_s = sid[entry_id]
+
+    real_meta: list[dict] = []
+    for blk in blocks:
+        cur = blk["s"]
+        if blk["kind"] == "return":
+            updates = []
+        elif blk["kind"] == "goto":
+            updates = [f"{sv}={sv}~{enc.delta_expr(cur, sid[blk['succ']])}"]
+        else:
+            updates = _branch_updates_flat(
+                blk["cond"], sv, enc, cur,
+                sid[blk["t"]], sid[blk["e"]], c,
+            )
+        real_meta.append({
+            "s": cur,
+            "lines": blk["lines"],
+            "updates": updates,
+            "real": True,
+            "returns": blk["kind"] == "return",
+        })
+
+    all_ids = [blk["id"] for blk in blocks]
+    dead_meta: list[dict] = []
+    for _ in range(random.randint(len(real_meta), len(real_meta) * 2 + 1)):
+        ds = _new_state(used)
+        jl = _junk_flow(c, rich_junk, live)
+        sink = _last_zv(jl)
+        weave = f"~{_zero_from(sink)}" if sink else ""
+        update = (
+            f"{sv}={sv}~"
+            f"{enc.delta_expr(ds, _dead_target_single(sid, all_ids))}{weave}"
+        )
+        dead_meta.append({
+            "s": ds,
+            "lines": jl,
+            "updates": _dead_realvar_entangle(hoist_names, sink) + [update],
+            "real": False,
+            "returns": False,
+        })
+
+    movable = [m for m in real_meta + dead_meta if not m["returns"]]
+    return_metas = [m for m in real_meta if m["returns"]]
+    random.shuffle(movable)
+
+    # 일부 block은 outer dispatcher에 그대로 두어 split과 inline boundary가 한
+    # 함수 안에 공존하게 한다. helper 쪽에는 항상 적어도 하나를 남긴다.
+    inline_count = min(
+        max(1, len(movable) // 3),
+        max(0, len(movable) - 1),
+    )
+    inline_metas = return_metas + movable[:inline_count]
+    helper_metas = movable[inline_count:]
+
+    helper_count = min(3, max(1, len(helper_metas)))
+    groups: list[list[dict]] = [[] for _ in range(helper_count)]
+    for index, meta in enumerate(helper_metas):
+        groups[index % helper_count].append(meta)
+    groups = [group for group in groups if group]
+
+    lines: list[str] = []
+
+    def emit(level, text):
+        lines.append("  " * level + text)
+
+    emit(0, f"local {sv}={enc.enc_expr(entry_s)}")
+    emit(0, f"local {ht}={{}}")
+
+    helper_keys: list[int] = []
+    for group in groups:
+        key = _new_state(used)
+        helper_keys.append(key)
+        arg = _zv(c)
+        emit(0, f"{ht}[{key}]=function({arg})")
+        for index, meta in enumerate(group):
+            kw = "if" if index == 0 else "elseif"
+            emit(1, f"{kw} {enc.dec_expr(arg)}=={meta['s']} then")
+            if rich_junk and meta["real"] and random.random() < 0.85:
+                _emit_live_junk(emit, 2, c, rich_junk, live, sv)
+            if random.random() < 0.35:
+                _emit_absorbing_junk(emit, 2, c, rich_junk, live, sv)
+            for line in meta["lines"]:
+                emit(2, line)
+            for update in meta["updates"]:
+                emit(2, update)
+        emit(1, "end")
+        emit(0, "end")
+
+    emit(0, f"while {sv}~={enc.enc_expr(0)} do")
+    snap = _zv(c)
+    emit(1, f"local {snap}={sv}")
+
+    random.shuffle(inline_metas)
+    for index, meta in enumerate(inline_metas):
+        kw = "if" if index == 0 else "elseif"
+        emit(1, f"{kw} {enc.dec_expr(snap)}=={meta['s']} then")
+        if rich_junk and meta["real"] and random.random() < 0.85:
+            _emit_live_junk(emit, 2, c, rich_junk, live, sv)
+        if random.random() < 0.35:
+            _emit_absorbing_junk(emit, 2, c, rich_junk, live, sv)
+        for line in meta["lines"]:
+            emit(2, line)
+        for update in meta["updates"]:
+            emit(2, update)
+
+    if inline_metas:
+        emit(1, "else")
+        call_level = 2
+    else:
+        call_level = 1
+    random.shuffle(helper_keys)
+    for key in helper_keys:
+        emit(call_level, f"{ht}[{key}]({snap})")
+    if inline_metas:
+        emit(1, "end")
+
+    for _ in range(random.randint(1, 2)):
+        _emit_absorbing_junk(emit, 1, c, rich_junk, live, sv)
+    emit(0, "end")
+
+    if boundary_stats is not None:
+        boundary_stats["split_helpers"] = (
+            boundary_stats.get("split_helpers", 0) + len(groups)
+        )
+        boundary_stats["inline_blocks"] = (
+            boundary_stats.get("inline_blocks", 0) + len(inline_metas)
+        )
+    return lines
+
+
 def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
                        extra_hoist_names: list[str] | None = None,
                        rich_junk: bool = True,
-                       param_names: list[str] | None = None) -> str:
+                       param_names: list[str] | None = None,
+                       boundary_mode: str = "mixed",
+                       boundary_stats=None) -> str:
     """블록 전이 그래프를 generic dead-state와 함께 state machine으로 분산.
 
     blocks: `_compile_stmts_to_blocks`가 만든 블록 리스트. 각 블록은 dict:
@@ -2084,8 +2239,20 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     emitters = [_emit_dispatch_nested, _emit_dispatch_flat]
     if rich_junk and not _blocks_have_return(blocks):
         emitters.append(_emit_dispatch_closure)
-    emitter = random.choice(emitters)
-    lines = emitter(blocks, entry_id, c, param_vars, rich_junk, hoist_names)
+    split_eligible = rich_junk and len(blocks) >= 2
+    if boundary_mode == "split" and split_eligible:
+        emitter = _emit_dispatch_split
+    else:
+        if boundary_mode == "mixed" and split_eligible:
+            emitters.append(_emit_dispatch_split)
+        emitter = random.choice(emitters)
+    if emitter is _emit_dispatch_split:
+        lines = emitter(
+            blocks, entry_id, c, param_vars, rich_junk, hoist_names,
+            boundary_stats=boundary_stats,
+        )
+    else:
+        lines = emitter(blocks, entry_id, c, param_vars, rich_junk, hoist_names)
 
     zv_names = [f"_z{i}" for i in range(zv_start, c[0])]
 
@@ -2248,6 +2415,28 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
 _FUNC_NODE_TYPES = ("function_declaration", "function_definition")
 
 
+@dataclass(frozen=True)
+class _FunctionProvenance:
+    """초기 입력 AST에서 확정한 함수 출처와 nesting 깊이.
+
+    function_obf가 나중에 생성하는 closure/junk function은 이 레코드를 얻을 수
+    없으므로 recursive transform 대상이 될 수 없다. 이름이나 생성 identifier
+    패턴 대신 최초 AST node identity를 provenance로 사용한다.
+    """
+
+    node_id: int
+    parent_id: int | None
+    depth: int
+    origin: str = "SOURCE"
+
+
+def _ancestor_nodes(node):
+    ancestor = node.parent
+    while ancestor is not None:
+        yield ancestor
+        ancestor = ancestor.parent
+
+
 def _is_local_func(node) -> bool:
     """`local function NAME(...)` 형태인지 (function_declaration + 첫 자식 local)."""
     return (node.type == "function_declaration"
@@ -2298,11 +2487,358 @@ def _prelift_local_function_stmt(ctx, stmt, text: str) -> tuple[str | None, str]
     return name, f"{name}=function{text[paren_pos:]}"
 
 
+def _plan_simple_function_inlines(ctx, block, lexical_plan: _LexicalPlan):
+    """안전한 zero-argument local function을 단일값 식으로 inline할 계획을 만든다.
+
+    허용 형태는 root block의 ``local function f() return EXPR end``뿐이다.
+    EXPR은 정확히 하나이며 function_call/vararg가 아니어야 한다. 또한 binding의
+    모든 사용처가 ``f()`` 직접 호출이어야 한다. lexical plan의 고유 alpha-name을
+    기준으로 검사하므로 같은 철자의 shadow binding을 잘못 합치지 않는다.
+
+    이 보수적 부분집합은 인자 평가 순서, 재귀, 함수값 identity, 다중 반환 및
+    trailing nil을 건드리지 않으면서 실제 call boundary를 제거한다.
+    """
+    provisional: dict[str, tuple[str, int]] = {}
+
+    for stmt in _block_stmts(ctx, block):
+        if not _is_local_func(stmt):
+            continue
+
+        params = stmt.child_by_field_name("parameters")
+        if params is None or any(child.is_named for child in params.children):
+            continue
+
+        body = stmt.child_by_field_name("body")
+        body_stmts = _block_stmts(ctx, body) if body is not None else []
+        if len(body_stmts) != 1 or body_stmts[0].type != "return_statement":
+            continue
+
+        expr_list = next(
+            (child for child in body_stmts[0].children
+             if child.type == "expression_list"),
+            None,
+        )
+        expressions = (
+            [child for child in expr_list.children if child.is_named]
+            if expr_list is not None else []
+        )
+        if len(expressions) != 1:
+            continue
+        expression = expressions[0]
+        if expression.type in ("function_call", "vararg_expression"):
+            continue
+
+        rewritten_decl = _rewrite_node_with_plan(ctx, stmt, lexical_plan)
+        match = re.match(
+            r'^\s*local\s+function\s+([A-Za-z_]\w*)',
+            rewritten_decl,
+        )
+        if match is None:
+            continue
+        alpha = match.group(1)
+        expression_text = _rewrite_node_with_plan(
+            ctx, expression, lexical_plan
+        ).strip()
+        if re.search(rf'\b{re.escape(alpha)}\b', expression_text):
+            continue  # direct/indirect self recursion
+        provisional[alpha] = (expression_text, stmt.id)
+
+    if not provisional:
+        return {}, set()
+
+    # Candidate declarations themselves are excluded. Remaining references must all
+    # be exact zero-argument calls; assignment, passing as a value, method access,
+    # argument-bearing calls and rebinding all reject the candidate.
+    candidate_ids = {stmt_id for _, stmt_id in provisional.values()}
+    usage_text = "\n".join(
+        _rewrite_node_with_plan(ctx, stmt, lexical_plan)
+        for stmt in _block_stmts(ctx, block)
+        if stmt.id not in candidate_ids
+    )
+
+    candidate_names = set(provisional)
+    inline_map: dict[str, str] = {}
+    skipped_ids: set[int] = set()
+    for alpha, (expression_text, stmt_id) in provisional.items():
+        # Keep candidate-to-candidate dependencies out of this simple one-pass
+        # inliner. They require topological expansion and recursion-cycle handling.
+        if any(
+            re.search(rf'\b{re.escape(other)}\b', expression_text)
+            for other in candidate_names
+        ):
+            continue
+
+        refs = re.findall(rf'\b{re.escape(alpha)}\b', usage_text)
+        calls = re.findall(
+            rf'\b{re.escape(alpha)}\s*\(\s*\)',
+            usage_text,
+        )
+        if refs and len(refs) == len(calls):
+            inline_map[alpha] = f"({expression_text})"
+            skipped_ids.add(stmt_id)
+
+    return inline_map, skipped_ids
+
+
+def _apply_simple_function_inlines(text: str, inline_map: dict[str, str]) -> str:
+    for name, expression in inline_map.items():
+        text = re.sub(
+            rf'\b{re.escape(name)}\s*\(\s*\)',
+            lambda _match, value=expression: value,
+            text,
+        )
+    return text
+
+
+def _subtree_contains_type(node, types: set[str]) -> bool:
+    stack = [node]
+    while stack:
+        current = stack.pop()
+        if current.type in types:
+            return True
+        stack.extend(current.children)
+    return False
+
+
+def _static_integer(ctx, node) -> int | None:
+    if node is None:
+        return None
+    text = ctx.text(node).strip()
+    if not re.fullmatch(r"[+-]?(?:0[xX][0-9A-Fa-f]+|[0-9]+)", text):
+        return None
+    try:
+        return int(text, 0)
+    except ValueError:
+        return None
+
+
+def _numeric_for_values(ctx, stmt, max_iterations: int) -> list[int] | None:
+    clause = stmt.child_by_field_name("clause")
+    if clause is None or clause.type != "for_numeric_clause":
+        return None
+    start = _static_integer(ctx, clause.child_by_field_name("start"))
+    stop = _static_integer(ctx, clause.child_by_field_name("end"))
+    step_node = clause.child_by_field_name("step")
+    step = 1 if step_node is None else _static_integer(ctx, step_node)
+    if start is None or stop is None or step is None or step == 0:
+        return None
+
+    values: list[int] = []
+    current = start
+    predicate = (lambda value: value <= stop) if step > 0 else (lambda value: value >= stop)
+    while predicate(current):
+        values.append(current)
+        if len(values) > max_iterations:
+            return None
+        current += step
+    return values
+
+
+def _mini_cff_body(body_text: str, compound_options: dict,
+                   transform_budget: dict, compound_depth: int) -> str | None:
+    """compound body를 synthetic function body로 파싱해 독립 mini-CFG화한다."""
+    if compound_depth >= compound_options["max_depth"]:
+        return None
+    from .ts_utils import parse as parse_ts
+
+    wrapped = "return function()\n" + body_text + "\nend"
+    mini_ctx = parse_ts(wrapped)
+    generated_binding_prefix = _binding_prefix(wrapped)
+    root = next(
+        (node for node in mini_ctx.walk() if node.type == "function_definition"),
+        None,
+    )
+    block = root.child_by_field_name("body") if root is not None else None
+    if root is None or block is None:
+        return None
+    cost = max(1, len(_block_stmts(mini_ctx, block)))
+    if transform_budget["blocks_left"] < cost:
+        return None
+
+    transformed, _ = _transform_body(
+        mini_ctx, root, block,
+        rich_junk=False,
+        boundary_mode="cff",
+        compound_options=compound_options,
+        transform_budget=transform_budget,
+        compound_depth=compound_depth + 1,
+    )
+    if transformed is None:
+        return None
+    limit = max(
+        len(body_text) + 64,
+        int(len(body_text) * compound_options["max_expansion_ratio"]),
+    )
+    if len(transformed) > limit:
+        return None
+    # Each mini-CFG starts its private `_z` counter at zero. Without a namespace,
+    # parent table-pooling can mistake those names for its own generated locals and
+    # rewrite references across lexical scopes. The lexical binding prefix is known
+    # to be absent from the input body, so both generated families can be renamed
+    # without touching captured outer identifiers.
+    namespace = f"__KCM{random.randrange(1 << 30):x}_"
+    transformed = re.sub(
+        rf'\b{re.escape(generated_binding_prefix)}([A-Za-z0-9_]*)\b',
+        lambda match: namespace + "b" + match.group(1),
+        transformed,
+    )
+    transformed = re.sub(
+        r'\b_z([0-9]+)\b',
+        lambda match: namespace + "z" + match.group(1),
+        transformed,
+    )
+    growth = max(0, len(transformed) - len(body_text))
+    if growth > transform_budget["chars_left"]:
+        return None
+    transform_budget["blocks_left"] -= cost
+    transform_budget["chars_left"] -= growth
+    transform_budget["generated_chars"] += growth
+    return transformed
+
+
+def _compound_statement_chunks(ctx, stmt, lexical_plan: _LexicalPlan,
+                               inline_map: dict[str, str] | None,
+                               compound_options: dict | None,
+                               transform_budget: dict | None,
+                               compound_depth: int,
+                               compound_stats: dict) -> list[str] | None:
+    """loop/do를 iteration chunks 또는 native-header + mini-CFG body로 바꾼다."""
+    if not compound_options or not transform_budget:
+        return None
+    if stmt.type not in ("for_statement", "while_statement", "repeat_statement", "do_statement"):
+        return None
+    body = stmt.child_by_field_name("body")
+    if body is None or not _block_stmts(ctx, body):
+        return None
+
+    # A break moved into a mini dispatcher would break that dispatcher rather than
+    # the source loop. Goto/label crossing a generated state boundary is also unsafe.
+    if _subtree_contains_type(body, {"break_statement", "goto_statement", "label_statement"}):
+        compound_stats["skipped_unsafe"] += 1
+        return None
+    if stmt.type == "repeat_statement" and _subtree_contains_type(
+        body, {"variable_declaration", "function_declaration"}
+    ):
+        # repeat-body locals are visible in the until condition. Replanning only the
+        # body would rename that binding independently from the suffix condition.
+        compound_stats["skipped_unsafe"] += 1
+        return None
+
+    body_text = _apply_simple_function_inlines(
+        _rewrite_node_with_plan(ctx, body, lexical_plan), inline_map or {}
+    )
+    if (stmt.type == "for_statement" and compound_options["unroll"]
+            and random.random() < compound_options["unroll_rate"]):
+        values = _numeric_for_values(ctx, stmt, compound_options["unroll_max_iterations"])
+        # Conservatively preserve native numeric-for closure capture semantics.
+        if values is not None and not _subtree_contains_type(body, set(_FUNC_NODE_TYPES)):
+            clause = stmt.child_by_field_name("clause")
+            name_node = clause.child_by_field_name("name") if clause is not None else None
+            if name_node is not None:
+                loop_name = _rewrite_node_with_plan(ctx, name_node, lexical_plan)
+                chunks: list[str] = []
+                for value in values:
+                    mini = _mini_cff_body(
+                        body_text, compound_options, transform_budget, compound_depth
+                    )
+                    chunks.append(
+                        f"do local {loop_name}={value}\n"
+                        f"{mini if mini is not None else body_text}\nend"
+                    )
+                compound_stats["unrolled_loops"] += 1
+                compound_stats["unrolled_iterations"] += len(values)
+                return chunks
+
+    if not compound_options["split"]:
+        return None
+    mini = _mini_cff_body(
+        body_text, compound_options, transform_budget, compound_depth
+    )
+    if mini is None:
+        compound_stats["budget_fallbacks"] += 1
+        return None
+    prefix = _apply_simple_function_inlines(
+        _rewrite_range_with_plan(ctx, ctx.cs(stmt), ctx.cs(body), lexical_plan),
+        inline_map or {},
+    )
+    suffix = _apply_simple_function_inlines(
+        _rewrite_range_with_plan(
+            ctx, ctx.ce(body) + 1, ctx.ce(stmt) + 1, lexical_plan
+        ),
+        inline_map or {},
+    )
+    compound_stats["split_bodies"] += 1
+    return [prefix + mini + suffix]
+
+
+def _inline_chunk_helpers(script: str) -> tuple[str, int]:
+    """Lua chunk 직계 local helper에 함수 내부와 같은 안전 인라인을 적용한다.
+
+    lexical planner를 재사용하기 위해 chunk를 임시 vararg function body로 감싼다.
+    반환 시 wrapper는 제거되며, 원본 chunk의 주석/statement 사이 텍스트는 그대로
+    보존한다. 실제 inline이 하나도 없으면 입력 문자열 자체를 그대로 반환한다.
+    """
+    from .ts_utils import parse as parse_ts
+
+    prefix = "return function(...)\n"
+    wrapped = prefix + script + "\nend"
+    ctx = parse_ts(wrapped)
+    function_node = next(
+        (node for node in ctx.walk() if node.type == "function_definition"),
+        None,
+    )
+    if function_node is None:
+        return script, 0
+    block = function_node.child_by_field_name("body")
+    if block is None:
+        return script, 0
+
+    lexical_plan = _build_lexical_plan(ctx, function_node)
+    inline_map, skipped_ids = _plan_simple_function_inlines(
+        ctx, block, lexical_plan
+    )
+    if not skipped_ids:
+        return script, 0
+
+    start = ctx.cs(block)
+    end = ctx.ce(block) + 1
+    out: list[str] = []
+    pos = start
+    for stmt in _block_stmts(ctx, block):
+        stmt_start = ctx.cs(stmt)
+        stmt_end = ctx.ce(stmt) + 1
+        gap = _rewrite_range_with_plan(
+            ctx, pos, stmt_start, lexical_plan
+        )
+        out.append(_apply_simple_function_inlines(gap, inline_map))
+        if stmt.id not in skipped_ids:
+            rewritten = _rewrite_node_with_plan(ctx, stmt, lexical_plan)
+            out.append(_apply_simple_function_inlines(rewritten, inline_map))
+        pos = stmt_end
+    tail = _rewrite_range_with_plan(ctx, pos, end, lexical_plan)
+    out.append(_apply_simple_function_inlines(tail, inline_map))
+
+    transformed = "".join(out)
+    # wrapper가 넣은 body 양끝 개행만 제거한다. 원본 자체의 선행/후행 개행은
+    # 그 안쪽에 있으므로 보존된다.
+    if transformed.startswith("\n"):
+        transformed = transformed[1:]
+    if transformed.endswith("\n"):
+        transformed = transformed[:-1]
+    return transformed, len(skipped_ids)
+
+
 def _compile_stmts_to_blocks(
     ctx,
     stmts,
     extra_hoist_names: list[str],
     lexical_plan: _LexicalPlan | None = None,
+    inline_map: dict[str, str] | None = None,
+    skipped_statement_ids: set[int] | None = None,
+    compound_options: dict | None = None,
+    transform_budget: dict | None = None,
+    compound_depth: int = 0,
+    compound_stats: dict | None = None,
 ) -> tuple[list[dict], int]:
     """문장열을 상태 머신 블록 전이 그래프로 컴파일한다.
 
@@ -2311,6 +2847,14 @@ def _compile_stmts_to_blocks(
     """
     blocks: list[dict] = []
     counter = [0]
+    compound_stats = compound_stats if compound_stats is not None else {
+        "split_bodies": 0,
+        "lowered_loops": 0,
+        "unrolled_loops": 0,
+        "unrolled_iterations": 0,
+        "skipped_unsafe": 0,
+        "budget_fallbacks": 0,
+    }
 
     def _new_id() -> int:
         counter[0] += 1
@@ -2320,8 +2864,10 @@ def _compile_stmts_to_blocks(
         if node is None:
             return ""
         if lexical_plan is None:
-            return ctx.text(node)
-        return _rewrite_node_with_plan(ctx, node, lexical_plan)
+            text = ctx.text(node)
+        else:
+            text = _rewrite_node_with_plan(ctx, node, lexical_plan)
+        return _apply_simple_function_inlines(text, inline_map or {})
 
     def _stmts_of(block_node) -> list:
         return _block_stmts(ctx, block_node) if block_node is not None else []
@@ -2339,6 +2885,21 @@ def _compile_stmts_to_blocks(
             if ln.strip()
         ]
 
+    def _stmt_chunks(stmt) -> list[list[str]]:
+        compound = (
+            _compound_statement_chunks(
+                ctx, stmt, lexical_plan, inline_map, compound_options,
+                transform_budget, compound_depth, compound_stats,
+            )
+            if lexical_plan is not None else None
+        )
+        if compound is None:
+            return [_stmt_lines(stmt)]
+        return [
+            [line.strip() for line in text.splitlines() if line.strip()]
+            for text in compound
+        ]
+
     def _branch(cond: str, then_entry: int, else_entry: int) -> int:
         bid = _new_id()
         blocks.append({
@@ -2350,6 +2911,22 @@ def _compile_stmts_to_blocks(
             "e": else_entry,
         })
         return bid
+
+    def _condition_branch(cond: str, then_entry: int, else_entry: int) -> int:
+        """조건 계산과 branch 선택을 서로 다른 CFG state로 분리한다."""
+        temp_serial = _new_id()
+        temp = f"{_binding_prefix(ctx.script)}CF{temp_serial}"
+        if temp not in extra_hoist_names:
+            extra_hoist_names.append(temp)
+        branch_id = _branch(temp, then_entry, else_entry)
+        pre_id = _new_id()
+        blocks.append({
+            "id": pre_id,
+            "lines": [f"local {temp}=({cond})"],
+            "kind": "goto",
+            "succ": branch_id,
+        })
+        return pre_id
 
     def _compile_if(node, after_id: int) -> int:
         alts = [
@@ -2384,7 +2961,7 @@ def _compile_stmts_to_blocks(
                 ),
                 after_id,
             )
-            chain = _branch(ei_cond, ei_then, chain)
+            chain = _condition_branch(ei_cond, ei_then, chain)
 
         cond_node = node.child_by_field_name("condition")
         cond = _text(cond_node).strip()
@@ -2394,26 +2971,80 @@ def _compile_stmts_to_blocks(
             ),
             after_id,
         )
-        return _branch(cond, then_entry, chain)
+        return _condition_branch(cond, then_entry, chain)
+
+    def _compile_test_loop(node, after_id: int) -> int | None:
+        """Safe while/repeat를 explicit test/body/backedge CFG로 내린다."""
+        if node.type not in ("while_statement", "repeat_statement"):
+            return None
+        body_node = node.child_by_field_name("body")
+        condition_node = node.child_by_field_name("condition")
+        if body_node is None or condition_node is None:
+            return None
+        if _subtree_contains_type(body_node, {
+            "break_statement", "goto_statement", "label_statement",
+            "variable_declaration", "function_declaration", "function_definition",
+        }):
+            return None
+
+        cond = _text(condition_node).strip()
+        temp_serial = _new_id()
+        temp = f"{_binding_prefix(ctx.script)}CF{temp_serial}"
+        if temp not in extra_hoist_names:
+            extra_hoist_names.append(temp)
+        branch_id = _new_id()
+        test_id = _new_id()
+
+        if node.type == "while_statement":
+            body_entry = _compile_seq(_stmts_of(body_node), test_id)
+            true_target, false_target = body_entry, after_id
+            entry = test_id
+        else:
+            # repeat executes body first; true condition exits, false loops back.
+            body_entry = _compile_seq(_stmts_of(body_node), test_id)
+            true_target, false_target = after_id, body_entry
+            entry = body_entry
+
+        blocks.append({
+            "id": branch_id,
+            "lines": [],
+            "kind": "branch",
+            "cond": temp,
+            "t": true_target,
+            "e": false_target,
+        })
+        blocks.append({
+            "id": test_id,
+            "lines": [f"local {temp}=({cond})"],
+            "kind": "goto",
+            "succ": branch_id,
+        })
+        compound_stats["lowered_loops"] += 1
+        return entry
 
     def _compile_seq(stmt_list, after_id: int) -> int:
         next_id = after_id
         for stmt in reversed(stmt_list):
+            if stmt.id in (skipped_statement_ids or set()):
+                continue
             if stmt.type == "if_statement":
                 next_id = _compile_if(stmt, next_id)
             else:
-                bid = _new_id()
-                blk = {
-                    "id": bid,
-                    "lines": _stmt_lines(stmt),
-                }
-                if stmt.type == "return_statement":
-                    blk["kind"] = "return"
-                else:
-                    blk["kind"] = "goto"
-                    blk["succ"] = next_id
-                blocks.append(blk)
-                next_id = bid
+                lowered_loop = _compile_test_loop(stmt, next_id)
+                if lowered_loop is not None:
+                    next_id = lowered_loop
+                    continue
+                chunks = _stmt_chunks(stmt)
+                for chunk_index, lines in reversed(list(enumerate(chunks))):
+                    bid = _new_id()
+                    blk = {"id": bid, "lines": lines}
+                    if stmt.type == "return_statement" and chunk_index == len(chunks) - 1:
+                        blk["kind"] = "return"
+                    else:
+                        blk["kind"] = "goto"
+                        blk["succ"] = next_id
+                    blocks.append(blk)
+                    next_id = bid
         return next_id
 
     entry = _compile_seq(stmts, 0)
@@ -2425,23 +3056,54 @@ def _transform_body(
     function_node,
     block,
     rich_junk: bool = True,
-) -> str | None:
+    boundary_mode: str = "mixed",
+    compound_options: dict | None = None,
+    transform_budget: dict | None = None,
+    compound_depth: int = 0,
+) -> tuple[str | None, dict]:
     """함수 본문을 Phase-2 lexical binding 보존 상태로 CFF 변환."""
+
+    boundary_stats = {
+        "split_helpers": 0,
+        "inline_blocks": 0,
+        "inlined_functions": 0,
+        "split_bodies": 0,
+        "lowered_loops": 0,
+        "unrolled_loops": 0,
+        "unrolled_iterations": 0,
+        "skipped_unsafe": 0,
+        "budget_fallbacks": 0,
+    }
+
+    if compound_options and transform_budget is None:
+        transform_budget = {
+            "blocks_left": compound_options["max_generated_blocks"],
+            "chars_left": max(
+                256,
+                int(len(ctx.text(block)) * compound_options["max_expansion_ratio"]),
+            ),
+            "generated_chars": 0,
+        }
 
     stmts = _block_stmts(ctx, block)
     if not stmts:
-        return None
+        return None, boundary_stats
 
     for stmt in stmts:
         if _subtree_has_goto_or_label(stmt):
-            return None
+            return None, boundary_stats
 
     lexical_plan = _build_lexical_plan(ctx, function_node)
+    inline_map, skipped_statement_ids = _plan_simple_function_inlines(
+        ctx, block, lexical_plan
+    )
+    boundary_stats["inlined_functions"] = len(skipped_statement_ids)
 
     # CFF가 실제로 분해하는 root/if scope local만 hoist 대상.
     # loop/do/repeat/nested-function local은 plan.poolable_names에 없다.
     extra_hoist_names: list[str] = list(
-        lexical_plan.poolable_names
+        name for name in lexical_plan.poolable_names
+        if name not in inline_map
     )
 
     blocks, entry = _compile_stmts_to_blocks(
@@ -2449,6 +3111,12 @@ def _transform_body(
         stmts,
         extra_hoist_names,
         lexical_plan=lexical_plan,
+        inline_map=inline_map,
+        skipped_statement_ids=skipped_statement_ids,
+        compound_options=compound_options,
+        transform_budget=transform_budget,
+        compound_depth=compound_depth,
+        compound_stats=boundary_stats,
     )
 
     c: list[int] = [0]
@@ -2479,17 +3147,27 @@ def _transform_body(
                     restored.append(ln)
             lines = restored
 
-        return "\n".join(prefix_lines + lines)
+        return "\n".join(prefix_lines + lines), boundary_stats
 
+    compound_heavy = (
+        boundary_stats["unrolled_iterations"] > 0
+        or boundary_stats["split_bodies"] > 0
+        or boundary_stats["lowered_loops"] > 0
+    )
     cff = _build_generic_cff(
         blocks,
         entry,
         c,
         extra_hoist_names,
-        rich_junk=rich_junk,
+        # Compound mini-CFG/unroll already expands structure substantially. Layering
+        # rich junk again can cross Lua's local limit/table-pooling threshold, so the
+        # transformation budget deliberately falls back to conservative junk here.
+        rich_junk=rich_junk and not compound_heavy,
         param_names=params,
+        boundary_mode=boundary_mode,
+        boundary_stats=boundary_stats,
     )
-    return "\n".join(prefix_lines + [cff])
+    return "\n".join(prefix_lines + [cff]), boundary_stats
 
 
 # VM 디스패처(exec) 식별용 sentinel. exec의 dispatch 루프
@@ -2503,10 +3181,13 @@ _VM_HOT_LOOP_SENTINEL = re.compile(r'__VM_HOT_LOOP__')
 
 
 class FunctionObfuscationPass(BasePass):
-    """함수 리터럴에 가변인자 래퍼 + 본문 CFF를 적용한다.
+    """함수 리터럴에 가변인자 래퍼 + 함수 경계 변환 + 본문 CFF를 적용한다.
 
-    - 호출부(call site)는 전혀 건드리지 않는다 (`function(...) local a,b=... end`로
-      파라미터를 다시 풀어주므로 외부에서 보이는 시그니처/호출 규약은 동일).
+    - 외부 호출부는 건드리지 않는다 (`function(...) local a,b=... end`로 파라미터를
+      다시 풀어주므로 밖에서 보이는 시그니처/호출 규약은 동일).
+    - 다문장 함수의 CFF block 일부는 helper closure들로 분리하고 일부는 outer
+      dispatcher에 inline해 한 원본 함수가 여러 실행 경계에 걸치게 한다.
+    - 안전한 zero-argument/single-value local helper는 호출식에 직접 inline한다.
     - 이미 `...`를 사용하는 함수, `goto`/label이 있는 함수, 본문이 비어있는
       함수는 건드리지 않는다.
 
@@ -2524,11 +3205,227 @@ class FunctionObfuscationPass(BasePass):
     # 파싱은 tree-sitter(C, ~10x)로. 파이프라인이 tree 인자로 TSContext를 준다.
     parser = "treesitter"
 
-    def __init__(self, skip_vm_dispatcher: bool = False):
+    def __init__(self, skip_vm_dispatcher: bool = False,
+                 boundary_mode: str = "mixed",
+                 nested: bool = True,
+                 nested_max_depth: int = 4,
+                 loop_split: bool = True,
+                 loop_unroll: bool = True,
+                 loop_unroll_rate: float = 0.65,
+                 loop_unroll_max_iterations: int = 4,
+                 loop_max_generated_blocks: int = 64,
+                 loop_max_expansion_ratio: float = 128.0,
+                 loop_max_depth: int = 3):
+        if boundary_mode not in {"mixed", "split", "cff"}:
+            raise ValueError(
+                "boundary_mode must be 'mixed', 'split', or 'cff'"
+            )
         self.skip_vm_dispatcher = skip_vm_dispatcher
+        self.boundary_mode = boundary_mode
+        self.nested = bool(nested)
+        if (not isinstance(nested_max_depth, int)
+                or isinstance(nested_max_depth, bool)
+                or nested_max_depth < 0):
+            raise ValueError("nested_max_depth must be a non-negative integer")
+        self.nested_max_depth = nested_max_depth
+        if (not isinstance(loop_unroll_max_iterations, int)
+                or isinstance(loop_unroll_max_iterations, bool)
+                or loop_unroll_max_iterations < 0):
+            raise ValueError("loop_unroll_max_iterations must be a non-negative integer")
+        if (not isinstance(loop_unroll_rate, (int, float))
+                or isinstance(loop_unroll_rate, bool)
+                or not 0.0 <= float(loop_unroll_rate) <= 1.0):
+            raise ValueError("loop_unroll_rate must be between 0.0 and 1.0")
+        if (not isinstance(loop_max_generated_blocks, int)
+                or isinstance(loop_max_generated_blocks, bool)
+                or loop_max_generated_blocks < 1):
+            raise ValueError("loop_max_generated_blocks must be a positive integer")
+        if (not isinstance(loop_max_expansion_ratio, (int, float))
+                or isinstance(loop_max_expansion_ratio, bool)
+                or float(loop_max_expansion_ratio) < 1.0):
+            raise ValueError("loop_max_expansion_ratio must be >= 1.0")
+        if (not isinstance(loop_max_depth, int)
+                or isinstance(loop_max_depth, bool)
+                or loop_max_depth < 0):
+            raise ValueError("loop_max_depth must be a non-negative integer")
+        self.compound_options = {
+            "split": bool(loop_split),
+            "unroll": bool(loop_unroll),
+            "unroll_rate": float(loop_unroll_rate),
+            "unroll_max_iterations": loop_unroll_max_iterations,
+            "max_generated_blocks": loop_max_generated_blocks,
+            "max_expansion_ratio": float(loop_max_expansion_ratio),
+            "max_depth": loop_max_depth,
+        }
         self.last_transformed_count = 0
+        self.last_split_helper_count = 0
+        self.last_inline_block_count = 0
+        self.last_inlined_function_count = 0
+        self.last_nested_candidate_count = 0
+        self.last_nested_transformed_count = 0
+        self.last_depth_limited_count = 0
+        self.last_processed_source_count = 0
+        self.last_loop_split_body_count = 0
+        self.last_loop_lowered_count = 0
+        self.last_loop_unrolled_count = 0
+        self.last_loop_unrolled_iteration_count = 0
+        self.last_loop_unsafe_skip_count = 0
+        self.last_loop_budget_fallback_count = 0
+
+    @staticmethod
+    def _apply_replacements(source: str, replacements: list[Replacement]) -> str:
+        if not replacements:
+            return source
+        parts: list[str] = []
+        pos = 0
+        for replacement in sorted(replacements, key=lambda item: item.start):
+            parts.append(source[pos:replacement.start])
+            parts.append(replacement.new_text)
+            pos = replacement.end + 1
+        parts.append(source[pos:])
+        return "".join(parts)
+
+    def _transform_source_function(
+        self,
+        source_ctx,
+        source_node,
+        children_by_id: dict[int, list],
+        provenance: dict[int, _FunctionProvenance],
+        processed_ids: set[int],
+    ) -> tuple[str, bool]:
+        """초기 SOURCE 함수 subtree를 bottom-up으로 정확히 한 번 변환한다."""
+        source_id = source_node.id
+        record = provenance[source_id]
+        if source_id in processed_ids:
+            raise RuntimeError(
+                f"function_obf source node processed twice: {source_id}"
+            )
+        processed_ids.add(source_id)
+
+        node_start = source_ctx.cs(source_node)
+        fragment = source_ctx.text(source_node)
+        child_replacements: list[Replacement] = []
+
+        can_descend = self.nested and record.depth < self.nested_max_depth
+        for child in children_by_id.get(source_id, []):
+            child_record = provenance[child.id]
+            if not can_descend:
+                self.last_depth_limited_count += 1
+                continue
+            child_text, _ = self._transform_source_function(
+                source_ctx,
+                child,
+                children_by_id,
+                provenance,
+                processed_ids,
+            )
+            child_replacements.append(Replacement(
+                start=source_ctx.cs(child) - node_start,
+                end=source_ctx.ce(child) - node_start,
+                new_text=child_text,
+            ))
+
+        fragment = self._apply_replacements(fragment, child_replacements)
+
+        from .ts_utils import parse as parse_ts
+
+        fragment_ctx = parse_ts(fragment)
+        candidates = [
+            node for node in fragment_ctx.walk()
+            if node.type in _FUNC_NODE_TYPES
+            and not any(
+                ancestor.type in _FUNC_NODE_TYPES
+                for ancestor in _ancestor_nodes(node)
+            )
+        ]
+
+        if len(candidates) != 1:
+            raise RuntimeError(
+                "function_obf could not recover reconstructed source function "
+                f"root (found {len(candidates)})"
+            )
+        root = candidates[0]
+        block = root.child_by_field_name("body")
+        params_node = root.child_by_field_name("parameters")
+        if block is None or params_node is None:
+            return fragment, False
+
+        # vararg source 함수 자체는 기존 safety 정책대로 건드리지 않되, 위에서
+        # 이미 처리한 SOURCE nested 함수 결과는 fragment 안에 유지한다.
+        if any(
+            child.type == "vararg_expression"
+            for child in params_node.children
+        ):
+            return fragment, False
+
+        params = [
+            fragment_ctx.text(child)
+            for child in params_node.children
+            if child.type == "identifier"
+        ]
+        new_body, boundary_stats = _transform_body(
+            fragment_ctx,
+            root,
+            block,
+            rich_junk=True,
+            boundary_mode=self.boundary_mode,
+            compound_options=self.compound_options,
+        )
+        if new_body is None:
+            return fragment, False
+
+        local_replacements = [Replacement(
+            start=fragment_ctx.cs(block),
+            end=fragment_ctx.ce(block),
+            new_text=new_body,
+        )]
+        if params:
+            local_replacements.append(Replacement(
+                start=fragment_ctx.cs(params_node) + 1,
+                end=fragment_ctx.ce(params_node) - 1,
+                new_text="...",
+            ))
+        fragment = self._apply_replacements(fragment, local_replacements)
+
+        self.last_split_helper_count += boundary_stats["split_helpers"]
+        self.last_inline_block_count += boundary_stats["inline_blocks"]
+        self.last_inlined_function_count += boundary_stats["inlined_functions"]
+        self.last_loop_split_body_count += boundary_stats["split_bodies"]
+        self.last_loop_lowered_count += boundary_stats["lowered_loops"]
+        self.last_loop_unrolled_count += boundary_stats["unrolled_loops"]
+        self.last_loop_unrolled_iteration_count += boundary_stats["unrolled_iterations"]
+        self.last_loop_unsafe_skip_count += boundary_stats["skipped_unsafe"]
+        self.last_loop_budget_fallback_count += boundary_stats["budget_fallbacks"]
+        self.last_transformed_count += 1
+        if record.depth > 0:
+            self.last_nested_transformed_count += 1
+        return fragment, True
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        self.last_transformed_count = 0
+        self.last_split_helper_count = 0
+        self.last_inline_block_count = 0
+        self.last_inlined_function_count = 0
+        self.last_nested_candidate_count = 0
+        self.last_nested_transformed_count = 0
+        self.last_depth_limited_count = 0
+        self.last_processed_source_count = 0
+        self.last_loop_split_body_count = 0
+        self.last_loop_lowered_count = 0
+        self.last_loop_unrolled_count = 0
+        self.last_loop_unrolled_iteration_count = 0
+        self.last_loop_unsafe_skip_count = 0
+        self.last_loop_budget_fallback_count = 0
+        original_script = script
+        chunk_rewritten = False
+        if not self.skip_vm_dispatcher:
+            script, chunk_inline_count = _inline_chunk_helpers(script)
+            if chunk_inline_count:
+                from .ts_utils import parse as parse_ts
+
+                ctx = parse_ts(script)
+                chunk_rewritten = True
+                self.last_inlined_function_count += chunk_inline_count
         replacements: list[Replacement] = []
         scan_start = time.perf_counter()
         # 이미 변환 대상으로 선택된 함수의 body(block) 범위들. 이 범위에 완전히
@@ -2589,6 +3486,80 @@ class FunctionObfuscationPass(BasePass):
         self.last_candidate_scan_elapsed = time.perf_counter() - scan_start
         transform_start = time.perf_counter()
 
+        if not self.skip_vm_dispatcher:
+            # Provenance는 function_obf가 어떤 코드를 생성하기 *전*의 AST에서 한
+            # 번만 만든다. 이후 reconstructed fragment에 나타난 helper/junk 함수는
+            # 이 map에 node id가 없으므로 recursive input이 될 수 없다.
+            provenance: dict[int, _FunctionProvenance] = {}
+            children_by_id: dict[int, list] = {}
+            top_level_nodes: list = []
+
+            for node in func_nodes:
+                function_ancestors = [
+                    ancestor for ancestor in _ancestor_nodes(node)
+                    if ancestor.type in _FUNC_NODE_TYPES
+                ]
+                parent = function_ancestors[0] if function_ancestors else None
+                parent_id = parent.id if parent is not None else None
+                provenance[node.id] = _FunctionProvenance(
+                    node_id=node.id,
+                    parent_id=parent_id,
+                    depth=len(function_ancestors),
+                )
+                if parent_id is None:
+                    top_level_nodes.append(node)
+                else:
+                    children_by_id.setdefault(parent_id, []).append(node)
+
+            # Source order 고정은 같은 seed에서 재현 가능한 random consumption 순서를
+            # 보장한다. ctx.walk()/body-size 정렬 순서에 기대지 않는다.
+            for children in children_by_id.values():
+                children.sort(key=ctx.cs)
+            top_level_nodes.sort(key=ctx.cs)
+
+            self.last_nested_candidate_count = sum(
+                1 for record in provenance.values()
+                if 0 < record.depth <= self.nested_max_depth
+            ) if self.nested else 0
+
+            processed_ids: set[int] = set()
+            for node in top_level_nodes:
+                transformed_text, _ = self._transform_source_function(
+                    ctx,
+                    node,
+                    children_by_id,
+                    provenance,
+                    processed_ids,
+                )
+                if transformed_text != ctx.text(node):
+                    replacements.append(Replacement(
+                        start=ctx.cs(node),
+                        end=ctx.ce(node),
+                        new_text=transformed_text,
+                    ))
+
+            self.last_processed_source_count = len(processed_ids)
+            expected_processed = {
+                node_id for node_id, record in provenance.items()
+                if record.depth <= self.nested_max_depth
+                and (self.nested or record.depth == 0)
+            }
+            if processed_ids != expected_processed:
+                raise RuntimeError(
+                    "function_obf SOURCE provenance processing mismatch: "
+                    f"processed={len(processed_ids)} expected={len(expected_processed)}"
+                )
+
+            self.last_transform_elapsed = time.perf_counter() - transform_start
+            if chunk_rewritten:
+                final_script = self._apply_replacements(script, replacements)
+                return [Replacement(
+                    start=0,
+                    end=max(-1, len(original_script) - 1),
+                    new_text=final_script,
+                )]
+            return replacements
+
         for node in func_nodes:
             block = _block_of(node)
             if block is None:
@@ -2634,14 +3605,22 @@ class FunctionObfuscationPass(BasePass):
             # VM 재난독화(skip_vm_dispatcher)에서는 rich junk을 끈다: 함수 정의/
             # 루프/다양한 연산자가 든 가짜 흐름이 VM 템플릿을 이후 패스와 함께
             # 재난독화할 때(localize_globals 등) 깨질 수 있어, 보수적 흐름만 쓴다.
-            new_body = _transform_body(
+            new_body, boundary_stats = _transform_body(
                 ctx,
                 node,
                 block,
                 rich_junk=not self.skip_vm_dispatcher,
+                boundary_mode=(
+                    "cff" if self.skip_vm_dispatcher
+                    else self.boundary_mode
+                ),
             )
             if new_body is None:
                 continue
+
+            self.last_split_helper_count += boundary_stats["split_helpers"]
+            self.last_inline_block_count += boundary_stats["inline_blocks"]
+            self.last_inlined_function_count += boundary_stats["inlined_functions"]
 
             claimed_ranges.append((bstart, bend))
             replacements.append(Replacement(start=bstart, end=bend, new_text=new_body))
@@ -2657,6 +3636,20 @@ class FunctionObfuscationPass(BasePass):
 
         self.last_transformed_count = len(claimed_ranges)
         self.last_transform_elapsed = time.perf_counter() - transform_start
+        if chunk_rewritten:
+            parts: list[str] = []
+            pos = 0
+            for replacement in sorted(replacements, key=lambda item: item.start):
+                parts.append(script[pos:replacement.start])
+                parts.append(replacement.new_text)
+                pos = replacement.end + 1
+            parts.append(script[pos:])
+            final_script = "".join(parts)
+            return [Replacement(
+                start=0,
+                end=max(-1, len(original_script) - 1),
+                new_text=final_script,
+            )]
         return replacements
 
 if __name__ == "__main__":

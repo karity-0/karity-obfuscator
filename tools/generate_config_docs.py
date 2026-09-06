@@ -14,17 +14,100 @@ from obfuscator.registry import (  # noqa: E402
     VM_OPTION_DOCS,
     get_pass_contexts,
 )
+from obfuscator.vm.backend import VM_BACKENDS, unsupported_vm_options
 
 
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
 
 VM_DETAILS = """\
 `vm_options.backend` selects only the VM runtime execution model, independently
-from the build profile. Both backends use the current compiler, instruction
+from the build profile. Karity and classic use the current compiler, instruction
 layout, serializer/blob protection, dispatcher selection, integrity checks, and
 output pipeline. `karity` remains the implicit choice when the option is omitted.
 `classic` uses direct register storage and straightforward opcode handlers;
-`default` is accepted as an alias for `classic`.
+`default` is an alias for `karity`, matching an omitted backend.
+Older builds mapped `default` to `classic`; use explicit `classic` to preserve
+that runtime when migrating. See [backend architecture and capabilities](backends.md).
+
+`mov` is a supported release backend with a hybrid runtime. Use it with
+`--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM/MOD/IDIV,
+BAND/BOR/BXOR/SHL/SHR/BNOT and EQ/LT/LE lower into nibble lookup microcode;
+Signed MOD/IDIV use a shared 64-step restoring-division recipe with Lua floor
+correction, integer wraparound and explicit zero-divisor errors. NOT and
+expected-truth tests use boolean lookup after native-value classification.
+Division skips leading zero nibbles using moves and a counter transition table,
+so small operands do not execute all 64 restoring-division bit rounds.
+Integer SHL/SHR use six lookup/MOV stages for distances 1, 2, 4, 8, 16 and 32.
+Microcode computes count sign, unsigned magnitude, direction reversal and the
+64-bit range check, including minimum-integer counts. HOST preparation supplies
+encoded operands and opcode direction without decoding the count or computing
+digit positions. Integral floats and numeric strings retain Lua coercion.
+Float/float EQ/LT/LE bitcast binary64 values into encoded nibbles, then use
+lookup-generated ordering keys, NaN classification and signed-zero equality.
+Float UNM copies binary64 payload digits and toggles the sign nibble through XOR
+lookup. Host bitcasts convert the input/output representation; no native unary
+arithmetic executes on this path, including signed zeros, infinities and NaNs.
+Mixed integer/float EQ/LT/LE build exact 80-bit ordering keys through lookup
+normalization, with a shared exponent and 63 fraction bits. No integer-to-float
+conversion occurs, preserving precision beyond 2^53 and at the signed 64-bit limits.
+String equality uses encoded byte-list lookup regardless of locale. String LT/LE
+use the same microcode under C/POSIX collation; other locales and unavailable
+locale queries retain host ordering. The current locale is checked per operation.
+Embedded NUL bytes remain ordinary bytes, distinct from list termination.
+Constructing the input byte lists requires linear allocation per comparison.
+This boundary preserves [Lua's locale-sensitive string ordering](https://www.lua.org/source/5.3/lvm.c.html).
+String LEN counts byte-list nodes using lookup carry propagation. All-string
+CONCAT uses indirect MOV stores to join private operand copies, then retains the
+result as an immutable encoded byte list. Register copies can share that list;
+later length/concatenation operations need no native-string materialization.
+Native consumers decode the finished stream with string.char/table.concat.
+Numeric coercion and __concat effects still use host execution, preserving
+right-to-left concatenation and coroutine suspension. Table/userdata LEN remains
+a host operation. These list operations require linear traversal/allocation.
+TEST/TESTSET and JMP select microcode addresses, with captured locals closed
+before scope-exiting jumps. Integer results retain encoded digit storage across MOV
+operations. Other operations (including `/`, power, binary floating-point arithmetic, coercions,
+metamethods and native calls) cross explicit Lua host boundaries. Original operand
+words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
+MOV-only is the target, not the current completion status: binary floating-point
+arithmetic, coercing/metamethod concatenation, locale-specific ordering and Lua object/call semantics
+still use host execution. Native fallback traps in the regression suite verify
+the implemented integer, boolean and all numeric comparison paths.
+Host opcodes share one indirect function-table call, with shuffled entries and
+a distinct XOR key per VM. Native arithmetic fallback also uses function lookup.
+The host functions still contain inspectable Lua operations; dispatch indirection
+does not turn those operations into lookup microcode. Per-frame handler closures
+preserve recursion, coroutine suspension and return/tail-call packets, at the
+cost of additional closure allocation.
+Multiple MOV interpreters use independent instruction IDs and digit codebooks.
+Prototypes follow the shared vm_count assignment and calls/upvalues/tail-call
+transitions cross representations through Lua values. The versioned microcode
+extension is covered by shared blob encryption and integrity binding, and is
+generated after instruction relocation. Common arithmetic recipes are linked
+once into each VM's tape and shared across prototypes; call frames keep private
+scratch storage and continuation addresses.
+
+MOV is a supported release configuration; its hybrid HOST boundaries remain
+part of the documented implementation, not a claim of complete MOV-only execution.
+Valid unsupported options are retained but ignored. Invalid names/types/ranges
+still fail validation. CLI emits one stderr warning listing supplied unsupported
+options, including inherited profile values; `--print-config` stdout remains JSON.
+GUI disables unsupported controls for the selected backend, preserves their
+values when switching backends, and reports ignored options after a build.
+The same capability map drives GUI metadata, warnings and MOV build profiling.
+
+MOV retains junk insertion, integrity constants, blob forms, source/output passes
+and packing. Each VM uses its own fixed microcode dispatcher with randomized IDs;
+dispatcher_type, dispatcher_target_hiding, fake_handlers, mutate_handlers and
+Karity graph/state/representation controls do not apply. Legacy split/fuse/defer
+and block variants are disabled. The mov_lowering profile entry lists unsupported
+controls and reports effective VM counts, lowered sites, expanded/stored
+micro-instructions, shared recipes and extension bytes. MOV release-check
+validates shared source protections, VM count,
+junk insertion, integrity and blob form, excluding unused legacy dispatcher/
+handler and Karity graph options. Use `--profile high --vm-option backend=mov
+--release-check` for the complete profile and release validation.
+Lookup microcode adds runtime and output overhead; measure actual workloads.
 
 The remaining implementation notes in this section describe Karity's hardened
 runtime model. In classic mode, runtime graph execution, encoded/dynamic register
@@ -153,6 +236,28 @@ def render_pass(name: str, info: dict) -> list[str]:
     ]
     if name == "vm":
         lines.extend([VM_DETAILS, ""])
+    if name == "function_obf":
+        lines.extend([
+            "Source nested functions are selected from the initial AST and transformed",
+            "bottom-up. Functions generated by `function_obf` or junk emitters are not",
+            "part of that provenance set and are never recursively reprocessed.",
+            "",
+            "`function_obf_options.boundary_mode` accepts `mixed`, `split`, or `cff`",
+            "(default: `mixed`). `function_obf_options.nested` enables recursive SOURCE",
+            "nested-function transformation (default: `true`), and",
+            "`function_obf_options.nested_max_depth` limits nesting expansion",
+            "(default: `4`, valid range: `0..16`).",
+            "",
+            "Loop/compound transformation is controlled by `loop_split` (default:",
+            "`true`) and `loop_unroll` (default: `true`). Static integer numeric-for",
+            "loops unroll up to `loop_unroll_max_iterations` (default: `4`).",
+            "Eligible loops choose unrolling with the seed-driven `loop_unroll_rate`",
+            "(default: `0.65`); other cases fall back to body splitting.",
+            "`loop_max_generated_blocks` (default: `64`),",
+            "`loop_max_expansion_ratio` (default: `128.0`), and `loop_max_depth`",
+            "(default: `3`) bound recursive compound expansion.",
+            "",
+        ])
 
     docs_path = info.get("docs")
     if docs_path:
@@ -254,20 +359,42 @@ def render() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def backend_document() -> tuple[Path, str]:
+    path = ROOT_DIR / "docs/backends.md"
+    text = path.read_text(encoding="utf-8")
+    start, end = "<!-- BEGIN BACKEND OPTIONS -->", "<!-- END BACKEND OPTIONS -->"
+    assert text.count(start) == text.count(end) == 1
+    rows = ["| Option | Karity | Classic | MOV |", "|---|---|---|---|"]
+    for name in VM_OPTION_DOCS:
+        cells = ["No" if name in unsupported_vm_options(backend) else "Yes" for backend in VM_BACKENDS]
+        rows.append(f"| `{name}` | " + " | ".join(cells) + " |")
+    before, tail = text.split(start)
+    _, after = tail.split(end)
+    return path, before + start + "\n\n" + "\n".join(rows) + "\n\n" + end + after
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="generate docs/configuration.md")
     parser.add_argument("--check", action="store_true", help="fail if the document is not up to date")
     args = parser.parse_args()
 
+    for info in PASS_REGISTRY.values():
+        if info.get("docs") and not (ROOT_DIR / "docs" / info["docs"]).is_file():
+            raise ValueError(f"missing pass documentation: {info['docs']}")
     content = render()
+    backend_path, backend_content = backend_document()
     if args.check:
         current = OUTPUT.read_text(encoding="utf-8") if OUTPUT.exists() else ""
         if current != content:
             print(f"{OUTPUT} is out of date", file=sys.stderr)
             return 1
+        if backend_path.read_text(encoding="utf-8") != backend_content:
+            print(f"{backend_path} capability table is out of date", file=sys.stderr)
+            return 1
         return 0
 
     OUTPUT.write_text(content, encoding="utf-8")
+    backend_path.write_text(backend_content, encoding="utf-8")
     print(f"wrote {OUTPUT}")
     return 0
 

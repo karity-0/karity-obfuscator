@@ -298,6 +298,14 @@ document.addEventListener('DOMContentLoaded', () => {
       range.addEventListener('change', () => renderAll());
       host.appendChild(wrap);
     }
+    const selected = state.config.vm_options.backend ?? 'karity';
+    const backend = bootstrap.backend_aliases[selected] ?? selected;
+    if (!option.supported_backends.includes(backend)) {
+      row.classList.add('unsupported-option');
+      row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
+      row.querySelector('.option-description').textContent = `Not used by ${backend}; saved value retained`;
+      row.dataset.hint = `This option does not apply to ${backend}. Switch backends to edit it.`;
+    }
     return row;
   }
 
@@ -332,7 +340,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.activeLevel.textContent = titleCase(state.protection_level);
     ui.metricPasses.textContent = allPasses.length;
     ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
-    ui.metricRuntime.textContent = formatPercent(state.config.vm_options.runtime_polymorphism_rate);
+    ui.metricRuntime.textContent = ['classic', 'mov'].includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
+      ? 'N/A' : formatPercent(state.config.vm_options.runtime_polymorphism_rate);
     renderPipeline();
   }
 
@@ -420,6 +429,10 @@ document.addEventListener('DOMContentLoaded', () => {
       ui.output.value = result.output;
       ui.outputStats.textContent = `${result.output.length.toLocaleString()} chars · ${result.elapsed}s`;
       const passCount = result.profile?.passes?.length || 0;
+      if (result.warnings?.length) {
+        setStatus('Protection complete (options ignored)', 'success', result.warnings.join('\n'));
+        return;
+      }
       setStatus('Protection complete', 'success', `${passCount} passes · ${result.elapsed}s total`);
     } catch (error) {
       setStatus('Build failed', 'error', String(error));

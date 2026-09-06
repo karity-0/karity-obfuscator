@@ -11,6 +11,7 @@ import webview
 
 from obfuscator import Pipeline
 from obfuscator.profiling import Profiler
+from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
     CONFIG_PASS_LISTS,
     PASS_DESCRIPTIONS,
@@ -20,6 +21,7 @@ from obfuscator.registry import (
     get_pass_contexts,
     resolve_config_profile,
     validate_config,
+    config_warnings,
     validate_release_config,
 )
 
@@ -162,6 +164,8 @@ def _vm_option_meta() -> list[dict]:
             "description": info.get("description", ""),
             "default": default,
             "group": _OPTION_GROUPS.get(name, "Advanced"),
+            "supported_backends": [backend for backend in VM_BACKENDS
+                                   if name not in unsupported_vm_options(backend)],
         }
         if isinstance(default, bool):
             item["kind"] = "boolean"
@@ -231,7 +235,7 @@ class Api:
         return {
             "state": state, "profiles": profiles, "protection_levels": levels,
             "passes": _pass_meta(), "vm_options": _vm_option_meta(),
-            "profile_source": source,
+            "profile_source": source, "backend_aliases": dict(VM_BACKEND_ALIASES),
         }
 
     def save_config(self, state: dict):
@@ -283,7 +287,7 @@ class Api:
             output = pipeline.run(script, verbose=0, profiler=profiler)
             return {"ok": True, "output": output,
                     "elapsed": round(time.perf_counter() - start, 3),
-                    "profile": profiler.as_dict()}
+                    "profile": profiler.as_dict(), "warnings": config_warnings(config)}
         except Exception:
             return {"ok": False, "error": traceback.format_exc()}
 
