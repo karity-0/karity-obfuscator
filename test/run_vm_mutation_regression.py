@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 import random
-import shutil
 import subprocess
 import sys
-import os
 import tempfile
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,21 +13,6 @@ sys.path.insert(0, str(ROOT))
 
 from obfuscator.vm.vm_mutation import mutate_handler_body
 
-
-def _lua_command() -> list[str]:
-    local = ROOT / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if local.exists():
-        return [str(local)]
-
-    system = (
-        shutil.which("lua5.3")
-        or shutil.which("lua53")
-        or shutil.which("lua")
-    )
-    if system:
-        return [system]
-
-    raise RuntimeError("Lua interpreter not found")
 
 
 def main() -> int:
@@ -63,7 +47,7 @@ assert(run_declared()==12, "declared multi-local handler mutation lost values")
             path = Path(handle.name)
         try:
             result = subprocess.run(
-                [*_lua_command(), str(path)],
+                [lua_executable(), str(path)],
                 capture_output=True,
                 text=True,
                 timeout=10,

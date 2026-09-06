@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 import random
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -17,11 +16,7 @@ from obfuscator.profiling import Profiler
 from obfuscator.vm.vm_variants import _render_tamper, apply_line_state
 
 
-LUA = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-if not LUA.exists():
-    LUA = Path(shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua")
-
-
+LUA = lua_executable()
 def run_lua(path: Path, *args: str) -> subprocess.CompletedProcess[bytes]:
     result = subprocess.run([str(LUA), str(path), *args], capture_output=True, timeout=120)
     result.stdout = result.stdout.replace(b"\r\n", b"\n")

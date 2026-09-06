@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-import os
 import random
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -19,11 +18,7 @@ from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
 from obfuscator.vm.output_emitter import emit_vm_literals
 
 
-LUA = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-if not LUA.exists():
-    LUA = Path(shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua")
-
-
+LUA = lua_executable()
 def run_source(source: str) -> tuple[int, bytes, bytes]:
     with tempfile.TemporaryDirectory(prefix="karity-vm-emitter-") as raw_temp:
         path = Path(raw_temp) / "emitter.lua"

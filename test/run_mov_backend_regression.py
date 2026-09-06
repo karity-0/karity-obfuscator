@@ -9,6 +9,7 @@ import tempfile
 import time
 from pathlib import Path
 from unittest.mock import patch
+from lua_runtime import lua_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -29,7 +30,7 @@ from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
 from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
 from obfuscator.vm.mov.tables import banks
-from run_vm_backend_regression import lua_executable, options
+from run_vm_backend_regression import options
 from mov_shift_checks import check_shift_microcode
 
 

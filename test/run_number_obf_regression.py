@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 import json
 import random
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -17,12 +16,6 @@ from obfuscator.passes.string_obfuscation import StringObfuscationPass
 from obfuscator.passes.packer import _obfuscate_packer_output
 from obfuscator.pipeline import Pipeline
 
-
-def lua_executable() -> str:
-    local = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if local.exists():
-        return str(local)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def main() -> int:

@@ -1,12 +1,11 @@
 from __future__ import annotations
 
 from pathlib import Path
-import os
 import random
-import shutil
 import subprocess
 import sys
 import tempfile
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -15,12 +14,6 @@ sys.path.insert(0, str(ROOT_DIR))
 from obfuscator.registry import ConfigError, validate_config, validate_release_config
 from obfuscator.vm import VMPass
 
-
-def lua_executable() -> str:
-    bundled = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if bundled.exists():
-        return str(bundled)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def options(backend: str, dispatcher: str = "ifelseif") -> dict:

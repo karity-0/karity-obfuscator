@@ -3,12 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -32,12 +32,6 @@ def parse_args():
     parser.add_argument("--keep", action="store_true")
     return parser.parse_args()
 
-
-def default_lua_exe() -> str:
-    local_lua = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if local_lua.exists():
-        return str(local_lua)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def decode(data: bytes) -> str:
@@ -317,7 +311,7 @@ TESTS = [
 def run() -> int:
     global ARGS
     ARGS = parse_args()
-    ARGS.lua_exe = ARGS.lua or default_lua_exe()
+    ARGS.lua_exe = ARGS.lua or lua_executable()
 
     print(f"lua: {ARGS.lua_exe}")
     print(f"config: {ARGS.config}")

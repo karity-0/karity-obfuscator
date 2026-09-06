@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import sys
 import tempfile
 from pathlib import Path
 from unittest.mock import patch
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -18,11 +17,7 @@ from obfuscator.passes.output_signature import OutputSignaturePass, strip_commen
 from obfuscator.registry import ConfigError, validate_config
 
 
-LUA = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-if not LUA.exists():
-    LUA = Path(shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua")
-
-
+LUA = lua_executable()
 def config(passes: list[str], signature: dict) -> dict:
     return {
         "passes": passes,

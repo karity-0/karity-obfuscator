@@ -1,10 +1,10 @@
 """Lexical naming and generated-runtime integration regressions."""
 from pathlib import Path
-import os
 import re
 import subprocess
 import sys
 import tempfile
+from lua_runtime import lua_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -24,7 +24,7 @@ def run(source):
     with tempfile.TemporaryDirectory() as tmp:
         path = Path(tmp) / "test.lua"
         path.write_text(source, encoding="utf-8")
-        result = subprocess.run([str(ROOT / "bin" / ("lua.exe" if os.name == "nt" else "lua")), str(path)], capture_output=True, timeout=30)
+        result = subprocess.run([lua_executable(), str(path)], capture_output=True, timeout=30)
         assert result.returncode == 0, result.stderr
         return result.stdout
 

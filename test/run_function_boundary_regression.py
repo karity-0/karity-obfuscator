@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-import os
 import random
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+from lua_runtime import lua_executable
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -14,12 +13,6 @@ if str(ROOT) not in sys.path:
 from obfuscator.pipeline import Pipeline
 from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
 
-
-def lua_executable() -> str:
-    bundled = ROOT / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if bundled.exists():
-        return str(bundled)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def run_lua(source: str) -> subprocess.CompletedProcess[bytes]:

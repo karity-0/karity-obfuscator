@@ -2,11 +2,11 @@ from __future__ import annotations
 
 import argparse
 import os
-import shutil
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 BASE_DIR = Path(__file__).parent
@@ -32,12 +32,6 @@ def parse_args():
     parser.add_argument("--keep-output", action="store_true", help="keep obfuscated outputs for passing tests")
     return parser.parse_args()
 
-
-def default_lua_exe() -> str:
-    local_lua = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if local_lua.exists():
-        return str(local_lua)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def run_lua(lua_exe: str, path: Path, timeout: float):
@@ -127,7 +121,7 @@ def select_scripts(filters: list[str]) -> list[Path]:
 
 def run_test() -> int:
     args = parse_args()
-    args.lua_exe = args.lua or default_lua_exe()
+    args.lua_exe = args.lua or lua_executable()
     args.jobs = max(1, args.jobs)
 
     target_scripts = select_scripts(args.filters)
