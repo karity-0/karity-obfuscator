@@ -71,7 +71,7 @@ def run_output(source: str, backend: str, dispatcher: str = "ifelseif") -> bytes
     # VMPass accounts for the outer pipeline's signature when deriving its
     # source-bound key; Pipeline is responsible for prepending that signature.
     output = output_prefix + vm.run(source)
-    if vm.backend != backend:
+    if vm.backend != ("karity" if backend == "default" else backend):
         raise AssertionError(f"selected {backend}, facade reported {vm.backend}")
     if backend == "classic":
         output_profile = next(
@@ -132,13 +132,13 @@ def main() -> int:
 
     if VMPass(vm_options={}).backend != "karity":
         raise AssertionError("a missing backend must preserve current karity behavior")
-    if VMPass(vm_options={"backend": "default"}).backend != "classic":
-        raise AssertionError("default alias must resolve to classic")
+    if VMPass(vm_options={"backend": "default"}).backend != "karity":
+        raise AssertionError("default alias must resolve to karity")
 
     source = ('local empty=""; assert(type(empty)=="string" and #empty==0); '
               'local seen=0; for _,v in ipairs({1,empty,3}) do seen=seen+1 end; '
               'assert(seen==3); local x=20+22; local t={x,3}; print(t[1]+t[2])')
-    cases = [("karity", "ifelseif")] + [
+    cases = [("karity", "ifelseif"), ("default", "ifelseif")] + [
         ("classic", dispatcher)
         for dispatcher in (
             "ifelseif", "tailcall", "table", "bsearch",

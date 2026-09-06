@@ -11,7 +11,7 @@ import webview
 
 from obfuscator import Pipeline
 from obfuscator.profiling import Profiler
-from obfuscator.vm.backend import VM_BACKENDS, unsupported_vm_options
+from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
     CONFIG_PASS_LISTS,
     PASS_DESCRIPTIONS,
@@ -235,7 +235,7 @@ class Api:
         return {
             "state": state, "profiles": profiles, "protection_levels": levels,
             "passes": _pass_meta(), "vm_options": _vm_option_meta(),
-            "profile_source": source,
+            "profile_source": source, "backend_aliases": dict(VM_BACKEND_ALIASES),
         }
 
     def save_config(self, state: dict):

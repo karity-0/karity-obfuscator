@@ -14,6 +14,7 @@ from obfuscator.registry import (  # noqa: E402
     VM_OPTION_DOCS,
     get_pass_contexts,
 )
+from obfuscator.vm.backend import VM_BACKENDS, unsupported_vm_options
 
 
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
@@ -24,7 +25,9 @@ from the build profile. Karity and classic use the current compiler, instruction
 layout, serializer/blob protection, dispatcher selection, integrity checks, and
 output pipeline. `karity` remains the implicit choice when the option is omitted.
 `classic` uses direct register storage and straightforward opcode handlers;
-`default` is accepted as an alias for `classic`.
+`default` is an alias for `karity`, matching an omitted backend.
+Older builds mapped `default` to `classic`; use explicit `classic` to preserve
+that runtime when migrating. See [backend architecture and capabilities](backends.md).
 
 `mov` is a supported release backend with a hybrid runtime. Use it with
 `--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM/MOD/IDIV,
@@ -356,20 +359,42 @@ def render() -> str:
     return "\n".join(lines).rstrip() + "\n"
 
 
+def backend_document() -> tuple[Path, str]:
+    path = ROOT_DIR / "docs/backends.md"
+    text = path.read_text(encoding="utf-8")
+    start, end = "<!-- BEGIN BACKEND OPTIONS -->", "<!-- END BACKEND OPTIONS -->"
+    assert text.count(start) == text.count(end) == 1
+    rows = ["| Option | Karity | Classic | MOV |", "|---|---|---|---|"]
+    for name in VM_OPTION_DOCS:
+        cells = ["No" if name in unsupported_vm_options(backend) else "Yes" for backend in VM_BACKENDS]
+        rows.append(f"| `{name}` | " + " | ".join(cells) + " |")
+    before, tail = text.split(start)
+    _, after = tail.split(end)
+    return path, before + start + "\n\n" + "\n".join(rows) + "\n\n" + end + after
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="generate docs/configuration.md")
     parser.add_argument("--check", action="store_true", help="fail if the document is not up to date")
     args = parser.parse_args()
 
+    for info in PASS_REGISTRY.values():
+        if info.get("docs") and not (ROOT_DIR / "docs" / info["docs"]).is_file():
+            raise ValueError(f"missing pass documentation: {info['docs']}")
     content = render()
+    backend_path, backend_content = backend_document()
     if args.check:
         current = OUTPUT.read_text(encoding="utf-8") if OUTPUT.exists() else ""
         if current != content:
             print(f"{OUTPUT} is out of date", file=sys.stderr)
             return 1
+        if backend_path.read_text(encoding="utf-8") != backend_content:
+            print(f"{backend_path} capability table is out of date", file=sys.stderr)
+            return 1
         return 0
 
     OUTPUT.write_text(content, encoding="utf-8")
+    backend_path.write_text(backend_content, encoding="utf-8")
     print(f"wrote {OUTPUT}")
     return 0
 

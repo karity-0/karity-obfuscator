@@ -28,7 +28,7 @@ def main():
         for name in unsupported:
             assert name in warnings[0]
         for name in metadata:
-            canonical = "classic" if backend == "default" else backend
+            canonical = "karity" if backend == "default" else backend
             assert (canonical in metadata[name]["supported_backends"]) == (name not in unsupported)
         assert config == original
     assert "block_variant_count" in unsupported_vm_options("mov")
@@ -46,6 +46,11 @@ def main():
     config = resolve_config_profile(json.loads((ROOT / "config.example.json").read_text()), "high")
     config["vm_options"]["backend"] = "mov"
     validate_release_config(config)
+    config["vm_options"]["backend"] = "default"
+    validate_release_config(config)
+    assert not config_warnings(config)
+    from obfuscator_gui import Api
+    assert Api().get_bootstrap()["backend_aliases"] == {"default": "karity"}
     result = subprocess.run([
         sys.executable, str(ROOT / "main.py"), "--config", str(ROOT / "config.example.json"),
         "--profile", "high", "--vm-option", "backend=mov", "--release-check", "--print-config",
@@ -54,6 +59,12 @@ def main():
     assert json.loads(result.stdout)["vm_options"]["backend"] == "mov"
     assert result.stderr.count("warning:") == 1, result.stderr
     assert "graph_execution_rate" in result.stderr and "fake_handlers" in result.stderr
+    alias = subprocess.run([
+        sys.executable, str(ROOT / "main.py"), "--config", str(ROOT / "config.example.json"),
+        "--profile", "high", "--vm-option", "backend=default", "--release-check", "--print-config",
+    ], capture_output=True, text=True, timeout=30, cwd=ROOT)
+    assert alias.returncode == 0 and not alias.stderr, alias.stderr
+    assert json.loads(alias.stdout)["vm_options"]["backend"] == "default"
     print("backend-options-regression-ok metadata=3_backends alias=ok warnings=ok release=ok")
     return 0
 

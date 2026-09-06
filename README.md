@@ -67,65 +67,31 @@ The selected profile controls which optional stages run and how aggressively
 the VM stages are compiled.
 
 ```mermaid
-flowchart LR
-    A[Lua 5.3 source] --> B[Source passes]
+flowchart TD
+    A[Lua source] --> B[Source passes]
     B --> C{VM enabled?}
-
-    %% Non-VM path
-    C -->|No| P{Packer enabled?}
-
-    %% VM path
-    C -->|Yes| D[luac compile]
-    D --> E[Parse Lua 5.3 bytecode]
-
-    E --> F{junk_instructions?}
-    F -->|Yes| G[Inject junk instructions]
-    F -->|No| H[VM assignment and map generation]
-    G --> H
-
-    H --> I{vm_count > 1?}
-    I -->|No| J[Single-VM map set]
-    I -->|Yes| K[Assign prototypes across<br/>independent VM map sets]
-
-    J --> L[VM serialization]
-    K --> L
-
-    J --> M[Build-time VM specialization]
-    K --> M
-
-    M --> N[Opcode aliases / split / fuse / defer<br/>dispatcher / execution kits / VM variants]
-
-    N --> O{dispatcher_target_hiding?}
-    O -->|Yes| Q[Hide dispatcher targets]
-    O -->|No| R[Continue VM generation]
-    Q --> R
-
-    R --> S[Keystream / tamper / instruction-layout specialization]
-
-    S --> T[Handler / arithmetic / semantic / control graphs]
-    T --> U[Configured VM output passes]
-    U --> V[Line-state finalization]
-    V --> W[Dump finalized VM function<br/>derive integrity state]
-
-    L --> X{integrity_constants?}
-    W --> X
-
-    X -->|Yes| Y[Patch integrity-dependent<br/>serialized values]
-    X -->|No| Z[Use serialized VM blob]
-
-    Y --> AA[Encrypt serialized blob]
-    Z --> AA
-
-    AA --> AB[Assemble protected VM wrapper]
-    AB --> P
-
-    %% Final optional layer
-    P -->|No| AC[Protected Lua]
-    P -->|Yes| AD[Compressed / protected loader]
-    AD --> AC
+    C -->|Yes| D[luac 5.3 and bytecode parsing]
+    D --> E{Backend selection}
+    E -->|karity or default| K[Karity runtime]
+    E -->|classic| L[Classic runtime]
+    E -->|mov| M[MOV lookup runtime]
+    K --> F[Blob serialization and integrity binding]
+    L --> F
+    M --> F
+    F --> G[VM output passes and protected wrapper]
+    G --> H{Packer enabled?}
+    C -->|No| H
+    H -->|Yes| I[Packer and packer output passes]
+    I --> J[Protected Lua]
+    H -->|No| J
 ```
 
-At runtime, one instruction can take different equivalent routes depending on
+See [backend architecture, runtime diagrams and supported options](docs/backends.md).
+Serialization, runtime generation and integrity finalization cooperate during the
+build; the diagram groups those stages rather than prescribing a single pass order.
+
+
+In the Karity runtime, one instruction can take different equivalent routes depending on
 its opcode alias, compiled VM, block variant, execution state, and configured
 rates:
 
@@ -268,7 +234,9 @@ the current compiler, serializer/blob protection, dispatcher selection,
 integrity checks, and output pipeline. `backend=karity` selects the hardened
 graph/encoded-register runtime and is used when the option is omitted.
 `backend=classic` selects direct registers and straightforward opcode handlers;
-`backend=default` is a compatibility alias for `classic`.
+`backend=default` selects `karity`, just like omitting the option. Older builds
+mapped this alias to `classic`; set `backend=classic` explicitly to preserve
+that runtime when migrating.
 Release checks apply the shared dispatcher, integrity, mutation, and VM-count
 requirements to both modes, and apply graph/variant-rate requirements only to
 the Karity runtime that implements them.
@@ -400,6 +368,14 @@ pull requests targeting `main`, `dev`, and `future` run this matrix.
 For a deterministic build during diagnosis, pass `--seed`. Compare the source
 and protected program's exit code, stdout, and stderr; the main test runner does
 this automatically.
+
+## Design references
+
+- [Function transformations and scope boundaries](docs/passes/functionObfuscation.md)
+- [Global localization and environment assumptions](docs/passes/localizeGlobals.md)
+- [Backend architecture and capabilities](docs/backends.md)
+- [Packer and loader requirements](docs/passes/packer.md)
+- [Anti-debug wrapper behavior](docs/passes/antiDebug.md)
 
 ## Repository layout
 

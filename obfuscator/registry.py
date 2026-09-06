@@ -76,6 +76,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": FunctionObfuscationPass,
         "label": "Function Obfuscation",
         "group": "base",
+        "docs": "passes/functionObfuscation.md",
     },
     "rename_obf": {
         "cls": RenameObfuscationPass,
@@ -86,6 +87,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": LocalizeGlobalsPass,
         "label": "Localize Globals",
         "group": "base",
+        "docs": "passes/localizeGlobals.md",
     },
     "minify": {
         "cls": MinifyPass,
@@ -96,11 +98,13 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": VMPass,
         "label": "VM",
         "group": "post",
+        "docs": "backends.md",
     },
     "anti_debug": {
         "cls": AntiDebugPass,
         "label": "Anti-Debug Wrapper",
         "group": "pre",
+        "docs": "passes/antiDebug.md",
     },
     "anti_decompile": {
         "cls": AntiDecompilePass,
@@ -111,6 +115,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": PackerPass,
         "label": "Packer (deflate + load)",
         "group": "post",
+        "docs": "passes/packer.md",
     },
 }
 
@@ -147,7 +152,7 @@ VM_OPTION_DOCS = {
             ("karity", "hardened graph and encoded-register runtime"),
             ("classic", "direct-register and direct-handler runtime on the current VM pipeline"),
             ("mov", "supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback"),
-            ("default", "compatibility alias for classic"),
+            ("default", "alias for karity (the default runtime)"),
         ],
     },
     "dispatcher_type": {

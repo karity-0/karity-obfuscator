@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 VM_BACKENDS = ("karity", "classic", "mov")
-VM_BACKEND_ALIASES = {"default": "classic"}
+VM_BACKEND_ALIASES = {"default": "karity"}
 
 # Controls bypassed by the direct runtimes. Shared by validation, UI and profiles.
 _KARITY_ONLY = frozenset((

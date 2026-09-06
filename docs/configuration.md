@@ -185,6 +185,8 @@ Eligible loops choose unrolling with the seed-driven `loop_unroll_rate`
 `loop_max_expansion_ratio` (default: `128.0`), and `loop_max_depth`
 (default: `3`) bound recursive compound expansion.
 
+See [`function_obf` design and implementation notes](passes/functionObfuscation.md) for architecture, trade-offs, and future work.
+
 ## rename_obf
 
 **label:** Rename Obfuscation
@@ -204,6 +206,8 @@ Renames local identifiers.
 **type:** passes | vm_output_passes | packer_output_passes
 
 Converts global variable accesses to local aliases where possible.
+
+See [`localize_globals` design and implementation notes](passes/localizeGlobals.md) for architecture, trade-offs, and future work.
 
 ## minify
 
@@ -230,7 +234,9 @@ from the build profile. Karity and classic use the current compiler, instruction
 layout, serializer/blob protection, dispatcher selection, integrity checks, and
 output pipeline. `karity` remains the implicit choice when the option is omitted.
 `classic` uses direct register storage and straightforward opcode handlers;
-`default` is accepted as an alias for `classic`.
+`default` is an alias for `karity`, matching an omitted backend.
+Older builds mapped `default` to `classic`; use explicit `classic` to preserve
+that runtime when migrating. See [backend architecture and capabilities](backends.md).
 
 `mov` is a supported release backend with a hybrid runtime. Use it with
 `--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM/MOD/IDIV,
@@ -416,6 +422,8 @@ Removing line metadata through stripped-bytecode rehosting therefore changes the
 same runtime material used to decrypt and reconstruct protected values.
 
 
+See [`vm` design and implementation notes](backends.md) for architecture, trade-offs, and future work.
+
 ## anti_debug
 
 **label:** Anti-Debug Wrapper
@@ -425,6 +433,8 @@ same runtime material used to decrypt and reconstruct protected values.
 **type:** passes | vm_output_passes | packer_output_passes
 
 Inserts anti-debugging checks.
+
+See [`anti_debug` design and implementation notes](passes/antiDebug.md) for architecture, trade-offs, and future work.
 
 ## anti_decompile
 
@@ -446,6 +456,8 @@ Adds source-level traps that make decompiler output less useful.
 
 Compresses and wraps the final output in a self-extracting loader.
 
+See [`pack` design and implementation notes](passes/packer.md) for architecture, trade-offs, and future work.
+
 ## vm_options
 
 ### backend
@@ -457,7 +469,7 @@ VM runtime execution model. Missing values select the current karity runtime.
 | `karity` | hardened graph and encoded-register runtime |
 | `classic` | direct-register and direct-handler runtime on the current VM pipeline |
 | `mov` | supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback |
-| `default` | compatibility alias for classic |
+| `default` | alias for karity (the default runtime) |
 
 default: `karity`
 

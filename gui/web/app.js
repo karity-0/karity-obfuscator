@@ -299,7 +299,7 @@ document.addEventListener('DOMContentLoaded', () => {
       host.appendChild(wrap);
     }
     const selected = state.config.vm_options.backend ?? 'karity';
-    const backend = selected === 'default' ? 'classic' : selected;
+    const backend = bootstrap.backend_aliases[selected] ?? selected;
     if (!option.supported_backends.includes(backend)) {
       row.classList.add('unsupported-option');
       row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
@@ -340,7 +340,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.activeLevel.textContent = titleCase(state.protection_level);
     ui.metricPasses.textContent = allPasses.length;
     ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
-    ui.metricRuntime.textContent = ['classic', 'default', 'mov'].includes(state.config.vm_options.backend)
+    ui.metricRuntime.textContent = ['classic', 'mov'].includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
       ? 'N/A' : formatPercent(state.config.vm_options.runtime_polymorphism_rate);
     renderPipeline();
   }
