@@ -16,7 +16,7 @@ local function _mov_uint(r)
     error("invalid MOV field")
 end
 local function _mov_read(r, root)
-    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==10,"bad MOV version")
+    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==11,"bad MOV version")
     _mov_kits={}
     for vm=1,r.u16() do
         local kit={banks={},encode={},decode={},nonzero={},sign={}}
@@ -154,6 +154,7 @@ end
     _ms[326]=_mencode[8]; _ms[327]=_mov_banks[5]
     --<<FLOAT_TABLES>>
     --<<MIXED_TABLES>>
+    --<<SHIFT_TABLES>>
     local _mexpected={
         [0]={[false]=true,[true]=false},
         [1]={[false]=false,[true]=true},
@@ -192,6 +193,7 @@ end
             _ma=A; _mresume=_mentry[ip+1]
             _ms[170]=op==16
             _ms[325]=false
+            _ms[333]=op==23
             local x,y
             if op==28 then
                 if _mov_is_string(B) then
@@ -238,27 +240,7 @@ end
             if _ms[11] then
                 _ms[2]=x; _ms[3]=y; _ms[4]=0; _ms[5]=_mov_banks[_mbank[op]]
                 _ms[16]=_mov_banks[7]; _ms[15]=_mtruth[op]
-                if op==23 or op==24 then
-                    -- Shift magnitude changes addressing only. Nibble values
-                    -- are combined exclusively by the shift lookup recipe.
-                    local count=rget(C)
-                    if count>=64 or count<=-64 then
-                        _ms[2]=_mzero; _ms[3]=_mzero
-                    else
-                        local left=op==23
-                        if count<0 then count=-count; left=not left end
-                        local whole=count//4
-                        local a,b={},{}
-                        for j=0,15 do
-                            local index=left and (j-whole) or (j+whole)
-                            local neighbor=left and (index-1) or (index+1)
-                            a[j]=x[index] or _mencode[0]
-                            b[j]=x[neighbor] or _mencode[0]
-                        end
-                        _ms[2]=a; _ms[3]=b; _ms[4]=count%4
-                        _ms[5]=_mov_banks[left and 9 or 10]
-                    end
-                elseif op>=31 then
+                if op>=31 then
                     local nextpc=ip+1
                     _ms[19]=_mentry[({[true]=nextpc,[false]=nextpc+1})[A~=0]]
                     _ms[20]=_mentry[({[false]=nextpc,[true]=nextpc+1})[A~=0]]

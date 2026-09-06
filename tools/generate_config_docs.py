@@ -34,6 +34,11 @@ correction, integer wraparound and explicit zero-divisor errors. NOT and
 expected-truth tests use boolean lookup after native-value classification.
 Division skips leading zero nibbles using moves and a counter transition table,
 so small operands do not execute all 64 restoring-division bit rounds.
+Integer SHL/SHR use six lookup/MOV stages for distances 1, 2, 4, 8, 16 and 32.
+Microcode computes count sign, unsigned magnitude, direction reversal and the
+64-bit range check, including minimum-integer counts. HOST preparation supplies
+encoded operands and opcode direction without decoding the count or computing
+digit positions. Integral floats and numeric strings retain Lua coercion.
 Float/float EQ/LT/LE bitcast binary64 values into encoded nibbles, then use
 lookup-generated ordering keys, NaN classification and signed-zero equality.
 Float UNM copies binary64 payload digits and toggles the sign nibble through XOR

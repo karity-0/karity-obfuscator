@@ -24,11 +24,13 @@ from obfuscator.vm.mov.ir import Host, Op
 from obfuscator.vm.mov.lower import lower
 from obfuscator.vm.mov.float_compare import compare as compare_floats
 from obfuscator.vm.mov.float_ops import negate as negate_float
+from obfuscator.vm.mov.shift import shift
 from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
 from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
 from obfuscator.vm.mov.tables import banks
 from run_vm_backend_regression import lua_executable, options
+from mov_shift_checks import check_shift_microcode
 
 
 def run(path: Path) -> tuple:
@@ -128,6 +130,7 @@ def check(source: Path, opts: dict, passes: list[str], seed: int) -> None:
 
 
 def main() -> int:
+    check_shift_microcode()
     check_division_work()
     classic = (ROOT / "obfuscator/vm/runtimes/classic_exec.lua").read_text(encoding="utf-8")
     runtime = build_runtime(classic, make_kits(3))
@@ -150,6 +153,10 @@ def main() -> int:
     unary_recipe = []
     negate_float(unary_recipe)
     assert {i.a for i in unary_recipe if i.op == Op.HOST} == {Host.COMMIT_FLOAT}
+    shift_recipe = []
+    shift(shift_recipe)
+    assert {i.a for i in shift_recipe if i.op == Op.HOST} == {Host.COMMIT}
+    assert "local count=rget(C)" not in runtime
     mixed_recipe = []
     compare_mixed(mixed_recipe)
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in mixed_recipe)
@@ -190,6 +197,8 @@ def main() -> int:
     fixtures.append(cross_vm)
     division = ROOT / "test" / "fixtures" / "mov_division.lua"
     fixtures.append(division)
+    shifts = ROOT / "test/fixtures/mov_shift.lua"
+    fixtures.append(shifts)
     floats = ROOT / "test" / "fixtures" / "mov_float_compare.lua"
     fixtures.append(floats)
     float_unary = ROOT / "test/fixtures/mov_float_unary.lua"
@@ -267,6 +276,9 @@ def main() -> int:
         return runtime
     with patch("obfuscator.vm.mov.builder.build_runtime", forbid_native_fallbacks):
         check(focused, {**base, "vm_count": 3}, [], 9000)
+        check(shifts, {**base, "vm_count": 3, "blob_form": "table",
+                       "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 10301)
         check(float_unary, {**base, "vm_count": 3, "blob_form": "table",
                             "integrity_constants": True, "integrity_constant_rate": 1.0},
               ["rename_obf", "minify"], 10201)
@@ -294,6 +306,9 @@ def main() -> int:
     check(division, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9702)
+    check(shifts, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 10302)
     check(floats, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9802)

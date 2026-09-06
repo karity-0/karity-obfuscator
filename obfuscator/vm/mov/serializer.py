@@ -65,7 +65,7 @@ def serialize(programs: list[Program], kits: list[VMKit], stats: dict | None = N
     if stats is not None:
         stats.update(stored_micro_instructions=sum(len(t) for t in tapes),
                      shared_recipes=recipe_count)
-    out = bytearray(b"MOV\x0a")
+    out = bytearray(b"MOV\x0b")
     out.extend(struct.pack("<H", len(kits)))
     for kit, tape in zip(kits, tapes):
         out.extend(kit.encode)

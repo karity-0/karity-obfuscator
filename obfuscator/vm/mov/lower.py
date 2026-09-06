@@ -6,12 +6,15 @@ from .float_ops import negate as negate_float
 from .mixed_compare import compare as compare_mixed
 from .string_compare import compare as compare_strings
 from .string_ops import length as string_length, concatenate as string_concat
+from .shift import shift
 
 # Integer arithmetic, including MOD/IDIV, bitwise operations and comparisons.
 LOWERED = frozenset((13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 31, 32, 33))
 
 
 def _recipe(op: int) -> str:
+    if op in (23, 24):
+        return "shift"
     if op == 28:
         return "string_length"
     if op == 29:
@@ -102,6 +105,9 @@ def lower(code: list[int], vm_id: int = 0) -> Program:
     recipes: dict[str, int] = {}
     for kind in sorted({_recipe(op) for _, op in pending}):
         recipes[kind] = len(out) + 1
+        if kind == "shift":
+            shift(out)
+            continue
         if kind == "string_length":
             string_length(out)
             continue

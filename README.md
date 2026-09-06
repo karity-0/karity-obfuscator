@@ -279,6 +279,12 @@ the Karity runtime that implements them.
 division recipe, including minimum-integer overflow and divisor-sign correction.
 Leading zero nibbles skip four bit rounds through moves and counter-table lookup,
 reducing work for small operands without native arithmetic fallback.
+Integer shifts use six lookup/MOV stages for distances 1, 2, 4, 8, 16 and 32.
+Count sign, unsigned magnitude, direction reversal and the 64-bit range check
+are computed in microcode, including minimum-integer counts. HOST preparation
+only supplies encoded operands and the opcode direction; it no longer decodes
+the count or computes digit positions. Integral floats and numeric strings
+still use Lua's coercing shift handlers.
 Float/float `EQ/LT/LE` bitcast binary64 values and compare lookup-generated
 ordering keys; NaN classification and signed-zero equality also use lookup.
 Float `UNM` copies the binary64 payload and toggles its sign nibble through XOR
