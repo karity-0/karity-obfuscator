@@ -36,7 +36,8 @@ def _native_arithmetic(runtime: str) -> str:
 def build_runtime(classic: str, kits: list[VMKit]) -> str:
     template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
     template = template.replace("__MOV_DIV_STEPS__", "{" + ",".join(
-        f"[{i}]={{{i - 1},{str(i > 1).lower()}}}" for i in range(1, 65)
+        f"[{i}]={{{i - 1},{str(i > 1).lower()},{max(i - 4, 0)},{str(i > 4).lower()}}}"
+        for i in range(1, 65)
     ) + "}")
 
     def section(start: str, end: str) -> str:

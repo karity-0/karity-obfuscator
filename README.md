@@ -277,11 +277,18 @@ the Karity runtime that implements them.
 `ADD/SUB/MUL/UNM/MOD/IDIV`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
 4-bit lookup microcode. Signed floor division and modulo use a 64-step restoring
 division recipe, including minimum-integer overflow and divisor-sign correction.
+Leading zero nibbles skip four bit rounds through moves and counter-table lookup,
+reducing work for small operands without native arithmetic fallback.
 Float/float `EQ/LT/LE` bitcast binary64 values and compare lookup-generated
 ordering keys; NaN classification and signed-zero equality also use lookup.
 Mixed integer/float comparisons build exact 80-bit ordering keys with a shared
 exponent and 63 fraction bits. Integers are normalized through lookup shifts,
 without rounding them to binary64, preserving distinctions beyond `2^53`.
+String equality compares encoded byte lists in lookup microcode. String ordering
+uses that path in C/POSIX collation; other locales or an unavailable locale query
+retain host ordering. This preserves Lua's locale-sensitive comparison rules,
+including embedded NUL bytes. Byte-list construction adds linear allocation per
+comparison; it is an input representation boundary, not the comparison itself.
 `NOT` and expected-truth tests use boolean lookup after native-value classification;
 tests and jumps select microcode addresses;
 jumps close captured locals before leaving their scope. Integer results stay in
@@ -290,7 +297,7 @@ and mixed-type arithmetic, `/`, power, metamethods, tables and
 calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
 implementation. The original operand words remain available to host fallbacks.
 MOV-only remains the target; this implementation does not yet meet it. In
-particular, floating-point arithmetic, string
+particular, floating-point arithmetic, string length/concatenation and locale-specific ordering,
 operations and Lua object/call semantics
 still need host execution. Function-table indirection is not counted as MOV
 lowering. Regression tests reject native integer arithmetic, division, comparison

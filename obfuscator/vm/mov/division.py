@@ -80,7 +80,23 @@ def divide(out: list[I]) -> None:
         out[index] = I(Op.SELECT, 11, len(out) + 1, old.c)
 
     move(166, 173)
+    # Leading zero nibbles would only shift zero quotient/remainder words.
+    # Skip four such bit rounds with digit moves and a counter-table lookup.
+    # This keeps small operands cheap without introducing native arithmetic.
+    leading = len(out) + 1
+    lookup(11, 27, dividend + 15)
+    significant = len(out)
+    out.append(I(Op.SELECT, 11, 0, significant + 2))
+    for digit in range(15, 0, -1):
+        move(dividend + digit, dividend + digit - 1)
+    move(dividend, 21)
+    lookup(6, 165, 166)
+    lookup(166, 6, 35)
+    lookup(11, 6, 36)
+    exhausted = len(out)
+    out.append(I(Op.SELECT, 11, leading))
     loop = len(out) + 1
+    out[significant] = I(Op.SELECT, 11, loop, significant + 2)
     arithmetic(dividend, dividend, dividend, 25)
     # Carry out of the dividend is the incoming low remainder bit.
     arithmetic(remainder, remainder, remainder, 25, carry=4)
@@ -96,6 +112,7 @@ def divide(out: list[I]) -> None:
     lookup(166, 6, 17)
     lookup(11, 6, 18)
     out.append(I(Op.SELECT, 11, loop, len(out) + 2))
+    out[exhausted] = I(Op.SELECT, 11, leading, len(out) + 1)
 
     # Reduce the remainder to a boolean without materializing a Lua integer.
     move(171, 163)

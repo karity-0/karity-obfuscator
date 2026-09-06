@@ -16,7 +16,7 @@ local function _mov_uint(r)
     error("invalid MOV field")
 end
 local function _mov_read(r, root)
-    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==7,"bad MOV version")
+    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==8,"bad MOV version")
     _mov_kits={}
     for vm=1,r.u16() do
         local kit={banks={},encode={},decode={},nonzero={},sign={}}
@@ -96,6 +96,14 @@ end
         for j=0,15 do d[j]=_mencode[(bits>>(j*4))&15] end
         return d
     end
+    local function _mov_string_nodes(s)
+        local node={false}
+        for i=#s,1,-1 do
+            local byte=string.byte(s,i)
+            node={true,_mencode[byte&15],_mencode[byte>>4],node}
+        end
+        return node
+    end
     local function _mov_close(first)
         for slot,box in pairs(boxes) do
             if slot>=first then
@@ -116,6 +124,7 @@ end
     _ms[168]={[false]={[false]=false,[true]=true},[true]={[false]=true,[true]=false}}
     _ms[172]={[0]=true,[1]=false}
     _ms[175]={[false]=true,[true]=false}
+    _ms[321]={[0]=true,[1]=false,[2]=false}
     --<<FLOAT_TABLES>>
     --<<MIXED_TABLES>>
     local _mexpected={
@@ -157,6 +166,7 @@ end
             else x=_mov_digits(B); y=_mov_digits(C) end
             _ms[176]=false
             _ms[192]=false
+            _ms[320]=false
             if op>=31 then
                 local left,right=math.type(rget(B)),math.type(rget(C))
                 if left and right then
@@ -165,6 +175,15 @@ end
                     if _ms[199] then y=_mov_float_digits(rget(C)) end
                     _ms[176]=_ms[198] and _ms[199]
                     _ms[192]=_ms[198]~=_ms[199]
+                elseif type(rget(B))=="string" and type(rget(C))=="string" then
+                    local collate
+                    if op~=31 and type(os)=="table" and type(os.setlocale)=="function" then
+                        collate=os.setlocale(nil,"collate")
+                    end
+                    if op==31 or collate=="C" or collate=="POSIX" then
+                        x=_mov_string_nodes(rget(B)); y=_mov_string_nodes(rget(C))
+                        _ms[320]=true
+                    end
                 end
             end
             _ms[11]=x~=nil and y~=nil

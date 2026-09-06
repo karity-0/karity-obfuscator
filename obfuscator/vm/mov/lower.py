@@ -3,6 +3,7 @@ from .ir import Host, Instruction as I, Op, Program
 from .division import divide
 from .float_compare import compare as compare_floats
 from .mixed_compare import compare as compare_mixed
+from .string_compare import compare as compare_strings
 
 # Integer arithmetic, including MOD/IDIV, bitwise operations and comparisons.
 LOWERED = frozenset((13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26, 31, 32, 33))
@@ -103,6 +104,10 @@ def lower(code: list[int], vm_id: int = 0) -> Program:
             continue
         comparison = kind == "compare"
         if comparison:
+            string_branch = len(out)
+            out.append(I(Op.SELECT, 320, string_branch + 2))
+            compare_strings(out)
+            out[string_branch] = I(Op.SELECT, 320, string_branch + 2, len(out) + 1)
             mixed_branch = len(out)
             out.append(I(Op.SELECT, 192, mixed_branch + 2))
             compare_mixed(out)

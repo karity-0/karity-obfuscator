@@ -32,18 +32,26 @@ BAND/BOR/BXOR/SHL/SHR/BNOT and EQ/LT/LE lower into nibble lookup microcode;
 Signed MOD/IDIV use a shared 64-step restoring-division recipe with Lua floor
 correction, integer wraparound and explicit zero-divisor errors. NOT and
 expected-truth tests use boolean lookup after native-value classification.
+Division skips leading zero nibbles using moves and a counter transition table,
+so small operands do not execute all 64 restoring-division bit rounds.
 Float/float EQ/LT/LE bitcast binary64 values into encoded nibbles, then use
 lookup-generated ordering keys, NaN classification and signed-zero equality.
 Mixed integer/float EQ/LT/LE build exact 80-bit ordering keys through lookup
 normalization, with a shared exponent and 63 fraction bits. No integer-to-float
 conversion occurs, preserving precision beyond 2^53 and at the signed 64-bit limits.
+String equality uses encoded byte-list lookup regardless of locale. String LT/LE
+use the same microcode under C/POSIX collation; other locales and unavailable
+locale queries retain host ordering. The current locale is checked per operation.
+Embedded NUL bytes remain ordinary bytes, distinct from list termination.
+Constructing the input byte lists requires linear allocation per comparison.
+This boundary preserves [Lua's locale-sensitive string ordering](https://www.lua.org/source/5.3/lvm.c.html).
 TEST/TESTSET and JMP select microcode addresses, with captured locals closed
 before scope-exiting jumps. Integer results retain encoded digit storage across MOV
 operations. Other operations (including `/`, power, floating-point arithmetic, coercions,
 metamethods and native calls) cross explicit Lua host boundaries. Original operand
 words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
 MOV-only is the target, not the current completion status: floating-point
-arithmetic, strings and Lua object/call semantics
+arithmetic, string length/concatenation, locale-specific ordering and Lua object/call semantics
 still use host execution. Native fallback traps in the regression suite verify
 the implemented integer, boolean and all numeric comparison paths.
 Host opcodes share one indirect function-table call, with shuffled entries and

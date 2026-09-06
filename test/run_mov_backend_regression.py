@@ -24,12 +24,60 @@ from obfuscator.vm.mov.ir import Host, Op
 from obfuscator.vm.mov.lower import lower
 from obfuscator.vm.mov.float_compare import compare as compare_floats
 from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
+from obfuscator.vm.mov.string_compare import compare as compare_strings
+from obfuscator.vm.mov.tables import banks
 from run_vm_backend_regression import lua_executable, options
 
 
 def run(path: Path) -> tuple:
     result = subprocess.run([lua_executable(), str(path)], capture_output=True, timeout=120)
     return result.returncode, result.stdout, result.stderr
+
+
+def check_division_work() -> None:
+    """Measure executed microinstructions, independent of CI machine speed."""
+    encode = make_kits(1)[0].encode
+    decode = {value: i for i, value in enumerate(encode)}
+    add, sub = [
+        {x: {y: {c: {1: pair[0], 2: pair[1]} for c, pair in enumerate(states)}
+             for y, states in enumerate(ys)} for x, ys in enumerate(bank)}
+        for bank in banks(encode)[:2]
+    ]
+    code = []
+    divide(code)
+
+    def execute(a, b):
+        slots = {1: 0, 17: 1, 18: 2, 21: encode[0], 25: add, 30: True,
+                 27: {encode[i]: i != 0 for i in range(16)}, 162: sub, 163: False,
+                 164: {encode[i]: i >= 8 for i in range(16)},
+                 165: {i: {1: i-1, 2: i>1, 3: max(i-4, 0), 4: i>4} for i in range(1, 65)},
+                 168: {x: {y: x != y for y in (False, True)} for x in (False, True)},
+                 170: False, 172: {0: True, 1: False}, 173: 64}
+        slots.update({32+i: i for i in range(16)})
+        slots[2] = {i: encode[(a >> (4*i)) & 15] for i in range(16)}
+        slots[3] = {i: encode[(b >> (4*i)) & 15] for i in range(16)}
+        pc = 1
+        for steps in range(1, 50000):
+            ins = code[pc-1]
+            pc += 1
+            if ins.op == Op.MOVE:
+                slots[ins.a] = slots[ins.b]
+            elif ins.op == Op.LOOKUP:
+                slots[ins.a] = slots[ins.b][slots[ins.c]]
+            elif ins.op == Op.SELECT:
+                assert isinstance(slots[ins.a], bool)
+                pc = ins.b if slots[ins.a] else ins.c
+            else:
+                assert ins.a == Host.COMMIT
+                value = sum(decode[slots[64+i]] << (4*i) for i in range(16))
+                assert value == (a // b) & ((1 << 64)-1)
+                return steps
+        raise AssertionError("division recipe did not terminate")
+
+    small, large, zero = execute(7, 3), execute((1 << 63)-1, 3), execute(0, 3)
+    execute(-17, 3)
+    assert zero < small < large // 2, (zero, small, large)
+    print(f"mov-division-work small={small} full_width={large} zero={zero}", flush=True)
 
 
 def check_cli(profile: str, extra: list[str]) -> None:
@@ -78,6 +126,7 @@ def check(source: Path, opts: dict, passes: list[str], seed: int) -> None:
 
 
 def main() -> int:
+    check_division_work()
     classic = (ROOT / "obfuscator/vm/runtimes/classic_exec.lua").read_text(encoding="utf-8")
     runtime = build_runtime(classic, make_kits(3))
     dispatches = runtime.split("and q[2]==0 then")[1:]
@@ -99,6 +148,9 @@ def main() -> int:
     mixed_recipe = []
     compare_mixed(mixed_recipe)
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in mixed_recipe)
+    string_recipe = []
+    compare_strings(string_recipe)
+    assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in string_recipe)
     for opcode in (27, 34, 35):
         program = lower([opcode])
         site = program.code[:program.entries[1] - 1]
@@ -133,6 +185,8 @@ def main() -> int:
     fixtures.append(floats)
     mixed = ROOT / "test" / "fixtures" / "mov_mixed_compare.lua"
     fixtures.append(mixed)
+    strings = ROOT / "test" / "fixtures" / "mov_string_compare.lua"
+    fixtures.append(strings)
     for i, source in enumerate(fixtures):
         check(source, base, ["rename_obf", "minify"], 7100 + i)
     for i, form in enumerate(("table", "numeric", "string")):
@@ -143,6 +197,19 @@ def main() -> int:
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
     def forbid_native_fallbacks(classic, opcodes):
+        for op in (31, 32, 33):
+            marker = f"elseif op=={op} then"
+            assert marker in classic
+            if op == 31:
+                guard = 'error("native string equality fallback")'
+            else:
+                guard = """local collate
+                    if type(os)=="table" and type(os.setlocale)=="function" then
+                        collate=os.setlocale(nil,"collate") end
+                    if collate=="C" or collate=="POSIX" then
+                        error("native binary string ordering fallback") end
+                    _G.__mov_host_order_seen=true"""
+            classic = classic.replace(marker, marker + '\nif type(rget(B))=="string" and type(rget(C))=="string" then\n' + guard + '\nend;')
         for op in (31, 32, 33):
             marker = f"elseif op=={op} then"
             assert marker in classic
@@ -160,6 +227,7 @@ def main() -> int:
                 if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
                     error("native integer comparison/division fallback") end;""")
         runtime = build_runtime(classic, opcodes)
+        runtime = '_G.__mov_order_test=true\n' + runtime
         assert "local function _arith2(a,b,av,slot)" in runtime
         assert "local function _arith1(a,av,slot)" in runtime
         runtime = runtime.replace(
@@ -187,6 +255,9 @@ def main() -> int:
         check(mixed, {**base, "vm_count": 3, "blob_form": "table",
                       "integrity_constants": True, "integrity_constant_rate": 1.0},
               ["rename_obf", "minify"], 9901)
+        check(strings, {**base, "vm_count": 3, "blob_form": "table",
+                        "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 10001)
     check(ROOT / "test" / "scripts" / "14_vm_call_machine.lua", {**base, "vm_count": 2},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9100)
@@ -199,6 +270,9 @@ def main() -> int:
     check(mixed, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9902)
+    check(strings, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 10002)
     check_cli("fast-vm", ["--seed", "9300"])
     check_cli("fast-vm", ["--seed", "9300", "--passes", "vm,pack"])
     check_cli("high", ["--release-check"])
