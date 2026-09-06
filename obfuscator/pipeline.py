@@ -59,24 +59,48 @@ class Pipeline:
             self._passes.append(pass_)
         return self
 
-    def run(self, script: str, verbose: int = 0, profiler: Profiler | None = None) -> str:
+    def run(
+        self,
+        script: str,
+        verbose: int = 0,
+        profiler: Profiler | None = None,
+    ) -> str:
         from .names import RENAME_OPTIONS
-        token = RENAME_OPTIONS.set(self.rename_options) if self.rename_options is not None else None
+
+        token = (
+            RENAME_OPTIONS.set(self.rename_options)
+            if self.rename_options is not None
+            else None
+        )
         try:
             return self._run(script, verbose, profiler)
         finally:
             if token is not None:
                 RENAME_OPTIONS.reset(token)
 
-    def _run(self, script: str, verbose: int = 0, profiler: Profiler | None = None) -> str:
+    def _run(
+        self,
+        script: str,
+        verbose: int = 0,
+        profiler: Profiler | None = None,
+    ) -> str:
         for pre in self._pre_passes:
             before = _size(script)
             start = time.perf_counter()
             script = pre.run(script)
             elapsed = time.perf_counter() - start
-            record = ProfileRecord("PRE", pre.__class__.__name__, elapsed, before, _size(script))
+
+            record = ProfileRecord(
+                "PRE",
+                pre.__class__.__name__,
+                elapsed,
+                before,
+                _size(script),
+            )
+
             if profiler:
                 profiler.add(record)
+
             if verbose >= Verbosity.NORMAL:
                 info_message("PRE", pre, _format_record(record))
 
@@ -84,23 +108,39 @@ class Pipeline:
         # before choosing final names. Localization resolves lexical bindings on
         # its own, so it does not need an earlier rename to distinguish globals.
         from .passes.rename_obfuscation import RenameObfuscationPass
-        renamers = [p for p in self._passes if isinstance(p, RenameObfuscationPass)]
-        base_passes = [p for p in self._passes if not isinstance(p, RenameObfuscationPass)]
+
+        renamers = [
+            p
+            for p in self._passes
+            if isinstance(p, RenameObfuscationPass)
+        ]
+        base_passes = [
+            p
+            for p in self._passes
+            if not isinstance(p, RenameObfuscationPass)
+        ]
+
         if renamers:
             base_passes.append(renamers[-1])
+
         for pass_ in base_passes:
             before = _size(script)
             start = time.perf_counter()
+
             parser = getattr(pass_, "parser", "luaparser")
+
             if parser == "treesitter":
                 from .passes.ts_utils import parse as _ts_parse
 
                 tree = _ts_parse(script)
             else:
                 tree = ast.parse(script)
+
             replacements = pass_.run(script, tree)
             script = self._apply(script, replacements)
+
             elapsed = time.perf_counter() - start
+
             record = ProfileRecord(
                 "BASE",
                 pass_.__class__.__name__,
@@ -110,10 +150,13 @@ class Pipeline:
                 parser=parser,
                 replacements=len(replacements),
             )
+
             if profiler:
                 profiler.add(record)
+
             if verbose >= Verbosity.NORMAL:
                 info_message("BASE", pass_, _format_record(record))
+
             if verbose > Verbosity.DEBUG:
                 new_tree = ast.parse(script)
                 print(ast.to_pretty_str(new_tree))
@@ -121,9 +164,12 @@ class Pipeline:
         for post in self._post_passes:
             before = _size(script)
             start = time.perf_counter()
+
             script = post.run(script)
+
             elapsed = time.perf_counter() - start
             details = getattr(post, "last_profile", [])
+
             record = ProfileRecord(
                 "POST",
                 post.__class__.__name__,
@@ -132,38 +178,100 @@ class Pipeline:
                 _size(script),
                 details=details,
             )
+
             if profiler:
                 profiler.add(record)
+
             if verbose >= Verbosity.NORMAL:
                 info_message("POST", post, _format_record(record))
+
                 if verbose >= Verbosity.DEBUG:
                     for detail in details:
-                        print(f"  - {detail['phase']}: {detail['elapsed']:.3f}s")
+                        print(
+                            f"  - {detail['phase']}: "
+                            f"{detail['elapsed']:.3f}s"
+                        )
 
         if self._output_signature is None:
             return script
 
         before = _size(script)
         start = time.perf_counter()
+
         script = self._output_signature.run(script)
+
         record = ProfileRecord(
-            "POST", self._output_signature.__class__.__name__,
-            time.perf_counter() - start, before, _size(script),
+            "POST",
+            self._output_signature.__class__.__name__,
+            time.perf_counter() - start,
+            before,
+            _size(script),
         )
+
         if profiler:
             profiler.add(record)
+
         if verbose >= Verbosity.NORMAL:
-            info_message("POST", self._output_signature, _format_record(record))
+            info_message(
+                "POST",
+                self._output_signature,
+                _format_record(record),
+            )
+
         return script
 
-    def _apply(self, src: str, replacements: list[Replacement]) -> str:
+    def _apply(
+        self,
+        src: str,
+        replacements: list[Replacement],
+    ) -> str:
         if not replacements:
             return src
+
         parts: list[str] = []
         pos = 0
-        for r in sorted(replacements, key=lambda r: r.start):
-            parts.append(src[pos:r.start])
-            parts.append(r.new_text)
-            pos = r.end + 1
+
+        # Replacement uses inclusive end coordinates.
+        #
+        # end < start represents a zero-width insertion. Insertions must be
+        # emitted before a normal replacement starting at the same source
+        # position, and must not consume any source characters.
+        #
+        # Keep the original caller order between multiple insertions at the
+        # same position.
+        indexed = list(enumerate(replacements))
+
+        ordered = sorted(
+            indexed,
+            key=lambda item: (
+                item[1].start,
+                0 if item[1].end < item[1].start else 1,
+                item[0],
+            ),
+        )
+
+        for _, replacement in ordered:
+            start = replacement.start
+            end = replacement.end
+            is_insertion = end < start
+
+            if start < pos:
+                kind = "insertion" if is_insertion else "replacement"
+                raise RuntimeError(
+                    f"overlapping {kind} at {start}:{end}, "
+                    f"previous end={pos - 1}"
+                )
+
+            parts.append(src[pos:start])
+            parts.append(replacement.new_text)
+
+            if is_insertion:
+                # Move the cursor up to the insertion point but consume
+                # nothing. A normal replacement may therefore still begin
+                # at the exact same source position.
+                pos = start
+            else:
+                pos = end + 1
+
         parts.append(src[pos:])
         return "".join(parts)

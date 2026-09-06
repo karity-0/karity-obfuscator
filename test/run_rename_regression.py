@@ -16,6 +16,7 @@ from obfuscator.pipeline import Pipeline
 from obfuscator import build_pipeline_from_config
 from obfuscator.registry import validate_config, ConfigError
 from obfuscator.names import RENAME_OPTIONS
+from obfuscator.passes.base import Replacement
 from obfuscator.passes.anti_debug import AntiDebugPass
 from obfuscator.passes.anti_decompile import AntiDecompilePass
 
@@ -30,6 +31,115 @@ def run(source):
 
 
 def main():
+    # Generic Pipeline._apply() insertion semantics.
+    apply = Pipeline(show_header=False)._apply
+
+    # Reproduces the LocalizeGlobalsPass failure:
+    #
+    #   print("hi")
+    #
+    # localize needs both:
+    #   0..4  -> b
+    #   0..-1 -> alias declarations
+    #
+    # The insertion must happen first without consuming "print".
+    assert apply(
+        'print("hi")',
+        [
+            Replacement(
+                start=0,
+                end=4,
+                new_text="b",
+            ),
+            Replacement(
+                start=0,
+                end=-1,
+                new_text='local a=_ENV local b=a["print"] ',
+            ),
+        ],
+    ) == 'local a=_ENV local b=a["print"] b("hi")'
+
+    # An insertion in the middle must not duplicate or consume source.
+    assert apply(
+        "abc",
+        [
+            Replacement(
+                start=1,
+                end=0,
+                new_text="X",
+            ),
+        ],
+    ) == "aXbc"
+
+    # Multiple insertions at one point preserve caller order.
+    assert apply(
+        "abc",
+        [
+            Replacement(
+                start=1,
+                end=0,
+                new_text="X",
+            ),
+            Replacement(
+                start=1,
+                end=0,
+                new_text="Y",
+            ),
+        ],
+    ) == "aXYbc"
+
+    # Genuine overlapping replacements are invalid and must fail instead of
+    # silently producing corrupted output.
+    try:
+        apply(
+            "abcd",
+            [
+                Replacement(
+                    start=0,
+                    end=1,
+                    new_text="X",
+                ),
+                Replacement(
+                    start=1,
+                    end=2,
+                    new_text="Y",
+                ),
+            ],
+        )
+    except RuntimeError:
+        pass
+    else:
+        raise AssertionError(
+            "overlapping replacements were accepted"
+        )
+
+    # LocalizeGlobalsPass alone must both introduce aliases and actually use
+    # them when the global reference begins at source offset zero.
+    source = 'print("hi")'
+    expected = run(source)
+
+    localized = (
+        Pipeline(show_header=False)
+        .add(LocalizeGlobalsPass())
+        .run(source)
+    )
+
+    assert localized != source
+    assert 'print("hi")' not in localized
+    assert run(localized) == expected
+
+    # The same source must remain valid when rename is also enabled.
+    # Previously localize produced malformed Lua and rename merely detected it
+    # on the following Tree-sitter parse.
+    localized_renamed = (
+        Pipeline(show_header=False)
+        .add(LocalizeGlobalsPass())
+        .add(RenameObfuscationPass())
+        .run(source)
+    )
+
+    assert run(localized_renamed) == expected
+
     cases = [
         'a=40; local long=2; print(a+long)',
         'x=7; print(x); local x=x+1; do local x=x+10; print(x) end; print(x)',
