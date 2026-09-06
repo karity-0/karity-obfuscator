@@ -273,7 +273,8 @@ Release checks apply the shared dispatcher, integrity, mutation, and VM-count
 requirements to both modes, and apply graph/variant-rate requirements only to
 the Karity runtime that implements them.
 
-`backend=mov` is an experimental MOV-inspired backend. It lowers integer
+`backend=mov` is a supported release configuration with a hybrid MOV-inspired
+runtime. Full MOV-only execution remains a development target. It lowers integer
 `ADD/SUB/MUL/UNM/MOD/IDIV`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
 4-bit lookup microcode. Signed floor division and modulo use a 64-step restoring
 division recipe, including minimum-integer overflow and divisor-sign correction.
@@ -347,7 +348,7 @@ The most important performance controls are:
 
 | Option | Effect |
 |---|---|
-| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, experimental lookup `mov`, or the `default` alias |
+| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, supported lookup `mov`, or the `default` alias |
 | `graph_execution_rate` | How often heavy compiled handler graphs execute |
 | `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
 | `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
@@ -384,17 +385,17 @@ regressions. Full `max` builds are research/nightly or pre-release checks; their
 build time and output size are not performance gates, although incorrect output
 is still a bug.
 
-Focused regressions cover high-risk VM subsystems:
+CI and local verification use the same suite manifest in `test/run_ci.py`, including
+MOV, function boundary/loop/nested, GUI, and all focused regressions:
 
 ```bash
-python test/run_number_obf_regression.py
-python test/run_packer_regression.py
-python test/run_runtime_poly_regression.py
-python test/run_state_coupling_regression.py
-python test/run_vm_choke_regression.py
-python test/run_gui_regression.py
-python test/run_mov_backend_regression.py
+python test/run_ci.py
 ```
+
+Use `python test/run_ci.py --list` to inspect the exact commands. CI runs on
+Linux with Python 3.10, 3.11 and 3.12, plus Windows with Python 3.12. All jobs
+use Lua 5.3 (system packages on Linux, bundled binaries on Windows). Pushes and
+pull requests targeting `main`, `dev`, and `future` run this matrix.
 
 For a deterministic build during diagnosis, pass `--seed`. Compare the source
 and protected program's exit code, stdout, and stderr; the main test runner does

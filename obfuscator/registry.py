@@ -15,7 +15,7 @@ from __future__ import annotations
 import re
 
 from .vm import VMPass
-from .vm.backend import normalize_vm_backend
+from .vm.backend import normalize_vm_backend, unsupported_vm_options
 from .passes.output_signature import (
     DEFAULT_GENERATOR_PATTERNS,
     sanitize_generator_pattern,
@@ -146,7 +146,7 @@ VM_OPTION_DOCS = {
         "values": [
             ("karity", "hardened graph and encoded-register runtime"),
             ("classic", "direct-register and direct-handler runtime on the current VM pipeline"),
-            ("mov", "experimental multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback"),
+            ("mov", "supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback"),
             ("default", "compatibility alias for classic"),
         ],
     },
@@ -343,6 +343,22 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
     return resolved
 
 
+def config_warnings(config: dict) -> list[str]:
+    """Valid but unsupported controls are retained and ignored, never coerced.
+
+    Report once at the UI/CLI boundary, rather than during repeated validation.
+    Explicitly supplied controls are reported even when their value is false.
+    """
+    if "vm" not in config.get("passes", []):
+        return []
+    options = config.get("vm_options", {})
+    backend = normalize_vm_backend(options.get("backend"))
+    ignored = sorted(unsupported_vm_options(backend).intersection(options))
+    if not ignored:
+        return []
+    return [f"backend={backend}: unsupported VM options are ignored: {', '.join(ignored)}"]
+
+
 def validate_config(config: dict) -> None:
     for key in CONFIG_PASS_LISTS:
         value = config.get(key, [])
@@ -515,6 +531,9 @@ def _validate_function_obf_options(options: dict) -> None:
 def _validate_vm_options(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'vm_options' must be an object")
+    unknown = sorted(set(options) - set(VM_OPTION_DOCS))
+    if unknown:
+        raise ConfigError(f"unknown vm_options: {', '.join(unknown)}")
 
     try:
         normalize_vm_backend(options.get("backend"))

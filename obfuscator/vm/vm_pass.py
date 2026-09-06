@@ -1,4 +1,5 @@
 from __future__ import annotations
+from .backend import unsupported_vm_options
 import subprocess
 import platform
 import tempfile
@@ -2026,14 +2027,7 @@ class VMBuildPipeline(PostPass):
                 "extension_bytes": len(extension),
                 **storage_stats,
                 "dispatcher": "mov_microcode",
-                "unsupported_options": [
-                    "dispatcher_type", "dispatcher_target_hiding", "fake_handlers",
-                    "mutate_handlers", "graph_execution_rate", "cross_instruction_rate",
-                    "runtime_polymorphism_rate", "runtime_trace", "block_variant_rate",
-                    "helper_variant_count", "helper_diversity_rate", "semantic_diversity_rate",
-                    "semantic_state_threading", "argument_virtualization",
-                    "upvalue_virtualization", "table_virtualization", "branch_virtualization",
-                ],
+                "unsupported_options": sorted(unsupported_vm_options(self.backend)),
             })
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성

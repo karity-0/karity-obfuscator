@@ -15,6 +15,7 @@ from obfuscator.registry import (
     get_profile_names,
     resolve_config_profile,
     validate_config,
+    config_warnings,
     validate_release_config,
 )
 
@@ -179,6 +180,9 @@ def main():
     except ReleaseCheckError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    for warning in config_warnings(config):
+        print(f"warning: {warning}", file=sys.stderr)
 
     if args.print_config:
         print(json.dumps(config, indent=4, ensure_ascii=False))

@@ -214,3 +214,6 @@ button, select, input { -webkit-app-region: no-drag; }
   .editor-card:first-child { max-height: 42%; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+.unsupported-option { opacity: .55; }
+.unsupported-option input, .unsupported-option select { cursor: not-allowed; }

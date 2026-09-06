@@ -26,7 +26,7 @@ output pipeline. `karity` remains the implicit choice when the option is omitted
 `classic` uses direct register storage and straightforward opcode handlers;
 `default` is accepted as an alias for `classic`.
 
-`mov` is an experimental hybrid backend. Use it with
+`mov` is a supported release backend with a hybrid runtime. Use it with
 `--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM/MOD/IDIV,
 BAND/BOR/BXOR/SHL/SHR/BNOT and EQ/LT/LE lower into nibble lookup microcode;
 Signed MOD/IDIV use a shared 64-step restoring-division recipe with Lua floor
@@ -83,6 +83,15 @@ extension is covered by shared blob encryption and integrity binding, and is
 generated after instruction relocation. Common arithmetic recipes are linked
 once into each VM's tape and shared across prototypes; call frames keep private
 scratch storage and continuation addresses.
+
+MOV is a supported release configuration; its hybrid HOST boundaries remain
+part of the documented implementation, not a claim of complete MOV-only execution.
+Valid unsupported options are retained but ignored. Invalid names/types/ranges
+still fail validation. CLI emits one stderr warning listing supplied unsupported
+options, including inherited profile values; `--print-config` stdout remains JSON.
+GUI disables unsupported controls for the selected backend, preserves their
+values when switching backends, and reports ignored options after a build.
+The same capability map drives GUI metadata, warnings and MOV build profiling.
 
 MOV retains junk insertion, integrity constants, blob forms, source/output passes
 and packing. Each VM uses its own fixed microcode dispatcher with randomized IDs;
