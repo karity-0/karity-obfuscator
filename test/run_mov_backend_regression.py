@@ -23,6 +23,7 @@ from obfuscator.vm.mov.division import divide
 from obfuscator.vm.mov.ir import Host, Op
 from obfuscator.vm.mov.lower import lower
 from obfuscator.vm.mov.float_compare import compare as compare_floats
+from obfuscator.vm.mov.float_ops import negate as negate_float
 from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
 from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
@@ -146,6 +147,9 @@ def main() -> int:
     float_recipe = []
     compare_floats(float_recipe)
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in float_recipe)
+    unary_recipe = []
+    negate_float(unary_recipe)
+    assert {i.a for i in unary_recipe if i.op == Op.HOST} == {Host.COMMIT_FLOAT}
     mixed_recipe = []
     compare_mixed(mixed_recipe)
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in mixed_recipe)
@@ -188,6 +192,8 @@ def main() -> int:
     fixtures.append(division)
     floats = ROOT / "test" / "fixtures" / "mov_float_compare.lua"
     fixtures.append(floats)
+    float_unary = ROOT / "test/fixtures/mov_float_unary.lua"
+    fixtures.append(float_unary)
     mixed = ROOT / "test" / "fixtures" / "mov_mixed_compare.lua"
     fixtures.append(mixed)
     strings = ROOT / "test" / "fixtures" / "mov_string_compare.lua"
@@ -254,11 +260,16 @@ def main() -> int:
         ).replace(
             "local function _arith1(a,av,slot)",
             """local function _arith1(a,av,slot)
+            if math.type(a)=="float" and slot==__VM_SLOT_UNM__ then
+                error("native float negation fallback") end
             if math.type(a)=="integer" then error("native integer unary fallback") end""",
         )
         return runtime
     with patch("obfuscator.vm.mov.builder.build_runtime", forbid_native_fallbacks):
         check(focused, {**base, "vm_count": 3}, [], 9000)
+        check(float_unary, {**base, "vm_count": 3, "blob_form": "table",
+                            "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 10201)
         check(division, {**base, "vm_count": 3, "blob_form": "table",
                          "integrity_constants": True, "integrity_constant_rate": 1.0},
               ["rename_obf", "minify"], 9701)
@@ -289,6 +300,9 @@ def main() -> int:
     check(mixed, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9902)
+    check(float_unary, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 10202)
     check(strings, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 10002)

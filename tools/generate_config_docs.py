@@ -36,6 +36,9 @@ Division skips leading zero nibbles using moves and a counter transition table,
 so small operands do not execute all 64 restoring-division bit rounds.
 Float/float EQ/LT/LE bitcast binary64 values into encoded nibbles, then use
 lookup-generated ordering keys, NaN classification and signed-zero equality.
+Float UNM copies binary64 payload digits and toggles the sign nibble through XOR
+lookup. Host bitcasts convert the input/output representation; no native unary
+arithmetic executes on this path, including signed zeros, infinities and NaNs.
 Mixed integer/float EQ/LT/LE build exact 80-bit ordering keys through lookup
 normalization, with a shared exponent and 63 fraction bits. No integer-to-float
 conversion occurs, preserving precision beyond 2^53 and at the signed 64-bit limits.
@@ -55,10 +58,10 @@ right-to-left concatenation and coroutine suspension. Table/userdata LEN remains
 a host operation. These list operations require linear traversal/allocation.
 TEST/TESTSET and JMP select microcode addresses, with captured locals closed
 before scope-exiting jumps. Integer results retain encoded digit storage across MOV
-operations. Other operations (including `/`, power, floating-point arithmetic, coercions,
+operations. Other operations (including `/`, power, binary floating-point arithmetic, coercions,
 metamethods and native calls) cross explicit Lua host boundaries. Original operand
 words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
-MOV-only is the target, not the current completion status: floating-point
+MOV-only is the target, not the current completion status: binary floating-point
 arithmetic, coercing/metamethod concatenation, locale-specific ordering and Lua object/call semantics
 still use host execution. Native fallback traps in the regression suite verify
 the implemented integer, boolean and all numeric comparison paths.

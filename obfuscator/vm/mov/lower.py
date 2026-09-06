@@ -2,6 +2,7 @@
 from .ir import Host, Instruction as I, Op, Program
 from .division import divide
 from .float_compare import compare as compare_floats
+from .float_ops import negate as negate_float
 from .mixed_compare import compare as compare_mixed
 from .string_compare import compare as compare_strings
 from .string_ops import length as string_length, concatenate as string_concat
@@ -114,6 +115,11 @@ def lower(code: list[int], vm_id: int = 0) -> Program:
             _multiply(out)
             continue
         comparison = kind == "compare"
+        if kind == "integer":
+            branch = len(out)
+            out.append(I(Op.SELECT, 325, branch + 2))
+            negate_float(out)
+            out[branch] = I(Op.SELECT, 325, branch + 2, len(out) + 1)
         if comparison:
             string_branch = len(out)
             out.append(I(Op.SELECT, 320, string_branch + 2))

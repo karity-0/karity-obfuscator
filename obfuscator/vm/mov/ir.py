@@ -26,6 +26,7 @@ class Host(IntEnum):
     DIVZERO = 6
     COMMIT_TRUTH = 7
     COMMIT_STRING = 8
+    COMMIT_FLOAT = 9
 
 
 @dataclass(frozen=True)

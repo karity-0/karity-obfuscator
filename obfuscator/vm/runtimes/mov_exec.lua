@@ -16,7 +16,7 @@ local function _mov_uint(r)
     error("invalid MOV field")
 end
 local function _mov_read(r, root)
-    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==9,"bad MOV version")
+    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==10,"bad MOV version")
     _mov_kits={}
     for vm=1,r.u16() do
         local kit={banks={},encode={},decode={},nonzero={},sign={}}
@@ -151,6 +151,7 @@ end
     _ms[172]={[0]=true,[1]=false}
     _ms[175]={[false]=true,[true]=false}
     _ms[321]={[0]=true,[1]=false,[2]=false}
+    _ms[326]=_mencode[8]; _ms[327]=_mov_banks[5]
     --<<FLOAT_TABLES>>
     --<<MIXED_TABLES>>
     local _mexpected={
@@ -190,6 +191,7 @@ end
             local op,A,B,C=decode(code[ip],_ksm(ip))
             _ma=A; _mresume=_mentry[ip+1]
             _ms[170]=op==16
+            _ms[325]=false
             local x,y
             if op==28 then
                 if _mov_is_string(B) then
@@ -203,7 +205,11 @@ end
                     for slot=C,B,-1 do x={true,_mov_string_copy(slot),x} end
                     y=x; _ms[322]={false}; _ms[324]={false}
                 end
-            elseif op==25 then x=_mzero; y=_mov_digits(B)
+            elseif op==25 then
+                x=_mzero; y=_mov_digits(B)
+                if not y and math.type(rget(B))=="float" then
+                    x=_mov_float_digits(rget(B)); y=x; _ms[325]=true
+                end
             elseif op==26 then x=_mov_digits(B); y=_mones
             else x=_mov_digits(B); y=_mov_digits(C) end
             _ms[176]=false
@@ -288,6 +294,11 @@ end
             rset(_ma,_ms[11]); _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==8 then
             _mstrings[_ma]=_ms[322][4]; _mdigits[_ma]=nil; regs[_ma]=nil
+            _mp=_mresume
+        elseif kind==__MOV_HOST__ and q[2]==9 then
+            local bits=0
+            for j=15,0,-1 do bits=(bits<<4)|_mdecode[_ms[64+j]] end
+            rset(_ma,(string.unpack("<d",string.pack("<i8",bits))))
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==0 then
             pc=q[3]
