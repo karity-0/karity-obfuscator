@@ -223,6 +223,12 @@ option can also be edited directly; manual changes automatically switch the
 affected selector to `<Custom>`. VM controls are generated from the central
 option registry so newly registered options stay in sync with the CLI.
 
+The appearance menu in the title bar provides Light, Dark, Deep dark, System,
+and the original green terminal-style Classic theme, along with layout density,
+editor font size, motion, and section-memory controls. These GUI preferences are
+saved automatically to `obf_gui_preferences.json`; source text is never
+persisted automatically.
+
 ## Configuration
 
 Copy `config.example.json` to `config.json`, then adjust profiles instead of

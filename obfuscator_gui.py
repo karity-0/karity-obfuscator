@@ -29,8 +29,19 @@ from obfuscator.registry import (
 ROOT_DIR = Path(__file__).parent
 WEB_DIR = ROOT_DIR / "gui" / "web"
 CONFIG_PATH = ROOT_DIR / "obf_gui_config.json"
+PREFERENCES_PATH = ROOT_DIR / "obf_gui_preferences.json"
 PROJECT_CONFIG_PATH = ROOT_DIR / "config.json"
 EXAMPLE_CONFIG_PATH = ROOT_DIR / "config.example.json"
+
+THEMES = ("light", "dark", "deepdark", "system", "classic")
+_DEFAULT_PREFERENCES = {
+    "theme": "system",
+    "density": "comfortable",
+    "editor_font_size": 12,
+    "motion": "system",
+    "remember_sections": True,
+    "sections": {},
+}
 
 _OPTION_GROUPS = {
     "backend": "Execution",
@@ -209,6 +220,37 @@ def _initial_state(profiles: dict[str, dict], default_profile: str | None) -> di
     }
 
 
+def _normalize_preferences(value: object) -> dict:
+    """Return a small, forward-compatible and safe GUI preference object."""
+    source = value if isinstance(value, dict) else {}
+    preferences = copy.deepcopy(_DEFAULT_PREFERENCES)
+    if source.get("theme") in THEMES:
+        preferences["theme"] = source["theme"]
+    if source.get("density") in ("comfortable", "compact"):
+        preferences["density"] = source["density"]
+    if source.get("motion") in ("system", "reduced", "full"):
+        preferences["motion"] = source["motion"]
+    size = source.get("editor_font_size")
+    if isinstance(size, (int, float)) and not isinstance(size, bool):
+        preferences["editor_font_size"] = max(10, min(18, int(size)))
+    if isinstance(source.get("remember_sections"), bool):
+        preferences["remember_sections"] = source["remember_sections"]
+    sections = source.get("sections")
+    if isinstance(sections, dict):
+        preferences["sections"] = {
+            str(name)[:80]: opened for name, opened in sections.items()
+            if isinstance(name, str) and isinstance(opened, bool)
+        }
+    return preferences
+
+
+def _load_preferences() -> dict:
+    try:
+        return _normalize_preferences(json.loads(PREFERENCES_PATH.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        return _normalize_preferences({})
+
+
 class Api:
     """Backend exposed to JavaScript through window.pywebview.api."""
 
@@ -239,7 +281,15 @@ class Api:
             "state": state, "profiles": profiles, "protection_levels": levels,
             "passes": _pass_meta(), "vm_options": _vm_option_meta(),
             "profile_source": source, "backend_aliases": dict(VM_BACKEND_ALIASES),
+            "preferences": _load_preferences(),
+            "preference_defaults": _normalize_preferences({}),
         }
+
+    def save_preferences(self, preferences: dict):
+        saved = _normalize_preferences(preferences)
+        PREFERENCES_PATH.write_text(
+            json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+        return {"ok": True, "preferences": saved, "path": str(PREFERENCES_PATH)}
 
     def save_config(self, state: dict):
         config = _complete_config(state.get("config", {}))

@@ -17,12 +17,22 @@ document.addEventListener('DOMContentLoaded', () => {
     signatureGeneratorOptions: $('signature-generator-options'), signatureCustomOptions: $('signature-custom-options'),
     signatureWellKnown: $('signature-well-known'), signatureGenerator: $('signature-generator'),
     signatureCustomPattern: $('signature-custom-pattern'), signatureCustom: $('signature-custom'),
+    preferencesButton: $('preferences-btn'), preferencesOverlay: $('preferences-overlay'),
+    railPreferencesButton: $('rail-preferences-btn'),
+    preferencesClose: $('preferences-close'), preferencesReset: $('preferences-reset'),
+    preferencesStatus: $('preferences-status'), theme: $('theme-select'), density: $('density-select'),
+    editorFontSize: $('editor-font-size'), editorFontValue: $('editor-font-value'),
+    motion: $('motion-select'), rememberSections: $('remember-sections'),
   };
 
   let api = null;
   let bootstrap = null;
   let state = null;
+  let preferences = null;
+  let preferenceSaveTimer = null;
+  let preferenceRevision = 0;
   let originalFilename = 'obfuscated.lua';
+  const systemDark = window.matchMedia('(prefers-color-scheme: dark)');
 
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const titleCase = (value) => String(value || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
@@ -40,6 +50,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
       bootstrap = await api.get_bootstrap();
       state = bootstrap.state;
+      preferences = bootstrap.preferences;
+      applyPreferences();
       ensureConfigShape();
       renderPresetChoices();
       bindStaticEvents();
@@ -124,6 +136,43 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.copy.addEventListener('click', copyOutput);
     ui.saveOutput.addEventListener('click', saveOutput);
     ui.run.addEventListener('click', runObfuscation);
+    ui.preferencesButton.addEventListener('click', openPreferences);
+    ui.railPreferencesButton.addEventListener('click', openPreferences);
+    ui.preferencesClose.addEventListener('click', closePreferences);
+    ui.preferencesOverlay.addEventListener('click', event => {
+      if (event.target === ui.preferencesOverlay) closePreferences();
+    });
+    document.addEventListener('keydown', event => {
+      if (event.key === 'Escape' && !ui.preferencesOverlay.classList.contains('hidden')) closePreferences();
+    });
+    ui.theme.addEventListener('change', event => updatePreference('theme', event.target.value));
+    ui.density.addEventListener('change', event => updatePreference('density', event.target.value));
+    ui.editorFontSize.addEventListener('input', event => {
+      preferences.editor_font_size = Number(event.target.value);
+      ui.editorFontValue.textContent = event.target.value;
+      applyPreferences();
+      schedulePreferenceSave();
+    });
+    ui.motion.addEventListener('change', event => updatePreference('motion', event.target.value));
+    ui.rememberSections.addEventListener('change', event => {
+      preferences.remember_sections = event.target.checked;
+      if (!event.target.checked) preferences.sections = {};
+      bindSectionPreferences();
+      schedulePreferenceSave();
+    });
+    ui.preferencesReset.addEventListener('click', () => {
+      preferences = clone(bootstrap.preference_defaults);
+      applyPreferences();
+      document.querySelectorAll('details[data-section-key]').forEach(details => {
+        details.open = ['pipeline', 'signature'].includes(details.dataset.sectionKey)
+          || ['vm:Execution', 'vm:Semantic routing', 'vm:Runtime diversity'].includes(details.dataset.sectionKey);
+      });
+      renderAll();
+      schedulePreferenceSave(true);
+    });
+    systemDark.addEventListener?.('change', () => {
+      if (preferences.theme === 'system') applyPreferences();
+    });
 
     document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
       input.addEventListener('change', event => {
@@ -163,6 +212,81 @@ document.addEventListener('DOMContentLoaded', () => {
     renderVmOptions();
     renderSignature();
     updateOverview();
+    bindSectionPreferences();
+  }
+
+  function resolvedTheme() {
+    return preferences.theme === 'system' ? (systemDark.matches ? 'deepdark' : 'light') : preferences.theme;
+  }
+
+  function applyPreferences() {
+    const root = document.documentElement;
+    root.dataset.theme = resolvedTheme();
+    root.dataset.themePreference = preferences.theme;
+    root.dataset.density = preferences.density;
+    root.dataset.motion = preferences.motion;
+    root.style.setProperty('--editor-font-size', `${preferences.editor_font_size}px`);
+    ui.theme.value = preferences.theme;
+    ui.density.value = preferences.density;
+    ui.editorFontSize.value = preferences.editor_font_size;
+    ui.editorFontValue.textContent = preferences.editor_font_size;
+    ui.motion.value = preferences.motion;
+    ui.rememberSections.checked = Boolean(preferences.remember_sections);
+  }
+
+  function updatePreference(name, value) {
+    preferences[name] = value;
+    applyPreferences();
+    schedulePreferenceSave();
+  }
+
+  function openPreferences() {
+    applyPreferences();
+    ui.preferencesOverlay.classList.remove('hidden');
+    ui.theme.focus();
+  }
+
+  function closePreferences() {
+    ui.preferencesOverlay.classList.add('hidden');
+    ui.preferencesButton.focus();
+  }
+
+  function schedulePreferenceSave(immediate = false) {
+    clearTimeout(preferenceSaveTimer);
+    preferenceRevision += 1;
+    ui.preferencesStatus.textContent = 'Saving…';
+    const revision = preferenceRevision;
+    preferenceSaveTimer = setTimeout(() => savePreferences(revision), immediate ? 0 : 350);
+  }
+
+  async function savePreferences(revision) {
+    const snapshot = clone(preferences);
+    try {
+      const result = await api.save_preferences(snapshot);
+      if (!result.ok) throw new Error('Save failed');
+      if (revision === preferenceRevision) {
+        preferences = result.preferences;
+        ui.preferencesStatus.textContent = 'Saved automatically';
+      }
+    } catch (error) {
+      if (revision === preferenceRevision) ui.preferencesStatus.textContent = `Save failed: ${String(error)}`;
+    }
+  }
+
+  function bindSectionPreferences() {
+    document.querySelectorAll('details[data-section-key]').forEach(details => {
+      const key = details.dataset.sectionKey;
+      if (preferences.remember_sections && Object.prototype.hasOwnProperty.call(preferences.sections, key)) {
+        details.open = preferences.sections[key];
+      }
+      if (details.dataset.preferenceBound) return;
+      details.dataset.preferenceBound = 'true';
+      details.addEventListener('toggle', () => {
+        if (!preferences.remember_sections) return;
+        preferences.sections[key] = details.open;
+        schedulePreferenceSave();
+      });
+    });
   }
 
   function stripCommentTokens(value) {
@@ -247,12 +371,14 @@ document.addEventListener('DOMContentLoaded', () => {
     groups.forEach((options, groupName) => {
       const details = document.createElement('details');
       details.className = 'config-section';
+      details.dataset.sectionKey = `vm:${groupName}`;
       if (['Execution', 'Semantic routing', 'Runtime diversity'].includes(groupName)) details.open = true;
       details.innerHTML = `<summary><span>${groupName}</span><span class="section-count">${options.length}</span></summary><div class="section-body"></div>`;
       const body = details.querySelector('.section-body');
       options.forEach(option => body.appendChild(makeOptionRow(option)));
       ui.optionGroups.appendChild(details);
     });
+    bindSectionPreferences();
   }
 
   function makeOptionRow(option) {

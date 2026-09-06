@@ -21,6 +21,7 @@
     </div>
     <div class="title-meta"><span class="live-dot"></span><span id="backend-label">connecting</span></div>
     <div class="window-controls">
+      <button id="preferences-btn" class="window-button preferences-button" title="GUI 환경설정" aria-label="GUI 환경설정">⚙</button>
       <button id="win-min" class="window-button" title="최소화">─</button>
       <button id="win-max" class="window-button" title="최대화">□</button>
       <button id="win-close" class="window-button close" title="닫기">×</button>
@@ -50,7 +51,7 @@
           <div class="config-source" id="config-source"></div>
         </section>
 
-        <details class="config-section" open>
+        <details class="config-section" data-section-key="pipeline" open>
           <summary><span>Pipeline</span><span class="section-count" id="pipeline-count">0</span></summary>
           <div class="section-body">
             <div class="context-block">
@@ -68,7 +69,7 @@
           </div>
         </details>
 
-        <details class="config-section" open>
+        <details class="config-section" data-section-key="signature" open>
           <summary><span>Signature</span><span class="section-count" id="signature-mode-label">default</span></summary>
           <div class="section-body signature-settings">
             <div class="context-title">Mode</div>
@@ -103,6 +104,7 @@
       </div>
 
       <footer class="rail-footer">
+        <button id="rail-preferences-btn" class="button secondary preferences-entry">GUI preferences</button>
         <button id="save-config-btn" class="button secondary">Save configuration</button>
         <span id="config-status" class="save-status"></span>
       </footer>
@@ -167,6 +169,48 @@ print(&quot;hello, karity&quot;)"></textarea>
 </div>
 
 <div id="tooltip" class="tooltip"></div>
+<div id="preferences-overlay" class="preferences-overlay hidden" role="presentation">
+  <section class="preferences-panel" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
+    <header class="preferences-header">
+      <div><span class="eyebrow">GUI PREFERENCES</span><h2 id="preferences-title">Appearance</h2></div>
+      <button id="preferences-close" class="button tiny ghost" aria-label="환경설정 닫기">Close</button>
+    </header>
+    <div class="preferences-body">
+      <label class="preference-row" for="theme-select">
+        <span><strong>Theme</strong><small>앱 색상 테마</small></span>
+        <select id="theme-select" class="select-control">
+          <option value="light">Light</option><option value="dark">Dark</option>
+          <option value="deepdark">Deep dark</option><option value="system">System</option>
+          <option value="classic">Classic</option>
+        </select>
+      </label>
+      <label class="preference-row" for="density-select">
+        <span><strong>Density</strong><small>설정 패널 간격</small></span>
+        <select id="density-select" class="select-control">
+          <option value="comfortable">Comfortable</option><option value="compact">Compact</option>
+        </select>
+      </label>
+      <label class="preference-row" for="editor-font-size">
+        <span><strong>Editor font</strong><small><span id="editor-font-value">12</span>px</small></span>
+        <input id="editor-font-size" class="range-control" type="range" min="10" max="18" step="1">
+      </label>
+      <label class="preference-row" for="motion-select">
+        <span><strong>Motion</strong><small>애니메이션 효과</small></span>
+        <select id="motion-select" class="select-control">
+          <option value="system">System</option><option value="reduced">Reduced</option><option value="full">Full</option>
+        </select>
+      </label>
+      <label class="preference-row choice" for="remember-sections">
+        <span><strong>Remember sections</strong><small>접거나 펼친 설정 그룹 복원</small></span>
+        <input id="remember-sections" type="checkbox">
+      </label>
+    </div>
+    <footer class="preferences-footer">
+      <span id="preferences-status">Changes save automatically</span>
+      <button id="preferences-reset" class="button tiny">Reset defaults</button>
+    </footer>
+  </section>
+</div>
 <script src="app.js"></script>
 </body>
 </html>

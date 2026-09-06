@@ -9,15 +9,16 @@ import subprocess
 import sys
 import tempfile
 
-
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
 
+import obfuscator_gui
 from obfuscator.registry import VM_OPTION_DOCS, validate_config, validate_release_config
 from obfuscator_gui import (
     Api,
     _complete_config,
     _load_profile_root,
+    _normalize_preferences,
     _protection_levels,
     _resolved_profiles,
     _vm_option_meta,
@@ -48,6 +49,18 @@ def main() -> int:
 
     bootstrap = Api().get_bootstrap()
     json.dumps(bootstrap)
+    if bootstrap["preferences"]["theme"] not in {"light", "dark", "deepdark", "system", "classic"}:
+        raise AssertionError("GUI returned an unsupported theme preference")
+    normalized = _normalize_preferences({
+        "theme": "invalid", "density": "compact", "editor_font_size": 100,
+        "motion": "reduced", "remember_sections": True,
+        "sections": {"pipeline": False, "bad": "false"},
+    })
+    assert normalized == {
+        "theme": "system", "density": "compact", "editor_font_size": 18,
+        "motion": "reduced", "remember_sections": True,
+        "sections": {"pipeline": False},
+    }
 
     html = (ROOT_DIR / "gui" / "web" / "index.html").read_text(encoding="utf-8")
     javascript = (ROOT_DIR / "gui" / "web" / "app.js").read_text(encoding="utf-8")
@@ -83,6 +96,21 @@ def main() -> int:
         shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
     )
     with tempfile.TemporaryDirectory(prefix="karity-gui-") as temp:
+        original_preferences_path = obfuscator_gui.PREFERENCES_PATH
+        obfuscator_gui.PREFERENCES_PATH = Path(temp) / "preferences.json"
+        try:
+            saved_preferences = Api().save_preferences({
+                "theme": "classic", "editor_font_size": 9,
+                "sections": {"signature": False},
+            })
+            assert saved_preferences["ok"]
+            persisted = json.loads(obfuscator_gui.PREFERENCES_PATH.read_text(encoding="utf-8"))
+            assert persisted["theme"] == "classic"
+            assert persisted["editor_font_size"] == 10
+            assert persisted["sections"] == {"signature": False}
+        finally:
+            obfuscator_gui.PREFERENCES_PATH = original_preferences_path
+
         output_path = Path(temp) / "gui-smoke.lua"
         output_path.write_text(result["output"], encoding="utf-8")
         executed = subprocess.run([lua, str(output_path)], capture_output=True, timeout=120)
