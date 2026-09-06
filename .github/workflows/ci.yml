@@ -29,6 +29,22 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
 
+      - uses: step-security/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+
+      - uses: leafo/gh-actions-lua@v13
+        if: runner.os == 'Windows'
+        with:
+          luaVersion: "5.3.6"
+
+      - name: Prepare bundled Lua
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Copy-Item -LiteralPath (Get-Command lua).Source -Destination bin/lua.exe -Force
+          Copy-Item -LiteralPath (Get-Command luac).Source -Destination bin/luac53.exe -Force
+          & .\bin\lua.exe -v
+
       - name: Install dependencies
         run: |
           pip install -r requirements.txt
