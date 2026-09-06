@@ -251,13 +251,21 @@ locale queries retain host ordering. The current locale is checked per operation
 Embedded NUL bytes remain ordinary bytes, distinct from list termination.
 Constructing the input byte lists requires linear allocation per comparison.
 This boundary preserves [Lua's locale-sensitive string ordering](https://www.lua.org/source/5.3/lvm.c.html).
+String LEN counts byte-list nodes using lookup carry propagation. All-string
+CONCAT uses indirect MOV stores to join private operand copies, then retains the
+result as an immutable encoded byte list. Register copies can share that list;
+later length/concatenation operations need no native-string materialization.
+Native consumers decode the finished stream with string.char/table.concat.
+Numeric coercion and __concat effects still use host execution, preserving
+right-to-left concatenation and coroutine suspension. Table/userdata LEN remains
+a host operation. These list operations require linear traversal/allocation.
 TEST/TESTSET and JMP select microcode addresses, with captured locals closed
 before scope-exiting jumps. Integer results retain encoded digit storage across MOV
 operations. Other operations (including `/`, power, floating-point arithmetic, coercions,
 metamethods and native calls) cross explicit Lua host boundaries. Original operand
 words remain in the blob for those fallbacks. This is not literal MOV-only Lua.
 MOV-only is the target, not the current completion status: floating-point
-arithmetic, string length/concatenation, locale-specific ordering and Lua object/call semantics
+arithmetic, coercing/metamethod concatenation, locale-specific ordering and Lua object/call semantics
 still use host execution. Native fallback traps in the regression suite verify
 the implemented integer, boolean and all numeric comparison paths.
 Host opcodes share one indirect function-table call, with shuffled entries and

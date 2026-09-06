@@ -25,6 +25,7 @@ from obfuscator.vm.mov.lower import lower
 from obfuscator.vm.mov.float_compare import compare as compare_floats
 from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
+from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
 from obfuscator.vm.mov.tables import banks
 from run_vm_backend_regression import lua_executable, options
 
@@ -151,6 +152,10 @@ def main() -> int:
     string_recipe = []
     compare_strings(string_recipe)
     assert all(i.op in (Op.MOVE, Op.LOOKUP, Op.SELECT) for i in string_recipe)
+    for build_recipe, commit in ((string_length, Host.COMMIT), (string_concat, Host.COMMIT_STRING)):
+        code = []
+        build_recipe(code)
+        assert {i.a for i in code if i.op == Op.HOST} == {commit}
     for opcode in (27, 34, 35):
         program = lower([opcode])
         site = program.code[:program.entries[1] - 1]
@@ -187,6 +192,8 @@ def main() -> int:
     fixtures.append(mixed)
     strings = ROOT / "test" / "fixtures" / "mov_string_compare.lua"
     fixtures.append(strings)
+    string_ops = ROOT / "test" / "fixtures" / "mov_string_ops.lua"
+    fixtures.append(string_ops)
     for i, source in enumerate(fixtures):
         check(source, base, ["rename_obf", "minify"], 7100 + i)
     for i, form in enumerate(("table", "numeric", "string")):
@@ -197,6 +204,12 @@ def main() -> int:
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
     def forbid_native_fallbacks(classic, opcodes):
+        classic = classic.replace('elseif op==28 then', '''elseif op==28 then
+            if type(rget(B))=="string" then error("native string length fallback") end;''')
+        classic = classic.replace('elseif op==29 then', '''elseif op==29 then
+            local strings=true
+            for slot=B,C do if type(rget(slot))~="string" then strings=false; break end end
+            if strings then error("native string concat fallback") end;''')
         for op in (31, 32, 33):
             marker = f"elseif op=={op} then"
             assert marker in classic
@@ -258,6 +271,12 @@ def main() -> int:
         check(strings, {**base, "vm_count": 3, "blob_form": "table",
                         "integrity_constants": True, "integrity_constant_rate": 1.0},
               ["rename_obf", "minify"], 10001)
+        check(string_ops, {**base, "vm_count": 3, "blob_form": "table",
+                           "integrity_constants": True, "integrity_constant_rate": 1.0},
+              ["rename_obf", "minify"], 10101)
+        # Output literal obfuscation may itself use string.char; this trap
+        # targets the VM value representation without those unrelated layers.
+        check(ROOT / "test/fixtures/mov_string_storage.lua", {**base, "vm_count": 2}, [], 10103)
     check(ROOT / "test" / "scripts" / "14_vm_call_machine.lua", {**base, "vm_count": 2},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 9100)
@@ -273,6 +292,9 @@ def main() -> int:
     check(strings, {**base, "vm_count": 2, "blob_form": "numeric"},
           ["function_obf", "rename_obf", "localize_globals", "string_obf",
            "boolean_obf", "number_obf", "minify"], 10002)
+    check(string_ops, {**base, "vm_count": 2, "blob_form": "numeric"},
+          ["function_obf", "rename_obf", "localize_globals", "string_obf",
+           "boolean_obf", "number_obf", "minify"], 10102)
     check_cli("fast-vm", ["--seed", "9300"])
     check_cli("fast-vm", ["--seed", "9300", "--passes", "vm,pack"])
     check_cli("high", ["--release-check"])

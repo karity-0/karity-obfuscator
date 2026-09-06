@@ -2,6 +2,7 @@
 
 LOOKUP indexes an internal table using a scratch-slot key. SELECT chooses
 immediate addresses (mode=0) or addresses held in scratch slots (mode=1).
+MOVE mode=1 stores a scratch value into an internal table through a slot key.
 HOST is an explicit boundary for Lua values, effects and representation changes.
 """
 from dataclasses import dataclass, field
@@ -24,6 +25,7 @@ class Host(IntEnum):
     CLOSE = 5
     DIVZERO = 6
     COMMIT_TRUTH = 7
+    COMMIT_STRING = 8
 
 
 @dataclass(frozen=True)

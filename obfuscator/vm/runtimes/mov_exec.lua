@@ -16,7 +16,7 @@ local function _mov_uint(r)
     error("invalid MOV field")
 end
 local function _mov_read(r, root)
-    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==8,"bad MOV version")
+    assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==9,"bad MOV version")
     _mov_kits={}
     for vm=1,r.u16() do
         local kit={banks={},encode={},decode={},nonzero={},sign={}}
@@ -63,7 +63,19 @@ end
     local _mov_banks=_mkit.banks
     local _mencode,_mdecode=_mkit.encode,_mkit.decode
     local _mdigits={}
+    local _mstrings={}
     local function rget(i)
+        local node=_mstrings[i]
+        if node then
+            if regs[i]~=nil then return regs[i] end
+            local bytes={}; local n=0
+            while node[1] do
+                n=n+1; bytes[n]=string.char(_mdecode[node[2]]|(_mdecode[node[3]]<<4))
+                node=node[4]
+            end
+            regs[i]=table.concat(bytes)
+            return regs[i]
+        end
         local d=_mdigits[i]
         if d then
             if regs[i]~=nil then return regs[i] end
@@ -75,7 +87,7 @@ end
         return regs[i]
     end
     local function rset(i,v)
-        _mdigits[i]=nil; regs[i]=v
+        _mdigits[i]=nil; _mstrings[i]=nil; regs[i]=v
     end
     local function _mov_digits(i)
         local d=_mdigits[i]
@@ -88,7 +100,7 @@ end
         return d
     end
     local function _mov_copy(a,b)
-        regs[a]=regs[b]; _mdigits[a]=_mdigits[b]
+        regs[a]=regs[b]; _mdigits[a]=_mdigits[b]; _mstrings[a]=_mstrings[b]
     end
     local function _mov_float_digits(v)
         local bits=string.unpack("<i8",string.pack("<d",v))
@@ -103,6 +115,20 @@ end
             node={true,_mencode[byte&15],_mencode[byte>>4],node}
         end
         return node
+    end
+    local function _mov_is_string(i)
+        return _mstrings[i]~=nil or type(regs[i])=="string"
+    end
+    local function _mov_string_copy(i)
+        local node=_mstrings[i]
+        if not node then return _mov_string_nodes(regs[i]) end
+        local root={}; local tail=root
+        while node[1] do
+            local copy={true,node[2],node[3]}
+            tail[4]=copy; tail=copy; node=node[4]
+        end
+        tail[4]={false}
+        return root[4]
     end
     local function _mov_close(first)
         for slot,box in pairs(boxes) do
@@ -147,7 +173,11 @@ end
         local q=_mtape[_mp]; _mp=_mp+1
         local kind=q[1]
         if kind==__MOV_MOVE__ then
-            _ms[q[2]]=_ms[q[3]]
+            if q[6]==1 then
+                _ms[q[2]][_ms[q[3]]]=_ms[q[4]]
+            else
+                _ms[q[2]]=_ms[q[3]]
+            end
         elseif kind==__MOV_LOOKUP__ then
             _ms[q[2]]=_ms[q[3]][_ms[q[4]]]
         elseif kind==__MOV_SELECT__ then
@@ -161,7 +191,19 @@ end
             _ma=A; _mresume=_mentry[ip+1]
             _ms[170]=op==16
             local x,y
-            if op==25 then x=_mzero; y=_mov_digits(B)
+            if op==28 then
+                if _mov_is_string(B) then
+                    x=_mstrings[B] or _mov_string_nodes(regs[B]); y=x
+                end
+            elseif op==29 then
+                local strings=true
+                for slot=B,C do if not _mov_is_string(slot) then strings=false; break end end
+                if strings then
+                    x={false}
+                    for slot=C,B,-1 do x={true,_mov_string_copy(slot),x} end
+                    y=x; _ms[322]={false}; _ms[324]={false}
+                end
+            elseif op==25 then x=_mzero; y=_mov_digits(B)
             elseif op==26 then x=_mov_digits(B); y=_mones
             else x=_mov_digits(B); y=_mov_digits(C) end
             _ms[176]=false
@@ -219,7 +261,7 @@ end
         elseif kind==__MOV_HOST__ and q[2]==2 then
             local d={}
             for j=0,15 do d[j]=_ms[64+j] end
-            _mdigits[_ma]=d; regs[_ma]=nil
+            _mdigits[_ma]=d; _mstrings[_ma]=nil; regs[_ma]=nil
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==3 then
             local ip=q[3]
@@ -244,6 +286,9 @@ end
             error("attempt to divide by zero")
         elseif kind==__MOV_HOST__ and q[2]==7 then
             rset(_ma,_ms[11]); _mp=_mresume
+        elseif kind==__MOV_HOST__ and q[2]==8 then
+            _mstrings[_ma]=_ms[322][4]; _mdigits[_ma]=nil; regs[_ma]=nil
+            _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==0 then
             pc=q[3]
             if pc>#code then error("MOV instruction pointer out of range") end

@@ -289,6 +289,13 @@ uses that path in C/POSIX collation; other locales or an unavailable locale quer
 retain host ordering. This preserves Lua's locale-sensitive comparison rules,
 including embedded NUL bytes. Byte-list construction adds linear allocation per
 comparison; it is an input representation boundary, not the comparison itself.
+String length counts byte-list nodes with lookup carry propagation. Concatenation
+of string operands uses indirect MOV stores to link private operand copies;
+committed lists are immutable and register copies may share them. Length and
+subsequent concatenation consume this encoded storage directly. Native consumers
+materialize the resulting byte stream with `string.char`/`table.concat`; those
+calls do not concatenate the original operands. Numeric coercion and `__concat`
+remain host boundaries, as do table/userdata length operations.
 `NOT` and expected-truth tests use boolean lookup after native-value classification;
 tests and jumps select microcode addresses;
 jumps close captured locals before leaving their scope. Integer results stay in
@@ -297,7 +304,7 @@ and mixed-type arithmetic, `/`, power, metamethods, tables and
 calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
 implementation. The original operand words remain available to host fallbacks.
 MOV-only remains the target; this implementation does not yet meet it. In
-particular, floating-point arithmetic, string length/concatenation and locale-specific ordering,
+particular, floating-point arithmetic, coercing/metamethod concatenation and locale-specific ordering,
 operations and Lua object/call semantics
 still need host execution. Function-table indirection is not counted as MOV
 lowering. Regression tests reject native integer arithmetic, division, comparison

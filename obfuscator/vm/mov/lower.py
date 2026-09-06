@@ -4,12 +4,17 @@ from .division import divide
 from .float_compare import compare as compare_floats
 from .mixed_compare import compare as compare_mixed
 from .string_compare import compare as compare_strings
+from .string_ops import length as string_length, concatenate as string_concat
 
 # Integer arithmetic, including MOD/IDIV, bitwise operations and comparisons.
-LOWERED = frozenset((13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26, 31, 32, 33))
+LOWERED = frozenset((13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 31, 32, 33))
 
 
 def _recipe(op: int) -> str:
+    if op == 28:
+        return "string_length"
+    if op == 29:
+        return "string_concat"
     if op in (16, 19):
         return "divide"
     return "multiply" if op == 15 else "compare" if op >= 31 else "integer"
@@ -96,6 +101,12 @@ def lower(code: list[int], vm_id: int = 0) -> Program:
     recipes: dict[str, int] = {}
     for kind in sorted({_recipe(op) for _, op in pending}):
         recipes[kind] = len(out) + 1
+        if kind == "string_length":
+            string_length(out)
+            continue
+        if kind == "string_concat":
+            string_concat(out)
+            continue
         if kind == "divide":
             divide(out)
             continue
