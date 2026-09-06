@@ -4,10 +4,10 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -21,11 +21,6 @@ SCRIPTS = (
     "18_vm_cross_instruction_semantics.lua",
 )
 
-
-def lua_executable() -> str:
-    if LUA.exists():
-        return str(LUA)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def run(command: list[str], timeout: float) -> subprocess.CompletedProcess[bytes]:

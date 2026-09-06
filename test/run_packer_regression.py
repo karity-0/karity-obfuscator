@@ -3,12 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -32,12 +32,6 @@ def parse_args():
     parser.add_argument("--keep", action="store_true")
     return parser.parse_args()
 
-
-def default_lua_exe() -> str:
-    local_lua = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if local_lua.exists():
-        return str(local_lua)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def decode(data: bytes) -> str:
@@ -208,8 +202,15 @@ def test_vm_pack_semantics(ctx: Path):
 def test_single_signature_header(ctx: Path):
     source = ctx / "header.lua"
     output = ctx / "header_pack.lua"
+    config_path = ctx / "header_config.json"
     make_semantic_source(source)
-    build(source, output, config=ARGS.config, timeout=ARGS.timeout, vm=True)
+    config = json.loads(Path(ARGS.config).read_text(encoding="utf-8"))
+    config["signature"] = {
+        "mode": "custom",
+        "custom": "obfuscated using karity obfuscator!",
+    }
+    config_path.write_text(json.dumps(config), encoding="utf-8")
+    build(source, output, config=config_path, timeout=ARGS.timeout, vm=True)
 
     text = output.read_text(encoding="utf-8")
     if not text.startswith(HEADER + "\n"):
@@ -310,7 +311,7 @@ TESTS = [
 def run() -> int:
     global ARGS
     ARGS = parse_args()
-    ARGS.lua_exe = ARGS.lua or default_lua_exe()
+    ARGS.lua_exe = ARGS.lua or lua_executable()
 
     print(f"lua: {ARGS.lua_exe}")
     print(f"config: {ARGS.config}")

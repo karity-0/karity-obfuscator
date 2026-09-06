@@ -142,6 +142,7 @@ IOP_XOR        = 7
 IOP_ADD        = 8
 IOP_MUL        = 9
 IOP_GET_SCRIPT_HASH = 10
+IOP_GET_LINE_STATE = 11
 
 PSEUDO_LOADIEXPR = 47
 PSEUDO_GET_SCRIPT_HASH = 48
@@ -176,39 +177,40 @@ _FAKE_NUMBERS_INT   = [0, 1, -1, 2, 10, 16, 32, 64, 100, 255, 256, 1000, 0xFF, 0
 _FAKE_NUMBERS_FLOAT = [0.0, 1.0, -1.0, 3.14, 2.718, 0.5, 100.0]
 
 
-def _write_fake_pool(w: Writer) -> None:
+def _write_fake_pool(w: Writer, constant_tags: tuple[int, ...]) -> None:
     """가짜 상수 풀을 blob에 직렬화. 태그 구조는 진짜 풀과 동일."""
+    c_nil, c_bool, c_int, c_float, c_str, _c_iexpr = constant_tags
     entries = []
     # 문자열 랜덤 샘플
     n_str = random.randint(8, 20)
     for s in random.sample(_FAKE_STRINGS, min(n_str, len(_FAKE_STRINGS))):
-        entries.append((CTAG_STR, s))
+        entries.append((c_str, s))
     # 정수 랜덤 샘플
     n_int = random.randint(3, 8)
     for v in random.sample(_FAKE_NUMBERS_INT, min(n_int, len(_FAKE_NUMBERS_INT))):
-        entries.append((CTAG_INT, v))
+        entries.append((c_int, v))
     # 실수 랜덤 샘플
     n_flt = random.randint(1, 4)
     for v in random.sample(_FAKE_NUMBERS_FLOAT, min(n_flt, len(_FAKE_NUMBERS_FLOAT))):
-        entries.append((CTAG_FLOAT, v))
+        entries.append((c_float, v))
     # bool/nil 약간
     for _ in range(random.randint(1, 3)):
-        entries.append((CTAG_BOOL, random.choice([True, False])))
-    entries.append((CTAG_NIL, None))
+        entries.append((c_bool, random.choice([True, False])))
+    entries.append((c_nil, None))
 
     random.shuffle(entries)
     w.u32(len(entries))
     for tag, val in entries:
         w.u8(tag)
-        if tag == CTAG_NIL:
+        if tag == c_nil:
             pass
-        elif tag == CTAG_BOOL:
+        elif tag == c_bool:
             w.u8(1 if val else 0)
-        elif tag == CTAG_INT:
+        elif tag == c_int:
             w.i64(val)
-        elif tag == CTAG_FLOAT:
+        elif tag == c_float:
             w.f64(val)
-        elif tag == CTAG_STR:
+        elif tag == c_str:
             w.string(val)
 
 
@@ -701,6 +703,7 @@ def _integrity_sources(seed: int, integrity: dict, code_count: int, vm_id: int) 
         IOP_GET_VMID: vm_id & 0xFFFFFFFF,
         IOP_GET_CODELEN: code_count & 0xFFFFFFFF,
         IOP_GET_SCRIPT_HASH: integrity.get("script_hash", 0) & 0xFFFFFFFF,
+        IOP_GET_LINE_STATE: integrity.get("line_state", 0) & 0xFFFFFFFF,
     }
 
 
@@ -733,6 +736,7 @@ def _make_integrity_program() -> list[tuple[int, int | None]]:
         IOP_GET_VMID,
         IOP_GET_CODELEN,
         IOP_GET_SCRIPT_HASH,
+        IOP_GET_LINE_STATE,
     ]
     random.shuffle(sources)
 
@@ -949,7 +953,9 @@ def serialize(proto: Proto,
               graph_family_count: int = 8,
               block_variant_rate: float = 0.0,
               block_variant_count: int = 3,
-              block_variant_max_instructions: int = 6) -> bytes:
+              block_variant_max_instructions: int = 6,
+              constant_tags: dict[str, int] | None = None,
+              relocated_code: list[list[int]] | None = None) -> bytes:
     """vm_maps[vm_id] = (vop_map, split_map, fuse_map, defer_map).
 
     vm_assign = {id(proto): vm_id}.
@@ -961,6 +967,18 @@ def serialize(proto: Proto,
     if vm_assign is None:
         vm_assign = {}
     w = Writer(layout)
+    constant_tag_values = tuple(
+        (constant_tags or {}).get(name, default)
+        for name, default in (
+            ("nil", CTAG_NIL), ("bool", CTAG_BOOL),
+            ("int", CTAG_INT), ("float", CTAG_FLOAT),
+            ("str", CTAG_STR), ("iexpr", CTAG_IEXPR),
+        )
+    )
+    if len(set(constant_tag_values)) != len(constant_tag_values):
+        raise ValueError("constant tags must be distinct")
+    if any(not 0 <= value <= 0xFF for value in constant_tag_values):
+        raise ValueError("constant tags must fit in one byte")
     seed = random.randint(0, 0xFFFF)
     w.u16(seed)
     integrity = {
@@ -969,17 +987,18 @@ def serialize(proto: Proto,
         "vm_count": len(vm_maps),
         "layout_hash": _layout_hash(layout),
         "script_hash": int((integrity_options or {}).get("script_hash", 0)),
+        "line_state": int((integrity_options or {}).get("line_state", 0)),
     }
     w.u32(integrity["layout_hash"])
     w.u16(integrity["vm_count"])
-    _write_fake_pool(w)
+    _write_fake_pool(w, constant_tag_values)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
     _write_proto(w, proto, vm_assign, vm_maps, acc_state,
                  graph_sites if graph_sites is not None else set(), seed, integrity,
                  graph_execution_rate, cross_instruction_rate,
                  graph_family_count, block_variant_rate, block_variant_count,
-                 block_variant_max_instructions)
+                 block_variant_max_instructions, constant_tag_values, relocated_code)
     return w.data()
 
 
@@ -989,9 +1008,16 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                  graph_execution_rate: float, cross_instruction_rate: float,
                  graph_family_count: int, block_variant_rate: float,
                  block_variant_count: int,
-                 block_variant_max_instructions: int):
+                 block_variant_max_instructions: int,
+                 constant_tags: tuple[int, ...],
+                 relocated_code: list[list[int]] | None = None):
     vm_id = vm_assign.get(id(proto), 0)
     vop_map, split_map, fuse_map, defer_map = vm_maps[vm_id]
+    if relocated_code is not None and (split_map or fuse_map or defer_map or block_variant_rate):
+        raise ValueError("relocated code capture requires unsplit, unfused instructions")
+    captured: list[int] = []
+    if relocated_code is not None:
+        relocated_code.append(captured)
 
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
@@ -1040,12 +1066,16 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         emit_op = emit_raw & 0x3F
         if unit[0] == "iexpr_stream":
             for pseudo_raw in _as_iexpr_stream(raw, temp0, temp1):
+                if relocated_code is not None:
+                    captured.append(pseudo_raw)
                 pseudo_op = pseudo_raw & 0x3F
                 _emit_instr(w, pseudo_raw, _rand_alias(vop_map, pseudo_op), acc_state)
                 emitted_av.append(())
                 emitted_sites.append(())
                 physical += 1
         elif unit[0] == "normal":
+            if relocated_code is not None:
+                captured.append(emit_raw)
             _emit_instr(w, emit_raw, _rand_alias(vop_map, emit_op), acc_state)
             emitted_av.append(add_slots.get(i, ()))
             desc = graph_descriptor(emit_op)
@@ -1135,12 +1165,13 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
             w.u32(target)
 
     # 상수
+    c_nil, c_bool, c_int, c_float, c_str, c_iexpr = constant_tags
     w.u32(len(proto.constants))
     for i, c in enumerate(proto.constants):
         if c is None:
-            w.u8(CTAG_NIL)
+            w.u8(c_nil)
         elif isinstance(c, bool):
-            w.u8(CTAG_BOOL)
+            w.u8(c_bool)
             w.u8(1 if c else 0)
         elif isinstance(c, int):
             if i in iexpr_indices:
@@ -1149,17 +1180,17 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
                     program,
                     _integrity_sources(seed, integrity, total, vm_id),
                 )
-                w.u8(CTAG_IEXPR)
+                w.u8(c_iexpr)
                 w.i64(c ^ mix)
                 _write_integrity_program(w, program)
             else:
-                w.u8(CTAG_INT)
+                w.u8(c_int)
                 w.i64(c)
         elif isinstance(c, float):
-            w.u8(CTAG_FLOAT)
+            w.u8(c_float)
             w.f64(c)
         elif isinstance(c, (str, bytes)):
-            w.u8(CTAG_STR)
+            w.u8(c_str)
             w.string(c)
         else:
             raise ValueError(f"unknown constant type: {type(c)}")
@@ -1176,7 +1207,8 @@ def _write_proto(w: Writer, proto: Proto, vm_assign: dict[int, int],
         _write_proto(w, sub, vm_assign, vm_maps, acc_state, graph_sites, seed,
                      integrity, graph_execution_rate, cross_instruction_rate,
                      graph_family_count, block_variant_rate,
-                     block_variant_count, block_variant_max_instructions)
+                     block_variant_count, block_variant_max_instructions,
+                     constant_tags, relocated_code)
 
 
 # ---------------------------------------------------------------------------
@@ -1191,30 +1223,54 @@ def deserialize(data: bytes) -> Proto:
     return _read_proto(r, acc_state)
 
 
-def patch_integrity_script_hash(data: bytes, new_hash: int) -> bytes:
+def patch_integrity_sources(
+    data: bytes,
+    new_hash: int,
+    new_line_state: int,
+    constant_tags: dict[str, int] | None = None,
+) -> bytes:
     patched = bytearray(data)
     r = BinReader(data)
+    constant_tag_values = tuple(
+        (constant_tags or {}).get(name, default)
+        for name, default in (
+            ("nil", CTAG_NIL), ("bool", CTAG_BOOL),
+            ("int", CTAG_INT), ("float", CTAG_FLOAT),
+            ("str", CTAG_STR), ("iexpr", CTAG_IEXPR),
+        )
+    )
     seed = r.u16()
     layout_hash = r.u32()
     vm_count = r.u16()
-    _skip_fake_pool(r)
-    _patch_proto_integrity(r, patched, seed, layout_hash, vm_count, 0, new_hash & 0xFFFFFFFF)
+    _skip_fake_pool(r, constant_tag_values)
+    _patch_proto_integrity(
+        r, patched, seed, layout_hash, vm_count,
+        0, new_hash & 0xFFFFFFFF,
+        0, new_line_state & 0xFFFFFFFF,
+        constant_tag_values,
+    )
     return bytes(patched)
 
 
-def _skip_fake_pool(r: BinReader) -> None:
+def patch_integrity_script_hash(data: bytes, new_hash: int) -> bytes:
+    """Backward-compatible wrapper for callers without source-line state."""
+    return patch_integrity_sources(data, new_hash, 0)
+
+
+def _skip_fake_pool(r: BinReader, constant_tags: tuple[int, ...]) -> None:
+    _c_nil, c_bool, c_int, c_float, c_str, c_iexpr = constant_tags
     count = r.u32()
     for _ in range(count):
         tag = r.u8()
-        if tag == CTAG_BOOL:
+        if tag == c_bool:
             r.u8()
-        elif tag == CTAG_INT:
+        elif tag == c_int:
             r.i64()
-        elif tag == CTAG_FLOAT:
+        elif tag == c_float:
             r.f64()
-        elif tag == CTAG_STR:
+        elif tag == c_str:
             r.string()
-        elif tag == CTAG_IEXPR:
+        elif tag == c_iexpr:
             r.i64()
             _skip_integrity_program(r)
 
@@ -1256,7 +1312,11 @@ def _patch_proto_integrity(
     vm_count: int,
     old_hash: int,
     new_hash: int,
+    old_line_state: int,
+    new_line_state: int,
+    constant_tags: tuple[int, ...],
 ) -> None:
+    c_nil, c_bool, c_int, c_float, c_str, c_iexpr = constant_tags
     r.u8(); r.u8(); r.u8()
     vm_id = r.u8()
     code_count = r.u32()
@@ -1279,27 +1339,29 @@ def _patch_proto_integrity(
     const_count = r.u32()
     for _ in range(const_count):
         tag = r.u8()
-        if tag == CTAG_NIL:
+        if tag == c_nil:
             continue
-        if tag == CTAG_BOOL:
+        if tag == c_bool:
             r.u8()
-        elif tag == CTAG_INT:
+        elif tag == c_int:
             r.i64()
-        elif tag == CTAG_FLOAT:
+        elif tag == c_float:
             r.f64()
-        elif tag == CTAG_STR:
+        elif tag == c_str:
             r.string()
-        elif tag == CTAG_IEXPR:
+        elif tag == c_iexpr:
             encoded_pos = r._pos
             encoded = r.i64()
             program = _read_integrity_program(r)
             old_sources = {
                 **sources_base,
                 "script_hash": old_hash,
+                "line_state": old_line_state,
             }
             new_sources = {
                 **sources_base,
                 "script_hash": new_hash,
+                "line_state": new_line_state,
             }
             old_mix = _eval_integrity_program(
                 program, _integrity_sources(seed, old_sources, code_count, vm_id)
@@ -1317,7 +1379,11 @@ def _patch_proto_integrity(
 
     proto_count = r.u32()
     for _ in range(proto_count):
-        _patch_proto_integrity(r, buf, seed, layout_hash, vm_count, old_hash, new_hash)
+        _patch_proto_integrity(
+            r, buf, seed, layout_hash, vm_count,
+            old_hash, new_hash, old_line_state, new_line_state,
+            constant_tags,
+        )
 
 
 def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
@@ -1366,7 +1432,7 @@ def _read_proto(r: BinReader, acc_state: list[int]) -> Proto:
         elif tag == CTAG_FLOAT:
             constants.append(r.f64())
         elif tag == CTAG_STR:
-            constants.append(r.string())
+            constants.append(r.string() or "")
         elif tag == CTAG_IEXPR:
             constants.append(r.i64())
             prog_len = r.u8()

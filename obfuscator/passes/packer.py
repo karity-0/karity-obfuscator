@@ -7,7 +7,7 @@ The packer is intentionally the outer runtime component rather than another VM:
 - builds an external context table outside the packed payload
 - couples packed code to that context through state-derived slot routing
 - for VM output, externalizes the VM call constants and reconstructs rand_tail
-  through the packer auth graph without modifying _vmf itself
+  through the packer auth graph without modifying the captured VM function
 - for non-VM output, conservatively externalizes safe top-level functions /
   literal constants and selected reference proxies
 """
@@ -83,8 +83,8 @@ _BARE_REF_PROXY_EXPRESSIONS = {
 }
 
 _VM_TAIL_RE = re.compile(
-    r"return\s*\(_vmf\((?P<args>[^)]*)\)\)"
-    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",_vmf\)\s*$",
+    r"return\s*\((?P<vmf>[A-Za-z_]\w*)\((?P<args>[^)]*)\)\)"
+    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)\)\s*$",
     re.S,
 )
 
@@ -224,15 +224,13 @@ def _loader_binding(loader_src: str) -> str:
 
 
 
-def _dump_loader_stripped(loader_src: str) -> bytes:
+def _dump_loader_stripped(loader_src: str, output_prefix: str = "") -> bytes:
     """Dump the final loader function in the exact runtime outer context."""
     if not _LUA or (isinstance(_LUA, Path) and not _LUA.exists()):
         raise FileNotFoundError("lua5.3 not found.")
 
-    from ..pipeline import Pipeline
-
     wrapped = (
-        f"{Pipeline.HEADER}"
+        f"{output_prefix}"
         f"{_loader_binding(loader_src)}"
         f'local _D="";'
         f"return _P"
@@ -589,7 +587,8 @@ def _alloc_plan(script: str) -> ContextPlan:
         vm_args = [part.strip() for part in vm_match.group("args").split(",")]
         vm_tail = vm_match.group("tail")
 
-        # The VM path intentionally keeps `_vmf` untouched.  External Context
+        # The VM path intentionally keeps the captured VM function untouched.
+        # External Context
         # only supplies runtime primitives/state plus the VM call constants
         # and tail reconstruction inputs.
         slot_names = [
@@ -723,8 +722,8 @@ def _alloc_plan(script: str) -> ContextPlan:
         vm_args = [x.strip() for x in vm_match.group("args").split(",")]
         vm_tail = vm_match.group("tail")
 
-        # Never touch inside _vmf. Generic extraction/ref-proxying would change
-        # its stripped dump and invalidate existing VM integrity.
+        # Never touch inside the captured VM function. Generic extraction or
+        # ref-proxying would change its stripped dump and invalidate integrity.
         funcs = []
         selected_constants = []
         refs = {}
@@ -994,15 +993,16 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     tail_enc = base64.b64encode(
         _auth_xor(plan.vm_tail.encode("ascii"), state)
     ).decode("ascii")
+    vmf_name = m.group("vmf")
 
     replacement = (
-        f"return (_vmf({','.join(encoded_args)}))"
-        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),_vmf)"
+        f"return ({vmf_name}({','.join(encoded_args)}))"
+        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name})"
     )
     body = script[:m.start()] + replacement + script[m.end():]
 
-    # Keep this prefix on the current source line. _vmf itself is byte-for-byte
-    # untouched and its line number is not shifted, preserving the VM dump CRC.
+    # Keep this prefix on the current source line. The captured VM function is
+    # byte-for-byte untouched and its line is not shifted, preserving dump CRC.
     prefix = (
         "local __KCTX,__KSTATEF,__KDECODE=...;"
         "local __KSTATE=__KSTATEF(__KCTX);"
@@ -1011,10 +1011,7 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 
 
 def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
-    from ..pipeline import Pipeline
-
     return (
-        f"{Pipeline.HEADER}"
         f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
         f"return _P(_D,_P)\n"
@@ -1024,8 +1021,13 @@ def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
 class PackerPass(PostPass):
     """Final self-keyed packer with cross-layer external-context coupling."""
 
-    def __init__(self, packer_output_passes: list[str] | None = None):
+    def __init__(
+        self,
+        packer_output_passes: list[str] | None = None,
+        output_prefix: str = "",
+    ):
         self.packer_output_passes = packer_output_passes or []
+        self.output_prefix = output_prefix
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
@@ -1058,7 +1060,7 @@ class PackerPass(PostPass):
             self.packer_output_passes,
         )
 
-        dump_hash = _fnv1a32(_dump_loader_stripped(loader_src))
+        dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix))
         state = _context_state(dump_hash, plan)
 
         if plan.is_vm:

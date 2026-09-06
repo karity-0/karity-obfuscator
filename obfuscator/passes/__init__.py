@@ -12,3 +12,4 @@ from .minify import MinifyPass
 from .anti_debug import AntiDebugPass
 from .anti_decompile import AntiDecompilePass
 from .packer import PackerPass
+from .output_signature import OutputSignaturePass, SignatureOptions

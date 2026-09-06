@@ -6,7 +6,7 @@ import sys
 import time
 from pathlib import Path
 
-from obfuscator import Pipeline, build_pipeline_from_config
+from obfuscator import Pipeline, build_pipeline_from_config, __version__
 from obfuscator.profiling import Profiler
 from obfuscator.registry import (
     ConfigError,
@@ -15,6 +15,7 @@ from obfuscator.registry import (
     get_profile_names,
     resolve_config_profile,
     validate_config,
+    config_warnings,
     validate_release_config,
 )
 
@@ -31,8 +32,7 @@ def load_config(path: str = "config.json") -> dict:
 
 
 def build_pipeline(config: dict) -> Pipeline:
-    has_vm = "vm" in config.get("passes", [])
-    return build_pipeline_from_config(config, Pipeline, show_header=not has_vm)
+    return build_pipeline_from_config(config, Pipeline)
 
 
 def parse_args():
@@ -40,7 +40,10 @@ def parse_args():
     parser.add_argument("input", nargs="?", help="input lua script")
     parser.add_argument("-o", "--output", help="output lua script")
     parser.add_argument("-c", "--config", default="config.json", help="config json path")
-    parser.add_argument("--profile", help="config profile name")
+    parser.add_argument(
+        "--profile",
+        help="config profile name; 'max' is experimental and has no build-time or output-size target",
+    )
     parser.add_argument("--passes", help="override top-level passes with a comma-separated list")
     parser.add_argument("--vm-output-passes", help="override vm_output_passes with a comma-separated list")
     parser.add_argument("--packer-output-passes", help="override packer_output_passes with a comma-separated list")
@@ -58,6 +61,7 @@ def parse_args():
     parser.add_argument("--list-profiles", action="store_true", help="print profiles in the config")
     parser.add_argument("--seed", type=int, help="seed python's random module for reproducible builds")
     parser.add_argument("-v", "--verbose", action="count", default=0, help="print debug info")
+    parser.add_argument("--version", action="version", version=f"Karity Obfuscator {__version__}",)
     return parser.parse_args()
 
 
@@ -114,7 +118,13 @@ def print_profiles(config: dict) -> None:
     selected = config.get("profile")
     for name in names:
         marker = " *" if name == selected else ""
-        print(f"{name}{marker}")
+        if name == "high":
+            note = " (recommended for strong practical builds)"
+        elif name == "max":
+            note = " (experimental; research/extreme builds)"
+        else:
+            note = ""
+        print(f"{name}{marker}{note}")
 
 
 def read_script(path: str) -> str:
@@ -170,6 +180,9 @@ def main():
     except ReleaseCheckError as e:
         print(f"error: {e}", file=sys.stderr)
         sys.exit(1)
+
+    for warning in config_warnings(config):
+        print(f"warning: {warning}", file=sys.stderr)
 
     if args.print_config:
         print(json.dumps(config, indent=4, ensure_ascii=False))

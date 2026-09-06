@@ -1,4 +1,5 @@
 import random
+from ..names import NameAllocator
 from .base import BasePass, Replacement
 
 
@@ -22,13 +23,13 @@ def _truthy_literal() -> str:
     ])
 
 
-def _junk_body() -> str:
+def _junk_body(allocator=None) -> str:
     """그럴싸해 보이는 무의미 연산. guard가 발동(디컴파일)될 때만 실행되고
     원본에서는 절대 실행되지 않으므로 부작용이 없다. 이후 rename/number/
     string 패스가 추가로 난독화해 주변 코드와 섞인다."""
     a, b = random.randint(1, 9999), random.randint(1, 9999)
-    v1 = f"_ac{random.randint(1000,9999)}"
-    v2 = f"_ac{random.randint(1000,9999)}"
+    allocator = allocator or NameAllocator()
+    v1, v2 = allocator.allocate(), allocator.allocate()
     op = random.choice(["~", "+", "*", "%"])
     return (
         f"local {v1},{v2}={a},{b} "
@@ -37,14 +38,14 @@ def _junk_body() -> str:
     )
 
 
-def _guard() -> str:
+def _guard(allocator=None) -> str:
     """무작위 형태의 anti-decompile guard 한 개.
 
     셋 다 공통 성질: sentinel이 nil(원본)이면 무해(0회/스킵), truthy
     (디컴파일)이면 무한루프로 hang. 형태·이름·본문을 매번 다르게 해서
     정규식 하나로 일괄 제거되지 않게 한다."""
     sent = random.choice(_SENTINELS)
-    junk = _junk_body()
+    junk = _junk_body(allocator)
     form = random.randint(0, 2)
     if form == 0:
         # 원본: nil이라 0회. 디컴파일: truthy라 무한.
@@ -112,7 +113,8 @@ class AntiDecompilePass(BasePass):
         replacements: list[Replacement] = []
 
         # 2) 미끼 로컬 선언을 청크 최상단(pos 0)에 삽입 → 슬롯 0..N-1 확보.
-        decoy_vars = ",".join(f"_ac{random.randint(1000,9999)}"
+        allocator = NameAllocator.for_source(script)
+        decoy_vars = ",".join(allocator.allocate("decoy")
                               for _ in range(_DECOY_COUNT))
         decoy_vals = ",".join(_truthy_literal() for _ in range(_DECOY_COUNT))
         decoy = f"local {decoy_vars}={decoy_vals} "
@@ -124,6 +126,6 @@ class AntiDecompilePass(BasePass):
             n = min(n, _GUARD_MAX, len(candidates))
             for pos in random.sample(sorted(candidates), n):
                 replacements.append(
-                    Replacement(start=pos, end=pos - 1, new_text=_guard()))
+                    Replacement(start=pos, end=pos - 1, new_text=" " + _guard(allocator)))
 
         return replacements

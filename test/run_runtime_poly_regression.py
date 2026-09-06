@@ -4,11 +4,11 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
 import time
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -18,11 +18,6 @@ TRACE_RE = re.compile(
     rb"blocks:([0-9]+) blocktrace:([0-9a-f]{16})\r?\n?"
 )
 
-
-def lua_executable() -> str:
-    if LUA.exists():
-        return str(LUA)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def run_lua(lua: str, script: Path) -> subprocess.CompletedProcess[bytes]:

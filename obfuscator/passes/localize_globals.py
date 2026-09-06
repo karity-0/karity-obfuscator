@@ -45,10 +45,8 @@ _KNOWN_LIBS = {
     "coroutine", "utf8", "bit32", "debug",
 }
 
-# bare 식별자로 등장하는 표준 전역 함수/값. 이 패스는 rename_obf *이후*에
-# 돌기 때문에, 사용자/VM의 모든 로컬은 이미 `_vN`으로 개명되어 있다. 따라서
-# 이 이름들과 일치하는 bare 식별자는 (필드/메서드/테이블키가 아닌 한) 반드시
-# 전역이다.
+# Recognized global functions. Lexical binding spans are excluded even when
+# localization runs without a preceding rename pass.
 _KNOWN_GLOBAL_FUNCS = {
     "type", "tostring", "tonumber", "pairs", "ipairs", "next", "select",
     "setmetatable", "getmetatable", "rawget", "rawset", "rawequal", "rawlen",
@@ -57,18 +55,11 @@ _KNOWN_GLOBAL_FUNCS = {
 }
 
 
-def _alloc_names(script: str, count: int) -> list[str]:
-    """script에 아직 없는 `_v` 계열 이름 count개. rename_obf의 `_v<digits>`와
-    충돌하지 않도록 기존 이름을 피한다."""
-    existing = set(re.findall(r'_v\d+', script))
-    names: list[str] = []
-    n = 900000
-    while len(names) < count:
-        cand = f"_v{n}"
-        n += 1
-        if cand not in existing:
-            names.append(cand)
-    return names
+def _alloc_names(script: str, count: int, reserved=()) -> list[str]:
+    from ..names import NameAllocator
+    allocator = NameAllocator.for_source(script)
+    allocator.used.update(reserved)
+    return [allocator.allocate("global_alias") for _ in range(count)]
 
 
 def _is_global_ref(node) -> bool:
@@ -83,7 +74,7 @@ def _is_global_ref(node) -> bool:
         return False
     # `{ type = ... }` 의 테이블 키(=가 있는 name 필드의 첫 자식) → 스킵.
     if pt == "field":
-        if p.children and p.children[0] is node and len(p.children) > 1:
+        if p.children and p.children[0].id == node.id and len(p.children) > 1:
             return False
     # 할당 대상(LHS), 함수 선언 이름, 파라미터 → 스킵.
     if pt in ("variable_list", "function_declaration", "function_definition", "parameters"):
@@ -97,6 +88,25 @@ class LocalizeGlobalsPass(BasePass):
     parser = "treesitter"
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        return self.replacements_with_ctx(script, ctx)
+
+    def replacements_with_ctx(
+        self,
+        script: str,
+        ctx,
+        renamed_spans: set[tuple[int, int]] | None = None,
+        reserved_names=(),
+    ) -> list[Replacement]:
+        """Plan localization against a shared pre-rename syntax context.
+
+        ``renamed_spans`` identifies local references that the rename stage will
+        replace. Skipping them preserves the old rename-then-localize behavior
+        when both plans are rendered together by the VM output backend.
+        """
+        from .rename_ts import resolve_bindings
+        bindings, _, _, _, _ = resolve_bindings(ctx)
+        renamed_spans = set(renamed_spans or ())
+        renamed_spans.update((ctx.cs(n), ctx.ce(n)) for b in bindings for n in b.nodes)
         # (lib, method) -> [(start,end), ...]    /    func -> [(start,end), ...]
         lib_spans: dict[tuple[str, str], list[tuple[int, int]]] = {}
         func_spans: dict[str, list[tuple[int, int]]] = {}
@@ -108,6 +118,8 @@ class LocalizeGlobalsPass(BasePass):
                 if (base is None or field is None
                         or base.type != "identifier" or field.type != "identifier"):
                     continue
+                if (ctx.cs(base), ctx.ce(base)) in renamed_spans:
+                    continue
                 lib = ctx.text(base)
                 if lib not in _KNOWN_LIBS:
                     continue
@@ -115,6 +127,8 @@ class LocalizeGlobalsPass(BasePass):
                     (ctx.cs(node), ctx.ce(node)))
 
             elif node.type == "identifier":
+                if (ctx.cs(node), ctx.ce(node)) in renamed_spans:
+                    continue
                 name = ctx.text(node)
                 if name not in _KNOWN_GLOBAL_FUNCS:
                     continue
@@ -131,7 +145,7 @@ class LocalizeGlobalsPass(BasePass):
         funcs     = sorted(func_spans.keys())
 
         # 1(_E) + libs + leaves + funcs 개수만큼 이름이 필요.
-        names = _alloc_names(script, 1 + len(libs_used) + len(leaves) + len(funcs))
+        names = _alloc_names(script, 1 + len(libs_used) + len(leaves) + len(funcs), reserved_names)
         it = iter(names)
         env_name  = next(it)
         lib_name  = {lib: next(it) for lib in libs_used}

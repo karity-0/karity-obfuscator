@@ -72,6 +72,11 @@ def main() -> int:
         raise AssertionError(f"GUI backend smoke build failed: {result.get('error')}")
     if not result.get("profile", {}).get("passes"):
         raise AssertionError("GUI backend did not return build profiling")
+    mov_config = _complete_config({"passes": ["vm"], "vm_options": {"backend": "mov"}})
+    mov_result = Api().run_obfuscation({"script": "print(42)", "config": mov_config})
+    assert mov_result["ok"], mov_result
+    assert len(mov_result["warnings"]) == 1
+    assert "fake_handlers" in mov_result["warnings"][0]
 
     lua_path = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
     lua = str(lua_path) if lua_path.exists() else (
