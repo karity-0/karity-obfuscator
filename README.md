@@ -36,13 +36,25 @@ install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 |---|---|---:|---|
 | `dev` | Fast source-level iteration | No, by default | Fastest builds and easiest debugging |
 | `fast-vm` | VM behavior checks and routine protected builds | Single lightweight VM | Moderate output and runtime cost |
-| `max` | Release candidates requiring the full protection stack | Three diversified VMs | Largest output and longest build time |
+| `high` | Strong production-oriented protection | Two diversified VMs | High build and output cost; practical alternative to `max` |
+| `max` | Experimental research and extreme protection combinations | Three diversified VMs | Unbounded build time and output growth; not intended for routine production use |
 
 ```bash
 python main.py input.lua --profile dev
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --profile max --release-check
 ```
+
+`high` is the strongest preset intended for practical use. It enables the full
+source protection and packing stack with two diversified VMs, while avoiding
+the most explosive VM and packer output-pass combinations used by `max`.
+
+`max` is an experimental research profile. It deliberately combines the most
+aggressive stages and has no build-time or output-size target; very long builds
+are expected. Use `high`, `fast-vm`, or a tuned custom profile for routine
+protected builds. `--release-check` validates release-safety constraints, but
+does not turn `max` into the recommended production profile.
 
 The guiding performance rule is: **keep graph generation, execute heavy graphs
 sparsely**. Complex handlers and variants are compiled at build time where
@@ -55,22 +67,31 @@ The selected profile controls which optional stages run and how aggressively
 the VM stages are compiled.
 
 ```mermaid
-flowchart LR
-    A[Lua 5.3 source] --> B[Source passes]
-    B --> C[Lua 5.3 bytecode]
-    C --> D[VM serializer]
-    D --> E[Opcode aliases<br/>split / fuse / delayed ops]
-    E --> F[Encrypted bytecode blob]
-    F --> G[Build-time VM compiler]
-    G --> H[Handler graphs<br/>execution kits / VM variants]
-    H --> I[VM output passes]
-    I --> J{Packer enabled?}
-    J -->|No| K[Protected Lua]
-    J -->|Yes| L[Compressed loader]
-    L --> K
+flowchart TD
+    A[Lua source] --> B[Source passes]
+    B --> C{VM enabled?}
+    C -->|Yes| D[luac 5.3 and bytecode parsing]
+    D --> E{Backend selection}
+    E -->|karity or default| K[Karity runtime]
+    E -->|classic| L[Classic runtime]
+    E -->|mov| M[MOV lookup runtime]
+    K --> F[Blob serialization and integrity binding]
+    L --> F
+    M --> F
+    F --> G[VM output passes and protected wrapper]
+    G --> H{Packer enabled?}
+    C -->|No| H
+    H -->|Yes| I[Packer and packer output passes]
+    I --> J[Protected Lua]
+    H -->|No| J
 ```
 
-At runtime, one instruction can take different equivalent routes depending on
+See [backend architecture, runtime diagrams and supported options](docs/backends.md).
+Serialization, runtime generation and integrity finalization cooperate during the
+build; the diagram groups those stages rather than prescribing a single pass order.
+
+
+In the Karity runtime, one instruction can take different equivalent routes depending on
 its opcode alias, compiled VM, block variant, execution state, and configured
 rates:
 
@@ -131,6 +152,12 @@ runtime work sparse.
 - Consumer-triggered delayed materialization across instructions
 - Per-execution rolling route state and runtime-polymorphic microtraces
 - Runtime-selected physical variants of straight-line bytecode blocks
+- State-coupled dispatcher targets without fixed virtual-opcode comparisons
+- Source-semantic state threaded through value writes, calls, and VM runtime state
+- Shuffled, padded, state-masked argument packets across entry, call, tail-call, and vararg paths
+- Closed-upvalue affine shares and hidden reference-vault handles across closure frames
+- VM-created table lowering into state-keyed split shadow storage until native escape
+- Branch decisions sealed in live-state control packets before target selection
 - Diverse table, upvalue, comparison, closure, and vararg handler implementations
 - Per-VM fetch/decode, register-access, semantic, flow, and continuation-router kits
 - Build-time call-site wiring instead of a single runtime helper selector
@@ -154,7 +181,11 @@ python main.py input.lua -o protected.lua
 
 # Profiles and one-off overrides
 python main.py input.lua --profile fast-vm
+python main.py input.lua --profile high
 python main.py input.lua --passes string_obf,number_obf,minify
+python main.py input.lua --vm-option backend=classic
+python main.py input.lua --profile fast-vm --vm-option backend=mov
+python main.py input.lua --profile high --vm-option backend=mov --release-check
 python main.py input.lua --vm-option vm_count=2
 python main.py input.lua --vm-option graph_execution_rate=0.05
 
@@ -173,7 +204,8 @@ python main.py input.lua --profile max --release-check
 
 `--seed` exists for reproducible testing. Do not use a fixed seed for release
 artifacts. `--release-check` rejects reproducible seeds and weak release
-settings before writing the output.
+settings before writing the output. The `max` example above is an experimental
+full-stack validation run, not the recommended routine release workflow.
 
 ## GUI
 
@@ -185,7 +217,7 @@ The GUI exposes the same profile-based configuration used by the CLI.
 
 ![GUI](images/5.png)
 
-Choose a complete build preset (`dev`, `fast-vm`, or `max`) or apply an
+Choose a complete build preset (`dev`, `fast-vm`, `high`, or `max`) or apply an
 independent VM protection level (`Light` through `Maximum`). Every pass and VM
 option can also be edited directly; manual changes automatically switch the
 affected selector to `<Custom>`. VM controls are generated from the central
@@ -197,11 +229,101 @@ Copy `config.example.json` to `config.json`, then adjust profiles instead of
 editing pass lists for every build. CLI values supplied with `--vm-option`
 override the selected profile for that invocation.
 
+VM runtime architecture is independent from protection level. Karity and classic retain
+the current compiler, serializer/blob protection, dispatcher selection,
+integrity checks, and output pipeline. `backend=karity` selects the hardened
+graph/encoded-register runtime and is used when the option is omitted.
+`backend=classic` selects direct registers and straightforward opcode handlers;
+`backend=default` selects `karity`, just like omitting the option. Older builds
+mapped this alias to `classic`; set `backend=classic` explicitly to preserve
+that runtime when migrating.
+Release checks apply the shared dispatcher, integrity, mutation, and VM-count
+requirements to both modes, and apply graph/variant-rate requirements only to
+the Karity runtime that implements them.
+
+`backend=mov` is a supported release configuration with a hybrid MOV-inspired
+runtime. Full MOV-only execution remains a development target. It lowers integer
+`ADD/SUB/MUL/UNM/MOD/IDIV`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
+4-bit lookup microcode. Signed floor division and modulo use a 64-step restoring
+division recipe, including minimum-integer overflow and divisor-sign correction.
+Leading zero nibbles skip four bit rounds through moves and counter-table lookup,
+reducing work for small operands without native arithmetic fallback.
+Integer shifts use six lookup/MOV stages for distances 1, 2, 4, 8, 16 and 32.
+Count sign, unsigned magnitude, direction reversal and the 64-bit range check
+are computed in microcode, including minimum-integer counts. HOST preparation
+only supplies encoded operands and the opcode direction; it no longer decodes
+the count or computes digit positions. Integral floats and numeric strings
+still use Lua's coercing shift handlers.
+Float/float `EQ/LT/LE` bitcast binary64 values and compare lookup-generated
+ordering keys; NaN classification and signed-zero equality also use lookup.
+Float `UNM` copies the binary64 payload and toggles its sign nibble through XOR
+lookup. Input/output bitcasts remain host representation boundaries; negation
+does not execute native unary arithmetic.
+Mixed integer/float comparisons build exact 80-bit ordering keys with a shared
+exponent and 63 fraction bits. Integers are normalized through lookup shifts,
+without rounding them to binary64, preserving distinctions beyond `2^53`.
+String equality compares encoded byte lists in lookup microcode. String ordering
+uses that path in C/POSIX collation; other locales or an unavailable locale query
+retain host ordering. This preserves Lua's locale-sensitive comparison rules,
+including embedded NUL bytes. Byte-list construction adds linear allocation per
+comparison; it is an input representation boundary, not the comparison itself.
+String length counts byte-list nodes with lookup carry propagation. Concatenation
+of string operands uses indirect MOV stores to link private operand copies;
+committed lists are immutable and register copies may share them. Length and
+subsequent concatenation consume this encoded storage directly. Native consumers
+materialize the resulting byte stream with `string.char`/`table.concat`; those
+calls do not concatenate the original operands. Numeric coercion and `__concat`
+remain host boundaries, as do table/userdata length operations.
+`NOT` and expected-truth tests use boolean lookup after native-value classification;
+tests and jumps select microcode addresses;
+jumps close captured locals before leaving their scope. Integer results stay in
+encoded digit storage until a host operation needs a Lua value. Binary floating-point arithmetic
+and mixed-type arithmetic, `/`, power, metamethods, tables and
+calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
+implementation. The original operand words remain available to host fallbacks.
+MOV-only remains the target; this implementation does not yet meet it. In
+particular, binary floating-point arithmetic, coercing/metamethod concatenation and locale-specific ordering,
+operations and Lua object/call semantics
+still need host execution. Function-table indirection is not counted as MOV
+lowering. Regression tests reject native integer arithmetic, division, comparison
+and boolean fallbacks, plus all numeric comparison fallbacks, to verify that the
+implemented lookup paths really run.
+All host opcodes enter through one function-table call. Each VM shuffles the
+handler table and uses a distinct XOR key for its entries; native arithmetic
+fallbacks also use function lookup instead of slot-comparison chains. These
+tables obscure the ordered opcode dispatcher, but their Lua operations remain
+inspectable. Handler closures are allocated per call frame to preserve recursive
+calls, coroutine suspension, and return/tail-call packets.
+
+Start with `--profile fast-vm --vm-option backend=mov`. Multiple MOV interpreters
+use distinct instruction IDs and digit codebooks, with prototypes assigned by
+`vm_count` as in the other backends. Calls, shared upvalues and tail-call frame
+transitions preserve Lua values across these representations. Each interpreter
+uses a fixed microcode dispatcher; legacy dispatcher selection/target
+hiding, fake/mutated/split/fused handlers, and Karity graph/representation options
+do not apply. Junk insertion, integrity constants, all blob forms, source/output
+passes and packing remain available. Arithmetic recipes are stored once per VM
+and shared across prototypes, while scratch slots and continuations remain private
+to each call frame. `--profile high --vm-option backend=mov
+--release-check` checks the shared source, VM-count, junk, integrity and blob
+requirements; unused legacy dispatcher/handler and Karity graph options are
+excluded from MOV release validation. Profiling records effective VM counts,
+unsupported controls, lowered sites, stored micro-instructions and shared recipe
+counts in `mov_lowering`. Lookup tables and
+microcode increase output size and runtime cost; benchmark the intended workload.
+
 The most important performance controls are:
 
 | Option | Effect |
 |---|---|
+| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, supported lookup `mov`, or the `default` alias |
 | `graph_execution_rate` | How often heavy compiled handler graphs execute |
+| `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
+| `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
+| `argument_virtualization` | Shuffles, pads, and masks VM arguments behind dynamic packet accessors |
+| `upvalue_virtualization` | Stores closed upvalues as affine shares or hidden reference handles |
+| `table_virtualization` | Lowers VM-created tables into split shadow storage until native escape |
+| `branch_virtualization` | Seals comparison results in live-state packets before branching |
 | `cross_instruction_rate` | Frequency of delayed cross-instruction materialization |
 | `runtime_polymorphism_rate` | Frequency of runtime-selected microtrace recipes |
 | `block_variant_rate` | Fraction of eligible blocks emitted with runtime variants |
@@ -210,9 +332,10 @@ The most important performance controls are:
 | `semantic_diversity_rate` | Fraction of eligible aliases using alternate semantic lowering |
 | `vm_count` | Number of independent interpreters; strongly affects output and build size |
 
-Start with `fast-vm`. Increase one family at a time and profile the protected
-program's real workload. A high setting in every category is rarely the best
-performance/security balance.
+Start with `fast-vm`, then use `high` when the full protection and packing stack
+is required. Increase individual option families only after profiling the
+protected program's real workload. A maximum setting in every category is
+rarely the best performance/security balance.
 
 ## Testing
 
@@ -221,22 +344,38 @@ Run the semantic suite against the currently selected config:
 ```bash
 python test/run_test.py --profile dev
 python test/run_test.py --profile fast-vm --jobs 4
+python test/run_test.py --profile high --jobs 4
 python test/run_test.py 09_table 14_vm_call_machine
 ```
 
-Focused regressions cover high-risk VM subsystems:
+Routine CI should test practical profiles and focused, deterministic VM
+regressions. Full `max` builds are research/nightly or pre-release checks; their
+build time and output size are not performance gates, although incorrect output
+is still a bug.
+
+CI and local verification use the same suite manifest in `test/run_ci.py`, including
+MOV, function boundary/loop/nested, GUI, and all focused regressions:
 
 ```bash
-python test/run_number_obf_regression.py
-python test/run_packer_regression.py
-python test/run_runtime_poly_regression.py
-python test/run_vm_choke_regression.py
-python test/run_gui_regression.py
+python test/run_ci.py
 ```
+
+Use `python test/run_ci.py --list` to inspect the exact commands. CI runs on
+Linux with Python 3.10, 3.11 and 3.12, plus Windows with Python 3.12. All jobs
+use Lua 5.3 (system packages on Linux, bundled binaries on Windows). Pushes and
+pull requests targeting `main`, `dev`, and `future` run this matrix.
 
 For a deterministic build during diagnosis, pass `--seed`. Compare the source
 and protected program's exit code, stdout, and stderr; the main test runner does
 this automatically.
+
+## Design references
+
+- [Function transformations and scope boundaries](docs/passes/functionObfuscation.md)
+- [Global localization and environment assumptions](docs/passes/localizeGlobals.md)
+- [Backend architecture and capabilities](docs/backends.md)
+- [Packer and loader requirements](docs/passes/packer.md)
+- [Anti-debug wrapper behavior](docs/passes/antiDebug.md)
 
 ## Repository layout
 

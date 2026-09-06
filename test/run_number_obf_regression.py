@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-import os
 import json
 import random
-import shutil
 import subprocess
 import sys
 from pathlib import Path
+from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -17,12 +16,6 @@ from obfuscator.passes.string_obfuscation import StringObfuscationPass
 from obfuscator.passes.packer import _obfuscate_packer_output
 from obfuscator.pipeline import Pipeline
 
-
-def lua_executable() -> str:
-    local = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if local.exists():
-        return str(local)
-    return shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
 
 
 def main() -> int:
@@ -35,6 +28,23 @@ def main() -> int:
     generator = NumberObfuscationPass()
     lines: list[str] = []
     case = 0
+
+    def run_number_batch(batch: list[str], first_case: int) -> int:
+        result = subprocess.run(
+            [lua_executable(), "-"],
+            cwd=ROOT_DIR,
+            input=("\n".join(batch) + "\n").encode(),
+            capture_output=True,
+            timeout=60,
+        )
+        if result.returncode != 0:
+            stderr = result.stderr.decode(errors="replace")
+            sys.stderr.write(
+                f"number regression cases {first_case}-{first_case + len(batch) - 1} "
+                f"failed: rc={result.returncode} stderr={stderr[:1000]!r}\n"
+            )
+        return result.returncode
+
     for seed in range(128):
         random.seed(seed)
         for value in values:
@@ -44,18 +54,18 @@ def main() -> int:
                 f"if ({expr})~={value} then "
                 f"error('case {case} seed {seed} expected {value}') end"
             )
-    lines.append(f"print('number-obf-ok {case}')")
-    result = subprocess.run(
-        [lua_executable(), "-"],
-        cwd=ROOT_DIR,
-        input=("\n".join(lines) + "\n").encode(),
-        capture_output=True,
-        timeout=60,
-    )
-    if result.returncode != 0:
-        sys.stderr.write(result.stderr.decode(errors="replace"))
-        return result.returncode or 1
-    sys.stdout.write(result.stdout.decode(errors="replace"))
+            # Keeping each Lua chunk modest avoids parser/allocator failures in
+            # the bundled Windows Lua while exercising the same expressions.
+            if len(lines) == 512:
+                returncode = run_number_batch(lines, case - len(lines) + 1)
+                if returncode != 0:
+                    return returncode or 1
+                lines.clear()
+    if lines:
+        returncode = run_number_batch(lines, case - len(lines) + 1)
+        if returncode != 0:
+            return returncode or 1
+    print(f"number-obf-ok {case}")
 
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-/.: "
     text = "".join(alphabet[(i * 37 + i // 3) % len(alphabet)] for i in range(768))

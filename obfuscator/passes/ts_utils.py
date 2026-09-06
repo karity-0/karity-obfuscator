@@ -41,17 +41,27 @@ class TSContext:
         data = script.encode("utf-8")
         self.tree = _PARSER.parse(data)
         self.root = self.tree.root_node
-        self.b2c = _build_b2c(script, len(data))
+        # Generated VM/packer sources are ASCII. In that common multi-MB
+        # case, byte and character coordinates are identical, so building an
+        # 8M-entry byte-to-char table only burns time and memory. Keep the
+        # mapping for arbitrary user Unicode source where it is required.
+        self.b2c = None if script.isascii() else _build_b2c(script, len(data))
 
     def cs(self, node) -> int:
         """char 기준 start."""
+        if self.b2c is None:
+            return node.start_byte
         return self.b2c[node.start_byte]
 
     def ce(self, node) -> int:
         """char 기준 inclusive end."""
+        if self.b2c is None:
+            return node.end_byte - 1
         return self.b2c[node.end_byte] - 1
 
     def text(self, node) -> str:
+        if self.b2c is None:
+            return self.script[node.start_byte:node.end_byte]
         return self.script[self.b2c[node.start_byte]:self.b2c[node.end_byte]]
 
     def walk(self):

@@ -1,4 +1,6 @@
 from __future__ import annotations
+from ..names import NameAllocator
+from .backend import unsupported_vm_options
 import subprocess
 import platform
 import tempfile
@@ -17,20 +19,24 @@ from ..parser import Lua53Parser
 from .serializer import (
     serialize,
     assign_vm_ids,
+    iter_protos,
     collect_fuseable_pairs_for_vm,
-    patch_integrity_script_hash,
+    patch_integrity_sources,
 )
 from .kae_blob import encrypt_blob
 from .vm_obfuscation import (prune_and_inject_handlers, apply_vop_to_vm,
                              apply_split_to_vm, apply_fuse_to_vm,
                              apply_defer_to_vm, ALL_SPLIT_OPS, DEFER_OPS,
-                             apply_dispatch, apply_execution_kit,
+                             apply_dispatch, apply_dispatch_target_hiding,
+                             apply_execution_kit,
                              wire_exec_router, build_next_router_kit,
                              build_exec_variants,
                              collect_used_ops_for_vm, collect_used_orig_ops_for_vm)
 from .vm_variants import (make_instr_layout, apply_instr_layout,
-                          apply_keystream, apply_tamper)
+                          apply_keystream, apply_tamper, apply_line_state)
+from .output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from .junk_injection import inject_junk
+from .runtime_trace import apply_runtime_trace
 
 
 if platform.system() == "Windows":
@@ -47,6 +53,7 @@ if not _LUAC or (isinstance(_LUAC, Path) and not _LUAC.exists()):
     raise FileNotFoundError("luac5.3 not found.")
 
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
+_CLASSIC_EXEC_PATH = Path(__file__).parent / "runtimes" / "classic_exec.lua"
 
 
 def _compile(script: str) -> bytes:
@@ -152,7 +159,8 @@ _NUMERIC_DECODE = (
     "_b[_p+1]=_n&0xFF;_b[_p+2]=(_n>>8)&0xFF;"
     "_b[_p+3]=(_n>>16)&0xFF;_b[_p+4]=(_n>>24)&0xFF;_p=_p+4 end;"
     "while #_b>_L do _b[#_b]=nil end;"
-    "return string.char(table.unpack(_b))end)(blob)"
+    "local _o={};for _i=1,#_b,4096 do local _e=_i+4095;if _e>#_b then _e=#_b end;"
+    "_o[#_o+1]=string.char(table.unpack(_b,_i,_e))end;return table.concat(_o)end)(blob)"
 )
 
 
@@ -227,7 +235,12 @@ def _make_defer_map(used_vops: set[int],
     return {op: _new_unique_vop(used_vops) for op in sorted(defer_ops)}
 
 
-def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
+def _dump_function_stripped(
+    vm_func_src: str,
+    header: str,
+    decoy_name: str,
+    decoy_value: str,
+) -> bytes:
     """
     vm_func_src(= "return function(...) ... end")를 최종 출력과 동일한
     enclosing 컨텍스트(`header` 주석 + `local a="..."` 프리픽스) 안에서
@@ -240,8 +253,7 @@ def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
     dump와 런타임 dump가 바이트 단위로 일치한다.
     """
     wrapped = (
-        f'{header}'
-        f'local a="obfuscated using karity obfuscator"'
+        f'{header}local {decoy_name}="{decoy_value}"'
         f'{vm_func_src};'
     )
 
@@ -291,20 +303,74 @@ def _dump_function_stripped(vm_func_src: str, header: str = "") -> bytes:
                 os.unlink(p)
 
 
-def _load_vm() -> str:
+def _load_vm(backend: str = "karity", mov_kits: list | None = None) -> str:
     src = _VM_LUA_PATH.read_text(encoding="utf-8")
     cutoff = src.find("\nif arg and arg[0]")
     if cutoff != -1:
         src = src[:cutoff]
+    if backend in ("classic", "mov"):
+        classic_exec = _CLASSIC_EXEC_PATH.read_text(encoding="utf-8")
+        if backend == "mov":
+            from .mov.builder import build_runtime
+            classic_exec = build_runtime(classic_exec, mov_kits)
+        start = src.index("local exec, _EX, _NX")
+        end_marker = "--<<ENDNEXT_ROUTER>>"
+        end = src.index(end_marker, start) + len(end_marker)
+        src = src[:start] + classic_exec + src[end:]
+
+        run_start_marker = "--<<RUN_ENTRY>>"
+        run_end_marker = "--<<ENDRUN_ENTRY>>"
+        run_start = src.index(run_start_marker)
+        run_end = src.index(run_end_marker, run_start) + len(run_end_marker)
+        direct_entry = (
+            "_EX[proto.vm_id+1](proto,{env_box},table.pack())"
+        )
+        src = src[:run_start] + direct_entry + src[run_end:]
+        if backend == "mov":
+            src = src.replace("local proto=read_proto(r,acc_state)",
+                              "local proto=read_proto(r,acc_state); _mov_read(r,proto)")
     return src
+
+
+_CLASSIC_SEMANTIC_TOKENS = (
+    "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
+    "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
+    "__VM_CMP_TRUTH__", "__VM_OP_MOD__", "__VM_OP_POW__",
+    "__VM_OP_DIV__", "__VM_OP_IDIV__", "__VM_OP_NOT__",
+    "__VM_OP_LEN__", "__VM_OP_CONCAT__", "__VM_OP_NEWTABLE__",
+    "__VM_OP_SETLIST__", "__VM_OP_CLOSURE__", "__VM_OP_VARARG__",
+)
+
+
+def _apply_classic_runtime_tokens(vm_code: str) -> str:
+    """Resolve current transform tokens without generating Karity graphs."""
+    semantic_tags = random.sample(range(0x10000, 0x7FFFFFFF),
+                                  len(_CLASSIC_SEMANTIC_TOKENS))
+    for token, value in zip(_CLASSIC_SEMANTIC_TOKENS, semantic_tags):
+        vm_code = vm_code.replace(token, str(value))
+
+    slot_tokens = tuple(spec[0] for spec in _ARITH_SPECS.values())
+    slot_values = random.sample(range(0x10000, 0x7FFFFFFF), len(slot_tokens))
+    for token, value in zip(slot_tokens, slot_values):
+        vm_code = vm_code.replace(token, str(value))
+
+    unresolved = sorted(
+        token for token in set(re.findall(r"__VM_[A-Z0-9_]+__", vm_code))
+        if token != "__VM_HOT_LOOP__"
+    )
+    if unresolved:
+        raise RuntimeError(
+            "classic runtime has unresolved VM tokens: " + ", ".join(unresolved)
+        )
+    return vm_code
 
 
 def _hex64() -> str:
     return f"0x{random.getrandbits(64):016X}"
 
 
-def _rand_lua_name(length: int = 7) -> str:
-    return "_" + "".join(random.choices(_NAME_CHARS, k=length))
+def _exact_graph_source(source: str) -> str:
+    return "--[[KARITY_EXACT_BEGIN]]" + source + "--[[KARITY_EXACT_END]]"
 
 
 def _opaque_zero(x: str, y: str) -> str:
@@ -394,8 +460,9 @@ def _make_integer_expr(kind: str, x: str = "x", y: str = "y") -> str:
 
 
 def _make_integer_graph_func(op_kind: str) -> str:
-    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
-    ctx = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    a, b, state, slots, regs, active, boxes = [name_allocator.allocate("helper") for _ in range(7)]
+    ctx = name_allocator.allocate("helper")
     state_key = random.randint(700, 1200)
     carry_key = 611
 
@@ -443,7 +510,7 @@ def _make_integer_graph_func(op_kind: str) -> str:
     if len(topo) != len(nodes):
         raise RuntimeError(f"generated {op_kind} graph contains a cycle")
 
-    names = {node_id: _rand_lua_name() for node_id in nodes}
+    names = {node_id: name_allocator.allocate("helper") for node_id in nodes}
     lines = ["(function()local " + ",".join(names.values()) + ";"]
 
     for node_id in topo:
@@ -476,9 +543,9 @@ def _make_integer_graph_func(op_kind: str) -> str:
             body = f"local r=({deps[0]})+({deps[1]})+({deps[2]});{ctx}.t=({ctx}.t~r~(r<<1));"
         lines.append(f"{name}=function({ctx}){cached}{body}{ctx}.k[{node_id + 1}]=r;return r end;")
 
-    out = _rand_lua_name()
-    slot = _rand_lua_name()
-    index = _rand_lua_name()
+    out = name_allocator.allocate("helper")
+    slot = name_allocator.allocate("helper")
+    index = name_allocator.allocate("helper")
     lines.extend([
         f"return function({a},{b},{state},{slots},{regs},{active},{boxes})",
         f"{state}={state} or {{}};{active}={active} or {{}};local {ctx}={{a={a},b={b},s={state},k={{}},t=(({a}~{b})~{_hex64()}~({state}[{carry_key}] or 0))}};",
@@ -492,8 +559,9 @@ def _make_integer_graph_func(op_kind: str) -> str:
 
 
 def _make_value_graph_func() -> str:
-    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
-    ctx = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    value, state, slots, regs, active, boxes, tag = [name_allocator.allocate("helper") for _ in range(7)]
+    ctx = name_allocator.allocate("helper")
     nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
     zeros: list[int] = []
     next_id = 1
@@ -528,7 +596,7 @@ def _make_value_graph_func() -> str:
             if indegree[child] == 0:
                 ready.append(child)
 
-    names = {i: _rand_lua_name() for i in nodes}
+    names = {i: name_allocator.allocate("helper") for i in nodes}
     state_key = random.randint(1201, 1700)
     lines = ["(function()local " + ",".join(names.values()) + ";"]
     for i in topo:
@@ -549,7 +617,7 @@ def _make_value_graph_func() -> str:
             f"{name}=function({ctx}){cached}{body}{ctx}.n[{i + 1}]=true;"
             f"{ctx}.k[{i + 1}]=r;return r end;"
         )
-    out, index, slot = _rand_lua_name(), _rand_lua_name(), _rand_lua_name()
+    out, index, slot = name_allocator.allocate("helper"), name_allocator.allocate("helper"), name_allocator.allocate("helper")
     lines.extend([
         f"return function({value},{state},{slots},{regs},{active},{boxes},{tag})",
         f"local {ctx}={{v={value},s={state},k={{}},n={{}},g={tag},t=(({state}[611] or 0)~{tag}~{_hex64()})}};",
@@ -564,9 +632,10 @@ def _make_value_graph_func() -> str:
 
 def _make_call_route_func() -> str:
     """Build an acyclic tail-call router whose only observable result is next(q)."""
-    terminal, query, ctx = [_rand_lua_name() for _ in range(3)]
+    name_allocator = NameAllocator(readable=True)
+    terminal, query, ctx = [name_allocator.allocate("helper") for _ in range(3)]
     count = random.randint(14, 22)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     order = list(range(count))
     random.shuffle(order)
     lines = ["(function()local " + ",".join(names) + ";"]
@@ -622,9 +691,10 @@ def _make_call_route_func() -> str:
 
 
 def _make_control_graph_func() -> str:
-    packet, state, ctx = [_rand_lua_name() for _ in range(3)]
+    name_allocator = NameAllocator(readable=True)
+    packet, state, ctx = [name_allocator.allocate("helper") for _ in range(3)]
     count = random.randint(12, 18)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     order = list(range(count))
     random.shuffle(order)
     state_key = random.randint(1701, 2200)
@@ -666,11 +736,12 @@ def _make_control_graph_func() -> str:
 
 
 def _make_occurrence_graph_func(site: int) -> str:
+    name_allocator = NameAllocator(readable=True)
     bank, pick, a, b, state, slots, regs, active, boxes, ctx = [
-        _rand_lua_name() for _ in range(10)
+        name_allocator.allocate("helper") for _ in range(10)
     ]
     count = random.randint(7, 11)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     order = list(range(count))
     random.shuffle(order)
     state_key = random.randint(2201, 2800)
@@ -705,11 +776,12 @@ def _make_occurrence_graph_func(site: int) -> str:
 
 
 def _make_loop_ir_func(kind: str) -> str:
-    packet, state, ctx = [_rand_lua_name() for _ in range(3)]
+    name_allocator = NameAllocator(readable=True)
+    packet, state, ctx = [name_allocator.allocate("helper") for _ in range(3)]
     semantic_count = 2 if kind == "FORLOOP" else 1
     wrapper_count = random.randint(7, 11)
     total = semantic_count + wrapper_count + 1
-    names = [_rand_lua_name() for _ in range(total)]
+    names = [name_allocator.allocate("helper") for _ in range(total)]
     state_key = random.randint(2801, 3300)
     definitions: list[str] = []
 
@@ -761,9 +833,10 @@ def _make_loop_ir_func(kind: str) -> str:
 
 
 def _make_semantic_ir_func(kind: str) -> str:
-    x, y, z, state, ctx = [_rand_lua_name() for _ in range(5)]
+    name_allocator = NameAllocator(readable=True)
+    x, y, z, state, ctx = [name_allocator.allocate("helper") for _ in range(5)]
     count = random.randint(7, 11)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     state_key = random.randint(3301, 3900)
     if kind == "GET":
         semantic = f"local r={ctx}.x[{ctx}.y];"
@@ -867,8 +940,9 @@ def _random_topological_order(nodes: dict[int, dict], label: str) -> list[int]:
 
 def _compile_integer_graph_func(op_kind: str) -> str:
     """Compile an arithmetic DAG into one specialized straight-line handler."""
-    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
-    trace = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    a, b, state, slots, regs, active, boxes = [name_allocator.allocate("helper") for _ in range(7)]
+    trace = name_allocator.allocate("helper")
     state_key = random.randint(700, 1200)
     nodes: dict[int, dict] = {}
 
@@ -891,7 +965,7 @@ def _compile_integer_graph_func(op_kind: str) -> str:
     sink = add_node("sink", [value, *random.sample(zeros, 2)])
 
     order = _random_topological_order(nodes, op_kind)
-    names = {node_id: _rand_lua_name() for node_id in nodes}
+    names = {node_id: name_allocator.allocate("helper") for node_id in nodes}
     lines = [
         f"function({a},{b},{state},{slots},{regs},{active},{boxes})",
         f"{state}={state} or {{}};{active}={active} or {{}};",
@@ -936,7 +1010,7 @@ def _compile_integer_graph_func(op_kind: str) -> str:
                 f"{trace}=({trace}~{name}~({name}<<1));"
             )
 
-    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    index, slot, mixed = [name_allocator.allocate("helper") for _ in range(3)]
     out = names[sink]
     lines.extend([
         f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
@@ -950,7 +1024,8 @@ def _compile_integer_graph_func(op_kind: str) -> str:
 
 def _compile_value_graph_func() -> str:
     """Compile a value diffusion DAG without runtime closures or memo tables."""
-    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
+    name_allocator = NameAllocator(readable=True)
+    value, state, slots, regs, active, boxes, tag = [name_allocator.allocate("helper") for _ in range(7)]
     nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
     zeros: list[int] = []
     for _ in range(random.randint(7, 11)):
@@ -969,8 +1044,8 @@ def _compile_value_graph_func() -> str:
     sink = len(nodes)
     nodes[sink] = {"kind": "sink", "deps": (current, *random.sample(zeros, 2))}
 
-    names = {node_id: _rand_lua_name() for node_id in nodes}
-    trace = _rand_lua_name()
+    names = {node_id: name_allocator.allocate("helper") for node_id in nodes}
+    trace = name_allocator.allocate("helper")
     state_key = random.randint(1201, 1700)
     lines = [
         f"function({value},{state},{slots},{regs},{active},{boxes},{tag})",
@@ -995,7 +1070,7 @@ def _compile_value_graph_func() -> str:
                 f"{name}={deps[0]};{trace}=({trace}~({zero_expr})~({tag}&0xFF));"
             )
     out = names[sink]
-    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    index, slot, mixed = [name_allocator.allocate("helper") for _ in range(3)]
     lines.extend([
         f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{tag});",
         f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
@@ -1017,9 +1092,10 @@ def _compiled_label_blocks(entry: str, blocks: list[tuple[str, str]]) -> str:
 
 
 def _compile_call_route_func() -> str:
-    terminal, query = [_rand_lua_name() for _ in range(2)]
+    name_allocator = NameAllocator(readable=True)
+    terminal, query = [name_allocator.allocate("helper") for _ in range(2)]
     count = random.randint(14, 22)
-    labels = [_rand_lua_name() for _ in range(count)]
+    labels = [name_allocator.allocate("helper") for _ in range(count)]
     blocks: list[tuple[str, str]] = []
     for i, label in enumerate(labels):
         if i == count - 1:
@@ -1063,9 +1139,10 @@ def _compile_call_route_func() -> str:
 
 
 def _compile_control_graph_func() -> str:
-    packet, state = [_rand_lua_name() for _ in range(2)]
+    name_allocator = NameAllocator(readable=True)
+    packet, state = [name_allocator.allocate("helper") for _ in range(2)]
     count = random.randint(12, 18)
-    labels = [_rand_lua_name() for _ in range(count)]
+    labels = [name_allocator.allocate("helper") for _ in range(count)]
     state_key = random.randint(1701, 2200)
     blocks: list[tuple[str, str]] = []
     for i, label in enumerate(labels):
@@ -1095,17 +1172,18 @@ def _compile_control_graph_func() -> str:
 
 
 def _compile_occurrence_graph_func(family_seed: int) -> str:
+    name_allocator = NameAllocator(readable=True)
     bank, pick, a, b, state, slots, regs, active, boxes, ledger, vm_state = [
-        _rand_lua_name() for _ in range(11)
+        name_allocator.allocate("helper") for _ in range(11)
     ]
-    site, selector, state_key, policy = [_rand_lua_name() for _ in range(4)]
+    site, selector, state_key, policy = [name_allocator.allocate("helper") for _ in range(4)]
     count = random.randint(7, 11)
-    labels = [_rand_lua_name() for _ in range(count)]
-    trace = _rand_lua_name()
+    labels = [name_allocator.allocate("helper") for _ in range(count)]
+    trace = name_allocator.allocate("helper")
     blocks: list[tuple[str, str]] = []
     for i, label in enumerate(labels):
         if i == count - 1:
-            key, out, result_value, mixed = [_rand_lua_name() for _ in range(4)]
+            key, out, result_value, mixed = [name_allocator.allocate("helper") for _ in range(4)]
             body = (
                 f"local {key}=(({pick}~{trace}~{selector}~"
                 f"({state}[{state_key}] or 0)~{vm_state})%#{bank})+1;"
@@ -1140,13 +1218,14 @@ def _compile_occurrence_graph_func(family_seed: int) -> str:
 
 
 def _compile_loop_ir_func(kind: str) -> str:
-    packet, state = [_rand_lua_name() for _ in range(2)]
-    trace = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    packet, state = [name_allocator.allocate("helper") for _ in range(2)]
+    trace = name_allocator.allocate("helper")
     state_key = random.randint(2801, 3300)
     labels: list[str] = []
     bodies: list[str] = []
     if kind == "FORLOOP":
-        labels.extend([_rand_lua_name(), _rand_lua_name()])
+        labels.extend([name_allocator.allocate("helper"), name_allocator.allocate("helper")])
         bodies.extend([
             f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]+"
             f"{packet}[__VM_CF_STEP__];{state}[{state_key}]="
@@ -1156,20 +1235,20 @@ def _compile_loop_ir_func(kind: str) -> str:
             f"(d>0 and v<=l) or (d<=0 and v>=l)",
         ])
     elif kind == "FORPREP":
-        labels.append(_rand_lua_name())
+        labels.append(name_allocator.allocate("helper"))
         bodies.append(
             f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]-"
             f"{packet}[__VM_CF_STEP__]"
         )
     else:
-        labels.append(_rand_lua_name())
+        labels.append(name_allocator.allocate("helper"))
         bodies.append(
             f"{packet}[__VM_CF_TAKE__]=({packet}[__VM_CF_VALUE__]~=nil)"
         )
     for _ in range(random.randint(7, 11)):
         if bodies:
             bodies[-1] += f";goto "
-        next_label = _rand_lua_name()
+        next_label = name_allocator.allocate("helper")
         if bodies:
             bodies[-1] += next_label
         labels.append(next_label)
@@ -1211,12 +1290,13 @@ def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
 
 
 def _compile_semantic_ir_func(kind: str) -> str:
-    x, y, z, state = [_rand_lua_name() for _ in range(4)]
+    name_allocator = NameAllocator(readable=True)
+    x, y, z, state = [name_allocator.allocate("helper") for _ in range(4)]
     direct = _semantic_source(kind, x, y, z)
-    trace = _rand_lua_name()
-    result = _rand_lua_name()
+    trace = name_allocator.allocate("helper")
+    result = name_allocator.allocate("helper")
     state_key = random.randint(3301, 3900)
-    labels = [_rand_lua_name() for _ in range(random.randint(7, 11))]
+    labels = [name_allocator.allocate("helper") for _ in range(random.randint(7, 11))]
     blocks: list[tuple[str, str]] = []
     # The semantic source may read the result again (notably CONCAT), so bind
     # every standalone result reference to the compiler-owned local.
@@ -1257,11 +1337,46 @@ def _apply_handler_graphs(
     graph_sites: set[int] | None = None,
     graph_family_count: int = 8,
     runtime_polymorphism_rate: float = 0.0,
-    runtime_trace: bool = False,
+    semantic_state_threading: bool = False,
+    argument_virtualization: bool = False,
+    upvalue_virtualization: bool = False,
+    table_virtualization: bool = False,
+    branch_virtualization: bool = False,
 ) -> str:
+    name_allocator = NameAllocator(readable=True)
     threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
     vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
-    vm_code = vm_code.replace("__VM_POLY_TRACE__", "true" if runtime_trace else "false")
+    vm_code = vm_code.replace(
+        "__VM_SEMANTIC_STATE__", "true" if semantic_state_threading else "false"
+    )
+    vm_code = vm_code.replace(
+        "__VM_ARGUMENT_VIRTUALIZATION__",
+        "true" if argument_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_UPVALUE_VIRTUALIZATION__",
+        "true" if upvalue_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_TABLE_VIRTUALIZATION__",
+        "true" if table_virtualization else "false",
+    )
+    vm_code = vm_code.replace(
+        "__VM_BRANCH_VIRTUALIZATION__",
+        "true" if branch_virtualization else "false",
+    )
+    for token in ("__VM_ARG_MASK__", "__VM_ARG_KEY__", "__VM_ARG_PAD__",
+                  "__VM_ARG_TAG__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    for token in ("__VM_UV_SEED__", "__VM_UV_NIL__", "__VM_UV_BIAS__",
+                  "__VM_UV_SHARE__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    for token in ("__VM_TABLE_SEED__", "__VM_TABLE_KEY__",
+                  "__VM_TABLE_SHARE__"):
+        vm_code = vm_code.replace(token, str(random.randint(0x10000, 0x7FFFFFFF)))
+    vm_code = vm_code.replace(
+        "__VM_BRANCH_SEED__", str(random.randint(0x10000, 0x7FFFFFFF))
+    )
     slots: dict[str, int] = {}
     used_slots: set[int] = set()
     for kind, (token, _, _) in _ARITH_SPECS.items():
@@ -1272,25 +1387,59 @@ def _apply_handler_graphs(
                 slots[kind] = slot
                 break
 
-    native_entries: list[str] = []
-    graph_entries: list[str] = []
-    kinds = list(_ARITH_SPECS)
-    random.shuffle(kinds)
-    for kind in kinds:
-        _, operator, arity = _ARITH_SPECS[kind]
-        slot = slots[kind]
-        x, y = _rand_lua_name(), _rand_lua_name()
-        if arity == 1:
-            native = f"function({x})return {operator}{x} end"
-        else:
-            native = f"function({x},{y})return {x}{operator}{y} end"
-        native_entries.append(f"[{slot}]={{{native},{native}}}")
-        graph_entries.append(
-            f"[{slot}]={{{','.join(_compile_integer_graph_func(kind) for _ in range(4))}}}"
+    def arithmetic_bank() -> str:
+        native_entries: list[str] = []
+        graph_entries: list[str] = []
+        arithmetic_indices: dict[str, int] = {}
+        kinds = list(_ARITH_SPECS)
+        random.shuffle(kinds)
+        for dense_index, kind in enumerate(kinds, 1):
+            _, operator, arity = _ARITH_SPECS[kind]
+            arithmetic_indices[kind] = dense_index
+            x, y = name_allocator.allocate("helper"), name_allocator.allocate("helper")
+            if arity == 1:
+                native = f"function({x})return {operator}{x} end"
+            else:
+                native = f"function({x},{y})return {x}{operator}{y} end"
+            native_entries.append(f"{{{native},{native}}}")
+            graph_entries.append(
+                "{" + ",".join(
+                    _compile_integer_graph_func(kind) for _ in range(4)
+                ) + "}"
+            )
+
+        arithmetic_share_a: list[str] = []
+        arithmetic_share_b: list[str] = []
+        for kind in kinds:
+            share = random.randint(0x10000, 0x7FFFFFFF)
+            slot = slots[kind]
+            dense_index = arithmetic_indices[kind]
+            arithmetic_share_a.append(f'[{slot}]=tonumber("{share}")')
+            arithmetic_share_b.append(
+                f'[{slot}]=tonumber("{share ^ dense_index}")'
+            )
+        return (
+            "{{" + ",".join(native_entries)
+            + "},{" + ",".join(graph_entries)
+            + "},{" + ",".join(arithmetic_share_a)
+            + "},{" + ",".join(arithmetic_share_b) + "}}"
         )
 
-    bundle = "{{" + ",".join(native_entries) + "},{" + ",".join(graph_entries) + "}}"
-    vm_code = vm_code.replace("__VM_ARITH_BUNDLE__", bundle)
+    arithmetic_route_a: list[str] = []
+    arithmetic_route_b: list[str] = []
+    for slot in slots.values():
+        share = random.randint(0x10000, 0x7FFFFFFF)
+        route = random.getrandbits(1)
+        arithmetic_route_a.append(f'[{slot}]=tonumber("{share}")')
+        arithmetic_route_b.append(f'[{slot}]=tonumber("{share ^ route}")')
+    bundle = (
+        "{{" + arithmetic_bank() + "," + arithmetic_bank()
+        + "},{" + ",".join(arithmetic_route_a)
+        + "},{" + ",".join(arithmetic_route_b) + "}}"
+    )
+    vm_code = vm_code.replace(
+        "__VM_ARITH_BUNDLE__", _exact_graph_source(bundle)
+    )
     affine_pairs = []
     for _ in range(16):
         multiplier = random.getrandbits(64) | 1
@@ -1298,7 +1447,10 @@ def _apply_handler_graphs(
         signed_multiplier = multiplier if multiplier < (1 << 63) else multiplier - (1 << 64)
         signed_inverse = inverse if inverse < (1 << 63) else inverse - (1 << 64)
         affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
-    vm_code = vm_code.replace("__VM_AFFINE_POOL__", "{" + ",".join(affine_pairs) + "}")
+    vm_code = vm_code.replace(
+        "__VM_AFFINE_POOL__",
+        _exact_graph_source("{" + ",".join(affine_pairs) + "}"),
+    )
     register_maps: list[str] = []
     used_maps: set[tuple[int, int, int]] = set()
     while len(register_maps) < 5:
@@ -1311,13 +1463,18 @@ def _apply_handler_graphs(
             continue
         used_maps.add(spec)
         register_maps.append("{" + ",".join(map(str, spec)) + "}")
-    vm_code = vm_code.replace("__VM_REGISTER_MAPS__", "{" + ",".join(register_maps) + "}")
+    vm_code = vm_code.replace(
+        "__VM_REGISTER_MAPS__",
+        _exact_graph_source("{" + ",".join(register_maps) + "}"),
+    )
     for kind, (token, _, _) in _ARITH_SPECS.items():
         vm_code = vm_code.replace(token, str(slots[kind]))
     value_token = "__VM_VALUE_GRAPHS__"
     while value_token in vm_code:
         variants = ",".join(_compile_value_graph_func() for _ in range(2))
-        vm_code = vm_code.replace(value_token, "{" + variants + "}", 1)
+        vm_code = vm_code.replace(
+            value_token, _exact_graph_source("{" + variants + "}"), 1
+        )
 
     call_tags = random.sample(range(0x10000, 0x7FFFFFFF), 4)
     call_replacements = {
@@ -1330,18 +1487,24 @@ def _apply_handler_graphs(
         "{[" + str(call_tags[2]) + "]=" + _compile_call_route_func()
         + ",[" + str(call_tags[3]) + "]=" + _compile_call_route_func() + "}"
     )
-    vm_code = vm_code.replace("__VM_CALL_GRAPHS__", call_graph)
+    vm_code = vm_code.replace(
+        "__VM_CALL_GRAPHS__", _exact_graph_source(call_graph)
+    )
     control_graphs = "{" + ",".join(
         _compile_control_graph_func() for _ in range(2)
     ) + "}"
-    vm_code = vm_code.replace("__VM_CONTROL_GRAPHS__", control_graphs)
+    vm_code = vm_code.replace(
+        "__VM_CONTROL_GRAPHS__", _exact_graph_source(control_graphs)
+    )
     loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
     loop_graphs = (
         "{[" + str(loop_tags[0]) + "]=" + _compile_loop_ir_func("FORLOOP")
         + ",[" + str(loop_tags[1]) + "]=" + _compile_loop_ir_func("FORPREP")
         + ",[" + str(loop_tags[2]) + "]=" + _compile_loop_ir_func("TFORLOOP") + "}"
     )
-    vm_code = vm_code.replace("__VM_LOOP_GRAPHS__", loop_graphs)
+    vm_code = vm_code.replace(
+        "__VM_LOOP_GRAPHS__", _exact_graph_source(loop_graphs)
+    )
     vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
     vm_code = vm_code.replace("__VM_LOOP_FORPREP__", str(loop_tags[1]))
     vm_code = vm_code.replace("__VM_LOOP_TFORLOOP__", str(loop_tags[2]))
@@ -1351,11 +1514,40 @@ def _apply_handler_graphs(
         "MOD", "POW", "DIV", "IDIV", "NOT", "LEN", "CONCAT",
         "NEWTABLE", "SETLIST", "CLOSURE", "VARARG",
     )
-    semantic_graphs = "{" + ",".join(
-        f"[{tag}]={_compile_semantic_ir_func(kind)}"
-        for kind, tag in zip(semantic_kinds, data_tags)
-    ) + "}"
-    vm_code = vm_code.replace("__VM_SEMANTIC_GRAPHS__", semantic_graphs)
+    def semantic_bank() -> str:
+        semantic_order = list(zip(semantic_kinds, data_tags))
+        random.shuffle(semantic_order)
+        semantic_entries: list[str] = []
+        semantic_share_a: list[str] = []
+        semantic_share_b: list[str] = []
+        for dense_index, (kind, tag) in enumerate(semantic_order, 1):
+            share = random.randint(0x10000, 0x7FFFFFFF)
+            semantic_entries.append(_compile_semantic_ir_func(kind))
+            semantic_share_a.append(f'[{tag}]=tonumber("{share}")')
+            semantic_share_b.append(
+                f'[{tag}]=tonumber("{share ^ dense_index}")'
+            )
+        return (
+            "{{" + ",".join(semantic_entries)
+            + "},{" + ",".join(semantic_share_a)
+            + "},{" + ",".join(semantic_share_b) + "}}"
+        )
+
+    semantic_route_a: list[str] = []
+    semantic_route_b: list[str] = []
+    for tag in data_tags:
+        share = random.randint(0x10000, 0x7FFFFFFF)
+        route = random.getrandbits(1)
+        semantic_route_a.append(f'[{tag}]=tonumber("{share}")')
+        semantic_route_b.append(f'[{tag}]=tonumber("{share ^ route}")')
+    semantic_graphs = (
+        "{{" + semantic_bank() + "," + semantic_bank()
+        + "},{" + ",".join(semantic_route_a)
+        + "},{" + ",".join(semantic_route_b) + "}}"
+    )
+    vm_code = vm_code.replace(
+        "__VM_SEMANTIC_GRAPHS__", _exact_graph_source(semantic_graphs)
+    )
     for token, tag in zip((
         "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
         "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
@@ -1376,7 +1568,9 @@ def _apply_handler_graphs(
         _compile_occurrence_graph_func(random.randint(0x10000, 0x7FFFFFFF))
         for _ in range(graph_family_count)
     ) + "}"
-    vm_code = vm_code.replace("__VM_OCCURRENCE_GRAPHS__", occurrence_graphs)
+    vm_code = vm_code.replace(
+        "__VM_OCCURRENCE_GRAPHS__", _exact_graph_source(occurrence_graphs)
+    )
 
     field_tokens = [
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",
@@ -1384,7 +1578,8 @@ def _apply_handler_graphs(
         "__VM_FR_SPLIT__", "__VM_FR_SPLIT_SHARE__", "__VM_FR_SPLIT_EPOCH__", "__VM_FR_SPLIT_TYPE__",
         "__VM_FR_SCRATCH__", "__VM_FR_ACTIVE__",
         "__VM_FR_FLOW_CACHE__", "__VM_FR_SEM_CACHE__", "__VM_FR_LOOP_CACHE__", "__VM_FR_GRAPH_CACHE__", "__VM_FR_REG_SHARES__", "__VM_FR_REG_EPOCHS__", "__VM_FR_REG_TYPES__", "__VM_FR_VALUE_VAULT__", "__VM_FR_VALUE_INDEX__", "__VM_FR_REPR_COUNTERS__", "__VM_FR_REG_SEED__", "__VM_FR_MAP_STATE__", "__VM_FR_LOGICAL_SLOTS__", "__VM_FR_PENDING__", "__VM_FR_LEDGER__", "__VM_FR_PROTO__", "__VM_FR_UPVALS__", "__VM_FR_A__",
-        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_FR_ROUTE_STATE__", "__VM_Q_KIND__",
+        "__VM_FR_C__", "__VM_FR_PARENT__", "__VM_FR_ROUTE_STATE__",
+        "__VM_FR_SEM_STATE__", "__VM_Q_KIND__",
         "__VM_Q_PROTO__", "__VM_Q_UPVALS__", "__VM_Q_ARGS__",
         "__VM_Q_CONT__", "__VM_Q_RESULT__", "__VM_Q_TRACE__",
         "__VM_Q_FLOW__", "__VM_Q_BUDGET__", "__VM_Q_LEDGER__",
@@ -1394,7 +1589,13 @@ def _apply_handler_graphs(
         "__VM_CF_TARGET__", "__VM_CF_A__", "__VM_CF_B__",
         "__VM_CF_C__", "__VM_CF_COUNT__",
         "__VM_CF_VALUE__", "__VM_CF_STEP__", "__VM_CF_LIMIT__",
-        "__VM_CF_TAKE__",
+        "__VM_CF_TAKE__", "__VM_AP_MARK__", "__VM_AP_SEED__",
+        "__VM_AP_COUNT__", "__VM_AP_DATA__",
+        "__VM_UV_LEFT__", "__VM_UV_RIGHT__", "__VM_UV_EPOCH__",
+        "__VM_UV_KIND__",
+        "__VM_TB_LEFT__", "__VM_TB_RIGHT__", "__VM_TB_KEYS__",
+        "__VM_TB_REVERSE__", "__VM_TB_SALT__", "__VM_TB_NEXT__",
+        "__VM_TB_EXPOSED__",
     ]
     field_slots = random.sample(range(3, 241), len(field_tokens))
     for token, slot in zip(field_tokens, field_slots):
@@ -1412,15 +1613,11 @@ _VM_RENAME_KEYS = [
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
 ]
 
-_NAME_CHARS = string.ascii_lowercase + string.digits
-
-def _rand_name(length: int = 6) -> str:
-    return '_' + ''.join(random.choices(_NAME_CHARS, k=length))
-
 def _rename_vm_keys(src: str) -> str:
     """vm.lua 내의 테이블 키 및 reader 메서드명을 랜덤 이름으로 치환."""
     import re
-    rename_map = {k: _rand_name() for k in _VM_RENAME_KEYS}
+    allocator = NameAllocator.for_source(src, seed=random.getrandbits(64))
+    rename_map = {k: allocator.allocate(k) for k in _VM_RENAME_KEYS}
     for orig, new in rename_map.items():
         src = re.sub(rf'\b{re.escape(orig)}\b', new, src)
         src = src.replace(f'["{orig}"]', f'["{new}"]')
@@ -1432,65 +1629,238 @@ def _obfuscate_vm_output(
     script: str,
     pass_names: list[str],
 ) -> tuple[str, list[dict]]:
-    """VM 출력물에 passes 재적용 + pass별 profiling."""
+    """Run structural VM passes, shared literal emitters, then text post-passes."""
     from ..pipeline import Pipeline
     from ..profiling import Profiler
     from ..registry import PASS_REGISTRY
 
-    pipeline = Pipeline()
-    applied_names: list[str] = []
+    before: list[tuple[str, type]] = []
+    after: list[tuple[str, type]] = []
+    emitter_names: list[str] = []
+    identifier_names: list[str] = []
 
     for name in pass_names:
+        if name in EMITTER_PASS_NAMES:
+            emitter_names.append(name)
+            continue
+        if name in {"rename_obf", "localize_globals"}:
+            identifier_names.append(name)
+            continue
+
         info = PASS_REGISTRY.get(name)
         if info is None:
             continue
 
         cls = info["cls"]
-
-        # VM 재귀 적용 금지.
         if cls.__name__ == "VMPass":
             continue
+        (after if issubclass(cls, PostPass) else before).append((name, cls))
 
-        # function_obf는 exec/dispatcher 자체는 제외하고 cold helper에만 적용.
-        if cls.__name__ == "FunctionObfuscationPass":
-            pipeline.add(cls(skip_vm_dispatcher=True))
-        else:
-            pipeline.add(cls())
-
-        applied_names.append(name)
-
-    profiler = Profiler()
-    output = pipeline.run(script, profiler=profiler)
-
+    output = script
     details: list[dict] = []
+    shared_ctx = None
 
-    # 현재 vm_output_passes는 BASE passes + 마지막 POST(minify) 구조라
-    # profiler.records와 적용 순서가 동일하다.
-    for index, record in enumerate(profiler.records):
-        data = record.as_dict()
+    def apply_replacements(source: str, replacements) -> str:
+        if not replacements:
+            return source
+        parts: list[str] = []
+        pos = 0
+        for replacement in sorted(replacements, key=lambda item: item.start):
+            parts.append(source[pos:replacement.start])
+            parts.append(replacement.new_text)
+            pos = replacement.end + 1
+        parts.append(source[pos:])
+        return "".join(parts)
 
-        configured_name = (
-            applied_names[index]
-            if index < len(applied_names)
-            else record.name
-        )
+    def run_legacy(
+        source: str,
+        entries: list[tuple[str, type]],
+    ) -> tuple[str, list[dict]]:
+        if not entries:
+            return source, []
 
+        pipeline = Pipeline(show_header=False)
+        names: list[str] = []
+        for configured_name, cls in entries:
+            if cls.__name__ == "FunctionObfuscationPass":
+                pipeline.add(cls(skip_vm_dispatcher=True))
+            else:
+                pipeline.add(cls())
+            names.append(configured_name)
+
+        profiler = Profiler()
+        transformed = pipeline.run(source, profiler=profiler)
+        records: list[dict] = []
+        for index, record in enumerate(profiler.records):
+            data = record.as_dict()
+            configured_name = names[index] if index < len(names) else record.name
+            records.append({
+                "phase": f"vm_output:{configured_name}",
+                "class": record.name,
+                "elapsed": data["elapsed"],
+                "input_bytes": data["input_bytes"],
+                "output_bytes": data["output_bytes"],
+                "delta_bytes": data["delta_bytes"],
+                **({"parser": data["parser"]} if "parser" in data else {}),
+                **(
+                    {"replacements": data["replacements"]}
+                    if "replacements" in data else {}
+                ),
+            })
+        return transformed, records
+
+    # FunctionObfuscationPass is commonly a no-op for the generated VM. Plan
+    # it on the same syntax tree used by the emitters so a no-op does not pay
+    # for a throwaway full-source parse. If it does transform the source, the
+    # later stages correctly parse the changed text again.
+    if (
+        before
+        and before[0][1].__name__ == "FunctionObfuscationPass"
+        and (identifier_names or emitter_names)
+    ):
+        from ..passes.ts_utils import parse as parse_ts
+
+        parse_start = time.perf_counter()
+        shared_ctx = parse_ts(output)
+        details.append({
+            "phase": "vm_output:source_parse",
+            "class": "VmOutputEmitter",
+            "elapsed": round(time.perf_counter() - parse_start, 6),
+            "input_bytes": len(output.encode("utf-8")),
+            "parser": "treesitter",
+            "parse_count": 1,
+        })
+
+        configured_name, cls = before.pop(0)
+        stage_start = time.perf_counter()
+        function_pass = cls(skip_vm_dispatcher=True)
+        function_replacements = function_pass.run(output, shared_ctx)
+        transformed = apply_replacements(output, function_replacements)
         details.append({
             "phase": f"vm_output:{configured_name}",
-            "class": record.name,
-            "elapsed": data["elapsed"],
-            "input_bytes": data["input_bytes"],
-            "output_bytes": data["output_bytes"],
-            "delta_bytes": data["delta_bytes"],
-            **(
-                {"parser": data["parser"]}
-                if "parser" in data else {}
+            "class": cls.__name__,
+            "elapsed": round(time.perf_counter() - stage_start, 6),
+            "input_bytes": len(output.encode("utf-8")),
+            "output_bytes": len(transformed.encode("utf-8")),
+            "delta_bytes": len(transformed.encode("utf-8")) - len(output.encode("utf-8")),
+            "parser": "treesitter",
+            "replacements": len(function_replacements),
+            "candidate_functions": function_pass.last_candidate_count,
+            "skipped_dispatchers": function_pass.last_skipped_dispatcher_count,
+            "transformed_functions": function_pass.last_transformed_count,
+            "candidate_scan_elapsed": round(
+                function_pass.last_candidate_scan_elapsed, 6,
             ),
-            **(
-                {"replacements": data["replacements"]}
-                if "replacements" in data else {}
+            "transform_elapsed": round(
+                function_pass.last_transform_elapsed, 6,
             ),
+            "backend": "shared_syntax_context",
         })
+        output = transformed
+        if function_replacements:
+            shared_ctx = None
+
+    output, legacy_details = run_legacy(output, before)
+    details.extend(legacy_details)
+    if legacy_details:
+        shared_ctx = None
+
+    if identifier_names or emitter_names:
+        from ..passes.localize_globals import LocalizeGlobalsPass
+        from ..passes.rename_ts import rename_plan_with_ctx_profiled
+        if shared_ctx is None:
+            from ..passes.ts_utils import parse as parse_ts
+
+            parse_start = time.perf_counter()
+            shared_ctx = parse_ts(output)
+            details.append({
+                "phase": "vm_output:source_parse",
+                "class": "VmOutputEmitter",
+                "elapsed": round(time.perf_counter() - parse_start, 6),
+                "input_bytes": len(output.encode("utf-8")),
+                "parser": "treesitter",
+                "parse_count": 1,
+            })
+
+        planned_replacements = []
+        renamed_spans: set[tuple[int, int]] = set()
+        literal_nodes = None
+        rename_detail = None
+        if "rename_obf" in identifier_names:
+            stage_start = time.perf_counter()
+            rename_replacements, literal_nodes, rename_profile = (
+                rename_plan_with_ctx_profiled(shared_ctx)
+            )
+            planned_replacements.extend(rename_replacements)
+            renamed_spans.update(
+                (item.start, item.end) for item in rename_replacements
+            )
+            rename_detail = {
+                "phase": "vm_output:rename_obf",
+                "class": "VmIdentifierEmitter",
+                "elapsed": round(time.perf_counter() - stage_start, 6),
+                "replacements": len(rename_replacements),
+                "backend": "structured_emitter",
+                "collect_elapsed": round(rename_profile["collect_elapsed"], 6),
+                "scope_resolution_elapsed": round(
+                    rename_profile["scope_resolution_elapsed"], 6,
+                ),
+                "replacement_elapsed": round(
+                    rename_profile["replacement_elapsed"], 6,
+                ),
+                "scope_count": rename_profile["scope_count"],
+                "identifier_count": rename_profile["identifier_count"],
+                "literal_count": rename_profile["literal_count"],
+            }
+            details.append(rename_detail)
+
+        if "localize_globals" in identifier_names:
+            stage_start = time.perf_counter()
+            localize_replacements = LocalizeGlobalsPass().replacements_with_ctx(
+                output,
+                shared_ctx,
+                renamed_spans,
+                reserved_names={item.new_text for item in planned_replacements},
+            )
+            planned_replacements.extend(localize_replacements)
+            details.append({
+                "phase": "vm_output:localize_globals",
+                "class": "VmIdentifierEmitter",
+                "elapsed": round(time.perf_counter() - stage_start, 6),
+                "replacements": len(localize_replacements),
+                "backend": "structured_emitter",
+            })
+
+        output, emitter_details = emit_vm_literals(
+            output,
+            emitter_names,
+            ctx=shared_ctx,
+            replacements=planned_replacements,
+            literal_nodes=literal_nodes,
+        )
+        if rename_detail is not None:
+            render_detail = next(
+                (
+                    item for item in emitter_details
+                    if item.get("phase") == "vm_output:literal_render"
+                ),
+                None,
+            )
+            rename_detail["render_elapsed"] = (
+                render_detail.get("elapsed", 0.0) if render_detail else 0.0
+            )
+            rename_detail["render_backend"] = "shared_identifier_literal_render"
+        details.extend(emitter_details)
+
+    if "rename_obf" in identifier_names:
+        from ..passes.rename_ts import rename_script_ts
+        stage_start = time.perf_counter()
+        output = rename_script_ts(output)
+        details.append({"phase": "vm_output:final_names",
+                        "elapsed": round(time.perf_counter() - stage_start, 6)})
+
+    output, post_details = run_legacy(output, after)
+    details.extend(post_details)
 
     return output, details
 
@@ -1500,6 +1870,12 @@ _DEFAULT_VM_OPTIONS = {
     # 디스패치 모양: "ifelseif" | "tailcall"(테이블+꼬리호출) | "bsearch"(op 이진탐색)
     #             | "mixed"(VM마다 랜덤)
     "dispatcher_type": "ifelseif",
+    "dispatcher_target_hiding": False,
+    "semantic_state_threading": False,
+    "argument_virtualization": False,
+    "upvalue_virtualization": False,
+    "table_virtualization": False,
+    "branch_virtualization": False,
     # 블롭 저장 형태: "string"(단일 문자열) | "table"(스크램블 청크 테이블) | "random"
     "blob_form": "random",
     "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
@@ -1522,14 +1898,37 @@ _DEFAULT_VM_OPTIONS = {
 }
 
 
-class VMPass(PostPass):
-    def __init__(self, vm_output_passes: list[str] | None = None, vm_options: dict | None = None):
+class VMBuildPipeline(PostPass):
+    def __init__(
+        self,
+        vm_output_passes: list[str] | None = None,
+        vm_options: dict | None = None,
+        output_prefix: str = "",
+    ):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
+        self.backend = self.vm_options.pop("backend", "karity")
+        self.output_prefix = output_prefix
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
         self.last_profile = []
+        mov_runtime = self.backend == "mov"
+        direct_runtime = self.backend in ("classic", "mov")
+        mov_kits = None
+        relocated_code = [] if mov_runtime else None
+        graph_execution_rate = 0.0 if direct_runtime else float(
+            self.vm_options.get("graph_execution_rate", 0.1)
+        )
+        cross_instruction_rate = 0.0 if direct_runtime else float(
+            self.vm_options.get("cross_instruction_rate", 0.2)
+        )
+        block_variant_rate = 0.0 if direct_runtime else float(
+            self.vm_options.get("block_variant_rate", 0.08)
+        )
+        semantic_diversity_rate = 0.0 if direct_runtime else float(
+            self.vm_options.get("semantic_diversity_rate", 0.35)
+        )
         # 1. luac 컴파일
         _phase_start = time.perf_counter()
         luac_bytes = _compile(script)
@@ -1552,24 +1951,35 @@ class VMPass(PostPass):
         _phase_start = time.perf_counter()
         vm_count = max(1, int(self.vm_options.get("vm_count", 1)))
         vm_assign, n = assign_vm_ids(proto, vm_count)
+        if mov_runtime:
+            from .mov.layout import make_kits
+            mov_kits = make_kits(n)
 
         used_vops: set[int] = set()
         vm_maps: list = []
         used_ops_list: list[set[int]] = []
         for k in range(n):
-            vop_map    = _make_vop_map(used_vops)
-            split_ops  = ALL_SPLIT_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
-            split_map  = _make_split_map(used_vops, split_ops)
-            fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
-            fuse_map   = _make_fuse_map(used_vops, fuse_pairs)
-            defer_ops  = DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
-            defer_map  = _make_defer_map(used_vops, defer_ops)
+            if mov_runtime:
+                # Original words serve only explicit host boundaries. MOV has
+                # its own randomized ISA and performs lowering after relocation.
+                vop_map = {op: [op] for op in range(_LUA_OP_COUNT)}
+                split_map, fuse_map, defer_map = {}, {}, {}
+            else:
+                vop_map = _make_vop_map(used_vops)
+                split_ops = ALL_SPLIT_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+                split_map = _make_split_map(used_vops, split_ops)
+                fuse_pairs = collect_fuseable_pairs_for_vm(proto, vm_assign, k)
+                fuse_map = _make_fuse_map(used_vops, fuse_pairs)
+                defer_ops = set() if direct_runtime else (
+                    DEFER_OPS & collect_used_orig_ops_for_vm(proto, vm_assign, k)
+                )
+                defer_map = _make_defer_map(used_vops, defer_ops)
             vm_maps.append((vop_map, split_map, fuse_map, defer_map))
             used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
             if self.vm_options.get("integrity_constants", False):
                 for pseudo_op in range(47, _LUA_OP_COUNT):
                     used_ops.update(vop_map[pseudo_op])
-            if float(self.vm_options.get("block_variant_rate", 0.08)) > 0.0:
+            if block_variant_rate > 0.0:
                 for pseudo_op in (58, 59):
                     used_ops.update(vop_map[pseudo_op])
             used_ops_list.append(used_ops)
@@ -1579,6 +1989,11 @@ class VMPass(PostPass):
         # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
         _phase_start = time.perf_counter()
         instr_layout = make_instr_layout()
+        constant_tag_names = ("nil", "bool", "int", "float", "str", "iexpr")
+        constant_tag_values = random.sample(range(0x20, 0x100), 6)
+        constant_tags = dict(zip(constant_tag_names, constant_tag_values))
+        constant_kind_values = random.sample(range(0x1000, 0x100000), 6)
+        constant_kinds = dict(zip(constant_tag_names, constant_kind_values))
         graph_sites: set[int] = set()
         graph_family_count = 8
         blob = serialize(
@@ -1591,34 +2006,67 @@ class VMPass(PostPass):
                 "enabled": self.vm_options.get("integrity_constants", False),
                 "rate": self.vm_options.get("integrity_constant_rate", 0.25),
             },
-            graph_execution_rate=float(
-                self.vm_options.get("graph_execution_rate", 0.1)
-            ),
-            cross_instruction_rate=float(
-                self.vm_options.get("cross_instruction_rate", 0.2)
-            ),
+            graph_execution_rate=graph_execution_rate,
+            cross_instruction_rate=cross_instruction_rate,
             graph_family_count=graph_family_count,
-            block_variant_rate=float(
-                self.vm_options.get("block_variant_rate", 0.08)
-            ),
+            block_variant_rate=block_variant_rate,
             block_variant_count=int(
                 self.vm_options.get("block_variant_count", 3)
             ),
             block_variant_max_instructions=int(
                 self.vm_options.get("block_variant_max_instructions", 6)
             ),
+            constant_tags=constant_tags,
+            relocated_code=relocated_code,
         )
         self.last_profile.append({"phase": "serialize_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})
+        if mov_runtime:
+            from .mov.lower import lower
+            from .mov.serializer import serialize as serialize_mov
+            _mov_start = time.perf_counter()
+            proto_ids = [vm_assign[id(p)] for p in iter_protos(proto)]
+            if len(proto_ids) != len(relocated_code):
+                raise RuntimeError("MOV relocated prototype count mismatch")
+            programs = [lower(code, vm_id) for code, vm_id in zip(relocated_code, proto_ids)]
+            storage_stats = {}
+            extension = serialize_mov(programs, mov_kits, storage_stats)
+            blob += extension
+            self.last_profile.append({
+                "phase": "mov_lowering",
+                "elapsed": round(time.perf_counter() - _mov_start, 6),
+                "prototypes": len(programs),
+                "effective_vms": n,
+                "vm_prototypes": [proto_ids.count(i) for i in range(n)],
+                "digit_encoding": "per_vm_permutation",
+                "lowered_sites": sum(p.lowered_sites for p in programs),
+                "micro_instructions": sum(len(p.code) for p in programs),
+                "extension_bytes": len(extension),
+                **storage_stats,
+                "dispatcher": "mov_microcode",
+                "unsupported_options": sorted(unsupported_vm_options(self.backend)),
+            })
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
         _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
-        vm_code = _rename_vm_keys(_load_vm())
-        if n == 1:
+        vm_code = _rename_vm_keys(apply_runtime_trace(
+            _load_vm(self.backend, mov_kits),
+            enabled=self.backend == "karity" and bool(self.vm_options.get("runtime_trace", False)),
+        ))
+        for name in constant_tag_names:
+            vm_code = vm_code.replace(
+                f"__VM_CTAG_{name.upper()}__", str(constant_tags[name])
+            )
+            vm_code = vm_code.replace(
+                f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
+            )
+        if mov_runtime:
+            pass  # MOV uses its own instruction stream and dispatcher.
+        elif n == 1:
             vop_map, split_map, fuse_map, defer_map = vm_maps[0]
             vm_code = apply_vop_to_vm(
                 vm_code, vop_map,
-                float(self.vm_options.get("semantic_diversity_rate", 0.35)),
+                semantic_diversity_rate,
             )
             vm_code = prune_and_inject_handlers(vm_code, used_ops_list[0],
                                                 fake_handlers=fake, mutate=mut)
@@ -1628,26 +2076,46 @@ class VMPass(PostPass):
             # 단일 VM 디스패치 모양: ifelseif(원본 체인) | tailcall | bsearch
             # (mixed면 셋 중 랜덤). 다른 transform 완료 후 최종 단계로만 적용.
             vm_code = apply_dispatch(vm_code, dispatch)
-            vm_code = apply_execution_kit(
-                vm_code,
-                int(self.vm_options.get("helper_variant_count", 3)),
-                float(self.vm_options.get("helper_diversity_rate", 0.35)),
-            )
-            vm_code = wire_exec_router(vm_code, 0)
-            vm_code = build_next_router_kit(vm_code, 1)
+            if not direct_runtime:
+                vm_code = apply_execution_kit(
+                    vm_code,
+                    int(self.vm_options.get("helper_variant_count", 3)),
+                    float(self.vm_options.get("helper_diversity_rate", 0.35)),
+                )
+            if self.vm_options.get("dispatcher_target_hiding", False):
+                vm_code = apply_dispatch_target_hiding(vm_code)
+            if not direct_runtime:
+                vm_code = wire_exec_router(vm_code, 0)
+                vm_code = build_next_router_kit(vm_code, 1)
         else:
             vm_code = build_exec_variants(vm_code, n, vm_maps, used_ops_list,
                                           fake_handlers=fake, mutate=mut,
                                           dispatch=dispatch,
+                                          dispatch_target_hiding=bool(
+                                              self.vm_options.get(
+                                                  "dispatcher_target_hiding", False
+                                              )
+                                          ),
                                           helper_variant_count=int(
                                               self.vm_options.get("helper_variant_count", 3)
                                           ),
                                           helper_diversity_rate=float(
                                               self.vm_options.get("helper_diversity_rate", 0.35)
                                           ),
-                                          semantic_diversity_rate=float(
-                                              self.vm_options.get("semantic_diversity_rate", 0.35)
-                                          ))
+                                          semantic_diversity_rate=semantic_diversity_rate,
+                                          classic_runtime=direct_runtime)
+
+        # Keep disabled profiles free of semantic-threading calls on the hot
+        # fetch/write paths.  The local helpers remain as cold template code,
+        # but no per-instruction function-call overhead survives.
+        if direct_runtime or not self.vm_options.get("semantic_state_threading", False):
+            vm_code = vm_code.replace("; _ss_step(_ip,op,A,B,C)", "")
+            vm_code = vm_code.replace(
+                "\n        _ss_value(slot,encoded,epoch,kind)", ""
+            )
+            vm_code = vm_code.replace(
+                "; _ss_value(i,encoded,epoch,kind)", ""
+            )
 
         # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
         # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.
@@ -1685,37 +2153,86 @@ class VMPass(PostPass):
         )
 
         # VM output passes 자체를 세분화해서 측정.
-        vm_func_src, vm_output_details = _obfuscate_vm_output(
-            vm_func_src,
-            self.vm_output_passes,
-        )
-
-        # handler graph는 vm_output_passes와 별개의 후처리이므로 따로 측정.
+        # Handler graphs are generated before VM output passes so identifiers,
+        # literals, and whitespace in those backends join the same pipeline.
         _graph_start = time.perf_counter()
         _graph_input_bytes = len(vm_func_src.encode("utf-8"))
 
-        vm_func_src = _apply_handler_graphs(
-            vm_func_src,
-            graph_sites,
-            graph_family_count,
-            runtime_polymorphism_rate=float(
-                self.vm_options.get("runtime_polymorphism_rate", 0.2)
-            ),
-            runtime_trace=bool(self.vm_options.get("runtime_trace", False)),
-        )
+        if direct_runtime:
+            vm_func_src = _apply_classic_runtime_tokens(vm_func_src)
+        else:
+            vm_func_src = _apply_handler_graphs(
+                vm_func_src,
+                graph_sites,
+                graph_family_count,
+                runtime_polymorphism_rate=float(
+                    self.vm_options.get("runtime_polymorphism_rate", 0.2)
+                ),
+                semantic_state_threading=bool(
+                    self.vm_options.get("semantic_state_threading", False)
+                ),
+                argument_virtualization=bool(
+                    self.vm_options.get("argument_virtualization", False)
+                ),
+                upvalue_virtualization=bool(
+                    self.vm_options.get("upvalue_virtualization", False)
+                ),
+                table_virtualization=bool(
+                    self.vm_options.get("table_virtualization", False)
+                ),
+                branch_virtualization=bool(
+                    self.vm_options.get("branch_virtualization", False)
+                ),
+            )
 
         _graph_elapsed = time.perf_counter() - _graph_start
         _graph_output_bytes = len(vm_func_src.encode("utf-8"))
-
-        vm_output_details.append({
-            "phase": "vm_output:handler_graphs",
-            "class": "_apply_handler_graphs",
+        graph_detail = {
+            "phase": (
+                f"vm_output:{self.backend}_runtime" if direct_runtime
+                else "vm_output:handler_graphs"
+            ),
+            "class": (
+                "_apply_classic_runtime_tokens" if direct_runtime
+                else "_apply_handler_graphs"
+            ),
             "elapsed": round(_graph_elapsed, 6),
             "input_bytes": _graph_input_bytes,
             "output_bytes": _graph_output_bytes,
             "delta_bytes": _graph_output_bytes - _graph_input_bytes,
-            "graph_sites": len(graph_sites),
-            "graph_families": graph_family_count,
+            "graph_sites": 0 if direct_runtime else len(graph_sites),
+            "graph_families": 0 if direct_runtime else graph_family_count,
+            "backend": (
+                f"{self.backend}_runtime" if direct_runtime
+                else "pre_output_pipeline"
+            ),
+        }
+
+        vm_func_src, vm_output_details = _obfuscate_vm_output(
+            vm_func_src,
+            self.vm_output_passes,
+        )
+        vm_func_src = vm_func_src.replace(
+            "--[[KARITY_EXACT_BEGIN]]", "",
+        ).replace("--[[KARITY_EXACT_END]]", "")
+        vm_output_details.insert(0, graph_detail)
+
+        _line_state_start = time.perf_counter()
+        line_finalizer = None
+        if "minify" in self.vm_output_passes:
+            from ..passes.minify import MinifyPass
+            line_finalizer = MinifyPass().run
+        vm_func_src, line_state, probe_lines = apply_line_state(
+            vm_func_src,
+            self.output_prefix,
+            finalizer=line_finalizer,
+            output_passes=self.vm_output_passes,
+        )
+        self.last_profile.append({
+            "phase": "source_line_state",
+            "elapsed": round(time.perf_counter() - _line_state_start, 6),
+            "probe_count": len(probe_lines),
+            "probe_lines": probe_lines,
         })
 
         self.last_profile.append({
@@ -1728,23 +2245,32 @@ class VMPass(PostPass):
         })
     
         # 재난독화 결과 맨 앞의 헤더 주석을 분리 (dump/key 계산엔 영향 없음)
-        from ..pipeline import Pipeline
-        header = ""
-        if vm_func_src.startswith(Pipeline.HEADER):
-            header = Pipeline.HEADER
-            vm_func_src = vm_func_src[len(header):]
+        header = self.output_prefix
 
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         _phase_start = time.perf_counter()
-        dump_bytes = _dump_function_stripped(vm_func_src, header)
+        wrapper_alphabet = string.ascii_letters
+        wrapper_names = NameAllocator.for_source(vm_func_src, seed=random.getrandbits(64))
+        decoy_name = wrapper_names.allocate("decoy")
+        vmf_name = wrapper_names.allocate("vm")
+        decoy_value = "".join(
+            secrets.choice(wrapper_alphabet)
+            for _ in range(34)
+        )
+        dump_bytes = _dump_function_stripped(
+            vm_func_src, header, decoy_name, decoy_value,
+        )
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+        effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
         if self.vm_options.get("integrity_constants", False):
-            blob = patch_integrity_script_hash(blob, dump_crc)
+            blob = patch_integrity_sources(
+                blob, effective_crc, line_state, constant_tags,
+            )
         self.last_profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         alphabet  = string.ascii_letters + string.digits
         rand_tail = ''.join(secrets.choice(alphabet) for _ in range(16))
-        _KEY = f"karityObfuscator/{format(dump_crc, '08x')}/{rand_tail}"
+        _KEY = f"karityObfuscator/{format(effective_crc, '08x')}/{rand_tail}"
 
         # 6. blob 암호화: nonce(8B) + ciphertext
         _phase_start = time.perf_counter()
@@ -1763,11 +2289,40 @@ class VMPass(PostPass):
         vmf_body = vm_func_src[len("return "):]
 
         raw = (
-            f'{header}'
-            f'local a="obfuscated using karity obfuscator"'
-            f'local _vmf={vmf_body};'
-            f'return (_vmf(1032,413,258,104,953,283,120))'
-            f'({lua_blob},"{rand_tail}",_vmf)\n'
+            f'local {decoy_name}="{decoy_value}"'
+            f'local {vmf_name}={vmf_body};'
+            f'return ({vmf_name}(1032,413,258,104,953,283,120))'
+            f'({lua_blob},"{rand_tail}",{vmf_name})'
         )
 
         return raw
+
+
+class VMPass(PostPass):
+    """Select and run one VM implementation without coupling it to profiles."""
+
+    def __init__(
+        self,
+        vm_output_passes: list[str] | None = None,
+        vm_options: dict | None = None,
+        output_prefix: str = "",
+    ):
+        from .backend import normalize_vm_backend
+
+        options = dict(vm_options or {})
+        self.backend = normalize_vm_backend(options.pop("backend", None))
+        self.vm_options = {"backend": self.backend, **options}
+        self.vm_output_passes = vm_output_passes or []
+        self.output_prefix = output_prefix
+        self.last_profile: list[dict] = []
+
+        self._backend = VMBuildPipeline(
+            vm_output_passes=self.vm_output_passes,
+            vm_options={"backend": self.backend, **options},
+            output_prefix=output_prefix,
+        )
+
+    def run(self, script: str) -> str:
+        output = self._backend.run(script)
+        self.last_profile = getattr(self._backend, "last_profile", [])
+        return output

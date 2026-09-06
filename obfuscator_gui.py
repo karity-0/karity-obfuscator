@@ -9,8 +9,9 @@ from pathlib import Path
 
 import webview
 
-from obfuscator import Pipeline
+from obfuscator import Pipeline, __version__
 from obfuscator.profiling import Profiler
+from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
     CONFIG_PASS_LISTS,
     PASS_DESCRIPTIONS,
@@ -20,6 +21,7 @@ from obfuscator.registry import (
     get_pass_contexts,
     resolve_config_profile,
     validate_config,
+    config_warnings,
     validate_release_config,
 )
 
@@ -31,6 +33,7 @@ PROJECT_CONFIG_PATH = ROOT_DIR / "config.json"
 EXAMPLE_CONFIG_PATH = ROOT_DIR / "config.example.json"
 
 _OPTION_GROUPS = {
+    "backend": "Execution",
     "dispatcher_type": "Execution", "blob_form": "Execution", "vm_count": "Execution",
     "fake_handlers": "Handlers", "mutate_handlers": "Handlers",
     "junk_instructions": "Handlers", "junk_rate": "Handlers",
@@ -45,6 +48,7 @@ _OPTION_GROUPS = {
 }
 
 _OPTION_LABELS = {
+    "backend": "VM runtime",
     "dispatcher_type": "Dispatcher", "blob_form": "Blob representation", "vm_count": "VM count",
     "fake_handlers": "Fake handlers", "mutate_handlers": "Handler mutation",
     "junk_instructions": "Junk instructions", "junk_rate": "Junk rate",
@@ -71,6 +75,20 @@ def _complete_config(config: dict) -> dict:
     for key in CONFIG_PASS_LISTS:
         result.setdefault(key, [])
     result["vm_options"] = {**_default_vm_options(), **result.get("vm_options", {})}
+    result.setdefault("signature", {
+        "mode": "default",
+        "fake": {
+            "sources": ["well_known", "generated"],
+            "generator_patterns": [
+                "Obfuscated using {name} obfuscator!",
+                "Protected with {name} V{version}",
+                "{name} Lua Protection\nBuild V{version}",
+                "Secured by {name}\nVersion: {version}",
+            ],
+            "custom_pattern": "",
+        },
+        "custom": "",
+    })
     return result
 
 
@@ -146,6 +164,8 @@ def _vm_option_meta() -> list[dict]:
             "description": info.get("description", ""),
             "default": default,
             "group": _OPTION_GROUPS.get(name, "Advanced"),
+            "supported_backends": [backend for backend in VM_BACKENDS
+                                   if name not in unsupported_vm_options(backend)],
         }
         if isinstance(default, bool):
             item["kind"] = "boolean"
@@ -196,6 +216,9 @@ class Api:
         self._restore_geometry: tuple[int, int, int, int] | None = None
         self._is_maximized = False
 
+    def get_version(self):
+        return __version__
+
     def get_bootstrap(self):
         root, source = _load_profile_root()
         profiles = _resolved_profiles(root)
@@ -215,7 +238,7 @@ class Api:
         return {
             "state": state, "profiles": profiles, "protection_levels": levels,
             "passes": _pass_meta(), "vm_options": _vm_option_meta(),
-            "profile_source": source,
+            "profile_source": source, "backend_aliases": dict(VM_BACKEND_ALIASES),
         }
 
     def save_config(self, state: dict):
@@ -261,14 +284,13 @@ class Api:
             validate_config(config)
             if payload.get("release_check"):
                 validate_release_config(config)
-            pipeline = build_pipeline_from_config(
-                config, Pipeline, show_header="vm" not in config["passes"])
+            pipeline = build_pipeline_from_config(config, Pipeline)
             profiler = Profiler()
             start = time.perf_counter()
             output = pipeline.run(script, verbose=0, profiler=profiler)
             return {"ok": True, "output": output,
                     "elapsed": round(time.perf_counter() - start, 3),
-                    "profile": profiler.as_dict()}
+                    "profile": profiler.as_dict(), "warnings": config_warnings(config)}
         except Exception:
             return {"ok": False, "error": traceback.format_exc()}
 

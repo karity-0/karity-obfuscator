@@ -62,7 +62,12 @@ local function kae_decrypt(blob, key)
     local RK=_kae_derive(blended,n)
     local pt={}
     for i=1,n do pt[i]=string.byte(blob,8+i)~RK[i] end
-    return string.char(table.unpack(pt))
+    local chunks={}
+    for i=1,#pt,4096 do
+        local last=i+4095; if last>#pt then last=#pt end
+        chunks[#chunks+1]=string.char(table.unpack(pt,i,last))
+    end
+    return table.concat(chunks)
 end
 
 ----------------------------------------
@@ -114,7 +119,12 @@ local function from_base36(s)
         i=i+7
     end
     while #bytes>length do bytes[#bytes]=nil end
-    return string.char(table.unpack(bytes))
+    local chunks={}
+    for j=1,#bytes,4096 do
+        local last=j+4095; if last>#bytes then last=#bytes end
+        chunks[#chunks+1]=string.char(table.unpack(bytes,j,last))
+    end
+    return table.concat(chunks)
 end
 
 local function make_reader(blob)
@@ -149,8 +159,9 @@ local function make_reader(blob)
     return r
 end
 
-local CTAG_NIL=0;local CTAG_BOOL=1;local CTAG_INT=2;local CTAG_FLOAT=3;local CTAG_STR=4;local CTAG_IEXPR=5
-local _IT={seed=0,layout=0,vmc=1,script=0}
+local CTAG_NIL=__VM_CTAG_NIL__;local CTAG_BOOL=__VM_CTAG_BOOL__;local CTAG_INT=__VM_CTAG_INT__;local CTAG_FLOAT=__VM_CTAG_FLOAT__;local CTAG_STR=__VM_CTAG_STR__;local CTAG_IEXPR=__VM_CTAG_IEXPR__
+local CK_NIL=__VM_CK_NIL__;local CK_BOOL=__VM_CK_BOOL__;local CK_INT=__VM_CK_INT__;local CK_FLOAT=__VM_CK_FLOAT__;local CK_STR=__VM_CK_STR__;local CK_IEXPR=__VM_CK_IEXPR__
+local _IT={seed=0,layout=0,vmc=1,script=0,line=0}
 
 -- 런타임 내부 keystream: read_proto가 디코드 직후 code[i]를 메모리에서 한 번 더
 -- 마스킹하고, exec가 fetch 시점에 동일 마스크로 푼다. 따라서 메모리에 상주하는
@@ -175,7 +186,12 @@ local function _kss(s)
         local m=((i*0x6D)~_ksd~(i>>3))&0xFF
         out[i]=(string.byte(s,i)~m)&0xFF
     end
-    return string.char(table.unpack(out))
+    local chunks={}
+    for i=1,#out,4096 do
+        local last=i+4095; if last>#out then last=#out end
+        chunks[#chunks+1]=string.char(table.unpack(out,i,last))
+    end
+    return table.concat(chunks)
 end
 --<<ENDKSTREAM>>
 
@@ -237,18 +253,18 @@ local function read_proto(r, acc_state)
     n=r.u32(); p.constants={}
     for i=1,n do
         local tag=r.u8()
-        if     tag==CTAG_NIL   then p.constants[i]={0}
-        elseif tag==CTAG_BOOL  then p.constants[i]={1,r.u8()~=0}
-        elseif tag==CTAG_INT   then p.constants[i]={2,r.i64()}
-        elseif tag==CTAG_FLOAT then p.constants[i]={3,r.f64()}
-        elseif tag==CTAG_STR   then local _s=r.str(); p.constants[i]={4,_s and _kss(_s) or nil}
+        if     tag==CTAG_NIL   then p.constants[i]={CK_NIL}
+        elseif tag==CTAG_BOOL  then p.constants[i]={CK_BOOL,r.u8()~=0}
+        elseif tag==CTAG_INT   then p.constants[i]={CK_INT,r.i64()}
+        elseif tag==CTAG_FLOAT then p.constants[i]={CK_FLOAT,r.f64()}
+        elseif tag==CTAG_STR   then local _s=r.str() or ""; p.constants[i]={CK_STR,_kss(_s)}
         elseif tag==CTAG_IEXPR then
             local _e=r.i64(); local _pn=r.u8(); local _p={}
             for _j=1,_pn do
                 local _op=r.u8()
                 if _op==1 then _p[_j]={_op,r.u32()} else _p[_j]={_op} end
             end
-            p.constants[i]={5,_e,_p}
+            p.constants[i]={CK_IEXPR,_e,_p}
         else error("bad const tag "..tostring(tag)) end
     end
     n=r.u32(); p.upvalues={}
@@ -274,6 +290,7 @@ local function _ieval(prog,proto)
         elseif op==5 then sp=sp+1; st[sp]=proto.vm_id&0xFFFFFFFF
         elseif op==6 then sp=sp+1; st[sp]=#proto.code&0xFFFFFFFF
         elseif op==10 then sp=sp+1; st[sp]=_IT.script&0xFFFFFFFF
+        elseif op==11 then sp=sp+1; st[sp]=_IT.line&0xFFFFFFFF
         else
             local b=st[sp]; local a=st[sp-1]; sp=sp-1
             if op==7 then st[sp]=(a~b)&0xFFFFFFFF
@@ -287,9 +304,9 @@ end
 
 local function kval(k,proto)
     if not k then return nil end
-    if k[1]==0 then return nil end
-    if k[1]==4 and k[2] then return _kss(k[2]) end
-    if k[1]==5 then
+    if k[1]==CK_NIL then return nil end
+    if k[1]==CK_STR and k[2] then return _kss(k[2]) end
+    if k[1]==CK_IEXPR then
         return k[2]~_ieval(k[3],proto)
     end
     return k[2]
@@ -320,8 +337,15 @@ local _DG=__VM_SEMANTIC_GRAPHS__
 local _RP=__VM_AFFINE_POOL__
 local _MP=__VM_REGISTER_MAPS__
 local _PY=__VM_POLY_THRESHOLD__
-local _PTRACE=__VM_POLY_TRACE__
-local _PN,_PX,_PE,_PBC,_PBH=0,0,0,0,0
+local _SY=__VM_SEMANTIC_STATE__
+local _AY=__VM_ARGUMENT_VIRTUALIZATION__
+local _UY=__VM_UPVALUE_VIRTUALIZATION__
+local _TY=__VM_TABLE_VIRTUALIZATION__
+local _BY=__VM_BRANCH_VIRTUALIZATION__
+local _PN,_PE=0,0
+--<<RUNTIME_TRACE>>
+local _PX,_PBC,_PBH=0,0,0
+--<<ENDRUNTIME_TRACE>>
 
 local function _vid(p)
     return p.vm_id
@@ -332,6 +356,58 @@ local function _pmix(x)
     x=(x~(x>>27))*-7723592293110705685
     return (x~(x>>31))&-1
 end
+
+local _AC=0
+local _AN={}
+local function _aseed(q)
+    return q[__VM_AP_SEED__]~__VM_ARG_MASK__~(_IT.layout or 0)~_ksd
+end
+local function _akey(seed,i)
+    return _pmix(seed~(i*-7046029254386353131)~__VM_ARG_KEY__)
+end
+local function _apack(values,n,flow)
+    if not _AY then values.n=n; return values end
+    _AC=_AC+1
+    local seed=_pmix(_PN~(_IT.seed or 0)~(flow or 0)~n~(_AC<<21))
+    local q={
+        [__VM_AP_MARK__]=__VM_ARG_TAG__,
+        [__VM_AP_SEED__]=seed~__VM_ARG_MASK__~(_IT.layout or 0)~_ksd,
+        [__VM_AP_COUNT__]=n~(seed&0x7FFFFFFF),
+        [__VM_AP_DATA__]={},
+    }
+    local data=q[__VM_AP_DATA__]
+    for i=1,n do
+        local v=values[i]
+        data[_akey(seed,i)]=(v==nil and _AN or v)
+    end
+    local pads=(seed&3)+1
+    for i=1,pads do data[_pmix(seed~i~__VM_ARG_PAD__)]=_pmix(seed+i) end
+    return q
+end
+local function _acount(q)
+    if q and q[__VM_AP_MARK__]==__VM_ARG_TAG__ then
+        local seed=_aseed(q)
+        return q[__VM_AP_COUNT__]~(seed&0x7FFFFFFF)
+    end
+    return q and (q.n or #q) or 0
+end
+local function _aget(q,i)
+    if q and q[__VM_AP_MARK__]==__VM_ARG_TAG__ then
+        if i>_acount(q) then return nil end
+        local v=q[__VM_AP_DATA__][_akey(_aseed(q),i)]
+        if v==nil then error("argument packet mismatch "..i.."/".._acount(q)) end
+        if v==_AN then return nil end
+        return v
+    end
+    return q and q[i] or nil
+end
+
+local _UV=setmetatable({},{__mode="k"})
+local _UO={}
+local _UI=setmetatable({},{__mode="k"})
+local _UC=0
+local _TM=setmetatable({},{__mode="k"})
+local _TC=0
 
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
@@ -374,6 +450,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                      ((_PY~=0 and _PN) or 0))&0x3FF),0}
     local _RL    = _fr and _fr[__VM_FR_LOGICAL_SLOTS__] or {}
     local _PR    = _fr and _fr[__VM_FR_ROUTE_STATE__]
+    local _SS    = _fr and _fr[__VM_FR_SEM_STATE__]
     local _seal_next
     local _pending_finish
     local _gsl, _gq
@@ -388,6 +465,32 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                    (proto.vm_id<<19)~#code),0}
     end
 
+    if not _SS then
+        _SS={_rmix((_zz or 0)~(_IT.seed or 0)~(_IT.layout or 0)~
+                   (_IT.script or 0)~(proto.vm_id<<23)~#code~_ksd~
+                   ((_XF and _XF[2]) or 0)),0}
+    end
+
+    local function _ss_step(ip,op,a,b,c)
+        if not _SY then return end
+        local n=(_SS[2] or 0)+1
+        local x=_rmix((_SS[1] or 0)~(ip<<32)~(op<<24)~(a<<16)~
+                      (b<<7)~c~n~(_S[611] or 0)~(_XF[1] or 0)~
+                      ((_XF and _XF[2]) or 0)~(_PR[1] or 0)~
+                      ((_MG[1] or 0)<<11)~_st~_ksd)
+        _SS[1],_SS[2]=x,n
+        _XF[2]=_rmix((_XF[2] or 0)~x~op~ip)
+    end
+
+    local function _ss_value(slot,encoded,epoch,kind)
+        if not _SY then return end
+        local x=_rmix((_SS[1] or 0)~slot~encoded~epoch~(kind or 0)~
+                      ((_RX[1] or 0)<<1)~((_MG[1] or 0)<<17)~
+                      (_XF[2] or 0))
+        _SS[1]=x
+        _XF[2]=_rmix((_XF[2] or 0)~x~slot~epoch)
+    end
+
     local function _route_step(ip,op,a,b,c)
         if _PY==0 then return end
         local n=(_PR[2] or 0)+1
@@ -395,7 +498,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                  (a<<16)~(b<<7)~c~n~(_MG[1]<<3)~(_RX[1] or 0))&-1
         x=(x~(x<<13)~(x>>7)~(x<<17))&-1
         _PR[1],_PR[2]=x,n
-        if _PTRACE then _PX=_rmix(_PX~x~ip~(op<<11)~n) end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~ip~(op<<11)~n)
+        --<<ENDRUNTIME_TRACE>>
     end
 
     local function _poly_gate(salt)
@@ -411,7 +516,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if _poly_gate(salt)>=_PY then return baseline end
         local x=_poly_word(salt)
         local pick=((x>>16)%count)+1
-        if _PTRACE then _PX=_rmix(_PX~x~pick~salt) end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~pick~salt)
+        --<<ENDRUNTIME_TRACE>>
         return pick
     end
 
@@ -420,18 +527,20 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if _poly_gate(salt)>=_PY then return true end
         local x=_poly_word(salt)
         local lazy=((x>>16)&1)==0
-        if _PTRACE then
-            _PX=_rmix(_PX~x~(lazy and 0x4C415A59 or 0x4E4F5721))
-        end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~(lazy and 0x4C415A59 or 0x4E4F5721))
+        --<<ENDRUNTIME_TRACE>>
         return lazy
     end
 
     local function _poly_route(route,salt)
         local x=_poly_word(salt~#route~0x424C4F43)
         local pick=((x>>16)%#route)+1
-        if _PTRACE then _PX=_rmix(_PX~x~pick~salt~0x524F5554) end
+        --<<RUNTIME_TRACE>>
+        _PX=_rmix(_PX~x~pick~salt~0x524F5554)
         _PBC=_PBC+1
         _PBH=_pmix(_PBH~x~pick~route[pick]~_PBC)
+        --<<ENDRUNTIME_TRACE>>
         _PR[1]=(_PR[1]~x~route[pick])&-1
         return route[pick]
     end
@@ -444,7 +553,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rnext(slot,salt)
         _RX[1]=((_RX[1] or 0)-7046029254386353131+slot+(salt or 0))&-1
-        return _rmix(_RX[1]~_RZ)
+        return _rmix(_RX[1]~_RZ~(_SY and (_SS[1] or 0) or 0))
     end
 
     local function _rpos_at(kind,slot,generation)
@@ -487,6 +596,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _RE[p3]=epoch
         if kind~=nil then _RT[p4]=kind end
         _RL[slot]=true
+        _ss_value(slot,encoded,epoch,kind)
     end
 
     local function _rdecode(encoded,kind)
@@ -582,7 +692,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rmap_tick(salt)
         _MG[2]=(_MG[2] or 0)+1
-        if _MG[2]<=2 or (_MG[2]&1023)==0 then _rmap_rotate(salt) end
+        if _MG[2]<=2 or (_MG[2]&1023)==0 then
+            _rmap_rotate(salt~(_SY and (_SS[1] or 0) or 0))
+        end
     end
 
     local function _split_set(v)
@@ -604,14 +716,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     if not _fr then
         args = args or {}
-        local _argc=args.n or #args
-        for i=1,proto.num_params do rset(i-1,args[i]) end
+        local _argc=_acount(args)
+        for i=1,proto.num_params do rset(i-1,_aget(args,i)) end
         if proto.is_vararg==1 then
-            local _vn=0
+            local _vv={}; local _vn=0
             for i=proto.num_params+1,_argc do
-                _vn=_vn+1; _va[_vn]=args[i]
+                _vn=_vn+1; _vv[_vn]=_aget(args,i)
             end
-            _va.n=_vn
+            _va=_apack(_vv,_vn,(_SS and _SS[1]) or (_XF[2] or 0))
         end
     end
 
@@ -631,7 +743,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     for _ci=1,256 do
         local _c=consts[_ci]
         if not _c then break end
-        if _c[1]==4 then
+        if _c[1]==CK_STR then
             if _c[2] then rset(255+_ci,_kss(_c[2])) end
         elseif _c[1]~=0 then
             rset(255+_ci,kval(_c,proto))
@@ -650,11 +762,136 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function get_upvalue(box)
         if box.get then return box.get() end
-        return box.v
+        if not _UY then return box.v end
+        local q=_UV[box]
+        if not q then
+            local v=box.v
+            _UC=_UC+1
+            local epoch=_rmix(_RZ~_UC~(_SS[1] or 0)~(_XF[2] or 0)~__VM_UV_SEED__)
+            local payload,kind
+            if math.type(v)=="integer" then payload,kind=v,1
+            elseif type(v)=="boolean" then payload,kind=(v and 1 or 0),2
+            elseif v==nil then payload,kind=_rmix(epoch~__VM_UV_NIL__),3
+            else
+                if not (type(v)=="number" and v~=v) then payload=_UI[v] end
+                if payload==nil then
+                    payload=#_UO+1; _UO[payload]=v
+                    if not (type(v)=="number" and v~=v) then _UI[v]=payload end
+                end
+                kind=4
+            end
+            local pair=_RP[(epoch&15)+1]
+            -- Closed boxes cross VM frame boundaries.  Derive their representation
+            -- from the box epoch rather than the current frame's register seed so
+            -- every closure sharing the box can decode the same payload.
+            local bias=_rmix(epoch~__VM_UV_BIAS__)
+            local encoded=pair[1]*payload+bias
+            local share=_rmix(epoch~__VM_UV_SHARE__)
+            q={[__VM_UV_LEFT__]=encoded-share,[__VM_UV_RIGHT__]=share,
+               [__VM_UV_EPOCH__]=epoch,[__VM_UV_KIND__]=kind}
+            _UV[box]=q; box.v=nil
+            _ss_value(-31,encoded,epoch,kind)
+        end
+        local epoch=q[__VM_UV_EPOCH__]
+        local pair=_RP[(epoch&15)+1]
+        local bias=_rmix(epoch~__VM_UV_BIAS__)
+        local payload=((q[__VM_UV_LEFT__]+q[__VM_UV_RIGHT__])-bias)*pair[2]
+        local kind=q[__VM_UV_KIND__]
+        if kind==1 then return payload end
+        if kind==2 then return payload~=0 end
+        if kind==3 then return nil end
+        return _UO[payload]
     end
 
     local function set_upvalue(box,v)
-        if box.set then box.set(v) else box.v=v end
+        if box.set then box.set(v)
+        elseif not _UY then box.v=v
+        else box.v=v; _UV[box]=nil; get_upvalue(box) end
+    end
+
+    local function _tnew()
+        local t={}
+        if not _TY then return t end
+        _TC=_TC+1
+        local salt=_rmix(_TC~(_SS[1] or 0)~(_XF[2] or 0)~
+                         _RZ~__VM_TABLE_SEED__)
+        _TM[t]={[__VM_TB_LEFT__]={},[__VM_TB_RIGHT__]={},
+                [__VM_TB_KEYS__]={},[__VM_TB_REVERSE__]={},
+                [__VM_TB_SALT__]=salt,[__VM_TB_NEXT__]=0,
+                [__VM_TB_EXPOSED__]=false}
+        return t
+    end
+
+    local function _tkey(m,k,create)
+        local id=m[__VM_TB_REVERSE__][k]
+        if id~=nil or not create then return id end
+        id=m[__VM_TB_NEXT__]+1; m[__VM_TB_NEXT__]=id
+        local physical=_rmix(m[__VM_TB_SALT__]~id~__VM_TABLE_KEY__)
+        m[__VM_TB_REVERSE__][k]=physical
+        m[__VM_TB_KEYS__][physical]=k
+        return physical
+    end
+
+    local function _tget(t,k)
+        local m=_TM[t]
+        if not m or m[__VM_TB_EXPOSED__] then return t[k] end
+        local physical=_tkey(m,k,false)
+        if physical==nil then return nil end
+        local left=m[__VM_TB_LEFT__][physical]
+        if left==nil then return nil end
+        local right=m[__VM_TB_RIGHT__][physical]
+        if type(left)=="number" and math.type(left)=="integer" and
+           type(right)=="number" then return left+right end
+        return left
+    end
+
+    local function _tset(t,k,v)
+        local m=_TM[t]
+        if not m or m[__VM_TB_EXPOSED__] then t[k]=v; return end
+        local physical=_tkey(m,k,v~=nil)
+        if physical==nil then return end
+        if v==nil then
+            m[__VM_TB_LEFT__][physical]=nil
+            m[__VM_TB_RIGHT__][physical]=nil
+            return
+        end
+        if math.type(v)=="integer" then
+            local share=_rmix(m[__VM_TB_SALT__]~physical~
+                              (_SS[1] or 0)~__VM_TABLE_SHARE__)
+            m[__VM_TB_LEFT__][physical]=v-share
+            m[__VM_TB_RIGHT__][physical]=share
+        else
+            m[__VM_TB_LEFT__][physical]=v
+            m[__VM_TB_RIGHT__][physical]=false
+        end
+        _ss_value(-47,physical,m[__VM_TB_SALT__],math.type(v)=="integer" and 1 or 4)
+    end
+
+    local function _tlen(t)
+        local m=_TM[t]
+        if not m or m[__VM_TB_EXPOSED__] then return #t end
+        local n=0
+        while _tget(t,n+1)~=nil do n=n+1 end
+        return n
+    end
+
+    local function _texpose(v,seen)
+        local m=type(v)=="table" and _TM[v] or nil
+        if not m or m[__VM_TB_EXPOSED__] then return v end
+        seen=seen or {}
+        if seen[v] then return v end
+        seen[v]=true
+        m[__VM_TB_EXPOSED__]=true
+        for physical,k in pairs(m[__VM_TB_KEYS__]) do
+            local x=m[__VM_TB_LEFT__][physical]
+            if x~=nil then
+                local right=m[__VM_TB_RIGHT__][physical]
+                if type(x)=="number" and math.type(x)=="integer" and
+                   type(right)=="number" then x=x+right end
+                v[_texpose(k,seen)]=_texpose(x,seen)
+            end
+        end
+        return v
     end
 
     local function make_closure(sub)
@@ -669,9 +906,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         local fn=function(...)
+            local _av=table.pack(...)
             local w=_CG[__VM_ROUTE_ENTER__](_NX,{
                 [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=sub,
-                [__VM_Q_UPVALS__]=new_uv,[__VM_Q_ARGS__]=table.pack(...)})
+                [__VM_Q_UPVALS__]=new_uv,
+                [__VM_Q_ARGS__]=_apack(_av,_av.n,(_SS and _SS[1]) or 0)})
+            for i=1,w[__VM_RES_COUNT__] do
+                w[__VM_RES_VALUES__][i]=_texpose(w[__VM_RES_VALUES__][i])
+            end
             return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
         end
         _VF[fn]={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
@@ -714,6 +956,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_MAP_STATE__]=_MG,
                 [__VM_FR_LOGICAL_SLOTS__]=_RL,
                 [__VM_FR_ROUTE_STATE__]=_PR,
+                [__VM_FR_SEM_STATE__]=_SS,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
                 [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
@@ -819,10 +1062,35 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return q[field]~key
     end
 
+    local function _branch(v,expected,av,tag)
+        if not _BY then return v==expected end
+        local k=(_S[611] or 0)~(_SS[1] or 0)~(_XF[2] or 0)~
+                (pc<<17)~tag~__VM_BRANCH_SEED__
+        local bit=(v==expected) and 1 or 0
+        local q={[__VM_CF_KEY__]=k,[__VM_CF_TAKE__]=bit~k,
+                 [__VM_CF_FIELDS__]={__VM_CF_TAKE__}}
+        q=_flow(q,av,tag)
+        return _cf(q,__VM_CF_TAKE__,tag)~=0
+    end
+
     --<<SEM>>
     local function _sem(tag,x,y,z)
+        if _TY then
+            if tag==__VM_OP_NEWTABLE__ then return _tnew() end
+            if tag==__VM_DATA_GET__ then return _tget(x,y) end
+            if tag==__VM_DATA_SET__ then _tset(x,y,z); return nil end
+            if tag==__VM_OP_LEN__ and type(x)=="table" and _TM[x] then
+                return _tlen(x)
+            end
+            if tag==__VM_OP_SETLIST__ and _TM[x] then
+                for i=1,z[2] do _tset(x,z[1]+i,y[i]) end
+                return nil
+            end
+        end
         local site=((pc-1)<<32)~tag
-        local bank=_DG[tag]
+        local route=((_DG[2][tag]~_DG[3][tag]~pc~(_S[611] or 0))&1)+1
+        local semantic=_DG[1][route]
+        local bank=semantic[1][semantic[2][tag]~semantic[3][tag]]
         local hit=_SC[site] or 0
         _SC[site]=hit+1
         local base=hit==0 and 1 or 2
@@ -871,16 +1139,19 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _arith2(a,b,av,slot,desc)
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
+        local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
+        local arithmetic=_AR[1][route]
+        local semantic_index=arithmetic[3][slot]~arithmetic[4][slot]
         local graph,hit=_graph_for(desc)
         if graph then
             local pick=_poly_pick(4,slot~pc~0x41524932,base)
-            local bank=_AR[_int2(a,b)][slot]
+            local bank=arithmetic[_int2(a,b)][semantic_index]
             local out=graph(bank,pick,a,b,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
         local pick=_poly_pick(2,slot~pc~0x41524932,base)
-        local out=_AR[1][slot][pick](a,b)
+        local out=arithmetic[1][semantic_index][pick](a,b)
         if graph==false then
             out=_couple_direct(out,desc,hit)
             return out
@@ -890,16 +1161,19 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _arith1(a,av,slot,desc)
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
+        local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
+        local arithmetic=_AR[1][route]
+        local semantic_index=arithmetic[3][slot]~arithmetic[4][slot]
         local graph,hit=_graph_for(desc)
         if graph then
             local pick=_poly_pick(4,slot~pc~0x41524931,base)
-            local bank=_AR[_int1(a)][slot]
+            local bank=arithmetic[_int1(a)][semantic_index]
             local out=graph(bank,pick,a,a,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
         local pick=_poly_pick(2,slot~pc~0x41524931,base)
-        local out=_AR[1][slot][pick](a)
+        local out=arithmetic[1][semantic_index][pick](a)
         if graph==false then
             out=_couple_direct(out,desc,hit)
             return out
@@ -1040,9 +1314,81 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
     end
 
+    local function _call_args(a,b,...)
+        local values={};local count=0
+        local last=(b==0 and top) or (b>1 and (a+b-1)) or a
+        for i=a+1,last do count=count+1;values[count]=rget(i) end
+        values.n=count
+        return values
+    end
+
+    local function _return_values(a,b,...)
+        if b==1 then return {},0 end
+        local result={};local count=(b==0 and (top-a+1)) or (b-1)
+        for i=1,count do result[i]=rget(a+i-1) end
+        return result,count
+    end
+
+    local function _native_call(fn,args,a,c,av,tail,tag,...)
+        local count=args.n
+        if not tail then _touch(av,tag) end
+        for i=1,count do args[i]=_texpose(args[i]) end
+        local result=table.pack(fn(table.unpack(args,1,count)))
+        if tail then return _leave(result,result.n,av,tag) end
+        if c==0 then
+            for i=1,result.n do rset(a+i-1,result[i]) end
+            top=a+result.n-1
+        elseif c>1 then
+            for i=1,c-1 do rset(a+i-1,result[i]) end
+        end
+    end
+
+    local function _jump(sbx,av,tag,...)
+        local key=(_S[611] or 0)~pc~sbx
+        local packet={[__VM_CF_KEY__]=key,
+                      [__VM_CF_TARGET__]=(pc+sbx)~key,
+                      [__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
+        packet=_flow(packet,av,tag)
+        return _cf(packet,__VM_CF_TARGET__,tag)
+    end
+
+    local function _loop_commit(q,a,tag,...)
+        local idx=q[__VM_CF_VALUE__]
+        rset(a,idx)
+        if q[__VM_CF_TAKE__] then
+            pc=_cf(q,__VM_CF_TARGET__,tag);rset(a+3,idx)
+        end
+    end
+
+    local function _forloop(a,sbx,av,tag,...)
+        local step=rget(a+2)
+        local limit=rget(a+1)
+        local key=(_S[611] or 0)~pc~a
+        local packet={[__VM_CF_KEY__]=key,
+                      [__VM_CF_TARGET__]=(pc+sbx)~key,
+                      [__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
+        packet[__VM_CF_VALUE__]=rget(a)
+        packet[__VM_CF_STEP__]=step
+        packet[__VM_CF_LIMIT__]=limit
+        packet=_flow(packet,av,tag)
+        local site=((pc-1)<<8)~__VM_LOOP_FORLOOP__
+        if not _LC[site] then
+            _LC[site]=true
+            packet=_LG[__VM_LOOP_FORLOOP__](packet,_S)
+        else
+            packet[__VM_CF_VALUE__]=packet[__VM_CF_VALUE__]+packet[__VM_CF_STEP__]
+            local value=packet[__VM_CF_VALUE__]
+            local delta=packet[__VM_CF_STEP__]
+            local bound=packet[__VM_CF_LIMIT__]
+            packet[__VM_CF_TAKE__]=
+                (delta>0 and value<=bound) or (delta<=0 and value>=bound)
+        end
+        _loop_commit(packet,a,tag)
+    end
+
     for i in setmetatable({},{__call=function(t)return t end}) do
         --<<FETCH>>
-        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C)
+        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
         --<<ENDFETCH>>
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,rget(B),nil,nil),_av,0))
@@ -1080,99 +1426,55 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==29 then
             local t={}; for i=B,C do t[#t+1]=rget(i) end
             rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
-        elseif op==30 then
-            local k=(_S[611] or 0)~pc~sBx
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
-            q=_flow(q,_av,30); pc=_cf(q,__VM_CF_TARGET__,30)
-        elseif op==31 then if _carry(_sem(__VM_CMP_EQ__,rget(B),rget(C),nil),_av,31)~=(A~=0) then pc=pc+1 end
-        elseif op==32 then if _carry(_sem(__VM_CMP_LT__,rget(B),rget(C),nil),_av,32)~=(A~=0) then pc=pc+1 end
-        elseif op==33 then if _carry(_sem(__VM_CMP_LE__,rget(B),rget(C),nil),_av,33)~=(A~=0) then pc=pc+1 end
-        elseif op==34 then if _carry(_sem(__VM_CMP_TRUTH__,rget(A),nil,nil),_av,34)~=(C~=0) then pc=pc+1 end
+        elseif op==30 then pc=_jump(sBx,_av,30)
+        elseif op==31 then if not _branch(_carry(_sem(__VM_CMP_EQ__,rget(B),rget(C),nil),_av,31),A~=0,_av,31) then pc=pc+1 end
+        elseif op==32 then if not _branch(_carry(_sem(__VM_CMP_LT__,rget(B),rget(C),nil),_av,32),A~=0,_av,32) then pc=pc+1 end
+        elseif op==33 then if not _branch(_carry(_sem(__VM_CMP_LE__,rget(B),rget(C),nil),_av,33),A~=0,_av,33) then pc=pc+1 end
+        elseif op==34 then if not _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(A),nil,nil),_av,34),C~=0,_av,34) then pc=pc+1 end
         elseif op==35 then
-            if _carry(_sem(__VM_CMP_TRUTH__,rget(B),nil,nil),_av,35)==(C~=0) then rset(A,rget(B)) else pc=pc+1 end
+            if _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(B),nil,nil),_av,35),C~=0,_av,35) then rset(A,rget(B)) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A)
+            local ca=_call_args(A,B)
+            local ca_n=ca.n
             local _vm=_VF[fn]
             if _vm then
                 ca.n=ca_n
                 local q={[__VM_Q_KIND__]=__VM_CALL_ENTER__,
                          [__VM_Q_PROTO__]=_vm[__VM_META_PROTO__],
                          [__VM_Q_UPVALS__]=_vm[__VM_META_UPVALS__],
-                         [__VM_Q_ARGS__]=ca,
+                         [__VM_Q_ARGS__]=_apack(ca,ca_n,(_SS and _SS[1]) or 0),
                          [__VM_Q_FLOW__]=_S[611] or 0,[__VM_Q_LEDGER__]=_XF}
                 q=_carry(q,_av,136)
                 q[__VM_Q_CONT__]=_frame(A,C,_kk)
                 return _CG[__VM_ROUTE_ENTER__](_NX,q)
             else
-                _touch(_av,36)
-                local res=table.pack(fn(table.unpack(ca,1,ca_n)))
-                if C==0 then
-                    for i=1,res.n do rset(A+i-1,res[i]) end; top=A+res.n-1
-                elseif C>1 then
-                    for i=1,C-1 do rset(A+i-1,res[i]) end
-                end
+                _native_call(fn,ca,A,C,_av,false,36)
             end
 
         elseif op==37 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A)
+            local ca=_call_args(A,B)
+            local ca_n=ca.n
             local _vm=_VF[fn]
             if _vm then
                 ca.n=ca_n
                 local q={[__VM_Q_KIND__]=__VM_CALL_ENTER__,
                          [__VM_Q_PROTO__]=_vm[__VM_META_PROTO__],
                          [__VM_Q_UPVALS__]=_vm[__VM_META_UPVALS__],
-                         [__VM_Q_ARGS__]=ca,[__VM_Q_CONT__]=_kk,
+                         [__VM_Q_ARGS__]=_apack(ca,ca_n,(_SS and _SS[1]) or 0),[__VM_Q_CONT__]=_kk,
                          [__VM_Q_FLOW__]=_S[611] or 0,[__VM_Q_LEDGER__]=_XF}
                 return _CG[__VM_ROUTE_ENTER__](_NX,
                     _carry(q,_av,137))
             end
-            local res=table.pack(fn(table.unpack(ca,1,ca_n)))
-            return _leave(res,res.n,_av,37)
+            return _native_call(fn,ca,A,C,_av,true,37)
 
         elseif op==38 then
-            if B==1 then return _leave({},0,_av,38)
-            elseif B==0 then
-                local r={}; local n=0
-                for i=A,top do n=n+1; r[n]=rget(i) end
-                return _leave(r,n,_av,38)
-            else
-                local n=B-1; local r={}
-                for i=A,A+n-1 do r[i-A+1]=rget(i) end
-                return _leave(r,n,_av,38)
-            end
+            local r,n=_return_values(A,B)
+            return _leave(r,n,_av,38)
 
-        elseif op==39 then
-            local step=rget(A+2); local limit=rget(A+1)
-            local k=(_S[611] or 0)~pc~A
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
-            q[__VM_CF_VALUE__]=rget(A); q[__VM_CF_STEP__]=step; q[__VM_CF_LIMIT__]=limit
-            q=_flow(q,_av,39)
-            local _ls=((pc-1)<<8)~__VM_LOOP_FORLOOP__
-            if not _LC[_ls] then
-                _LC[_ls]=true; q=_LG[__VM_LOOP_FORLOOP__](q,_S)
-            else
-                q[__VM_CF_VALUE__]=q[__VM_CF_VALUE__]+q[__VM_CF_STEP__]
-                local _lv=q[__VM_CF_VALUE__]
-                local _ld=q[__VM_CF_STEP__]
-                local _ll=q[__VM_CF_LIMIT__]
-                q[__VM_CF_TAKE__]=(_ld>0 and _lv<=_ll) or (_ld<=0 and _lv>=_ll)
-            end
-            local idx=q[__VM_CF_VALUE__]
-            rset(A,idx)
-            if q[__VM_CF_TAKE__] then
-                pc=_cf(q,__VM_CF_TARGET__,39); rset(A+3,idx)
-            end
+        elseif op==39 then _forloop(A,sBx,_av,39)
 
         elseif op==40 then
             local k=(_S[611] or 0)~pc~A
@@ -1187,7 +1489,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=A~k,[__VM_CF_C__]=C~k,[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_C__}}
             q=_flow(q,_av,41); local qa=_cf(q,__VM_CF_A__,41)
             local qc=_cf(q,__VM_CF_C__,41)
-            local res=table.pack(rget(qa)(rget(qa+1),rget(qa+2)))
+            local _it=rget(qa); local _is=_texpose(rget(qa+1)); local _ic=_texpose(rget(qa+2))
+            local res=table.pack(_it(_is,_ic))
             for i=1,qc do rset(qa+2+i,res[i]) end
 
         elseif op==42 then
@@ -1217,13 +1520,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             rset(A,_carry(fn,_av,44))
 
         elseif op==45 then
-            local _vn=B==0 and (_va.n or #_va) or B-1
+            local _vn=B==0 and _acount(_va) or B-1
             local k=(_S[611] or 0)~pc~A~B~_vn
             local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=A~k,[__VM_CF_B__]=B~k,[__VM_CF_COUNT__]=_vn~k,[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_B__,__VM_CF_COUNT__}}
             q=_flow(q,_av,45); local qa=_cf(q,__VM_CF_A__,45)
             local qb=_cf(q,__VM_CF_B__,45)
             local qn=_cf(q,__VM_CF_COUNT__,45)
-            _sem(__VM_OP_VARARG__,rset,qa,{qn,_va})
+            if _AY then
+                for i=1,qn do rset(qa+i-1,_aget(_va,i)) end
+            else
+                _sem(__VM_OP_VARARG__,rset,qa,{qn,_va})
+            end
             if qb==0 then
                 top=qa+qn-1
             end
@@ -1268,7 +1575,8 @@ end
 
 local function run(blob,rand_tail,self_func)
     local dump=string.dump(self_func,true)
-    local crc=_crc32(dump)
+    local dump_crc=_crc32(dump)
+    local crc=(dump_crc~(_LS or 0))&0xFFFFFFFF
     -- anti-tamper: 변조 신호를 키에 섞는다. clean이면 _t==0 -> crc 불변
     -- -> 팩 타임 키와 일치. 변조 시 _t~=0 -> 키 교란 -> garbage(분기 없음, 패치 불가).
     -- 아래 블록(마커 사이)은 파이프라인이 per-run 랜덤화한다(검사 항목/순서/가중치/
@@ -1296,7 +1604,8 @@ local function run(blob,rand_tail,self_func)
     crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
     --<<ENDTAMPER>>
     _IT.script=crc
-    _ksd=crc
+    _IT.line=_LS or 0
+    _ksd=dump_crc
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob)
@@ -1310,32 +1619,37 @@ local function run(blob,rand_tail,self_func)
     local _clock=math.floor(((os.clock and os.clock()) or 0)*1000000000)
     local _wall=(os.time and os.time()) or 0
     _PN=_pmix(_aa~_af~_clock~(_wall<<21)~crc~seed~_PE)
+    --<<RUNTIME_TRACE>>
     _PX=_pmix(_PN~seed~crc)
     _PBC=0; _PBH=_pmix(_PN~0x424C4F434B)
+    --<<ENDRUNTIME_TRACE>>
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
     local _fn=r.u32()
     for _=1,_fn do
         local _ft=r.u8()
-        if     _ft==1 then r.u8()
-        elseif _ft==2 then r.i64()
-        elseif _ft==3 then r.f64()
-        elseif _ft==4 then r.str()
-        elseif _ft==5 then
+        if     _ft==CTAG_NIL then
+        elseif _ft==CTAG_BOOL then r.u8()
+        elseif _ft==CTAG_INT then r.i64()
+        elseif _ft==CTAG_FLOAT then r.f64()
+        elseif _ft==CTAG_STR then r.str()
+        elseif _ft==CTAG_IEXPR then
             r.i64(); local _pn=r.u8()
             for _j=1,_pn do local _op=r.u8(); if _op==1 then r.u32() end end
         end
     end
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
+    --<<RUN_ENTRY>>
     _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]={n=0}})
-    if _PTRACE then
-        io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
-                        " blocks:",_PBC," blocktrace:",
-                        string.format("%016x",_PBH),"\n")
-    end
+         [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]=_apack({},0,crc)})
+    --<<ENDRUN_ENTRY>>
+    --<<RUNTIME_TRACE>>
+    io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
+                    " blocks:",_PBC," blocktrace:",
+                    string.format("%016x",_PBH),"\n")
+    --<<ENDRUNTIME_TRACE>>
 end
 
 if arg and arg[0] and arg[0]:match("vm") then

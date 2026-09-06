@@ -1070,6 +1070,24 @@ class NumberObfuscationPass(BasePass):
                 + expr
             )
 
+    def obfuscate_token(self, token: str) -> str:
+        """Obfuscate one Lua numeric token without requiring a syntax tree.
+
+        VM output emitters use this entry point so generated literal nodes can
+        be layered without rendering and reparsing the complete VM source.
+        """
+        try:
+            if self._is_float_literal(token):
+                expr = self._make_float_expr(token)
+            else:
+                value = _parse_int_token(token)
+                expr = self._fmt_int_expr(value, random.randint(1, 3))
+
+            self._validate_expr(expr)
+            return expr
+        except (ValueError, OverflowError):
+            return token
+
     def run(
         self,
         script: str,
@@ -1089,42 +1107,7 @@ class NumberObfuscationPass(BasePass):
 
             token = tree.text(node)
 
-            try:
-                if self._is_float_literal(
-                    token
-                ):
-                    expr = (
-                        self._make_float_expr(
-                            token
-                        )
-                    )
-
-                else:
-                    value = (
-                        _parse_int_token(
-                            token
-                        )
-                    )
-
-                    expr = (
-                        self._fmt_int_expr(
-                            value,
-                            random.randint(
-                                1,
-                                3,
-                            ),
-                        )
-                    )
-
-                self._validate_expr(
-                    expr
-                )
-
-            except (
-                ValueError,
-                OverflowError,
-            ):
-                continue
+            expr = self.obfuscate_token(token)
 
             replacements.append(
                 Replacement(

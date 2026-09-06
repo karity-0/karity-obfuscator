@@ -13,6 +13,10 @@ document.addEventListener('DOMContentLoaded', () => {
     backendLabel: $('backend-label'), tooltip: $('tooltip'), saveStatus: $('config-status'),
     run: $('run-btn'), open: $('open-file-btn'), clear: $('clear-input-btn'),
     copy: $('copy-output-btn'), saveOutput: $('save-output-btn'), saveConfig: $('save-config-btn'),
+    signatureModeLabel: $('signature-mode-label'), signatureFake: $('signature-fake-options'),
+    signatureGeneratorOptions: $('signature-generator-options'), signatureCustomOptions: $('signature-custom-options'),
+    signatureWellKnown: $('signature-well-known'), signatureGenerator: $('signature-generator'),
+    signatureCustomPattern: $('signature-custom-pattern'), signatureCustom: $('signature-custom'),
   };
 
   let api = null;
@@ -40,6 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderPresetChoices();
       bindStaticEvents();
       renderAll();
+      const version = await api.get_version();
+      document.getElementById("app-version").textContent = `v${version}`;
       ui.backendLabel.textContent = 'backend ready';
       document.querySelector('.live-dot')?.classList.add('ready');
       setStatus('Ready', 'idle', 'Choose a preset or tune individual controls.');
@@ -54,6 +60,17 @@ document.addEventListener('DOMContentLoaded', () => {
     state.config.vm_output_passes ||= [];
     state.config.packer_output_passes ||= [];
     state.config.vm_options ||= {};
+    state.config.signature ||= {
+      mode: 'default',
+      fake: { sources: ['well_known', 'generated'], generator_patterns: [
+        'Obfuscated using {name} obfuscator!', 'Protected with {name} V{version}',
+        '{name} Lua Protection\nBuild V{version}', 'Secured by {name}\nVersion: {version}'
+      ], custom_pattern: '' },
+      custom: ''
+    };
+    state.config.signature.fake ||= { sources: ['well_known', 'generated'], generator_patterns: [] };
+    state.config.signature.fake.sources ||= [];
+    state.config.signature.fake.generator_patterns ||= [];
     state.preset ||= 'custom';
     state.protection_level ||= 'custom';
   }
@@ -89,7 +106,9 @@ document.addEventListener('DOMContentLoaded', () => {
         updateOverview();
         return;
       }
+      const backend = state.config.vm_options.backend ?? 'karity';
       state.config.vm_options = clone(bootstrap.protection_levels[name]);
+      state.config.vm_options.backend = backend;
       state.protection_level = name;
       state.preset = 'custom';
       renderAll();
@@ -106,6 +125,29 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.saveOutput.addEventListener('click', saveOutput);
     ui.run.addEventListener('click', runObfuscation);
 
+    document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
+      input.addEventListener('change', event => {
+        state.config.signature.mode = event.target.value;
+        markPresetCustom(false);
+        renderSignature();
+      });
+    });
+    ui.signatureWellKnown.addEventListener('change', event => setSignatureSource('well_known', event.target.checked));
+    ui.signatureGenerator.addEventListener('change', event => setSignatureSource('generated', event.target.checked));
+    document.querySelectorAll('.signature-pattern').forEach(input => {
+      input.addEventListener('change', event => setGeneratorPattern(event.target.value, event.target.checked));
+    });
+    ui.signatureCustomPattern.addEventListener('input', event => {
+      event.target.value = stripCommentTokens(event.target.value);
+      state.config.signature.fake.custom_pattern = event.target.value;
+      markPresetCustom(false);
+    });
+    ui.signatureCustom.addEventListener('input', event => {
+      event.target.value = stripCommentTokens(event.target.value);
+      state.config.signature.custom = event.target.value;
+      markPresetCustom(false);
+    });
+
     document.addEventListener('mouseover', showTooltip);
     document.addEventListener('mousemove', moveTooltip);
     document.addEventListener('mouseout', hideTooltip);
@@ -119,7 +161,53 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.source.textContent = bootstrap.profile_source ? `profiles: ${bootstrap.profile_source}` : 'profiles unavailable';
     renderPasses();
     renderVmOptions();
+    renderSignature();
     updateOverview();
+  }
+
+  function stripCommentTokens(value) {
+    return String(value || '').replace(/--(?:\[(=*)\[)?|\](=*)\]/g, '').trimStart();
+  }
+
+  function renderSignature() {
+    const signature = state.config.signature;
+    const displayMode = signature.mode === 'generated' ? 'fake' : signature.mode;
+    document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
+      input.checked = input.value === displayMode;
+    });
+    const sources = signature.mode === 'generated' ? ['generated'] : signature.fake.sources;
+    ui.signatureWellKnown.checked = sources.includes('well_known');
+    ui.signatureGenerator.checked = sources.includes('generated');
+    ui.signatureFake.classList.toggle('hidden', displayMode !== 'fake');
+    ui.signatureGeneratorOptions.classList.toggle('hidden', displayMode !== 'fake' || !ui.signatureGenerator.checked);
+    ui.signatureCustomOptions.classList.toggle('hidden', displayMode !== 'custom');
+    document.querySelectorAll('.signature-pattern').forEach(input => {
+      input.checked = signature.fake.generator_patterns.includes(input.value);
+    });
+    ui.signatureCustomPattern.value = signature.fake.custom_pattern || signature.custom_pattern || '';
+    ui.signatureCustom.value = signature.custom || '';
+    ui.signatureModeLabel.textContent = signature.mode;
+  }
+
+  function setSignatureSource(source, enabled) {
+    if (state.config.signature.mode === 'generated') state.config.signature.mode = 'fake';
+    const sources = state.config.signature.fake.sources;
+    const index = sources.indexOf(source);
+    if (enabled && index < 0) sources.push(source);
+    if (!enabled && index >= 0) sources.splice(index, 1);
+    if (!sources.length) {
+      sources.push(source === 'well_known' ? 'generated' : 'well_known');
+    }
+    markPresetCustom(false);
+    renderSignature();
+  }
+
+  function setGeneratorPattern(pattern, enabled) {
+    const patterns = state.config.signature.fake.generator_patterns;
+    const index = patterns.indexOf(pattern);
+    if (enabled && index < 0) patterns.push(pattern);
+    if (!enabled && index >= 0) patterns.splice(index, 1);
+    markPresetCustom(false);
   }
 
   function renderPasses() {
@@ -212,12 +300,20 @@ document.addEventListener('DOMContentLoaded', () => {
       range.addEventListener('change', () => renderAll());
       host.appendChild(wrap);
     }
+    const selected = state.config.vm_options.backend ?? 'karity';
+    const backend = bootstrap.backend_aliases[selected] ?? selected;
+    if (!option.supported_backends.includes(backend)) {
+      row.classList.add('unsupported-option');
+      row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
+      row.querySelector('.option-description').textContent = `Not used by ${backend}; saved value retained`;
+      row.dataset.hint = `This option does not apply to ${backend}. Switch backends to edit it.`;
+    }
     return row;
   }
 
   function setVmOption(name, value, rerender = true) {
     state.config.vm_options[name] = value;
-    markPresetCustom(true);
+    markPresetCustom(name !== 'backend');
     if (rerender) renderAll();
     else updateOverview();
   }
@@ -230,8 +326,13 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function inferLevel() {
-    const options = JSON.stringify(state.config.vm_options);
-    return Object.keys(bootstrap.protection_levels).find(name => JSON.stringify(bootstrap.protection_levels[name]) === options) || 'custom';
+    const comparable = options => {
+      const result = clone(options);
+      delete result.backend;
+      return JSON.stringify(result);
+    };
+    const options = comparable(state.config.vm_options);
+    return Object.keys(bootstrap.protection_levels).find(name => comparable(bootstrap.protection_levels[name]) === options) || 'custom';
   }
 
   function updateOverview() {
@@ -241,7 +342,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.activeLevel.textContent = titleCase(state.protection_level);
     ui.metricPasses.textContent = allPasses.length;
     ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
-    ui.metricRuntime.textContent = formatPercent(state.config.vm_options.runtime_polymorphism_rate);
+    ui.metricRuntime.textContent = ['classic', 'mov'].includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
+      ? 'N/A' : formatPercent(state.config.vm_options.runtime_polymorphism_rate);
     renderPipeline();
   }
 
@@ -329,6 +431,10 @@ document.addEventListener('DOMContentLoaded', () => {
       ui.output.value = result.output;
       ui.outputStats.textContent = `${result.output.length.toLocaleString()} chars · ${result.elapsed}s`;
       const passCount = result.profile?.passes?.length || 0;
+      if (result.warnings?.length) {
+        setStatus('Protection complete (options ignored)', 'success', result.warnings.join('\n'));
+        return;
+      }
       setStatus('Protection complete', 'success', `${passCount} passes · ${result.elapsed}s total`);
     } catch (error) {
       setStatus('Build failed', 'error', String(error));

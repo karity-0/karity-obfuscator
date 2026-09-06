@@ -13,4 +13,8 @@ from .passes import (
     RemoveCommentPass,
     MinifyPass,
     AntiDebugPass,
+    OutputSignaturePass,
+    SignatureOptions,
 )
+
+__version__ = "1.0.0"
