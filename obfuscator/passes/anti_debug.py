@@ -1,12 +1,13 @@
 import random
+from ..names import NameAllocator
 from .base import PrePass
 
 
-def _junk_loop_body() -> str:
+def _junk_loop_body(allocator=None) -> str:
     """무한루프 안에서 의미없는 변수 swap/연산을 반복하는 본문."""
     a, b = random.randint(1, 9999), random.randint(1, 9999)
-    var1 = f"_ad{random.randint(1000,9999)}"
-    var2 = f"_ad{random.randint(1000,9999)}"
+    allocator = allocator or NameAllocator()
+    var1, var2 = allocator.allocate(), allocator.allocate()
     return (
         f"local {var1},{var2}={a},{b} "
         f"while true do "
@@ -33,8 +34,9 @@ class AntiDebugPass(PrePass):
     """
 
     def run(self, script: str) -> str:
-        cond_var = f"_ad{random.randint(1000,9999)}"
-        junk = _junk_loop_body()
+        allocator = NameAllocator.for_source(script)
+        cond_var = allocator.allocate("debug_ok")
+        junk = _junk_loop_body(allocator)
 
         return (
             f'local {cond_var}=(type(debug)~="table") '

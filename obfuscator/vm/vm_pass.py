@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ..names import NameAllocator
 from .backend import unsupported_vm_options
 import subprocess
 import platform
@@ -368,10 +369,6 @@ def _hex64() -> str:
     return f"0x{random.getrandbits(64):016X}"
 
 
-def _rand_lua_name(length: int = 7) -> str:
-    return "_" + "".join(random.choices(_NAME_CHARS, k=length))
-
-
 def _exact_graph_source(source: str) -> str:
     return "--[[KARITY_EXACT_BEGIN]]" + source + "--[[KARITY_EXACT_END]]"
 
@@ -463,8 +460,9 @@ def _make_integer_expr(kind: str, x: str = "x", y: str = "y") -> str:
 
 
 def _make_integer_graph_func(op_kind: str) -> str:
-    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
-    ctx = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    a, b, state, slots, regs, active, boxes = [name_allocator.allocate("helper") for _ in range(7)]
+    ctx = name_allocator.allocate("helper")
     state_key = random.randint(700, 1200)
     carry_key = 611
 
@@ -512,7 +510,7 @@ def _make_integer_graph_func(op_kind: str) -> str:
     if len(topo) != len(nodes):
         raise RuntimeError(f"generated {op_kind} graph contains a cycle")
 
-    names = {node_id: _rand_lua_name() for node_id in nodes}
+    names = {node_id: name_allocator.allocate("helper") for node_id in nodes}
     lines = ["(function()local " + ",".join(names.values()) + ";"]
 
     for node_id in topo:
@@ -545,9 +543,9 @@ def _make_integer_graph_func(op_kind: str) -> str:
             body = f"local r=({deps[0]})+({deps[1]})+({deps[2]});{ctx}.t=({ctx}.t~r~(r<<1));"
         lines.append(f"{name}=function({ctx}){cached}{body}{ctx}.k[{node_id + 1}]=r;return r end;")
 
-    out = _rand_lua_name()
-    slot = _rand_lua_name()
-    index = _rand_lua_name()
+    out = name_allocator.allocate("helper")
+    slot = name_allocator.allocate("helper")
+    index = name_allocator.allocate("helper")
     lines.extend([
         f"return function({a},{b},{state},{slots},{regs},{active},{boxes})",
         f"{state}={state} or {{}};{active}={active} or {{}};local {ctx}={{a={a},b={b},s={state},k={{}},t=(({a}~{b})~{_hex64()}~({state}[{carry_key}] or 0))}};",
@@ -561,8 +559,9 @@ def _make_integer_graph_func(op_kind: str) -> str:
 
 
 def _make_value_graph_func() -> str:
-    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
-    ctx = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    value, state, slots, regs, active, boxes, tag = [name_allocator.allocate("helper") for _ in range(7)]
+    ctx = name_allocator.allocate("helper")
     nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
     zeros: list[int] = []
     next_id = 1
@@ -597,7 +596,7 @@ def _make_value_graph_func() -> str:
             if indegree[child] == 0:
                 ready.append(child)
 
-    names = {i: _rand_lua_name() for i in nodes}
+    names = {i: name_allocator.allocate("helper") for i in nodes}
     state_key = random.randint(1201, 1700)
     lines = ["(function()local " + ",".join(names.values()) + ";"]
     for i in topo:
@@ -618,7 +617,7 @@ def _make_value_graph_func() -> str:
             f"{name}=function({ctx}){cached}{body}{ctx}.n[{i + 1}]=true;"
             f"{ctx}.k[{i + 1}]=r;return r end;"
         )
-    out, index, slot = _rand_lua_name(), _rand_lua_name(), _rand_lua_name()
+    out, index, slot = name_allocator.allocate("helper"), name_allocator.allocate("helper"), name_allocator.allocate("helper")
     lines.extend([
         f"return function({value},{state},{slots},{regs},{active},{boxes},{tag})",
         f"local {ctx}={{v={value},s={state},k={{}},n={{}},g={tag},t=(({state}[611] or 0)~{tag}~{_hex64()})}};",
@@ -633,9 +632,10 @@ def _make_value_graph_func() -> str:
 
 def _make_call_route_func() -> str:
     """Build an acyclic tail-call router whose only observable result is next(q)."""
-    terminal, query, ctx = [_rand_lua_name() for _ in range(3)]
+    name_allocator = NameAllocator(readable=True)
+    terminal, query, ctx = [name_allocator.allocate("helper") for _ in range(3)]
     count = random.randint(14, 22)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     order = list(range(count))
     random.shuffle(order)
     lines = ["(function()local " + ",".join(names) + ";"]
@@ -691,9 +691,10 @@ def _make_call_route_func() -> str:
 
 
 def _make_control_graph_func() -> str:
-    packet, state, ctx = [_rand_lua_name() for _ in range(3)]
+    name_allocator = NameAllocator(readable=True)
+    packet, state, ctx = [name_allocator.allocate("helper") for _ in range(3)]
     count = random.randint(12, 18)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     order = list(range(count))
     random.shuffle(order)
     state_key = random.randint(1701, 2200)
@@ -735,11 +736,12 @@ def _make_control_graph_func() -> str:
 
 
 def _make_occurrence_graph_func(site: int) -> str:
+    name_allocator = NameAllocator(readable=True)
     bank, pick, a, b, state, slots, regs, active, boxes, ctx = [
-        _rand_lua_name() for _ in range(10)
+        name_allocator.allocate("helper") for _ in range(10)
     ]
     count = random.randint(7, 11)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     order = list(range(count))
     random.shuffle(order)
     state_key = random.randint(2201, 2800)
@@ -774,11 +776,12 @@ def _make_occurrence_graph_func(site: int) -> str:
 
 
 def _make_loop_ir_func(kind: str) -> str:
-    packet, state, ctx = [_rand_lua_name() for _ in range(3)]
+    name_allocator = NameAllocator(readable=True)
+    packet, state, ctx = [name_allocator.allocate("helper") for _ in range(3)]
     semantic_count = 2 if kind == "FORLOOP" else 1
     wrapper_count = random.randint(7, 11)
     total = semantic_count + wrapper_count + 1
-    names = [_rand_lua_name() for _ in range(total)]
+    names = [name_allocator.allocate("helper") for _ in range(total)]
     state_key = random.randint(2801, 3300)
     definitions: list[str] = []
 
@@ -830,9 +833,10 @@ def _make_loop_ir_func(kind: str) -> str:
 
 
 def _make_semantic_ir_func(kind: str) -> str:
-    x, y, z, state, ctx = [_rand_lua_name() for _ in range(5)]
+    name_allocator = NameAllocator(readable=True)
+    x, y, z, state, ctx = [name_allocator.allocate("helper") for _ in range(5)]
     count = random.randint(7, 11)
-    names = [_rand_lua_name() for _ in range(count)]
+    names = [name_allocator.allocate("helper") for _ in range(count)]
     state_key = random.randint(3301, 3900)
     if kind == "GET":
         semantic = f"local r={ctx}.x[{ctx}.y];"
@@ -936,8 +940,9 @@ def _random_topological_order(nodes: dict[int, dict], label: str) -> list[int]:
 
 def _compile_integer_graph_func(op_kind: str) -> str:
     """Compile an arithmetic DAG into one specialized straight-line handler."""
-    a, b, state, slots, regs, active, boxes = [_rand_lua_name() for _ in range(7)]
-    trace = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    a, b, state, slots, regs, active, boxes = [name_allocator.allocate("helper") for _ in range(7)]
+    trace = name_allocator.allocate("helper")
     state_key = random.randint(700, 1200)
     nodes: dict[int, dict] = {}
 
@@ -960,7 +965,7 @@ def _compile_integer_graph_func(op_kind: str) -> str:
     sink = add_node("sink", [value, *random.sample(zeros, 2)])
 
     order = _random_topological_order(nodes, op_kind)
-    names = {node_id: _rand_lua_name() for node_id in nodes}
+    names = {node_id: name_allocator.allocate("helper") for node_id in nodes}
     lines = [
         f"function({a},{b},{state},{slots},{regs},{active},{boxes})",
         f"{state}={state} or {{}};{active}={active} or {{}};",
@@ -1005,7 +1010,7 @@ def _compile_integer_graph_func(op_kind: str) -> str:
                 f"{trace}=({trace}~{name}~({name}<<1));"
             )
 
-    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    index, slot, mixed = [name_allocator.allocate("helper") for _ in range(3)]
     out = names[sink]
     lines.extend([
         f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
@@ -1019,7 +1024,8 @@ def _compile_integer_graph_func(op_kind: str) -> str:
 
 def _compile_value_graph_func() -> str:
     """Compile a value diffusion DAG without runtime closures or memo tables."""
-    value, state, slots, regs, active, boxes, tag = [_rand_lua_name() for _ in range(7)]
+    name_allocator = NameAllocator(readable=True)
+    value, state, slots, regs, active, boxes, tag = [name_allocator.allocate("helper") for _ in range(7)]
     nodes: dict[int, dict] = {0: {"kind": "source", "deps": ()}}
     zeros: list[int] = []
     for _ in range(random.randint(7, 11)):
@@ -1038,8 +1044,8 @@ def _compile_value_graph_func() -> str:
     sink = len(nodes)
     nodes[sink] = {"kind": "sink", "deps": (current, *random.sample(zeros, 2))}
 
-    names = {node_id: _rand_lua_name() for node_id in nodes}
-    trace = _rand_lua_name()
+    names = {node_id: name_allocator.allocate("helper") for node_id in nodes}
+    trace = name_allocator.allocate("helper")
     state_key = random.randint(1201, 1700)
     lines = [
         f"function({value},{state},{slots},{regs},{active},{boxes},{tag})",
@@ -1064,7 +1070,7 @@ def _compile_value_graph_func() -> str:
                 f"{name}={deps[0]};{trace}=({trace}~({zero_expr})~({tag}&0xFF));"
             )
     out = names[sink]
-    index, slot, mixed = [_rand_lua_name() for _ in range(3)]
+    index, slot, mixed = [name_allocator.allocate("helper") for _ in range(3)]
     lines.extend([
         f"{state}[{state_key}]=(({state}[{state_key}] or 0)~{trace}~{tag});",
         f"if {slots} then for {index}=1,#{slots} do local {slot}={slots}[{index}];",
@@ -1086,9 +1092,10 @@ def _compiled_label_blocks(entry: str, blocks: list[tuple[str, str]]) -> str:
 
 
 def _compile_call_route_func() -> str:
-    terminal, query = [_rand_lua_name() for _ in range(2)]
+    name_allocator = NameAllocator(readable=True)
+    terminal, query = [name_allocator.allocate("helper") for _ in range(2)]
     count = random.randint(14, 22)
-    labels = [_rand_lua_name() for _ in range(count)]
+    labels = [name_allocator.allocate("helper") for _ in range(count)]
     blocks: list[tuple[str, str]] = []
     for i, label in enumerate(labels):
         if i == count - 1:
@@ -1132,9 +1139,10 @@ def _compile_call_route_func() -> str:
 
 
 def _compile_control_graph_func() -> str:
-    packet, state = [_rand_lua_name() for _ in range(2)]
+    name_allocator = NameAllocator(readable=True)
+    packet, state = [name_allocator.allocate("helper") for _ in range(2)]
     count = random.randint(12, 18)
-    labels = [_rand_lua_name() for _ in range(count)]
+    labels = [name_allocator.allocate("helper") for _ in range(count)]
     state_key = random.randint(1701, 2200)
     blocks: list[tuple[str, str]] = []
     for i, label in enumerate(labels):
@@ -1164,17 +1172,18 @@ def _compile_control_graph_func() -> str:
 
 
 def _compile_occurrence_graph_func(family_seed: int) -> str:
+    name_allocator = NameAllocator(readable=True)
     bank, pick, a, b, state, slots, regs, active, boxes, ledger, vm_state = [
-        _rand_lua_name() for _ in range(11)
+        name_allocator.allocate("helper") for _ in range(11)
     ]
-    site, selector, state_key, policy = [_rand_lua_name() for _ in range(4)]
+    site, selector, state_key, policy = [name_allocator.allocate("helper") for _ in range(4)]
     count = random.randint(7, 11)
-    labels = [_rand_lua_name() for _ in range(count)]
-    trace = _rand_lua_name()
+    labels = [name_allocator.allocate("helper") for _ in range(count)]
+    trace = name_allocator.allocate("helper")
     blocks: list[tuple[str, str]] = []
     for i, label in enumerate(labels):
         if i == count - 1:
-            key, out, result_value, mixed = [_rand_lua_name() for _ in range(4)]
+            key, out, result_value, mixed = [name_allocator.allocate("helper") for _ in range(4)]
             body = (
                 f"local {key}=(({pick}~{trace}~{selector}~"
                 f"({state}[{state_key}] or 0)~{vm_state})%#{bank})+1;"
@@ -1209,13 +1218,14 @@ def _compile_occurrence_graph_func(family_seed: int) -> str:
 
 
 def _compile_loop_ir_func(kind: str) -> str:
-    packet, state = [_rand_lua_name() for _ in range(2)]
-    trace = _rand_lua_name()
+    name_allocator = NameAllocator(readable=True)
+    packet, state = [name_allocator.allocate("helper") for _ in range(2)]
+    trace = name_allocator.allocate("helper")
     state_key = random.randint(2801, 3300)
     labels: list[str] = []
     bodies: list[str] = []
     if kind == "FORLOOP":
-        labels.extend([_rand_lua_name(), _rand_lua_name()])
+        labels.extend([name_allocator.allocate("helper"), name_allocator.allocate("helper")])
         bodies.extend([
             f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]+"
             f"{packet}[__VM_CF_STEP__];{state}[{state_key}]="
@@ -1225,20 +1235,20 @@ def _compile_loop_ir_func(kind: str) -> str:
             f"(d>0 and v<=l) or (d<=0 and v>=l)",
         ])
     elif kind == "FORPREP":
-        labels.append(_rand_lua_name())
+        labels.append(name_allocator.allocate("helper"))
         bodies.append(
             f"{packet}[__VM_CF_VALUE__]={packet}[__VM_CF_VALUE__]-"
             f"{packet}[__VM_CF_STEP__]"
         )
     else:
-        labels.append(_rand_lua_name())
+        labels.append(name_allocator.allocate("helper"))
         bodies.append(
             f"{packet}[__VM_CF_TAKE__]=({packet}[__VM_CF_VALUE__]~=nil)"
         )
     for _ in range(random.randint(7, 11)):
         if bodies:
             bodies[-1] += f";goto "
-        next_label = _rand_lua_name()
+        next_label = name_allocator.allocate("helper")
         if bodies:
             bodies[-1] += next_label
         labels.append(next_label)
@@ -1280,12 +1290,13 @@ def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
 
 
 def _compile_semantic_ir_func(kind: str) -> str:
-    x, y, z, state = [_rand_lua_name() for _ in range(4)]
+    name_allocator = NameAllocator(readable=True)
+    x, y, z, state = [name_allocator.allocate("helper") for _ in range(4)]
     direct = _semantic_source(kind, x, y, z)
-    trace = _rand_lua_name()
-    result = _rand_lua_name()
+    trace = name_allocator.allocate("helper")
+    result = name_allocator.allocate("helper")
     state_key = random.randint(3301, 3900)
-    labels = [_rand_lua_name() for _ in range(random.randint(7, 11))]
+    labels = [name_allocator.allocate("helper") for _ in range(random.randint(7, 11))]
     blocks: list[tuple[str, str]] = []
     # The semantic source may read the result again (notably CONCAT), so bind
     # every standalone result reference to the compiler-owned local.
@@ -1332,6 +1343,7 @@ def _apply_handler_graphs(
     table_virtualization: bool = False,
     branch_virtualization: bool = False,
 ) -> str:
+    name_allocator = NameAllocator(readable=True)
     threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
     vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
     vm_code = vm_code.replace(
@@ -1384,7 +1396,7 @@ def _apply_handler_graphs(
         for dense_index, kind in enumerate(kinds, 1):
             _, operator, arity = _ARITH_SPECS[kind]
             arithmetic_indices[kind] = dense_index
-            x, y = _rand_lua_name(), _rand_lua_name()
+            x, y = name_allocator.allocate("helper"), name_allocator.allocate("helper")
             if arity == 1:
                 native = f"function({x})return {operator}{x} end"
             else:
@@ -1601,15 +1613,11 @@ _VM_RENAME_KEYS = [
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
 ]
 
-_NAME_CHARS = string.ascii_lowercase + string.digits
-
-def _rand_name(length: int = 6) -> str:
-    return '_' + ''.join(random.choices(_NAME_CHARS, k=length))
-
 def _rename_vm_keys(src: str) -> str:
     """vm.lua 내의 테이블 키 및 reader 메서드명을 랜덤 이름으로 치환."""
     import re
-    rename_map = {k: _rand_name() for k in _VM_RENAME_KEYS}
+    allocator = NameAllocator.for_source(src, seed=random.getrandbits(64))
+    rename_map = {k: allocator.allocate(k) for k in _VM_RENAME_KEYS}
     for orig, new in rename_map.items():
         src = re.sub(rf'\b{re.escape(orig)}\b', new, src)
         src = src.replace(f'["{orig}"]', f'["{new}"]')
@@ -1812,6 +1820,7 @@ def _obfuscate_vm_output(
                 output,
                 shared_ctx,
                 renamed_spans,
+                reserved_names={item.new_text for item in planned_replacements},
             )
             planned_replacements.extend(localize_replacements)
             details.append({
@@ -1842,6 +1851,13 @@ def _obfuscate_vm_output(
             )
             rename_detail["render_backend"] = "shared_identifier_literal_render"
         details.extend(emitter_details)
+
+    if "rename_obf" in identifier_names:
+        from ..passes.rename_ts import rename_script_ts
+        stage_start = time.perf_counter()
+        output = rename_script_ts(output)
+        details.append({"phase": "vm_output:final_names",
+                        "elapsed": round(time.perf_counter() - stage_start, 6)})
 
     output, post_details = run_legacy(output, after)
     details.extend(post_details)
@@ -2234,10 +2250,9 @@ class VMBuildPipeline(PostPass):
         # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
         _phase_start = time.perf_counter()
         wrapper_alphabet = string.ascii_letters
-        decoy_name = secrets.choice(wrapper_alphabet)
-        vmf_name = "_" + "".join(
-            secrets.choice(wrapper_alphabet) for _ in range(3)
-        )
+        wrapper_names = NameAllocator.for_source(vm_func_src, seed=random.getrandbits(64))
+        decoy_name = wrapper_names.allocate("decoy")
+        vmf_name = wrapper_names.allocate("vm")
         decoy_value = "".join(
             secrets.choice(wrapper_alphabet)
             for _ in range(34)

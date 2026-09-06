@@ -39,6 +39,7 @@ class Pipeline:
     HEADER = DEFAULT_SIGNATURE
 
     def __init__(self, show_header: bool = True):
+        self.rename_options = None
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
@@ -59,6 +60,15 @@ class Pipeline:
         return self
 
     def run(self, script: str, verbose: int = 0, profiler: Profiler | None = None) -> str:
+        from .names import RENAME_OPTIONS
+        token = RENAME_OPTIONS.set(self.rename_options) if self.rename_options is not None else None
+        try:
+            return self._run(script, verbose, profiler)
+        finally:
+            if token is not None:
+                RENAME_OPTIONS.reset(token)
+
+    def _run(self, script: str, verbose: int = 0, profiler: Profiler | None = None) -> str:
         for pre in self._pre_passes:
             before = _size(script)
             start = time.perf_counter()
@@ -70,7 +80,15 @@ class Pipeline:
             if verbose >= Verbosity.NORMAL:
                 info_message("PRE", pre, _format_record(record))
 
-        for pass_ in self._passes:
+        # Renaming is an emission step: collect every generated base-pass helper
+        # before choosing final names. Localization resolves lexical bindings on
+        # its own, so it does not need an earlier rename to distinguish globals.
+        from .passes.rename_obfuscation import RenameObfuscationPass
+        renamers = [p for p in self._passes if isinstance(p, RenameObfuscationPass)]
+        base_passes = [p for p in self._passes if not isinstance(p, RenameObfuscationPass)]
+        if renamers:
+            base_passes.append(renamers[-1])
+        for pass_ in base_passes:
             before = _size(script)
             start = time.perf_counter()
             parser = getattr(pass_, "parser", "luaparser")

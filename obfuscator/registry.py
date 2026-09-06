@@ -82,6 +82,7 @@ PASS_REGISTRY: dict[str, dict] = {
         "cls": RenameObfuscationPass,
         "label": "Rename Obfuscation",
         "group": "base",
+        "docs": "passes/renameObfuscation.md",
     },
     "localize_globals": {
         "cls": LocalizeGlobalsPass,
@@ -135,7 +136,7 @@ PASS_DESCRIPTIONS = {
     "number_obf": "Obfuscates number literals.",
     "table_obf": "Obfuscates table variables.",
     "function_obf": "Recursively transforms SOURCE function boundaries with safe helper inlining, split helper closures, control-flow flattening, and junk blocks.",
-    "rename_obf": "Renames local identifiers.",
+    "rename_obf": "Assigns frequency-ranked short names to lexical locals and generated helpers.",
     "localize_globals": "Converts global variable accesses to local aliases where possible.",
     "minify": "Reduces script size by removing unnecessary whitespace.",
     "vm": "Virtualizes Lua bytecode using the custom Lua 5.3 VM.",
@@ -377,6 +378,7 @@ def validate_config(config: dict) -> None:
 
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
+    _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_signature(config.get("signature", {}))
@@ -459,6 +461,17 @@ def _reject_nested_output_passes(config: dict, key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
         raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
+
+
+def _validate_rename_options(options):
+    if not isinstance(options, dict):
+        raise ConfigError("'rename_obf_options' must be an object")
+    if set(options) - {"seed", "readable"}:
+        raise ConfigError("unknown rename_obf_options")
+    if "readable" in options and not isinstance(options["readable"], bool):
+        raise ConfigError("rename_obf_options.readable must be a boolean")
+    if "seed" in options and (not isinstance(options["seed"], int) or isinstance(options["seed"], bool)):
+        raise ConfigError("rename_obf_options.seed must be an integer")
 
 
 def _validate_function_obf_options(options: dict) -> None:
@@ -654,6 +667,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     pipeline                = pipeline_cls(show_header=False)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 
+    pipeline.rename_options = config.get("rename_obf_options", {})
     function_obf_options    = config.get("function_obf_options", {})
     vm_options              = config.get("vm_options", {})
     has_packer              = "pack" in config.get("passes", [])

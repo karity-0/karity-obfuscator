@@ -1,312 +1,152 @@
-"""
-tree-sitter 기반 scope-aware identifier rename.
+"""Resolve lexical bindings before assigning frequency-ranked short Lua names.
 
-이 구현은 기존 rename_ts.py의 의미를 최대한 유지하면서 대형 VM 출력에서의
-성능 병목을 제거한다.
-
-기존 구현의 주요 병목:
-- 선언마다 모든 scope를 선형 탐색해서 closest scope 계산
-- 모든 scope 쌍을 비교해 child interval subtraction 수행 (O(S^2))
-- scope segment마다 regex tokenizer로 소스를 다시 스캔
-- segment마다 거대한 문자열을 반복 재조립
-
-새 구현:
-1. tree-sitter AST를 한 번 순회하며 함수 scope tree와 local 선언을 수집
-2. 부모 scope map을 상속해 rename map 생성
-3. AST를 다시 한 번 순회하며 실제 identifier node만 rename 대상으로 판정
-4. replacement들을 원본 source 기준으로 한 번만 join
-
-중요:
-- 기존 구현처럼 scope 경계는 "함수" 단위로 유지한다.
-  do/if/for block별 lexical scope로 세분화하지 않는다.
-- local function 이름은 부모 함수 scope에 속한다.
-- 함수 파라미터 / local 변수 / numeric-for / generic-for 변수를 rename한다.
-- table field key, dot field, method name 등 변수 참조가 아닌 identifier는 건드리지 않는다.
+The iterative traversal handles declaration visibility, block scopes, closures,
+loop variables and implicit method self without Python recursion limits.
 """
 from __future__ import annotations
 
 import time
 from dataclasses import dataclass, field
-
+from ..names import NameAllocator, RENAME_OPTIONS
 from .base import Replacement
 from .ts_utils import parse as _ts_parse
 
 
-_FUNC_TYPES = {"function_declaration", "function_definition"}
-
-
 @dataclass
-class _Scope:
-    sid: int
-    node: object | None
-    parent: int | None
-    names: set[str] = field(default_factory=set)
-    rename_map: dict[str, str] = field(default_factory=dict)
+class Binding:
+    original: str
+    nodes: list = field(default_factory=list)
 
 
-def _first_child(node, typ: str):
-    for child in node.children:
-        if child.type == typ:
-            return child
-    return None
+class Scope:
+    def __init__(self, parent=None):
+        self.parent = parent
+        self.names = {}
 
-
-def _identifier_children(node):
-    for child in node.children:
-        if child.type == "identifier":
-            yield child
-
-
-def _is_local_function_declaration(node) -> bool:
-    return (
-        node.type == "function_declaration"
-        and bool(node.children)
-        and node.children[0].type == "local"
-    )
-
-
-def _function_decl_name_node(node):
-    """
-    local function foo(...) / function foo(...) 에서 단순 identifier 이름을 반환.
-    function a.b:c(...) 같은 복합 이름은 None을 반환해 field/method 이름을
-    변수 rename 대상으로 오인하지 않는다.
-    """
-    if node.type != "function_declaration":
+    def resolve(self, name):
+        scope = self
+        while scope is not None:
+            if name in scope.names:
+                return scope.names[name]
+            scope = scope.parent
         return None
 
-    # function_declaration의 직접 identifier child만 허용한다.
-    # parameters 내부 identifier는 직접 child가 아니므로 섞이지 않는다.
-    for child in node.children:
-        if child.type == "identifier":
-            return child
-    return None
+
+def _first(node, typ):
+    return next((c for c in node.named_children if c.type == typ), None)
 
 
-def _collect_scopes_and_decls(ctx):
-    """
-    AST를 한 번 DFS해서:
-    - 함수마다 scope id 할당
-    - 부모 함수 scope 연결
-    - 각 scope의 local declaration 이름 수집
+def _is_reference(node):
+    parent = node.parent
+    if parent is None:
+        return True
+    if parent.type in {'attribute', 'label_statement', 'goto_statement'}:
+        return False
+    if parent.type in {'dot_index_expression', 'method_index_expression'}:
+        return node.id == parent.named_children[0].id
+    if parent.type == 'field':
+        return not (parent.children[0].id == node.id and
+                    len(parent.children) > 1 and parent.children[1].type == '=')
+    return True
 
-    기존 rename_ts.py와 동일하게 함수 단위 scope만 사용한다.
-    """
-    root = ctx.root
-    text = ctx.text
 
-    scopes: list[_Scope] = [_Scope(0, None, None)]
-    node_scope: dict[int, int] = {}
-    identifier_nodes: list[tuple[object, int]] = []
-    literal_nodes: list = []
+def resolve_bindings(ctx):
+    """Return symbolic bindings, free names, literals and traversal statistics."""
+    if ctx.root.has_error:
+        raise ValueError('Cannot rename Lua source with syntax errors')
+    bindings, literals = [], []
+    reserved = {'_ENV', 'self'}
+    scopes = 1
+    identifiers = 0
+    stack = [('walk', ctx.root, Scope())]
 
-    # stack entry:
-    #   (node, current_scope, entering)
-    # entering=False는 현재 구현에서는 필요 없지만 재귀 없이 DFS하기 위해
-    # 구조를 명시적으로 유지한다.
-    stack: list[tuple[object, int]] = [(root, 0)]
+    def declare(node, scope):
+        name = ctx.text(node)
+        binding = Binding(name, [node])
+        bindings.append(binding)
+        scope.names[name] = binding
 
     while stack:
-        node, current_sid = stack.pop()
+        action, node, scope = stack.pop()
+        if action == 'declare':
+            declare(node, scope)
+            identifiers += 1
+            continue
         typ = node.type
-
-        # 함수 노드 자체는 새 scope를 만든다.
-        if typ in _FUNC_TYPES:
-            parent_sid = current_sid
-
-            # local function foo() 의 foo는 새 함수 scope가 아니라
-            # 선언이 위치한 부모 scope의 local이다.
-            if _is_local_function_declaration(node):
-                name_node = _function_decl_name_node(node)
-                if name_node is not None:
-                    scopes[parent_sid].names.add(text(name_node))
-
-            sid = len(scopes)
-            scopes.append(_Scope(sid, node, parent_sid))
-            node_scope[node.id] = sid
-            current_sid = sid
-
-            # 함수 parameters는 함수 자신의 scope local.
-            params = _first_child(node, "parameters")
+        if typ == 'identifier':
+            identifiers += 1
+            if _is_reference(node):
+                name = ctx.text(node)
+                binding = scope.resolve(name)
+                if binding is None:
+                    reserved.add(name)
+                else:
+                    binding.nodes.append(node)
+            continue
+        if typ in {'string', 'number', 'true', 'false'}:
+            literals.append(node)
+            continue
+        if typ in {'comment', 'attribute', 'label_statement', 'goto_statement'}:
+            continue
+        actions = []
+        if typ == 'variable_declaration':
+            assignment = _first(node, 'assignment_statement')
+            container = assignment if assignment is not None else node
+            values = _first(container, 'expression_list')
+            names = _first(container, 'variable_list')
+            if values is not None:
+                actions.append(('walk', values, scope))
+            if names is not None:
+                actions.extend(('declare', c, scope) for c in names.named_children if c.type == 'identifier')
+        elif typ in {'function_declaration', 'function_definition'}:
+            name = node.child_by_field_name('name')
+            inner = Scope(scope)
+            scopes += 1
+            if name is not None:
+                if node.children[0].type == 'local':
+                    actions.append(('declare', name, scope))
+                else:
+                    actions.append(('walk', name, scope))
+                if name.type == 'method_index_expression':
+                    # Implicit self has no declaration token and must keep its spelling.
+                    inner.names['self'] = None
+            params = node.child_by_field_name('parameters')
             if params is not None:
-                for child in params.children:
-                    if child.type == "identifier":
-                        scopes[current_sid].names.add(text(child))
-
-        elif typ == "variable_declaration":
-            # local x
-            # local x,y = ...
-            # grammar에 따라 assignment_statement 아래 variable_list가 있거나
-            # variable_list가 직접 자식일 수 있다.
-            asgn = _first_child(node, "assignment_statement")
-            if asgn is not None:
-                vlist = _first_child(asgn, "variable_list")
+                actions.extend(('declare', c, inner) for c in params.named_children if c.type == 'identifier')
+            body = node.child_by_field_name('body')
+            if body is not None:
+                actions.append(('body', body, inner))
+        elif typ == 'for_statement':
+            inner = Scope(scope)
+            scopes += 1
+            clause = node.child_by_field_name('clause')
+            if clause.type == 'for_numeric_clause':
+                name = clause.child_by_field_name('name')
+                actions.extend(('walk', c, scope) for c in clause.named_children if c.id != name.id)
+                actions.append(('declare', name, inner))
             else:
-                vlist = _first_child(node, "variable_list")
-
-            if vlist is not None:
-                for child in vlist.children:
-                    if child.type == "identifier":
-                        scopes[current_sid].names.add(text(child))
-
-        elif typ == "for_statement":
-            num = _first_child(node, "for_numeric_clause")
-            if num is not None:
-                ident = _first_child(num, "identifier")
-                if ident is not None:
-                    scopes[current_sid].names.add(text(ident))
-
-            gen = _first_child(node, "for_generic_clause")
-            if gen is not None:
-                vlist = _first_child(gen, "variable_list")
-                if vlist is not None:
-                    for child in vlist.children:
-                        if child.type == "identifier":
-                            scopes[current_sid].names.add(text(child))
-
-        # Preserve the source-ordered nodes needed by the planning phase while
-        # this full AST traversal is already hot. The second phase can then
-        # inspect identifiers only instead of walking every syntax node again.
-        if typ == "identifier":
-            identifier_nodes.append((node, current_sid))
-        elif typ in {"number", "string", "true", "false"}:
-            literal_nodes.append(node)
-
-        # DFS. 함수 node를 만난 경우 current_sid가 새 scope로 바뀌었으므로
-        # 그 children은 자연스럽게 새 scope로 들어간다.
-        for child in reversed(node.children):
-            stack.append((child, current_sid))
-
-    return scopes, node_scope, identifier_nodes, literal_nodes
-
-
-def _build_scope_maps(scopes: list[_Scope]) -> None:
-    """
-    부모 scope의 map을 상속한 뒤 현재 scope local 이름을 새 _vN으로 덮어쓴다.
-
-    scope id는 DFS에서 부모보다 항상 나중에 생성되므로 단순 순차 처리 가능.
-    """
-    counter = 0
-
-    for scope in scopes:
-        if scope.parent is None:
-            current: dict[str, str] = {}
+                names = _first(clause, 'variable_list')
+                actions.extend(('walk', c, scope) for c in clause.named_children if c.id != names.id)
+                actions.extend(('declare', c, inner) for c in names.named_children if c.type == 'identifier')
+            body = node.child_by_field_name('body')
+            if body is not None:
+                actions.append(('body', body, inner))
+        elif typ == 'repeat_statement':
+            inner = Scope(scope)
+            scopes += 1
+            body = node.child_by_field_name('body')
+            if body is not None:
+                actions.append(('body', body, inner))
+            condition = node.child_by_field_name('condition')
+            if condition is not None:
+                actions.append(('walk', condition, inner))
         else:
-            current = scopes[scope.parent].rename_map.copy()
-
-        # 기존 구현처럼 이름 길이 내림차순으로 deterministic allocation.
-        for name in sorted(scope.names, key=len, reverse=True):
-            current[name] = f"_v{counter}"
-            counter += 1
-
-        scope.rename_map = current
-
-
-def _is_table_field_key(node) -> bool:
-    """
-    { foo = value } 의 foo는 변수 참조가 아니라 literal field key.
-    """
-    parent = node.parent
-    if parent is None or parent.type != "field":
-        return False
-
-    children = parent.children
-    return (
-        len(children) >= 2
-        and children[0].id == node.id
-        and children[1].type == "="
-    )
-
-
-def _is_dot_or_method_name(node) -> bool:
-    """
-    obj.foo / obj:foo() 에서 foo는 변수명이 아니라 field/method 이름.
-    base 쪽 identifier(obj)는 정상 rename 대상이다.
-    """
-    parent = node.parent
-    if parent is None:
-        return False
-
-    if parent.type not in {"dot_index_expression", "method_index_expression"}:
-        return False
-
-    # 해당 expression에서 마지막 identifier가 field/method name이다.
-    id_children = [c for c in parent.children if c.type == "identifier"]
-    return bool(id_children) and id_children[-1].id == node.id
-
-
-def _is_label_or_goto_name(node) -> bool:
-    """
-    label/goto 이름은 local variable이 아니므로 rename map과 이름이 우연히
-    같아도 건드리지 않는다.
-    """
-    parent = node.parent
-    if parent is None:
-        return False
-    return parent.type in {
-        "label_statement",
-        "goto_statement",
-    }
-
-
-def _is_function_declaration_name(node) -> bool:
-    """
-    function foo(...)에서 foo 자체.
-
-    local function foo는 부모 scope local이므로 rename해야 한다.
-    global function foo는 기존 local rename 대상이 아니므로 rename하지 않는다.
-    복합 function a.b:c는 이 함수에서 단순 identifier declaration으로
-    판정하지 않고 dot/method 규칙에 맡긴다.
-    """
-    parent = node.parent
-    if parent is None or parent.type != "function_declaration":
-        return False
-
-    name_node = _function_decl_name_node(parent)
-    return name_node is not None and name_node.id == node.id
-
-
-def _should_skip_identifier(node) -> bool:
-    if _is_table_field_key(node):
-        return True
-    if _is_dot_or_method_name(node):
-        return True
-    if _is_label_or_goto_name(node):
-        return True
-
-    # non-local function declaration 이름은 global symbol.
-    if _is_function_declaration_name(node):
-        parent = node.parent
-        if not _is_local_function_declaration(parent):
-            return True
-
-    return False
-
-
-def _collect_identifier_replacements(
-    ctx,
-    scopes: list[_Scope],
-    identifier_nodes: list[tuple[object, int]],
-):
-    """
-    AST를 두 번째 DFS하면서 현재 함수 scope의 rename map으로 identifier node만
-    직접 치환한다.
-
-    문자열/주석/숫자는 애초에 identifier node가 아니므로 별도 regex 보호가
-    필요 없다.
-    """
-    text = ctx.text
-    cs = ctx.cs
-    ce = ctx.ce
-
-    replacements: list[tuple[int, int, str]] = []
-    for node, current_sid in identifier_nodes:
-        if not _should_skip_identifier(node):
-            original = text(node)
-            renamed = scopes[current_sid].rename_map.get(original)
-            if renamed is not None and renamed != original:
-                replacements.append((cs(node), ce(node), renamed))
-
-    return replacements
+            if typ == 'block' and action != 'body':
+                scope = Scope(scope)
+                scopes += 1
+            actions.extend(('walk', c, scope) for c in node.named_children)
+        stack.extend(reversed(actions))
+    return bindings, reserved, literals, scopes, identifiers
 
 
 def _apply_replacements_once(script: str, replacements: list[tuple[int, int, str]]) -> str:
@@ -339,71 +179,45 @@ def _apply_replacements_once(script: str, replacements: list[tuple[int, int, str
     return "".join(parts)
 
 
-def rename_script_ts(script: str) -> str:
-    """standalone 진입점: 직접 tree-sitter parse 후 rename."""
-    return rename_with_ctx(_ts_parse(script))
+def rename_script_ts(script: str, *, seed=None, readable=None) -> str:
+    return rename_with_ctx(_ts_parse(script), seed=seed, readable=readable)
 
 
-def rename_replacements_with_ctx(ctx) -> list[Replacement]:
-    """Return source-coordinate replacements for a pre-parsed context.
-
-    The VM output backend combines these replacements with global localization
-    and typed literal events, avoiding an intermediate render and reparse.
-    """
-    replacements, _ = rename_plan_with_ctx(ctx)
-    return replacements
+def rename_replacements_with_ctx(ctx, **options) -> list[Replacement]:
+    return rename_plan_with_ctx(ctx, **options)[0]
 
 
-def rename_plan_with_ctx(ctx) -> tuple[list[Replacement], list]:
-    """Return rename replacements and literals from the same AST traversal."""
-    replacements, literal_nodes, _profile = rename_plan_with_ctx_profiled(ctx)
-    return replacements, literal_nodes
+def rename_plan_with_ctx(ctx, **options):
+    replacements, literals, _ = rename_plan_with_ctx_profiled(ctx, **options)
+    return replacements, literals
 
 
-def rename_plan_with_ctx_profiled(ctx) -> tuple[list[Replacement], list, dict]:
-    """Return a rename plan plus timings for each linear planning phase."""
-    total_start = time.perf_counter()
-    collect_start = time.perf_counter()
-    scopes, _node_scope, identifier_nodes, literal_nodes = (
-        _collect_scopes_and_decls(ctx)
-    )
-    collect_elapsed = time.perf_counter() - collect_start
-
-    scope_start = time.perf_counter()
-    _build_scope_maps(scopes)
-    scope_elapsed = time.perf_counter() - scope_start
-
-    replacement_start = time.perf_counter()
-    replacements = [
-        Replacement(start=start, end=end, new_text=new_text)
-        for start, end, new_text in _collect_identifier_replacements(
-            ctx, scopes, identifier_nodes,
-        )
-    ]
-    replacement_elapsed = time.perf_counter() - replacement_start
-    return replacements, literal_nodes, {
-        "collect_elapsed": collect_elapsed,
-        "scope_resolution_elapsed": scope_elapsed,
-        "replacement_elapsed": replacement_elapsed,
-        "total_elapsed": time.perf_counter() - total_start,
-        "scope_count": len(scopes),
-        "identifier_count": len(identifier_nodes),
-        "literal_count": len(literal_nodes),
+def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=()):
+    options = RENAME_OPTIONS.get()
+    seed = options.get('seed') if seed is None else seed
+    readable = options.get('readable', False) if readable is None else readable
+    start = time.perf_counter()
+    bindings, free, literals, scopes, identifiers = resolve_bindings(ctx)
+    collected = time.perf_counter()
+    allocator = NameAllocator(free | set(reserved), seed=seed, readable=readable)
+    # Unique names across the chunk also prevent accidental upvalue capture.
+    ordered = sorted(bindings, key=lambda b: -len(b.nodes))
+    names = [(b, b.original if b.original == '_ENV' else allocator.allocate(b.original))
+             for b in ordered]
+    allocated = time.perf_counter()
+    replacements = [Replacement(ctx.cs(n), ctx.ce(n), name)
+                    for binding, name in names for n in binding.nodes]
+    replacements.sort(key=lambda r: r.start)
+    return replacements, literals, {
+        'collect_elapsed': collected - start,
+        'scope_resolution_elapsed': allocated - collected,
+        'replacement_elapsed': time.perf_counter() - allocated,
+        'total_elapsed': time.perf_counter() - start,
+        'scope_count': scopes, 'identifier_count': identifiers,
+        'literal_count': len(literals),
     }
 
 
-def rename_with_ctx(ctx) -> str:
-    """
-    Pipeline이 이미 만든 TSContext를 재사용하는 메인 진입점.
-
-    Complexity는 대략:
-      O(AST nodes + declarations + identifiers + output size)
-
-    기존의 scope-pair O(S^2), segment regex 재스캔, 반복 문자열 재조립을 제거한다.
-    """
-    replacements = rename_replacements_with_ctx(ctx)
-
-    return _apply_replacements_once(
-        ctx.script,
-        [(item.start, item.end, item.new_text) for item in replacements],
-    )
+def rename_with_ctx(ctx, **options) -> str:
+    replacements = rename_replacements_with_ctx(ctx, **options)
+    return _apply_replacements_once(ctx.script, [(r.start, r.end, r.new_text) for r in replacements])

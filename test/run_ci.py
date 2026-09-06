@@ -6,7 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REGRESSIONS = (
-    "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",
+    "rename", "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",
     "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
     "vm_output_emitter", "vm_choke", "gui", "signature", "line_state",
     "function_boundary", "function_loop", "function_nested",

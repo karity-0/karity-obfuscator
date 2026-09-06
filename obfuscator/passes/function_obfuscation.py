@@ -18,6 +18,7 @@ import re
 import time
 
 from .base import BasePass, Replacement
+from ..names import NameAllocator
 from ..vm.vm_mutation import _zv, _new_state
 
 # CFF로 hoisting된 local 변수 + 내부 생성 zv 개수가 이 값을 넘으면,
@@ -393,7 +394,7 @@ class _LexicalPlanner:
         fixed_alpha: str | None = None,
     ) -> _LexBinding:
         if fixed_alpha is None:
-            alpha = f"{self.prefix}{self.counter}"
+            alpha = NameAllocator.symbolic(self.prefix, self.counter)
             self.counter += 1
         else:
             alpha = fixed_alpha
@@ -1274,7 +1275,7 @@ def _junk_seg_call(c: list[int], live_vars=None) -> list[str]:
     자동 제외되게 한다(파라미터 decl/use 불일치 방지).
     """
     fn = _zv(c)
-    p = f"_pa{random.randint(0, 2 ** 31)}"
+    p = NameAllocator.symbolic("_pa", random.randint(0, 2 ** 31))
     a, b = _generic_const_pair()
     body_op = random.choice([f"{p}*{(b % 97) + 1}", f"{p}+{a % 100000}", f"{p}~{b % 65536}"])
     return [
@@ -1284,7 +1285,7 @@ def _junk_seg_call(c: list[int], live_vars=None) -> list[str]:
 
 
 def _junk_seg_loop(c: list[int], live_vars=None) -> list[str]:
-    fv = f"_fv{random.randint(0, 2 ** 31)}"   # local 없는 for 변수 → pooling 제외
+    fv = NameAllocator.symbolic("_fv", random.randint(0, 2 ** 31))   # local 없는 for 변수 → pooling 제외
     z = _zv(c)
     return [
         f"local {z}={random.randint(0, 999)}",
@@ -1325,7 +1326,7 @@ def _junk_seg_table(c: list[int], live_vars=None) -> list[str]:
     """테이블 생성 + 순회 (전역 미참조: `{}` 생성자와 숫자 for + `#` 만)."""
     t = _zv(c)
     acc = _zv(c)
-    fv = f"_fv{random.randint(0, 2 ** 31)}"
+    fv = NameAllocator.symbolic("_fv", random.randint(0, 2 ** 31))
     elems = ",".join(_junk_expr(c) for _ in range(random.randint(3, 5)))
     return [
         f"local {t}={{{elems}}}",
@@ -1354,7 +1355,7 @@ def _junk_seg_recursion(c: list[int], live_vars=None) -> list[str]:
     인자를 매 호출 감소시키고 <=0에서 return → 실행돼도 반드시 종료(dead 전용).
     """
     box = _zv(c)
-    p = f"_pa{random.randint(0, 2 ** 31)}"
+    p = NameAllocator.symbolic("_pa", random.randint(0, 2 ** 31))
     return [
         f"local {box}={{}}",
         f"{box}[1]=function({p}) if {p}<=0 then return 0 end return {p}+{box}[1]({p}-1) end",
@@ -1569,12 +1570,13 @@ def _rename_colliding_params(text: str, pooled_names: set[str]) -> str:
     `__call=function(t)return t end`의 파라미터 `t`가 다른 곳(예: SELF
     핸들러의 `local t=regs[B]`)의 풀링된 `t`와 이름이 같으면 본문의 `t`까지
     `_Tn.t`로 치환되어 파라미터 바인딩이 끊긴다. 이를 막기 위해, 충돌하는
-    파라미터만 미리 고유한 이름으로 바꿔둔다(예: `t` -> `_p0`).
+    파라미터만 NameAllocator로 충돌 없는 고유한 이름으로 바꿔둔다.
     """
     if not pooled_names:
         return text
 
-    counter = [0]
+    allocator = NameAllocator.for_source(text)
+    allocator.used.update(pooled_names)
     out_parts: list[str] = []
     last = 0
     pos = 0
@@ -1595,8 +1597,7 @@ def _rename_colliding_params(text: str, pooled_names: set[str]) -> str:
 
         rename_map = {}
         for p in colliding:
-            new_name = f"_p{counter[0]}"
-            counter[0] += 1
+            new_name = allocator.allocate("parameter")
             rename_map[p] = new_name
 
         out_parts.append(text[last:m.start()])
@@ -1617,12 +1618,12 @@ def _build_var_tables(names: list[str]) -> tuple[list[str], dict[str, str]]:
     """고유 lexical alpha-name들을 table slot에 배정한다.
 
     Phase 2에서는 names의 각 항목이 이미 하나의 lexical binding identity다.
-    table field 이름도 source variable 이름을 재사용하지 않고 `_bN` slot으로
+    table field 이름도 source variable 이름을 재사용하지 않고 별도 namespace의 짧은 slot으로
     만들어, name-based identity가 다시 의미를 갖지 않게 한다.
 
     반환:
       table_decl_lines: ["local _T0={}", "local _T1={}", ...]
-      name_to_ref: {"__KLB0": "_T0._b0", "__KLB1": "_T0._b1", ...}
+      name_to_ref: {"__KLB0": "_T0.a", "__KLB1": "_T0.b", ...}
     """
     table_decls: list[str] = []
     name_to_ref: dict[str, str] = {}
@@ -1632,15 +1633,17 @@ def _build_var_tables(names: list[str]) -> tuple[list[str], dict[str, str]]:
         if name not in _LUA_KEYWORDS
     ]
 
+    field_allocator = NameAllocator()
+    slot_names = [field_allocator.allocate() for _ in range(_VARS_PER_TABLE)]
     for idx, name in enumerate(safe_names):
         tbl_idx = idx // _VARS_PER_TABLE
         slot_idx = idx % _VARS_PER_TABLE
-        tbl = f"_T{tbl_idx}"
+        tbl = NameAllocator.symbolic("_T", tbl_idx)
 
         if tbl_idx == len(table_decls):
             table_decls.append(f"local {tbl}={{}}")
 
-        name_to_ref[name] = f"{tbl}._b{slot_idx}"
+        name_to_ref[name] = f"{tbl}.{slot_names[slot_idx]}"
 
     return table_decls, name_to_ref
 
@@ -2254,7 +2257,7 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     else:
         lines = emitter(blocks, entry_id, c, param_vars, rich_junk, hoist_names)
 
-    zv_names = [f"_z{i}" for i in range(zv_start, c[0])]
+    zv_names = [NameAllocator.symbolic("_z", i) for i in range(zv_start, c[0])]
 
     # 4) hoist 대상(real_names ∪ extra_hoist_names) + CFF가 생성한 zv
     #    (sv1/sv2/junk 전부) 총 개수로 테이블화 여부를 결정한다.
@@ -2676,7 +2679,7 @@ def _mini_cff_body(body_text: str, compound_options: dict,
     # rewrite references across lexical scopes. The lexical binding prefix is known
     # to be absent from the input body, so both generated families can be renamed
     # without touching captured outer identifiers.
-    namespace = f"__KCM{random.randrange(1 << 30):x}_"
+    namespace = NameAllocator.symbolic("__KCM", format(random.randrange(1 << 30), "x")) + "_"
     transformed = re.sub(
         rf'\b{re.escape(generated_binding_prefix)}([A-Za-z0-9_]*)\b',
         lambda match: namespace + "b" + match.group(1),
@@ -3679,15 +3682,15 @@ if __name__ == "__main__":
     # anonymous function parameter collision
     _src = "local x=1; local f=function(x)return x+1 end; return x+f(2)"
     _out = _rename_colliding_params(_src, {"x"})
-    assert "function(_p0)" in _out, _out
-    assert "return _p0+1" in _out, _out
+    _param = re.search(r"function\((\w+)\)", _out).group(1)
+    assert _param != "x" and f"return {_param}+1" in _out, _out
     _assert_no_pooled_binders("anonymous-param", _out)
 
     # named local function parameter collision
     _src = "local function bits(n) return n+1 end; local n=3; return bits(n)"
     _out = _rename_colliding_params(_src, {"n"})
-    assert re.search(r'local function bits\(_p\d+\)', _out), _out
-    assert re.search(r'return _p\d+\+1', _out), _out
+    _param = re.search(r'local function bits\((\w+)\)', _out).group(1)
+    assert _param != 'n' and f'return {_param}+1' in _out, _out
     _assert_no_pooled_binders("local-function-param", _out)
 
     # dotted / method-style named function parameter collision
@@ -3696,8 +3699,8 @@ if __name__ == "__main__":
         "function obj:other(y) return y end"
     )
     _out = _rename_colliding_params(_src, {"x", "y"})
-    assert re.search(r'function obj\.method\(_p\d+,_p\d+\)', _out), _out
-    assert re.search(r'function obj:other\(_p\d+\)', _out), _out
+    assert re.search(r'function obj\.method\([A-Za-z_]\w*,[A-Za-z_]\w*\)', _out), _out
+    assert re.search(r'function obj:other\([A-Za-z_]\w*\)', _out), _out
     _assert_no_pooled_binders("named-method-param", _out)
 
     # local declaration scanner must never treat Lua keyword `function` as a local name.

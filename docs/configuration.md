@@ -195,7 +195,13 @@ See [`function_obf` design and implementation notes](passes/functionObfuscation.
 
 **type:** passes | vm_output_passes | packer_output_passes
 
-Renames local identifiers.
+Assigns frequency-ranked short names to lexical locals and generated helpers.
+
+`rename_obf_options.seed` optionally shuffles the short-name alphabet.
+`rename_obf_options.readable` enables descriptive debug names (default: `false`).
+These options apply to source, VM output and packer output rename stages.
+
+See [`rename_obf` design and implementation notes](passes/renameObfuscation.md) for architecture, trade-offs, and future work.
 
 ## localize_globals
 

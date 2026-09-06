@@ -11,9 +11,10 @@ virtualize arbitrary global state.
 Run it after renaming and after transforms that introduce library references,
 particularly `string_obf`, and before minification/final runtime dumping. The
 shared VM output emitter can combine rename/localization plans against one syntax
-context; references known to be renamed locals are excluded from localization.
-Do not treat this as a general scope resolver when invoking the pass alone on
-unrenamed user code whose locals shadow standard-library names.
+context. The shared lexical resolver excludes local bindings, including when
+this pass runs alone on unrenamed code. Alias allocation reserves both source
+identifiers and names planned by the shared VM emitter. Final renaming includes
+the generated aliases.
 
 Aliases capture values when the enclosing generated body starts. Replacing
 `string.char`, `print`, a library table or `_ENV` later will not necessarily affect

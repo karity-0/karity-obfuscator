@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ..names import NameAllocator
 import random
 import re
 
@@ -18,7 +19,7 @@ _IND        = "        "
 
 def _zv(c: list[int]) -> str:
     n = c[0]; c[0] += 1
-    return f"_z{n}"
+    return NameAllocator.symbolic("_z", n)
 
 
 # ---------------------------------------------------------------------------

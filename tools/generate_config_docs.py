@@ -236,6 +236,13 @@ def render_pass(name: str, info: dict) -> list[str]:
     ]
     if name == "vm":
         lines.extend([VM_DETAILS, ""])
+    if name == "rename_obf":
+        lines.extend([
+            "`rename_obf_options.seed` optionally shuffles the short-name alphabet.",
+            "`rename_obf_options.readable` enables descriptive debug names (default: `false`).",
+            "These options apply to source, VM output and packer output rename stages.",
+            "",
+        ])
     if name == "function_obf":
         lines.extend([
             "Source nested functions are selected from the initial AST and transformed",
