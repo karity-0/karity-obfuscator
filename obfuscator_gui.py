@@ -9,7 +9,7 @@ from pathlib import Path
 
 import webview
 
-from obfuscator import Pipeline
+from obfuscator import Pipeline, __version__
 from obfuscator.profiling import Profiler
 from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
@@ -215,6 +215,9 @@ class Api:
     def __init__(self):
         self._restore_geometry: tuple[int, int, int, int] | None = None
         self._is_maximized = False
+
+    def get_version(self):
+        return __version__
 
     def get_bootstrap(self):
         root, source = _load_profile_root()

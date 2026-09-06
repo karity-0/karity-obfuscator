@@ -64,6 +64,13 @@ button, select, input { -webkit-app-region: no-drag; }
   color: var(--violet); background: rgba(157,140,255,.09);
   font: 700 13px var(--mono); box-shadow: 0 0 22px rgba(157,140,255,.12);
 }
+.app-version {
+    margin-left: 6px;
+    font-size: 10px;
+    font-weight: 500;
+    opacity: 0.55;
+    letter-spacing: 0.04em;
+}
 .app-name { font: 700 11px var(--mono); letter-spacing: .18em; }
 .app-caption { margin-top: 2px; color: var(--faint); font-size: 9px; letter-spacing: .05em; }
 .title-meta { display: flex; align-items: center; gap: 7px; color: var(--muted); font: 10px var(--mono); }

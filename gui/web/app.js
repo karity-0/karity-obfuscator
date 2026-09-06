@@ -44,6 +44,8 @@ document.addEventListener('DOMContentLoaded', () => {
       renderPresetChoices();
       bindStaticEvents();
       renderAll();
+      const version = await api.get_version();
+      document.getElementById("app-version").textContent = `v${version}`;
       ui.backendLabel.textContent = 'backend ready';
       document.querySelector('.live-dot')?.classList.add('ready');
       setStatus('Ready', 'idle', 'Choose a preset or tune individual controls.');
