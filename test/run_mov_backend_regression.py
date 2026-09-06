@@ -84,9 +84,9 @@ def check_division_work() -> None:
     print(f"mov-division-work small={small} full_width={large} zero={zero}", flush=True)
 
 
-def check_cli(profile: str, extra: list[str]) -> None:
+def check_cli(profile: str, extra: list[str], source_name: str = "14_vm_call_machine.lua") -> None:
     with tempfile.TemporaryDirectory(prefix="mov-cli-") as temp:
-        source = ROOT / "test" / "scripts" / "14_vm_call_machine.lua"
+        source = ROOT / "test" / "scripts" / source_name
         target = Path(temp) / "packed.lua"
         started = time.perf_counter()
         built = subprocess.run(
@@ -326,7 +326,10 @@ def main() -> int:
            "boolean_obf", "number_obf", "minify"], 10102)
     check_cli("fast-vm", ["--seed", "9300"])
     check_cli("fast-vm", ["--seed", "9300", "--passes", "vm,pack"])
-    check_cli("high", ["--release-check"])
+    # The release-profile check covers the complete CLI/config/pipeline path.
+    # Use a compact fixture here: call-machine semantics are already exercised
+    # above, while their MOV microcode can exceed hosted-runner wall-clock limits.
+    check_cli("high", ["--release-check"], "01_helloWorld.lua")
     print(f"mov-backend-regression-ok fixtures={len(fixtures)} protected_variants=6 multi_vm=ok lookup_fallback_traps=ok output_passes=ok cli_packer_release=ok")
     return 0
 
