@@ -9,7 +9,7 @@ REGRESSIONS = (
     "rename", "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",
     "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
     "vm_output_emitter", "vm_choke", "gui", "signature", "line_state",
-    "function_boundary", "function_loop", "function_nested",
+    "function_boundary", "function_loop", "function_nested", "toolchain",
 )
 COMMANDS = [("tools/generate_config_docs.py", "--check")]
 COMMANDS += [(f"test/run_{name}_regression.py",) for name in REGRESSIONS]

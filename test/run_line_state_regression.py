@@ -101,6 +101,19 @@ def main() -> int:
 
         clean = run_lua(runner, str(probe))
         stripped = run_lua(runner, str(probe), "strip")
+        # Source names can themselves contain colon-delimited numbers.
+        # Only the location immediately before the probe token is the line.
+        named_runner = temp / "named-runner.lua"
+        named_runner.write_text(
+            "local h=assert(io.open(arg[1],'rb')); local src=h:read('a'); h:close()\n"
+            "for _,name in ipairs({'@test:999:file.lua', '=source:123:part:456:', 'source:987:chunk'}) do\n"
+            " local f=assert(load(src,name))(); assert(f()==tonumber(arg[2]),name)\n"
+            "end\n",
+            encoding="utf-8",
+        )
+        named = run_lua(named_runner, str(probe), str(expected_state))
+        if named.returncode:
+            raise AssertionError(f"named chunk line state mismatch: {named.stderr!r}")
         expected_stdout = f"{expected_state}\n".encode()
         if (clean.returncode, clean.stdout, clean.stderr) != (0, expected_stdout, b""):
             raise AssertionError(

@@ -69,6 +69,19 @@
           </div>
         </details>
 
+        <details class="config-section" data-section-key="toolchain">
+          <summary><span>Lua toolchain</span></summary>
+          <div class="section-body">
+            <p>Lua 5.3 tools. Library takes priority for compilation and integrity dumps. Leave empty to use executables.</p>
+            <label class="field-label" for="lua_executable">Lua executable</label>
+            <input id="lua_executable" class="text-control" placeholder="Auto (lua.exe / lua5.3)">
+            <label class="field-label" for="luac_executable">Luac executable</label>
+            <input id="luac_executable" class="text-control" placeholder="Auto (luac53.exe / luac5.3)">
+            <label class="field-label" for="lua_library">Lua library (overrides executables)</label>
+            <input id="lua_library" class="text-control" placeholder="lua53-64.dll">
+          </div>
+        </details>
+
         <details class="config-section" data-section-key="signature" open>
           <summary><span>Signature</span><span class="section-count" id="signature-mode-label">default</span></summary>
           <div class="section-body signature-settings">

@@ -103,7 +103,11 @@ document.addEventListener('DOMContentLoaded', () => {
         updateOverview();
         return;
       }
-      state.config = clone(bootstrap.profiles[name]);
+      const toolchain = {};
+      ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
+        if (state.config[key]) toolchain[key] = state.config[key];
+      });
+      state.config = { ...clone(bootstrap.profiles[name]), ...toolchain };
       state.preset = name;
       state.protection_level = ({ dev: 'light', 'fast-vm': 'balanced', max: 'maximum' })[name] || inferLevel();
       state.release_check = name === 'max';
@@ -174,6 +178,13 @@ document.addEventListener('DOMContentLoaded', () => {
       if (preferences.theme === 'system') applyPreferences();
     });
 
+    ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
+      $(key).addEventListener('input', event => {
+        state.config[key] = event.target.value.trim() || null;
+        markPresetCustom(false);
+      });
+    });
+
     document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
       input.addEventListener('change', event => {
         state.config.signature.mode = event.target.value;
@@ -204,6 +215,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAll() {
     ensureConfigShape();
+    ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
+      $(key).value = state.config[key] || '';
+    });
     ui.preset.value = bootstrap.profiles[state.preset] ? state.preset : 'custom';
     ui.level.value = bootstrap.protection_levels[state.protection_level] ? state.protection_level : 'custom';
     ui.releaseCheck.checked = Boolean(state.release_check);

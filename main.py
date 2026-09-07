@@ -8,6 +8,7 @@ from pathlib import Path
 
 from obfuscator import Pipeline, build_pipeline_from_config, __version__
 from obfuscator.profiling import Profiler
+from obfuscator.toolchain import TOOLCHAIN_KEYS
 from obfuscator.registry import (
     ConfigError,
     ReleaseCheckError,
@@ -54,6 +55,8 @@ def parse_args():
         metavar="KEY=VALUE",
         help="override one vm_options value; can be repeated",
     )
+    for key in TOOLCHAIN_KEYS:
+        parser.add_argument("--" + key.replace("_", "-"), help=f"override {key} (path or executable name)")
     parser.add_argument("--print-config", action="store_true", help="print resolved config and exit")
     parser.add_argument("--release-check", action="store_true", help="fail unless the resolved config is suitable for release")
     parser.add_argument("--profile-report", help="write pass timing and size profile JSON to this path, or '-' for stdout")
@@ -78,6 +81,10 @@ def parse_option_value(value: str):
 
 def apply_cli_overrides(config: dict, args) -> dict:
     config = copy.deepcopy(config)
+    for key in TOOLCHAIN_KEYS:
+        value = getattr(args, key, None)
+        if value is not None:
+            config[key] = value
 
     overrides = (
         ("passes", args.passes),

@@ -294,7 +294,7 @@ def apply_line_state(
     block.append(
         f"local function {parser_name}(e,z) local {parser_value_name}="
         f"{tostring_name}(e) return {tonumber_name}("
-        f'{match_name}({parser_value_name},":(%d+):")) or z end'
+        f'{match_name}({parser_value_name},":(%d+): K%x+$")) or z end'
     )
     for probe_name, message_name in zip(probe_names, message_names):
         block.append(f"local _,{message_name}={pcall_name}({probe_name})")

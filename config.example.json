@@ -1,4 +1,7 @@
 {
+    "lua_executable": null,
+    "luac_executable": null,
+    "lua_library": null,
     "profile": "dev",
     "signature": {
         "mode": "default",

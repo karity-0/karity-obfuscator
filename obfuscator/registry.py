@@ -11,6 +11,7 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 모두에서 자동으로 사용 가능해진다.
 """
 from __future__ import annotations
+from .toolchain import LuaToolchain, TOOLCHAIN_KEYS
 
 import re
 
@@ -366,6 +367,10 @@ def config_warnings(config: dict) -> list[str]:
 
 
 def validate_config(config: dict) -> None:
+    for key in TOOLCHAIN_KEYS:
+        value = config.get(key)
+        if value is not None and (not isinstance(value, str) or not value.strip() or "\0" in value):
+            raise ConfigError(f"'{key}' must be a non-empty path/command string or null")
     for key in CONFIG_PASS_LISTS:
         value = config.get(key, [])
         if not isinstance(value, list) or not all(isinstance(name, str) for name in value):
@@ -667,24 +672,46 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     pipeline                = pipeline_cls(show_header=False)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 
+    pipeline.toolchain      = LuaToolchain.from_config(config)
     pipeline.rename_options = config.get("rename_obf_options", {})
     function_obf_options    = config.get("function_obf_options", {})
     vm_options              = config.get("vm_options", {})
     has_packer              = "pack" in config.get("passes", [])
 
+    # Integrity-bearing output must not be rewritten after its dump is hashed.
+    # Route a following minifier into that stage's output finalization instead.
+    stages: list[tuple[str, list[str]]] = []
+    protected_output = None
     for name in config.get("passes", []):
+        if name == "minify" and protected_output is not None:
+            if name not in stages[protected_output][1]:
+                stages[protected_output][1].append(name)
+            continue
+        stages.append((name, []))
+        if name in {"vm", "pack"}:
+            protected_output = len(stages) - 1
+
+    for name, finalizers in stages:
         info = PASS_REGISTRY.get(name)
 
         cls = info["cls"]
         if cls is VMPass:
             pipeline.add(cls(
-                vm_output_passes=vm_output_passes,
+                toolchain=pipeline.toolchain,
+                vm_output_passes=vm_output_passes + [
+                    finalizer for finalizer in finalizers
+                    if finalizer not in vm_output_passes
+                ],
                 vm_options=vm_options,
                 output_prefix="" if has_packer else signature_pass.prefix,
             ))
         elif cls is PackerPass:
             pipeline.add(cls(
-                packer_output_passes=packer_output_passes,
+                toolchain=pipeline.toolchain,
+                packer_output_passes=packer_output_passes + [
+                    finalizer for finalizer in finalizers
+                    if finalizer not in packer_output_passes
+                ],
                 output_prefix=signature_pass.prefix,
             ))
         elif cls is FunctionObfuscationPass:

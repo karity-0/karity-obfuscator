@@ -2,20 +2,19 @@ from __future__ import annotations
 from ..names import NameAllocator
 from .backend import unsupported_vm_options
 import subprocess
-import platform
 import tempfile
 import secrets
 import string
 import random
 import time
 import zlib
-import shutil
 import os
 import re
 from pathlib import Path
 
 from ..passes.base import PostPass
 from ..parser import Lua53Parser
+from ..toolchain import LuaToolchain, LIBRARY_DUMP_FUNCTION
 from .serializer import (
     serialize,
     assign_vm_ids,
@@ -39,24 +38,15 @@ from .junk_injection import inject_junk
 from .runtime_trace import apply_runtime_trace
 
 
-if platform.system() == "Windows":
-    _LUA    = Path(__file__).parent.parent.parent / "bin" / "lua.exe"
-    _LUAC   = Path(__file__).parent.parent.parent / "bin" / "luac53.exe"
-else:
-    _LUA    = shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua5.3"
-    _LUAC   = shutil.which("luac5.3") or shutil.which("luac53") or "luac5.3"
-
-if not _LUA or (isinstance(_LUA, Path) and not _LUA.exists()):
-    raise FileNotFoundError("lua5.3 not found.")
-
-if not _LUAC or (isinstance(_LUAC, Path) and not _LUAC.exists()):
-    raise FileNotFoundError("luac5.3 not found.")
-
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
 _CLASSIC_EXEC_PATH = Path(__file__).parent / "runtimes" / "classic_exec.lua"
 
 
-def _compile(script: str) -> bytes:
+def _compile(script: str, toolchain: LuaToolchain | None = None) -> bytes:
+    toolchain = toolchain or LuaToolchain()
+    if toolchain.lua_library:
+        return toolchain.run_library(script, "compile")
+    luac = toolchain.luac()
     with tempfile.NamedTemporaryFile(suffix=".lua", delete=False, mode="w", encoding="utf-8") as f:
         f.write(script)
         src_path = f.name
@@ -64,14 +54,17 @@ def _compile(script: str) -> bytes:
     out_path = src_path + ".luac"
     try:
         result = subprocess.run(
-            [str(_LUAC), "-o", out_path, src_path],
+            [luac, "-o", out_path, src_path],
             capture_output=True,
         )
         if result.returncode != 0:
             raise RuntimeError(f"luac failed: {result.stderr.decode()}")
 
         with open(out_path, "rb") as f:
-            return f.read()
+            data = f.read()
+        if data[:6] != b"\x1bLua\x53\x00":
+            raise RuntimeError("luac_executable must produce standard Lua 5.3 bytecode")
+        return data
     finally:
         os.unlink(src_path)
         if os.path.exists(out_path):
@@ -240,6 +233,7 @@ def _dump_function_stripped(
     header: str,
     decoy_name: str,
     decoy_value: str,
+    toolchain: LuaToolchain | None = None,
 ) -> bytes:
     """
     vm_func_src(= "return function(...) ... end")를 최종 출력과 동일한
@@ -256,6 +250,9 @@ def _dump_function_stripped(
         f'{header}local {decoy_name}="{decoy_value}"'
         f'{vm_func_src};'
     )
+    toolchain = toolchain or LuaToolchain()
+    if toolchain.lua_library:
+        return toolchain.run_library(wrapped, "dump")
 
     with tempfile.NamedTemporaryFile(suffix=".lua", delete=False, mode="w", encoding="utf-8") as f:
         f.write(wrapped)
@@ -280,7 +277,7 @@ def _dump_function_stripped(
         f.write(helper)
 
     try:
-        result = subprocess.run([str(_LUA), helper_path], capture_output=True)
+        result = subprocess.run([toolchain.lua(), helper_path], capture_output=True)
         if result.returncode != 0:
             error = result.stderr.decode(errors="replace")
             matches = re.findall(r':(\d+):', error)
@@ -303,8 +300,10 @@ def _dump_function_stripped(
                 os.unlink(p)
 
 
-def _load_vm(backend: str = "karity", mov_kits: list | None = None) -> str:
+def _load_vm(backend: str = "karity", mov_kits: list | None = None, library_dump: bool = False) -> str:
     src = _VM_LUA_PATH.read_text(encoding="utf-8")
+    if library_dump:
+        src = src.replace("string.dump(self_func,true)", LIBRARY_DUMP_FUNCTION + "(self_func,true)")
     cutoff = src.find("\nif arg and arg[0]")
     if cutoff != -1:
         src = src[:cutoff]
@@ -1904,11 +1903,13 @@ class VMBuildPipeline(PostPass):
         vm_output_passes: list[str] | None = None,
         vm_options: dict | None = None,
         output_prefix: str = "",
+        toolchain: LuaToolchain | None = None,
     ):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
         self.backend = self.vm_options.pop("backend", "karity")
         self.output_prefix = output_prefix
+        self.toolchain = toolchain or LuaToolchain()
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
@@ -1931,7 +1932,7 @@ class VMBuildPipeline(PostPass):
         )
         # 1. luac 컴파일
         _phase_start = time.perf_counter()
-        luac_bytes = _compile(script)
+        luac_bytes = _compile(script, self.toolchain)
         self.last_profile.append({"phase": "compile_luac", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
         # 2. 파싱 → junk instruction 삽입
@@ -2050,7 +2051,7 @@ class VMBuildPipeline(PostPass):
         _phase_start = time.perf_counter()
         dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(apply_runtime_trace(
-            _load_vm(self.backend, mov_kits),
+            _load_vm(self.backend, mov_kits, bool(self.toolchain.lua_library)),
             enabled=self.backend == "karity" and bool(self.vm_options.get("runtime_trace", False)),
         ))
         for name in constant_tag_names:
@@ -2258,7 +2259,7 @@ class VMBuildPipeline(PostPass):
             for _ in range(34)
         )
         dump_bytes = _dump_function_stripped(
-            vm_func_src, header, decoy_name, decoy_value,
+            vm_func_src, header, decoy_name, decoy_value, self.toolchain,
         )
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
         effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
@@ -2306,6 +2307,7 @@ class VMPass(PostPass):
         vm_output_passes: list[str] | None = None,
         vm_options: dict | None = None,
         output_prefix: str = "",
+        toolchain: LuaToolchain | None = None,
     ):
         from .backend import normalize_vm_backend
 
@@ -2314,12 +2316,14 @@ class VMPass(PostPass):
         self.vm_options = {"backend": self.backend, **options}
         self.vm_output_passes = vm_output_passes or []
         self.output_prefix = output_prefix
+        self.toolchain = toolchain or LuaToolchain()
         self.last_profile: list[dict] = []
 
         self._backend = VMBuildPipeline(
             vm_output_passes=self.vm_output_passes,
             vm_options={"backend": self.backend, **options},
             output_prefix=output_prefix,
+            toolchain=self.toolchain,
         )
 
     def run(self, script: str) -> str:

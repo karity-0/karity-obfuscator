@@ -15,11 +15,9 @@ from __future__ import annotations
 
 import base64
 import os
-import platform
 import random
 import re
 import secrets
-import shutil
 import subprocess
 import tempfile
 import zlib
@@ -27,17 +25,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .base import PostPass
+from ..toolchain import LuaToolchain, LIBRARY_DUMP_FUNCTION
 
 
 _STUB_PATH = Path(__file__).parent / "pack_stub.lua"
 _MASK32 = 0xFFFFFFFF
 _ROUTE_MASK = 0x7FFFFFFF
-
-if platform.system() == "Windows":
-    _LUA = Path(__file__).parent.parent.parent / "bin" / "lua.exe"
-else:
-    _LUA = shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua5.3"
-
 
 _COMPRESSION_CANDIDATES = (
     (9, zlib.Z_DEFAULT_STRATEGY),
@@ -224,10 +217,11 @@ def _loader_binding(loader_src: str) -> str:
 
 
 
-def _dump_loader_stripped(loader_src: str, output_prefix: str = "") -> bytes:
+def _dump_loader_stripped(
+    loader_src: str, output_prefix: str = "", toolchain: LuaToolchain | None = None,
+) -> bytes:
     """Dump the final loader function in the exact runtime outer context."""
-    if not _LUA or (isinstance(_LUA, Path) and not _LUA.exists()):
-        raise FileNotFoundError("lua5.3 not found.")
+    toolchain = toolchain or LuaToolchain()
 
     wrapped = (
         f"{output_prefix}"
@@ -235,6 +229,9 @@ def _dump_loader_stripped(loader_src: str, output_prefix: str = "") -> bytes:
         f'local _D="";'
         f"return _P"
     )
+    if toolchain.lua_library:
+        return toolchain.run_library(wrapped, "dump")
+    lua = toolchain.lua()
 
     with tempfile.NamedTemporaryFile(
         suffix=".lua",
@@ -266,7 +263,7 @@ out:close()
 
     try:
         result = subprocess.run(
-            [str(_LUA), helper_path],
+            [lua, helper_path],
             capture_output=True,
         )
         if result.returncode != 0:
@@ -1025,9 +1022,11 @@ class PackerPass(PostPass):
         self,
         packer_output_passes: list[str] | None = None,
         output_prefix: str = "",
+        toolchain: LuaToolchain | None = None,
     ):
         self.packer_output_passes = packer_output_passes or []
         self.output_prefix = output_prefix
+        self.toolchain = toolchain or LuaToolchain()
         self.last_profile: list[dict] = []
 
     def run(self, script: str) -> str:
@@ -1050,8 +1049,11 @@ class PackerPass(PostPass):
             "__FP_PRINT_BAD__": print_bad,
         }
 
+        stub = _STUB_PATH.read_text(encoding="utf-8")
+        if self.toolchain.lua_library:
+            stub = stub.replace("local _dump=string.dump", "local _dump=" + LIBRARY_DUMP_FUNCTION)
         loader_src = _render_loader(
-            _STUB_PATH.read_text(encoding="utf-8"),
+            stub,
             plan,
             scalar_values,
         )
@@ -1060,7 +1062,7 @@ class PackerPass(PostPass):
             self.packer_output_passes,
         )
 
-        dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix))
+        dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix, self.toolchain))
         state = _context_state(dump_hash, plan)
 
         if plan.is_vm:

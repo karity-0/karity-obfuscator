@@ -343,6 +343,46 @@ is required. Increase individual option families only after profiling the
 protected program's real workload. A maximum setting in every category is
 rarely the best performance/security balance.
 
+### Custom Lua tools
+
+Set top-level JSON options (shared by profiles, with per-profile overrides), or
+use CLI flags:
+
+```sh
+python main.py input.lua --lua-executable "C:/Lua 5.3/lua.exe" --luac-executable "C:/Lua 5.3/luac.exe"
+```
+
+- `lua_executable` / `--lua-executable`: interpreter used for VM and packer integrity dumps; also available as `pipeline.toolchain.lua()` for execution/validation.
+- `luac_executable` / `--luac-executable`: bytecode compiler used by all VM backends. Its output must be standard Lua 5.3 bytecode.
+- `lua_library` / `--lua-library`: Lua 5.3 DLL/shared-library path. When set, **takes priority over both executables** for VM bytecode compilation and VM/packer integrity dumps. All VM backends use this path. Missing, incompatible or failing libraries cause an error without executable fallback. Calls run in an isolated Python worker with a 120-second timeout.
+
+Set **Lua library** in the GUI to the desired DLL/shared-library path; the
+executable fields may stay empty. The library must match Python's architecture.
+The current bytecode parser requires 64-bit size_t, 64-bit Lua integers and
+double numbers; 32-bit library layouts are rejected.
+
+The library host opens standard Lua libraries. Application-specific APIs are
+not generally available, so final scripts should also be tested in their target
+application. Source code is compiled without executing it; integrity dump
+generation executes only the generated wrapper to obtain its function.
+Supported format-2 dumps are decoded into standard Lua 5.3 bytes for stable
+integrity checks without changing the runtime's dump mode.
+
+Python consumers can call `pipeline.toolchain.run_library(script)` to execute a
+script in the isolated DLL host (Lua errors propagate; no result values are returned).
+The adapter follows the [Lua 5.3 C API](https://www.lua.org/manual/5.3/manual.html#4).
+
+CLI overrides take precedence over the selected profile. Omitted/null executable
+options search `bin/` first, then PATH. Explicit executable values accept file
+paths or command names on PATH; missing explicit tools fail without fallback.
+Relative paths are relative to the process working directory (CLI and GUI), and
+`~` is expanded. Tools are resolved when used, so source-only passes and config
+inspection do not require Lua binaries. GUI settings are under **Lua toolchain**.
+
+Use matching Lua 5.3 interpreter/compiler builds and a matching target runtime:
+VM/packer integrity checks depend on `string.dump` output. Selecting an arbitrary
+executable does not add Lua 5.1, Lua 5.4 or LuaJIT bytecode support.
+
 ## Testing
 
 Run the semantic suite against the currently selected config:
