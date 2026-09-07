@@ -124,7 +124,7 @@ class ToolchainTests(unittest.TestCase):
                 else:
                     self.assertNotIn(str(luac.resolve()), commands)
                 result = real_run([str(lua), "-"], input=output, text=True,
-                                  capture_output=True, timeout=30)
+                                  encoding="utf-8", capture_output=True, timeout=30)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.strip(), "42")
 
