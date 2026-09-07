@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -74,9 +75,11 @@ def main() -> int:
         raise AssertionError("line-state source exposed an expected-line comparison")
     if "_LS" in rendered:
         raise AssertionError("line-state source retained the fixed state identifier")
+    if re.search(r'\b_l[a-z]{9}\b', rendered):
+        raise AssertionError("late line-state helpers bypassed shared naming")
 
     random.seed(16017)
-    late_rendered, _, _ = apply_line_state(
+    late_rendered, late_state, _ = apply_line_state(
         "return function(...) return _LS end",
         output_passes=[
             "rename_obf", "localize_globals", "string_obf",
@@ -101,6 +104,22 @@ def main() -> int:
 
         clean = run_lua(runner, str(probe))
         stripped = run_lua(runner, str(probe), "strip")
+        late_probe = temp / "late.lua"
+        late_probe.write_text(late_rendered, encoding="utf-8")
+        late = run_lua(runner, str(late_probe))
+        if (late.returncode, late.stdout, late.stderr) != (0, f"{late_state}\n".encode(), b""):
+            raise AssertionError(f"localized late helpers changed behavior: {late.stderr!r}")
+
+        # Short helper names must not capture existing locals, globals, or `_`.
+        collision_source = (
+            'local a=11; local b=22; local _=33; '
+            'return function(...) assert(a+b+_==66); return _LS end'
+        )
+        collision_rendered, collision_state, _ = apply_line_state(collision_source)
+        late_probe.write_text(collision_rendered, encoding="utf-8")
+        collision = run_lua(runner, str(late_probe))
+        if (collision.returncode, collision.stdout, collision.stderr) != (0, f"{collision_state}\n".encode(), b""):
+            raise AssertionError(f"late helper name collision: {collision.stderr!r}")
         # Source names can themselves contain colon-delimited numbers.
         # Only the location immediately before the probe token is the line.
         named_runner = temp / "named-runner.lua"

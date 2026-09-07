@@ -6,6 +6,7 @@
 - [profiles](#profiles)
 - [signature](#signature)
 - feature passes
+  - [strip_info](#strip_info)
   - [remove_comment](#remove_comment)
   - [string_encode](#string_encode)
   - [string_obf](#string_obf)
@@ -93,6 +94,18 @@ comment text only: Lua comment delimiters are removed before rendering.
   "custom": ""
 }}
 ```
+
+## strip_info
+
+**label:** Strip Info
+
+**group:** pre pass
+
+**type:** passes | vm_output_passes | packer_output_passes
+
+Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.
+
+See [`strip_info` design and implementation notes](passes/stripInfo.md) for architecture, trade-offs, and future work.
 
 ## remove_comment
 

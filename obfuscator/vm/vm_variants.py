@@ -239,11 +239,17 @@ def apply_line_state(
     seed_bytes = hashlib.sha256(repr(random.getstate()).encode("utf-8")).digest()
     rng = random.Random(int.from_bytes(seed_bytes, "big"))
     probe_count = rng.randint(3, 5)
-    alphabet = "abcdefghijklmnopqrstuvwxyz"
+    from ..names import NameAllocator, RENAME_OPTIONS
+
+    name_options = RENAME_OPTIONS.get()
+    allocator = NameAllocator.for_source(
+        vm_func_src,
+        seed=name_options.get("seed"),
+        readable=name_options.get("readable", False),
+    )
 
     def ident(tag: str) -> str:
-        tail = "".join(rng.choice(alphabet) for _ in range(8))
-        return f"_l{tag}{tail}"
+        return allocator.allocate(tag)
 
     parser_name = ident("p")
     state_name = ident("s")
@@ -291,13 +297,16 @@ def apply_line_state(
             f'local function {probe_name}() {error_name}("{token}") end'
         )
     parser_value_name = ident("x")
+    parser_error_name = ident("message")
+    parser_fallback_name = ident("fallback")
+    ignored_status_name = ident("status")
     block.append(
-        f"local function {parser_name}(e,z) local {parser_value_name}="
-        f"{tostring_name}(e) return {tonumber_name}("
-        f'{match_name}({parser_value_name},":(%d+): K%x+$")) or z end'
+        f"local function {parser_name}({parser_error_name},{parser_fallback_name}) local {parser_value_name}="
+        f"{tostring_name}({parser_error_name}) return {tonumber_name}("
+        f'{match_name}({parser_value_name},":(%d+): K%x+$")) or {parser_fallback_name} end'
     )
     for probe_name, message_name in zip(probe_names, message_names):
-        block.append(f"local _,{message_name}={pcall_name}({probe_name})")
+        block.append(f"local {ignored_status_name},{message_name}={pcall_name}({probe_name})")
     for message_name, value_name, fallback in zip(message_names, value_names, fallbacks):
         block.append(f"local {value_name}={parser_name}({message_name},{fallback})")
     block.append(f"local {state_name}=0")
@@ -344,7 +353,7 @@ def apply_line_state(
     prefix_lines = output_prefix.count("\n")
     probe_lines: list[int] = []
     for probe_name in probe_names:
-        marker_pos = result.find(f"function {probe_name}")
+        marker_pos = result.find(f"function {probe_name}(")
         if marker_pos < 0:
             raise AssertionError("line probe marker disappeared during rendering")
         probe_lines.append(prefix_lines + result[:marker_pos].count("\n") + 1)

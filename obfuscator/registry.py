@@ -31,6 +31,7 @@ from .passes import (
     TableObfuscationPass,
     FunctionObfuscationPass,
     RenameObfuscationPass,
+    StripInfoPass,
     LocalizeGlobalsPass,
     RemoveCommentPass,
     MinifyPass,
@@ -42,6 +43,12 @@ from .passes import (
 
 
 PASS_REGISTRY: dict[str, dict] = {
+    "strip_info": {
+        "cls": StripInfoPass,
+        "label": "Strip Info",
+        "group": "pre",
+        "docs": "passes/stripInfo.md",
+    },
     "remove_comment": {
         "cls": RemoveCommentPass,
         "label": "Remove Comment",
@@ -130,6 +137,7 @@ VALID_SIGNATURE_MODES = {"default", "none", "fake", "generated", "custom"}
 VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
 
 PASS_DESCRIPTIONS = {
+    "strip_info": "Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.",
     "remove_comment": "Removes comments from the source code before AST parsing.",
     "string_encode": "Encodes string literals.",
     "string_obf": "Obfuscates string literals.",
