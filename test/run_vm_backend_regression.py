@@ -47,7 +47,8 @@ def options(backend: str, dispatcher: str = "ifelseif") -> dict:
     }
 
 
-def run_output(source: str, backend: str, dispatcher: str = "ifelseif") -> bytes:
+def run_output(source: str, backend: str, dispatcher: str = "ifelseif",
+               output_passes: list[str] | None = None) -> bytes:
     dispatch_seeds = {
         "ifelseif": 3400, "tailcall": 3401, "table": 3402,
         "bsearch": 3403, "split4": 3404, "bsplit4": 3405, "mixed": 3406,
@@ -57,13 +58,16 @@ def run_output(source: str, backend: str, dispatcher: str = "ifelseif") -> bytes
     vm = VMPass(
         # Exercise the shared current output pipeline through the classic
         # runtime as well. Karity's emitter has its own focused suite.
-        vm_output_passes=["minify"] if backend == "classic" else [],
+        vm_output_passes=(output_passes if output_passes is not None
+                          else ["minify"] if backend == "classic" else []),
         vm_options=options(backend, dispatcher),
         output_prefix=output_prefix,
     )
     # VMPass accounts for the outer pipeline's signature when deriving its
     # source-bound key; Pipeline is responsible for prepending that signature.
     output = output_prefix + vm.run(source)
+    if "__call" in output or "VM_DISPATCH_ENTRY" in output:
+        raise AssertionError(f"dispatcher signature leaked for {backend}/{dispatcher}")
     if vm.backend != ("karity" if backend == "default" else backend):
         raise AssertionError(f"selected {backend}, facade reported {vm.backend}")
     if backend == "classic":
@@ -138,6 +142,16 @@ def main() -> int:
             "split4", "bsplit4", "mixed",
         )
     ]
+    for backend in ("karity", "classic", "mov"):
+        dispatchers = (("ifelseif",) if backend == "mov" else
+                       ("ifelseif", "bsearch", "tailcall", "split4", "bsplit4", "mixed"))
+        for dispatcher in dispatchers:
+            for output_passes in ([], ["function_obf"]):
+                actual = run_output(source, backend, dispatcher, output_passes)
+                if actual != b"45\n":
+                    raise AssertionError(
+                        f"dispatcher annotation changed {backend}/{dispatcher}: {actual!r}"
+                    )
     for backend, dispatcher in cases:
         stdout = run_output(source, backend, dispatcher)
         if stdout != b"45\n":
@@ -145,7 +159,8 @@ def main() -> int:
                 f"{backend}/{dispatcher} semantic mismatch: {stdout!r}"
             )
 
-    print("vm-backend-regression-ok backends=classic,karity classic_dispatchers=7 alias=default")
+    print("vm-backend-regression-ok backends=classic,karity,mov "
+          "annotation_cases=26 classic_dispatchers=7 alias=default")
     return 0
 
 

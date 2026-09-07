@@ -3173,13 +3173,8 @@ def _transform_body(
     return "\n".join(prefix_lines + [cff]), boundary_stats
 
 
-# VM 디스패처(exec) 식별용 sentinel. exec의 dispatch 루프
-# `for i in setmetatable({},{__call=function(t)return t end}) do` 에만 등장하며,
-# `__call`은 VM 템플릿 전체에서 이 한 곳에서만 쓰이는 메타메서드 키다
-# (사용자 코드는 bytecode로 blob에 들어가므로 VM 텍스트에 나타나지 않는다).
-# rename/number/string 난독화에도 살아남는다(`__call`은 테이블 필드 키,
-# `function`은 키워드).
-_DISPATCH_SENTINEL = re.compile(r'__call\s*=\s*function')
+# Build-time annotation, removed by the VM output pipeline. No runtime sentinel.
+_DISPATCH_SENTINEL = re.compile(r"--\[\[VM_DISPATCH_ENTRY\]\]")
 _VM_HOT_LOOP_SENTINEL = re.compile(r'__VM_HOT_LOOP__')
 
 
@@ -3195,8 +3190,8 @@ class FunctionObfuscationPass(BasePass):
       함수는 건드리지 않는다.
 
     skip_vm_dispatcher: VM 출력물 재난독화 시 켠다. dispatch sentinel
-      (`__call=function`)을 직접 포함하는 함수, 즉 VM 디스패처(exec)와 이를
-      감싸는 _vmf wrapper만 변환에서 제외한다. exec 본문은 거대한 dispatch
+      (`--[[VM_DISPATCH_ENTRY]]`) 주석을 소유한 가장 안쪽 함수만 변환에서
+      제외한다. exec 본문은 거대한 dispatch
       state machine이라 텍스트 기반 CFF로 평탄화하면 분기마다 흩어진 local
       function 정의가 스코프 밖으로 사라져 깨지고, hot path라 비용도 크다.
       반면 exec *내부*의 작은 헬퍼 클로저(rget/rset/get_box/make_closure 등)와
@@ -3447,8 +3442,8 @@ class FunctionObfuscationPass(BasePass):
         func_nodes = [n for n in ctx.walk() if n.type in _FUNC_NODE_TYPES]
         func_nodes.sort(key=_bsize, reverse=True)
 
-        # VM 디스패처 스킵 준비: sentinel을 *직접* 포함하는 함수(= exec 및 이를
-        # 감싸는 _vmf wrapper)만 변환에서 제외한다. exec 본문은 거대한
+        # VM 디스패처 스킵 준비: sentinel을 소유한 가장 안쪽 함수만
+        # 변환에서 제외한다. exec 본문은 거대한
         # dispatch state machine이라 텍스트 기반 CFF로 평탄화하면 분기마다
         # 흩어진 local function 정의가 스코프 밖으로 사라져 깨지고, 매
         # instruction마다 도는 hot path라 평탄화 비용도 크다.
@@ -3463,15 +3458,22 @@ class FunctionObfuscationPass(BasePass):
         if self.skip_vm_dispatcher:
             sentinel_spans = [
                 (match.start(), match.end() - 1)
-                for pattern in (_DISPATCH_SENTINEL, _VM_HOT_LOOP_SENTINEL)
-                for match in pattern.finditer(script)
+                for match in _VM_HOT_LOOP_SENTINEL.finditer(script)
             ]
+            sentinel_spans.extend(
+                (ctx.cs(node), ctx.ce(node))
+                for node in ctx.walk()
+                if node.type == "comment"
+                and _DISPATCH_SENTINEL.fullmatch(ctx.text(node))
+                and not any(parent.type == "string" for parent in _ancestor_nodes(node))
+            )
             function_spans = []
+            # Include leading comments before the first statement in the body.
             for candidate in func_nodes:
                 candidate_block = _block_of(candidate)
                 if candidate_block is not None:
                     function_spans.append((
-                        ctx.cs(candidate_block), ctx.ce(candidate_block),
+                        ctx.cs(candidate), ctx.ce(candidate),
                         candidate.id,
                     ))
             for start, end in sentinel_spans:

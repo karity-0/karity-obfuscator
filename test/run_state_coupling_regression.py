@@ -72,13 +72,13 @@ def assert_target_transform() -> None:
 
     fixtures = (
         "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
-        "for i in setmetatable({},{__call=function(t)return t end}) do "
+        "--[[VM_DISPATCH_ENTRY]] while true do "
         "if op==7 then return 1 elseif op==19 then return 2 end end end",
         "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
-        "local _H=setmetatable({},{}) _H[7]=function()end "
+        "--[[VM_DISPATCH_ENTRY]] local _H={} _H[7]=function()end "
         "_H[19]=function()end return _H[op]() end",
         "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
-        "local _dsm=setmetatable({},{}) if op<=7 then return 1 "
+        "--[[VM_DISPATCH_ENTRY]] if op<=7 then return 1 "
         "elseif op<19 then return 2 end end",
     )
     forbidden = re.compile(r"\bop\s*(?:==|<=|<)\s*\d+|_H\[\d+\]")

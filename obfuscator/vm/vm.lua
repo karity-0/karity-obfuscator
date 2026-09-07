@@ -1386,7 +1386,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _loop_commit(packet,a,tag)
     end
 
-    for i in setmetatable({},{__call=function(t)return t end}) do
+    --[[VM_DISPATCH_ENTRY]] while true do
         --<<FETCH>>
         _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
         --<<ENDFETCH>>

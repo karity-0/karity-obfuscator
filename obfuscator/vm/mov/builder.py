@@ -77,7 +77,7 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     host_dispatch = """local result=_mov_host[op~__MOV_HOST_KEY__](A,B,C,Bx,sBx,_av)
             if result then return result end"""
     loop = section("LOOP", "END").replace("--<<HOST_HANDLERS>>", host_dispatch)
-    loop_start = classic.index("    for i in setmetatable(")
+    loop_start = classic.index("    --[[VM_DISPATCH_ENTRY]] while true do")
     loop_end = classic.index("    return {r={},n=0}", b)
     runtime = classic[:loop_start] + section("FRAME", "LOOP") + "\n--<<HOST_BANK>>\n" + loop + classic[loop_end:]
     reg_start = runtime.index("    --<<RGET>>")

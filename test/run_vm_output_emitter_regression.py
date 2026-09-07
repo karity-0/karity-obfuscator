@@ -73,7 +73,7 @@ def walk_details(details: list[dict]):
 def main() -> int:
     nested_helper_source = """
 local function dispatch(x)
-    local marker=setmetatable({},{__call=function(t)return t end})
+    --[[VM_DISPATCH_ENTRY]]
     local function helper(a)
         local b=a+1
         local c=b*2
@@ -97,6 +97,20 @@ print(dispatch(3))
             f"skipped={function_pass.last_skipped_dispatcher_count} "
             f"transformed={function_pass.last_transformed_count}"
         )
+
+    user_call_source = """
+local function call(a)
+    local t=setmetatable({value=a},{__call=function(self,b)return self.value+b end})
+    local text="--[[VM_DISPATCH_ENTRY]]"
+    return t(5), text
+end
+print(call(3))
+"""
+    transformed_call = helper_pipeline.run(user_call_source)
+    if function_pass.last_skipped_dispatcher_count != 0:
+        raise AssertionError("user __call or string literal classified as dispatcher")
+    if run_source(transformed_call) != run_source(user_call_source):
+        raise AssertionError("user __call semantics changed")
 
     random.seed(260826)
     source = (
@@ -184,6 +198,8 @@ print(dispatch(3))
             raise AssertionError(
                 f"generated VM symbol bypassed output integration: {leaked_name}"
             )
+    if "__call" in vm_output or "VM_DISPATCH_ENTRY" in vm_output:
+        raise AssertionError("dispatcher signature leaked through full output passes")
     vm_details = [
         detail
         for record in profiler.records

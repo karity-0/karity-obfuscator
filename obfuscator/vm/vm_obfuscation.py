@@ -288,7 +288,7 @@ _CHAIN_START_PATTERN = re.compile(r'if\s+op==\d+\s*then')
 
 def _find_chain(vm_code: str) -> tuple[int, int]:
     """exec 함수 내 if/elseif op==N 체인의 (start, end) 인덱스를 반환."""
-    anchor = vm_code.find("for i in setmetatable(")
+    anchor = vm_code.find(_TAILCALL_FOR_ANCHOR)
     if anchor == -1:
         anchor = 0
     m = _CHAIN_START_PATTERN.search(vm_code, anchor)
@@ -607,7 +607,7 @@ def prune_and_inject_handlers(
 #
 # fetch 라인(local ins=...decode(ins); pc=pc+1)은 _rename_vm_keys가 이미 치환한
 # code 변수명을 그대로 재사용해야 하므로 템플릿에서 추출해 _step 본문에 넣는다.
-_TAILCALL_FOR_ANCHOR  = "for i in setmetatable("
+_TAILCALL_FOR_ANCHOR  = "--[[VM_DISPATCH_ENTRY]] while true do"
 _TAILCALL_TAIL_RE     = re.compile(
     r'\s*(?P<epilogue>if _has_pending then _seal_pending\(\) end\s*)?'
     r'end\s*return\s*(?:\{r=\{\},n=0\}|_leave\(\{\},0(?:,[^)]*)?\))'
@@ -716,16 +716,9 @@ def apply_dispatch_target_hiding(vm_code: str) -> str:
             transformed = transformed.replace(
                 route_step, f"{route_step};_ds(op)", 1
             )
-    anchors = (
-        _TAILCALL_FOR_ANCHOR,
-        "local _H=setmetatable(",
-        "local _dsm=setmetatable(",
-    )
-    positions = [transformed.find(anchor) for anchor in anchors]
-    positions = [position for position in positions if position >= 0]
-    if not positions:
+    insert_at = transformed.find("--[[VM_DISPATCH_ENTRY]]")
+    if insert_at < 0:
         raise RuntimeError("dispatch target hiding: dispatcher entry not found")
-    insert_at = min(positions)
     transformed = transformed[:insert_at] + helpers + transformed[insert_at:]
     return prefix + transformed + suffix
 
@@ -772,7 +765,7 @@ def convert_dispatch_to_tailcall(vm_code: str) -> str:
     # CFF 평탄화돼 꼬리호출이 깨지는 것을 막는다(= 무한 루프 방지). 동시에 호출
     # 시그니처도 숨겨져 function_obf와 동일한 효과를 얻는다.
     parts = [
-        "local _H=setmetatable({},{__call=function(t)return t end})",
+        "--[[VM_DISPATCH_ENTRY]] local _H={}",
         "local function _step(...)",
         f"    {fetch_src}",
         "    return _H[op](A,B,C,Bx,sBx)",
@@ -901,15 +894,9 @@ def convert_dispatch_to_split(vm_code: str, k: int = 2,
     # 그룹 함수는 vararg 로 emit → function_obf 가 hot path 를 CFF 평탄화(꼬리호출
     # 파괴)하지 않도록 한다(tailcall 과 동일 이유).
     #
-    # dispatch sentinel: function_obf(skip_vm_dispatcher)는 `__call=function` 을
-    # 포함한 함수를 exec(디스패처)로 인식해 CFF 평탄화에서 제외한다. 원본 for-loop
-    # 는 이 토큰을 iterator 메타테이블로 갖고 있었고 tailcall 은 _H 메타테이블로
-    # 유지한다. split 은 for-loop 를 통째로 치환하므로, 이 토큰이 사라지면 exec 가
-    # 평탄화돼 트램폴린(`return _step()`)이 깨져 무한 루프가 된다. 따라서 sentinel
-    # 을 명시적으로 유지한다(function_obf 가 vm_output_passes 첫 패스라 dead 여도
-    # 그때까지 살아 있다).
+    # Build-time comment keeps exec out of function CFF; removed before output.
     parts = [
-        "local _dsm=setmetatable({},{__call=function(t)return t end})",
+        "--[[VM_DISPATCH_ENTRY]]",
         f"local {','.join(gnames)}",
         "local function _step(...)",
         f"    {fetch_src}",

@@ -173,7 +173,7 @@ exec = function(proto, upvals, args, va_in)
         end
     end
 
-    for i in setmetatable({},{__call=function(t)return t end}) do
+    --[[VM_DISPATCH_ENTRY]] while true do
         --<<FETCH>>
         local _ip=pc; local op,A,B,C,Bx,sBx=decode(code[pc],_ksm(pc));
         local _av=nil; pc=pc+1; _route_step(_ip,op,A,B,C)

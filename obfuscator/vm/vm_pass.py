@@ -1862,6 +1862,8 @@ def _obfuscate_vm_output(
     output, post_details = run_legacy(output, after)
     details.extend(post_details)
 
+    # Never expose build-time dispatcher annotations, even without minify.
+    output = output.replace("--[[VM_DISPATCH_ENTRY]]", " ")
     return output, details
 
 

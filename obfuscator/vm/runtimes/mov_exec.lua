@@ -171,7 +171,7 @@ end
     local _ma,_mresume
     local _mselect={}
 --<<LOOP>>
-    for i in setmetatable({},{__call=function(t)return t end}) do
+    --[[VM_DISPATCH_ENTRY]] while true do
         local q=_mtape[_mp]; _mp=_mp+1
         local kind=q[1]
         if kind==__MOV_MOVE__ then
