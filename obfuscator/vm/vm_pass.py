@@ -1653,7 +1653,8 @@ def _obfuscate_vm_output(
         cls = info["cls"]
         if cls.__name__ == "VMPass":
             continue
-        (after if issubclass(cls, PostPass) else before).append((name, cls))
+        # Keep fun phrases visible after the structured string/number emitters.
+        (after if issubclass(cls, PostPass) or name == "meme_strings" else before).append((name, cls))
 
     output = script
     details: list[dict] = []

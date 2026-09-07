@@ -27,6 +27,7 @@ from .passes import (
     StringEncodePass,
     StringObfuscationPass,
     NumberObfuscationPass,
+    MemeStringsPass,
     BooleanObfuscationPass,
     TableObfuscationPass,
     FunctionObfuscationPass,
@@ -74,6 +75,12 @@ PASS_REGISTRY: dict[str, dict] = {
         "label": "Number Obfuscation",
         "group": "base",
         "docs": "passes/numberObfuscation.md"
+    },
+    "meme_strings": {
+        "cls": MemeStringsPass,
+        "label": "Meme / Fun Strings",
+        "group": "base",
+        "docs": "passes/memeStrings.md",
     },
     "table_obf": {
         "cls": TableObfuscationPass,
@@ -143,6 +150,7 @@ PASS_DESCRIPTIONS = {
     "string_obf": "Obfuscates string literals.",
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
+    "meme_strings": "Replaces some numeric literals with meme string lengths and arithmetic corrections.",
     "table_obf": "Obfuscates table variables.",
     "function_obf": "Recursively transforms SOURCE function boundaries with safe helper inlining, split helper closures, control-flow flattening, and junk blocks.",
     "rename_obf": "Assigns frequency-ranked short names to lexical locals and generated helpers.",

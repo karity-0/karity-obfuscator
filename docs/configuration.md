@@ -12,6 +12,7 @@
   - [string_obf](#string_obf)
   - [boolean_obf](#boolean_obf)
   - [number_obf](#number_obf)
+  - [meme_strings](#meme_strings)
   - [table_obf](#table_obf)
   - [function_obf](#function_obf)
   - [rename_obf](#rename_obf)
@@ -158,6 +159,18 @@ Obfuscates boolean literals.
 Obfuscates number literals.
 
 See [`number_obf` design and implementation notes](passes/numberObfuscation.md) for architecture, trade-offs, and future work.
+
+## meme_strings
+
+**label:** Meme / Fun Strings
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
+
+Replaces some numeric literals with meme string lengths and arithmetic corrections.
+
+See [`meme_strings` design and implementation notes](passes/memeStrings.md) for architecture, trade-offs, and future work.
 
 ## table_obf
 

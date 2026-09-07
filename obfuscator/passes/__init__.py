@@ -2,6 +2,7 @@ from .base import BasePass, PrePass, PostPass, Replacement
 from .string_encode import StringEncodePass
 from .string_obfuscation import StringObfuscationPass
 from .number_obfuscation import NumberObfuscationPass
+from .meme_strings import MemeStringsPass
 from .boolean_obfuscation import BooleanObfuscationPass
 from .table_obfuscation import TableObfuscationPass
 from .function_obfuscation import FunctionObfuscationPass
