@@ -1,26 +1,22 @@
 from __future__ import annotations
 
+from .backends import backend_capabilities
+from .backends.base import KARITY_OPTIONS
+
 VM_BACKENDS = ("karity", "classic", "mov")
 VM_BACKEND_ALIASES = {"default": "karity"}
 
-# Controls bypassed by the direct runtimes. Shared by validation, UI and profiles.
-_KARITY_ONLY = frozenset((
-    "graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
-    "runtime_trace", "block_variant_rate", "block_variant_count",
-    "block_variant_max_instructions", "helper_variant_count", "helper_diversity_rate",
-    "semantic_diversity_rate", "semantic_state_threading", "argument_virtualization",
-    "upvalue_virtualization", "table_virtualization", "branch_virtualization",
-))
+# Derived from backend declarations so validation, GUI metadata and lowering use
+# one capability source.
 VM_UNSUPPORTED_OPTIONS = {
-    "karity": frozenset(),
-    "classic": _KARITY_ONLY,
-    "mov": _KARITY_ONLY | {"dispatcher_type", "dispatcher_target_hiding",
-                           "fake_handlers", "mutate_handlers"},
+    name: KARITY_OPTIONS - backend_capabilities(name).supported_options
+    for name in VM_BACKENDS
 }
 
 
 def unsupported_vm_options(backend: object) -> frozenset[str]:
-    return VM_UNSUPPORTED_OPTIONS[normalize_vm_backend(backend)]
+    canonical = normalize_vm_backend(backend)
+    return VM_UNSUPPORTED_OPTIONS[canonical]
 
 
 def normalize_vm_backend(value: object) -> str:

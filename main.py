@@ -60,6 +60,15 @@ def parse_args():
     parser.add_argument("--print-config", action="store_true", help="print resolved config and exit")
     parser.add_argument("--release-check", action="store_true", help="fail unless the resolved config is suitable for release")
     parser.add_argument("--profile-report", help="write pass timing and size profile JSON to this path, or '-' for stdout")
+    parser.add_argument("--dump-ir", metavar="PATH", help="write deterministic Semantic IR to PATH")
+    parser.add_argument(
+        "--dump-protection-plan", metavar="PATH",
+        help="write the resolved backend-neutral protection plan to PATH",
+    )
+    parser.add_argument(
+        "--dump-backend-ir", metavar="PATH",
+        help="write the selected backend's lowered IR to PATH",
+    )
     parser.add_argument("--list-passes", action="store_true", help="print known pass names")
     parser.add_argument("--list-profiles", action="store_true", help="print profiles in the config")
     parser.add_argument("--seed", type=int, help="seed python's random module for reproducible builds")
@@ -106,6 +115,17 @@ def apply_cli_overrides(config: dict, args) -> dict:
                 raise ConfigError("--vm-option key cannot be empty")
             vm_options[key] = parse_option_value(value.strip())
         config["vm_options"] = vm_options
+
+    debug_dumps = {
+        name: getattr(args, f"dump_{name}", None)
+        for name in ("ir", "protection_plan", "backend_ir")
+    }
+    debug_dumps = {name: path for name, path in debug_dumps.items() if path}
+    if debug_dumps:
+        config["debug_dumps"] = {
+            **config.get("debug_dumps", {}),
+            **debug_dumps,
+        }
 
     return config
 

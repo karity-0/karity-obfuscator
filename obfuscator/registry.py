@@ -402,6 +402,7 @@ def validate_config(config: dict) -> None:
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
+    _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
 
 
@@ -631,6 +632,18 @@ def _validate_vm_options(options: dict) -> None:
                 )
 
 
+def _validate_debug_dumps(options: dict) -> None:
+    if not isinstance(options, dict):
+        raise ConfigError("'debug_dumps' must be an object")
+    allowed = {"ir", "protection_plan", "backend_ir"}
+    unknown = sorted(set(options) - allowed)
+    if unknown:
+        raise ConfigError("unknown debug dumps: " + ", ".join(unknown))
+    for name, path in options.items():
+        if not isinstance(path, str) or not path.strip() or "\0" in path:
+            raise ConfigError(f"debug_dumps.{name} must be a non-empty path")
+
+
 def _validate_signature(signature: dict) -> None:
     if not isinstance(signature, dict):
         raise ConfigError("'signature' must be an object")
@@ -719,6 +732,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                     if finalizer not in vm_output_passes
                 ],
                 vm_options=vm_options,
+                debug_dumps=config.get("debug_dumps", {}),
                 output_prefix="" if has_packer else signature_pass.prefix,
             ))
         elif cls is PackerPass:

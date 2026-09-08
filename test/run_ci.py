@@ -9,7 +9,7 @@ REGRESSIONS = (
     "strip_info",
     "meme_strings",
     "rename", "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",
-    "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
+    "vm_ir", "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
     "vm_output_emitter", "vm_choke", "gui", "signature", "line_state",
     "function_boundary", "function_loop", "function_nested", "toolchain",
 )

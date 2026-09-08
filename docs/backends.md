@@ -11,15 +11,19 @@ not yet a complete MOV-only implementation.
 
 `VMPass(vm_options=...)` normalizes the backend and delegates to `VMBuildPipeline`.
 Its `run(script)` returns protected Lua; `last_profile` reports build phases.
-All backends share compilation, prototype parsing, VM assignment, junk insertion,
-integrity constants, encrypted blob forms, and configured output passes. The
-backend selects instruction lowering and runtime generation. Packing is a separate
-outer pass and also works without a VM.
+All backends share compilation, prototype parsing, Semantic IR construction,
+protection planning, VM assignment, junk insertion, integrity constants,
+encrypted blob forms, and configured output passes. The backend declares its
+capabilities and selects instruction lowering and runtime generation. Packing is
+a separate outer pass and also works without a VM. See the
+[IR architecture and migration map](vm-ir-architecture.md).
 
 ```mermaid
 flowchart TD
     S[Source passes] --> C[luac 5.3 and prototype parsing]
-    C --> A[Junk insertion and prototype-to-VM assignment]
+    C --> I[Backend-neutral Semantic IR]
+    I --> P[Protection plan and capability resolution]
+    P --> A[Junk insertion and prototype-to-VM assignment]
     A --> B{Backend}
     B --> K[Karity graphs and encoded registers]
     B --> L[Classic direct handlers and registers]

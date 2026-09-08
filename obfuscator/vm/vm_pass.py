@@ -1,6 +1,6 @@
 from __future__ import annotations
 from ..names import NameAllocator
-from .backend import unsupported_vm_options
+from .backend import normalize_vm_backend, unsupported_vm_options
 import subprocess
 import tempfile
 import secrets
@@ -36,6 +36,9 @@ from .vm_variants import (make_instr_layout, apply_instr_layout,
 from .output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from .junk_injection import inject_junk
 from .runtime_trace import apply_runtime_trace
+from .backends import BackendContext, get_backend
+from .protection import ProtectionPlanner
+from .semantic_ir import build_semantic_ir, normalize_semantic_ir
 
 
 _VM_LUA_PATH = Path(__file__).parent / "vm.lua"
@@ -1907,32 +1910,26 @@ class VMBuildPipeline(PostPass):
         vm_options: dict | None = None,
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
+        debug_dumps: dict[str, str] | None = None,
     ):
         self.vm_output_passes = vm_output_passes or []
         self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
-        self.backend = self.vm_options.pop("backend", "karity")
+        self.backend = normalize_vm_backend(self.vm_options.pop("backend", None))
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain()
+        self.debug_dumps = dict(debug_dumps or {})
         self.last_profile: list[dict] = []
+        self.last_semantic_ir = None
+        self.last_protection_plan = None
+        self.last_lowered_ir = None
 
     def run(self, script: str) -> str:
         self.last_profile = []
-        mov_runtime = self.backend == "mov"
-        direct_runtime = self.backend in ("classic", "mov")
+        backend_adapter = get_backend(self.backend)
+        mov_runtime = backend_adapter.mov_microcode
+        direct_runtime = backend_adapter.direct_runtime
         mov_kits = None
         relocated_code = [] if mov_runtime else None
-        graph_execution_rate = 0.0 if direct_runtime else float(
-            self.vm_options.get("graph_execution_rate", 0.1)
-        )
-        cross_instruction_rate = 0.0 if direct_runtime else float(
-            self.vm_options.get("cross_instruction_rate", 0.2)
-        )
-        block_variant_rate = 0.0 if direct_runtime else float(
-            self.vm_options.get("block_variant_rate", 0.08)
-        )
-        semantic_diversity_rate = 0.0 if direct_runtime else float(
-            self.vm_options.get("semantic_diversity_rate", 0.35)
-        )
         # 1. luac 컴파일
         _phase_start = time.perf_counter()
         luac_bytes = _compile(script, self.toolchain)
@@ -1942,18 +1939,71 @@ class VMBuildPipeline(PostPass):
         _phase_start = time.perf_counter()
         proto = Lua53Parser(luac_bytes).parse()
         self.last_profile.append({"phase": "parse_bytecode", "elapsed": round(time.perf_counter() - _phase_start, 6)})
-        if self.vm_options.get("junk_instructions", True):
+
+        # The frontend creates one backend-neutral semantic model. Protection
+        # controls describe desired state separately; the selected adapter then
+        # resolves support and lowers that shared input.
+        _phase_start = time.perf_counter()
+        semantic_ir = normalize_semantic_ir(build_semantic_ir(proto))
+        self.last_semantic_ir = semantic_ir
+        planner = ProtectionPlanner(self.vm_options)
+        initial_plan = planner.build(semantic_ir)
+        initial_lowered = backend_adapter.lower(
+            semantic_ir, initial_plan, BackendContext(self.vm_options)
+        )
+        initial_resolution = initial_lowered.resolution
+        self.last_profile.append({
+            "phase": "build_semantic_ir",
+            "elapsed": round(time.perf_counter() - _phase_start, 6),
+            "functions": sum(1 for _ in semantic_ir.functions()),
+            "instructions": sum(
+                len(block.instructions)
+                for function in semantic_ir.functions()
+                for block in function.blocks
+            ),
+        })
+        self.last_profile.append({
+            "phase": "resolve_backend_capabilities",
+            "elapsed": 0.0,
+            "backend": self.backend,
+            "supported": [request.feature for request in initial_resolution.active],
+            "disabled": [request.feature for request in initial_resolution.disabled],
+        })
+        if initial_lowered.policy.get("junk_instructions", True):
             _phase_start = time.perf_counter()
-            proto = inject_junk(proto, rate=self.vm_options.get("junk_rate", 0.15))
+            proto = inject_junk(proto, rate=initial_lowered.policy.get("junk_rate", 0.15))
             self.last_profile.append({"phase": "inject_junk", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
-        fake = self.vm_options["fake_handlers"]
-        mut  = self.vm_options["mutate_handlers"]
+        _phase_start = time.perf_counter()
+        protected_semantic_ir = build_semantic_ir(proto)
+        protection_plan = planner.build(protected_semantic_ir)
+        lowered_ir = backend_adapter.optimize(
+            backend_adapter.lower(
+                protected_semantic_ir, protection_plan, BackendContext(self.vm_options)
+            ),
+            BackendContext(self.vm_options),
+        )
+        proto = lowered_ir.source_proto
+        self.last_protection_plan = protection_plan
+        self.last_lowered_ir = lowered_ir
+        graph_execution_rate = lowered_ir.policy["graph_execution_rate"]
+        cross_instruction_rate = lowered_ir.policy["cross_instruction_rate"]
+        block_variant_rate = lowered_ir.policy["block_variant_rate"]
+        semantic_diversity_rate = lowered_ir.policy["semantic_diversity_rate"]
+        self.last_profile.append({
+            "phase": "backend_lowering",
+            "elapsed": round(time.perf_counter() - _phase_start, 6),
+            "backend": lowered_ir.backend,
+            "kind": lowered_ir.kind,
+        })
+
+        fake = bool(lowered_ir.policy.get("fake_handlers", False))
+        mut = bool(lowered_ir.policy.get("mutate_handlers", False))
 
         # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
         #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
         _phase_start = time.perf_counter()
-        vm_count = max(1, int(self.vm_options.get("vm_count", 1)))
+        vm_count = max(1, int(lowered_ir.policy.get("vm_count", 1)))
         vm_assign, n = assign_vm_ids(proto, vm_count)
         if mov_runtime:
             from .mov.layout import make_kits
@@ -1980,7 +2030,7 @@ class VMBuildPipeline(PostPass):
                 defer_map = _make_defer_map(used_vops, defer_ops)
             vm_maps.append((vop_map, split_map, fuse_map, defer_map))
             used_ops = collect_used_ops_for_vm(proto, vm_assign, k, vop_map)
-            if self.vm_options.get("integrity_constants", False):
+            if lowered_ir.policy.get("integrity_constants", False):
                 for pseudo_op in range(47, _LUA_OP_COUNT):
                     used_ops.update(vop_map[pseudo_op])
             if block_variant_rate > 0.0:
@@ -2007,18 +2057,18 @@ class VMBuildPipeline(PostPass):
             layout=instr_layout,
             graph_sites=graph_sites,
             integrity_options={
-                "enabled": self.vm_options.get("integrity_constants", False),
-                "rate": self.vm_options.get("integrity_constant_rate", 0.25),
+                "enabled": lowered_ir.policy.get("integrity_constants", False),
+                "rate": lowered_ir.policy.get("integrity_constant_rate", 0.25),
             },
             graph_execution_rate=graph_execution_rate,
             cross_instruction_rate=cross_instruction_rate,
             graph_family_count=graph_family_count,
             block_variant_rate=block_variant_rate,
             block_variant_count=int(
-                self.vm_options.get("block_variant_count", 3)
+                lowered_ir.policy.get("block_variant_count", 3)
             ),
             block_variant_max_instructions=int(
-                self.vm_options.get("block_variant_max_instructions", 6)
+                lowered_ir.policy.get("block_variant_max_instructions", 6)
             ),
             constant_tags=constant_tags,
             relocated_code=relocated_code,
@@ -2032,6 +2082,7 @@ class VMBuildPipeline(PostPass):
             if len(proto_ids) != len(relocated_code):
                 raise RuntimeError("MOV relocated prototype count mismatch")
             programs = [lower(code, vm_id) for code, vm_id in zip(relocated_code, proto_ids)]
+            backend_adapter.attach_programs(lowered_ir, programs)
             storage_stats = {}
             extension = serialize_mov(programs, mov_kits, storage_stats)
             blob += extension
@@ -2052,10 +2103,10 @@ class VMBuildPipeline(PostPass):
 
         # 3. VM 코드 로드 + (단일/멀티) exec 생성
         _phase_start = time.perf_counter()
-        dispatch = self.vm_options.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
+        dispatch = lowered_ir.policy.get("dispatcher_type", "ifelseif")  # ifelseif | tailcall | bsearch | mixed
         vm_code = _rename_vm_keys(apply_runtime_trace(
             _load_vm(self.backend, mov_kits, bool(self.toolchain.lua_library)),
-            enabled=self.backend == "karity" and bool(self.vm_options.get("runtime_trace", False)),
+            enabled=bool(lowered_ir.policy.get("runtime_trace", False)),
         ))
         for name in constant_tag_names:
             vm_code = vm_code.replace(
@@ -2083,10 +2134,10 @@ class VMBuildPipeline(PostPass):
             if not direct_runtime:
                 vm_code = apply_execution_kit(
                     vm_code,
-                    int(self.vm_options.get("helper_variant_count", 3)),
-                    float(self.vm_options.get("helper_diversity_rate", 0.35)),
+                    int(lowered_ir.policy.get("helper_variant_count", 3)),
+                    float(lowered_ir.policy.get("helper_diversity_rate", 0.35)),
                 )
-            if self.vm_options.get("dispatcher_target_hiding", False):
+            if lowered_ir.policy.get("dispatcher_target_hiding", False):
                 vm_code = apply_dispatch_target_hiding(vm_code)
             if not direct_runtime:
                 vm_code = wire_exec_router(vm_code, 0)
@@ -2096,15 +2147,15 @@ class VMBuildPipeline(PostPass):
                                           fake_handlers=fake, mutate=mut,
                                           dispatch=dispatch,
                                           dispatch_target_hiding=bool(
-                                              self.vm_options.get(
+                                               lowered_ir.policy.get(
                                                   "dispatcher_target_hiding", False
                                               )
                                           ),
                                           helper_variant_count=int(
-                                              self.vm_options.get("helper_variant_count", 3)
+                                               lowered_ir.policy.get("helper_variant_count", 3)
                                           ),
                                           helper_diversity_rate=float(
-                                              self.vm_options.get("helper_diversity_rate", 0.35)
+                                               lowered_ir.policy.get("helper_diversity_rate", 0.35)
                                           ),
                                           semantic_diversity_rate=semantic_diversity_rate,
                                           classic_runtime=direct_runtime)
@@ -2112,7 +2163,7 @@ class VMBuildPipeline(PostPass):
         # Keep disabled profiles free of semantic-threading calls on the hot
         # fetch/write paths.  The local helpers remain as cold template code,
         # but no per-instruction function-call overhead survives.
-        if direct_runtime or not self.vm_options.get("semantic_state_threading", False):
+        if not lowered_ir.policy.get("semantic_state_threading", False):
             vm_code = vm_code.replace("; _ss_step(_ip,op,A,B,C)", "")
             vm_code = vm_code.replace(
                 "\n        _ss_value(slot,encoded,epoch,kind)", ""
@@ -2138,7 +2189,7 @@ class VMBuildPipeline(PostPass):
         # 주입은 _obfuscate_vm_output(재난독화) 전에 해야 주입한 전역(table.concat/
         # string.char 등)도 함께 localize/rename 된다. 블롭 리터럴 자체는 _vmf
         # 인자라 dump/crc와 무관(컨테이너 형태를 바꿔도 anti-tamper 영향 없음).
-        blob_form = self.vm_options.get("blob_form", "random")
+        blob_form = lowered_ir.policy.get("blob_form", "random")
         if blob_form == "random":
             blob_form = random.choice(("string", "table", "numeric"))
         if blob_form == "table":
@@ -2169,23 +2220,23 @@ class VMBuildPipeline(PostPass):
                 vm_func_src,
                 graph_sites,
                 graph_family_count,
-                runtime_polymorphism_rate=float(
-                    self.vm_options.get("runtime_polymorphism_rate", 0.2)
-                ),
+                runtime_polymorphism_rate=lowered_ir.policy[
+                    "runtime_polymorphism_rate"
+                ],
                 semantic_state_threading=bool(
-                    self.vm_options.get("semantic_state_threading", False)
+                    lowered_ir.policy.get("semantic_state_threading", False)
                 ),
                 argument_virtualization=bool(
-                    self.vm_options.get("argument_virtualization", False)
+                    lowered_ir.policy.get("argument_virtualization", False)
                 ),
                 upvalue_virtualization=bool(
-                    self.vm_options.get("upvalue_virtualization", False)
+                    lowered_ir.policy.get("upvalue_virtualization", False)
                 ),
                 table_virtualization=bool(
-                    self.vm_options.get("table_virtualization", False)
+                    lowered_ir.policy.get("table_virtualization", False)
                 ),
                 branch_virtualization=bool(
-                    self.vm_options.get("branch_virtualization", False)
+                    lowered_ir.policy.get("branch_virtualization", False)
                 ),
             )
 
@@ -2266,7 +2317,7 @@ class VMBuildPipeline(PostPass):
         )
         dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
         effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
-        if self.vm_options.get("integrity_constants", False):
+        if lowered_ir.policy.get("integrity_constants", False):
             blob = patch_integrity_sources(
                 blob, effective_crc, line_state, constant_tags,
             )
@@ -2298,6 +2349,24 @@ class VMBuildPipeline(PostPass):
             f'return ({vmf_name}(1032,413,258,104,953,283,120))'
             f'({lua_blob},"{rand_tail}",{vmf_name})'
         )
+        _phase_start = time.perf_counter()
+        raw = backend_adapter.emit(
+            lowered_ir, raw, BackendContext(self.vm_options)
+        )
+        self.last_profile.append({
+            "phase": "backend_emit",
+            "elapsed": round(time.perf_counter() - _phase_start, 6),
+            "backend": lowered_ir.backend,
+        })
+
+        dumps = {
+            "ir": semantic_ir.dump(),
+            "protection_plan": protection_plan.dump(),
+            "backend_ir": lowered_ir.dump(),
+        }
+        for name, path in self.debug_dumps.items():
+            if name in dumps and path:
+                Path(path).write_text(dumps[name], encoding="utf-8")
 
         return raw
 
@@ -2311,9 +2380,8 @@ class VMPass(PostPass):
         vm_options: dict | None = None,
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
+        debug_dumps: dict[str, str] | None = None,
     ):
-        from .backend import normalize_vm_backend
-
         options = dict(vm_options or {})
         self.backend = normalize_vm_backend(options.pop("backend", None))
         self.vm_options = {"backend": self.backend, **options}
@@ -2321,15 +2389,22 @@ class VMPass(PostPass):
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain()
         self.last_profile: list[dict] = []
+        self.last_semantic_ir = None
+        self.last_protection_plan = None
+        self.last_lowered_ir = None
 
         self._backend = VMBuildPipeline(
             vm_output_passes=self.vm_output_passes,
             vm_options={"backend": self.backend, **options},
             output_prefix=output_prefix,
             toolchain=self.toolchain,
+            debug_dumps=debug_dumps,
         )
 
     def run(self, script: str) -> str:
         output = self._backend.run(script)
         self.last_profile = getattr(self._backend, "last_profile", [])
+        self.last_semantic_ir = self._backend.last_semantic_ir
+        self.last_protection_plan = self._backend.last_protection_plan
+        self.last_lowered_ir = self._backend.last_lowered_ir
         return output
