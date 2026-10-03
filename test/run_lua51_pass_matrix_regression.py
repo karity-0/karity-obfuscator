@@ -18,6 +18,12 @@ from obfuscator.vm.targets.profile import TargetProfile
 
 SOURCE = '''
 -- source-pass matrix marker
+local function branch(value)
+    local result = value + 1
+    if value > 2 then result = result * 2 else result = result - 3 end
+    return result, nil, false
+end
+assert(branch(4) == 10 and branch(1) == -1)
 local function f(value, ...)
     local args = {...}
     return value, args[1]
@@ -33,11 +39,13 @@ OUTPUT_CASES = (
     ('minify',),
     ('rename_obf',),
     ('localize_globals',),
+    ('function_obf',),
+    ('function_obf', 'rename_obf', 'localize_globals', 'minify'),
     ('rename_obf', 'localize_globals', 'minify'),
 )
 SOURCE_PASSES = (
     'strip_info', 'remove_comment', 'string_encode',
-    'table_obf', 'rename_obf', 'minify',
+    'table_obf', 'rename_obf', 'minify', 'function_obf',
 )
 
 

@@ -8,7 +8,8 @@ PASS_REQUIREMENTS = {
     "boolean_obf": R({C.NATIVE_BITOPS}),
     "number_obf": R({C.NATIVE_BITOPS, C.INTEGER_ARITHMETIC}),
     "meme_strings": R({C.INTEGER_ARITHMETIC}),
-    "function_obf": R({C.NATIVE_BITOPS, C.INTEGER_ARITHMETIC}),
+    # Bounded arithmetic state encoding and predicates use common Lua syntax.
+    "function_obf": R(),
     "anti_debug": R({C.NATIVE_BITOPS}),
     "anti_decompile": R({C.NATIVE_BITOPS}),
     "localize_globals": R({C.ENV_TABLE}),

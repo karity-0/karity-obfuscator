@@ -72,8 +72,11 @@ def main():
     assert pipeline.target_profile.lua_version == '5.1'
     assert pipeline._post_passes[0].target_profile == pipeline.target_profile
     validate_config({**config, 'vm_output_passes': ['localize_globals', 'minify']})
+    validate_pass_target('function_obf', configured)
+    validate_vm_output_pass_target('function_obf', configured)
+    validate_config({**config, 'vm_output_passes': ['function_obf']})
     for unsupported in ('string_obf', 'boolean_obf', 'number_obf',
-                        'function_obf', 'anti_decompile', 'meme_strings'):
+                        'anti_decompile', 'meme_strings'):
         try:
             validate_vm_output_pass_target(unsupported, configured)
         except ValueError as error:
