@@ -4,6 +4,7 @@ Counts are static call sites after VM output passes but before line-state and
 wrapper emission, not execution frequency or a completion percentage.
 """
 from collections import Counter
+import argparse
 import json
 from pathlib import Path
 import random
@@ -19,6 +20,11 @@ from obfuscator.vm.vm_pass import VMPass
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--output', type=Path,
+                        default=ROOT / 'local' / 'lua51-dependency-audit.json',
+                        help='report path (default: ignored local/ directory)')
+    args = parser.parse_args()
     source = '''local function f(a,...)
 local t={...};local s=a
 for i=1,#t do s=s+t[i] end
@@ -75,8 +81,11 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
             assert len(captured) == 1
             results.append({'profile': profile, 'backend': backend, 'seed': 5812,
                             **outcome, **captured[0]})
-    print(json.dumps({'scope': 'after VM output passes; before line-state and wrapper',
-                      'source': source, 'builds': results}, indent=2))
+    report = json.dumps({'scope': 'after VM output passes; before line-state and wrapper',
+                         'source': source, 'builds': results}, indent=2)
+    args.output.parent.mkdir(parents=True, exist_ok=True)
+    args.output.write_text(report + '\n', encoding='utf-8')
+    print(report)
     failures = [result for result in results
                 if result.get('execution') != 'passed' or result['compatibility_modules']
                 or result['legacy_aliases']

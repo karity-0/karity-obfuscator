@@ -106,7 +106,7 @@ See [host image materialization](host-image-materialization.md) for validation l
 Lua 5.1 supports explicit matching executables or a library; otherwise it uses Lupa.
 Packing and source passes requiring native bit operators or `_ENV` are
 rejected before compilation. VM output passes run before target adaptation
-and can use the intermediate runtime dialect. See [migration status](lua-target-migration.md).
+and must emit syntax compatible with the final target. See [Lua targets](lua-targets.md).
 
 ## signature
 

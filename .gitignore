@@ -19,5 +19,5 @@ obf_gui_config.json
 obf_gui_preferences.json
 
 README.md.old
-idea*.md
-note*.md
+# Local-only notes, work records and generated reports
+/local/

@@ -384,7 +384,7 @@ Use matching Lua 5.3 interpreter/compiler builds and a matching target runtime:
 VM/packer integrity checks depend on `string.dump` output. Selecting an arbitrary
 executable does not select another Lua version. Choose `--lua-version 5.1`
 for experimental Lua 5.1 VM output with matching 5.1 tools; packing remains
-unavailable. See [Lua target migration](docs/lua-target-migration.md) for current
+unavailable. See [Lua targets](docs/lua-targets.md) for current
 limits and external toolchain tests. Lua 5.4 and LuaJIT chunks are unsupported.
 
 ## Testing
