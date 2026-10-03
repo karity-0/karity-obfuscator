@@ -124,9 +124,10 @@ def _render_kss() -> str:
 _KSTREAM_RE = re.compile(r'--<<KSTREAM>>.*?--<<ENDKSTREAM>>', re.S)
 
 
-def apply_keystream(vm_code: str) -> str:
+def apply_keystream(vm_code: str, render_ksm=None, render_kss=None) -> str:
     """KSTREAM 마커 사이(_ksm/_kss 정의)를 랜덤 상수/구조로 재생성한다."""
-    body = "--<<KSTREAM>>\n" + _render_ksm() + "\n" + _render_kss() + "\n--<<ENDKSTREAM>>"
+    body = ("--<<KSTREAM>>\n" + (render_ksm or _render_ksm)() + "\n" +
+            (render_kss or _render_kss)() + "\n--<<ENDKSTREAM>>")
     return _KSTREAM_RE.sub(lambda _m: body, vm_code, count=1)
 
 
@@ -198,9 +199,10 @@ def _render_tamper() -> str:
 _TAMPER_RE = re.compile(r'--<<TAMPER>>.*?--<<ENDTAMPER>>', re.S)
 
 
-def apply_tamper(vm_code: str) -> str:
+def apply_tamper(vm_code: str, renderer=None) -> str:
     """TAMPER 마커 사이(변조 검사 블록)를 랜덤 항목/순서/가중치/혼합식으로 재생성."""
-    return _TAMPER_RE.sub(lambda _m: _render_tamper(), vm_code, count=1)
+    render = renderer or _render_tamper
+    return _TAMPER_RE.sub(lambda _m: render(), vm_code, count=1)
 
 
 # ---------------------------------------------------------------------------

@@ -4,10 +4,18 @@ from .capabilities import Capability as C, TargetRequirements
 
 class Lua53Target:
     lua_version = "5.3"
+    user_number_model = "integer-binary64"
     library_dump_normalization = True
     requirements = TargetRequirements({C.NATIVE_BITOPS, C.INTEGER_ARITHMETIC, C.ENV_TABLE})
     capabilities = {"native_bitops": True, "env_model": "lexical", "integer_semantics": "int64",
                     "loader_api": "load", "unpack_api": "table.unpack"}
+
+    def runtime_template(self, name):
+        from pathlib import Path
+        root=Path(__file__).parents[1]
+        if name not in ('vm.lua','classic_exec.lua','mov_exec.lua'):
+            raise ValueError(f'unknown runtime template: {name}')
+        return (root/name if name=='vm.lua' else root/'runtimes'/name).read_text(encoding='utf-8')
 
     def compile(self, script, toolchain):
         from ..backends.runtime_emitter import _compile
@@ -19,6 +27,20 @@ class Lua53Target:
         return build_semantic_ir(Lua53Parser(bytecode).parse())
 
     def prepare_runtime(self, source, lowered):
+        return source
+
+    def apply_keystream(self, source):
+        from ..vm_variants import apply_keystream
+        return apply_keystream(source)
+
+    def apply_tamper(self, source):
+        from ..vm_variants import apply_tamper
+        return apply_tamper(source)
+
+    def finalize_runtime(self, source):
+        return source
+
+    def numeric_blob_decoder(self, source):
         return source
 
     def lower_source(self, source):

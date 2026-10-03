@@ -220,7 +220,7 @@ def main() -> int:
         check(cross_vm, opts, ["rename_obf", "minify"], 8200 + i)
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
-    def forbid_native_fallbacks(classic, opcodes):
+    def forbid_native_fallbacks(classic, opcodes, *, template=None):
         classic = classic.replace('elseif op==28 then', '''elseif op==28 then
             if type(rget(B))=="string" then error("native string length fallback") end;''')
         classic = classic.replace('elseif op==29 then', '''elseif op==29 then
@@ -256,7 +256,7 @@ def main() -> int:
             classic = classic.replace(marker, marker + """
                 if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
                     error("native integer comparison/division fallback") end;""")
-        runtime = build_runtime(classic, opcodes)
+        runtime = build_runtime(classic, opcodes, template=template)
         runtime = '_G.__mov_order_test=true\n' + runtime
         assert "local function _arith2(a,b,av,slot)" in runtime
         assert "local function _arith1(a,av,slot)" in runtime

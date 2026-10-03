@@ -14,6 +14,22 @@ class ClassicBackend(VMBackend):
         CLASSIC_OPTIONS,
     )
 
-    def compose_runtime(self, source, lowered):
+    def compose_runtime(self, source, lowered, *, target=None):
         from .runtime_templates import classic_executor, direct_executor
-        return direct_executor(source, classic_executor())
+        return direct_executor(source, target.runtime_template('classic_exec.lua') if target else classic_executor())
+
+    def validate_lowered(self, lowered):
+        from .handler_validation import validate_handler_dispatch
+        validate_handler_dispatch(lowered, delayed=False)
+
+    def emit_handlers(self, source, lowered, variants):
+        from .handler_emission import single_handlers
+        from ..vm_obfuscation import apply_dispatch_target_hiding, build_exec_variants
+        count = lowered.backend_data['layout'].vm_count
+        def render(template, index):
+            result = single_handlers(template, lowered, variants[index], vm_index=index,
+                                     executor_name=f'_ex{index}' if count > 1 else None)
+            if lowered.policy.get('dispatcher_target_hiding', False):
+                result = apply_dispatch_target_hiding(result)
+            return result
+        return build_exec_variants(source, count, render) if count > 1 else render(source, 0)

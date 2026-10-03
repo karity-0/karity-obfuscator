@@ -1,11 +1,145 @@
+-- Lua 5.1 target runtime template; maintained independently from Lua 5.3.
 local exec, _EX
 local _VF=setmetatable({},{__mode="kv"})
 local _PN,_PE=0,0
 --<<TARGET_PRIVATE_MIX>>
+local function _pmul64(hi,lo,khi,klo)
+    local a0,a1,a2,a3=lo%65536,math.floor(lo/65536),hi%65536,math.floor(hi/65536)
+    local b0,b1,b2,b3=klo%65536,math.floor(klo/65536),khi%65536,math.floor(khi/65536)
+    local value=a0*b0
+    local r0=value%65536;local carry=math.floor(value/65536)
+    value=carry+a0*b1+a1*b0
+    local r1=value%65536;carry=math.floor(value/65536)
+    value=carry+a0*b2+a1*b1+a2*b0
+    local r2=value%65536;carry=math.floor(value/65536)
+    value=carry+a0*b3+a1*b2+a2*b1+a3*b0
+    local r3=value%65536
+    return r2+r3*65536,r0+r1*65536
+end
+local _private_literals={}
+local function _pint(text)
+    local value=_private_literals[text]
+    if not value then
+        local hi,lo=0,0
+        for index=1,#text do
+            local digit=string.byte(text,index)-48
+            hi,lo=_pmul64(hi,lo,0,10)
+            lo=lo+digit
+            if lo>=4294967296 then lo=lo-4294967296;hi=(hi+1)%4294967296 end
+        end
+        value=I.make(hi,lo);_private_literals[text]=value
+    end
+    return value
+end
+local function _pword(value)
+    if I.isint(value) then return value.hi,value.lo end
+    if value>=0 then return math.floor(value/4294967296)%4294967296,value%4294967296 end
+    local magnitude=-value
+    local lo=(-magnitude)%4294967296
+    local hi=(4294967295-math.floor(magnitude/4294967296)+(lo==0 and 1 or 0))%4294967296
+    return hi,lo
+end
+local function _peq(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return ahi==bhi and alo==blo
+end
+local function _plow(value,modulus)
+    local _,lo=_pword(value)
+    return lo%modulus
+end
+local function _pmod(value,modulus)
+    local hi,lo=_pword(value)
+    local limb=4294967296%modulus
+    local result=((hi%modulus)*limb+(lo%modulus))%modulus
+    if hi>=2147483648 then result=(result-(limb*limb)%modulus)%modulus end
+    return result
+end
+local function _padd(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    local lo=alo+blo
+    return I.make((ahi+bhi+math.floor(lo/4294967296))%4294967296,lo%4294967296)
+end
+local function _pneg(a)
+    local hi,lo=_pword(a);lo=(-lo)%4294967296
+    return I.make((4294967295-hi+(lo==0 and 1 or 0))%4294967296,lo)
+end
+local function _psub(a,b) return _padd(a,_pneg(b)) end
+local function _pmul(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    local hi,lo=_pmul64(ahi,alo,bhi,blo)
+    return I.make(hi,lo)
+end
+local function _pmul_low(a,b,modulus)
+    local _,lo=_pmul64(0,a,0,b)
+    return lo%modulus
+end
+local function _pand_limb(a,b) return (a+b-_ixor(a,b))/2 end
+local function _por_limb(a,b) return (a+b+_ixor(a,b))/2 end
+local function _pband(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return I.make(_pand_limb(ahi,bhi),_pand_limb(alo,blo))
+end
+local function _pxor(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return I.make(_ixor(ahi,bhi),_ixor(alo,blo))
+end
+local function _pbor(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return I.make(_por_limb(ahi,bhi),_por_limb(alo,blo))
+end
+local function _pnot(a)
+    local hi,lo=_pword(a)
+    return I.make(4294967295-hi,4294967295-lo)
+end
+local function _pshift_count(value)
+    if not I.isint(value) then return value end
+    if value.hi<2147483648 then return value.hi==0 and value.lo or 64 end
+    local lo=(-value.lo)%4294967296
+    local hi=(4294967295-value.hi+(lo==0 and 1 or 0))%4294967296
+    return hi==0 and lo<64 and -lo or -64
+end
+local function _plow_shift(value,count,modulus,right)
+    local hi,lo=_pword(value)
+    count=_pshift_count(count)
+    if right then count=-count end
+    if count>=32 then return 0 end
+    if count>=0 then return ((lo%2^(32-count))*2^count)%modulus end
+    count=-count
+    if count>=64 then return 0 end
+    if count>=32 then return math.floor(hi/2^(count-32))%modulus end
+    return (math.floor(lo/2^count)+(hi%2^count)*2^(32-count))%modulus
+end
+local _pshl,_pshr
+_pshl=function(a,n)
+    local hi,lo=_pword(a);n=_pshift_count(n)
+    if n<0 then return _pshr(a,-n) end
+    if n>=64 then return I.make(0,0) end
+    if n==0 then return I.make(hi,lo) end
+    if n>=32 then return I.make((lo%2^(64-n))*2^(n-32),0) end
+    return I.make((hi%2^(32-n))*2^n+math.floor(lo/2^(32-n)),(lo%2^(32-n))*2^n)
+end
+_pshr=function(a,n)
+    local hi,lo=_pword(a);n=_pshift_count(n)
+    if n<0 then return _pshl(a,-n) end
+    if n>=64 then return I.make(0,0) end
+    if n==0 then return I.make(hi,lo) end
+    if n>=32 then return I.make(0,math.floor(hi/2^(n-32))) end
+    return I.make(math.floor(hi/2^n),math.floor(lo/2^n)+(hi%2^n)*2^(32-n))
+end
+local function _pmix_words(hi,lo)
+    local function shift_xor(n)
+        local shifted_hi=math.floor(hi/2^n)
+        local shifted_lo=math.floor(lo/2^n)+(hi%2^n)*2^(32-n)
+        hi,lo=_ixor(hi,shifted_hi),_ixor(lo,shifted_lo)
+    end
+    shift_xor(30);hi,lo=_pmul64(hi,lo,3210233709,484763065)
+    shift_xor(27);hi,lo=_pmul64(hi,lo,2496678331,321982955)
+    shift_xor(31)
+    return hi,lo
+end
 local function _pmix(x)
-    x=(x~(x>>30))*-4658895280553007687
-    x=(x~(x>>27))*-7723592293110705685
-    return (x~(x>>31))&-1
+    local hi,lo=_pmix_words(_pword(x))
+    return I.make(hi,lo)
 end
 --<<ENDTARGET_PRIVATE_MIX>>
 

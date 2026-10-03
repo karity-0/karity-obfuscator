@@ -1,80 +1,129 @@
--- Lua 5.3 VM (standalone)
+-- Lua 5.1 target runtime template; maintained independently from Lua 5.3.
+-- Loader and Karity executor; generation markers are resolved by the target emitter.
 
 ----------------------------------------
 --<<TARGET_RUNTIME_API>>
+local function _number_kind(value)
+    if I.isint(value) then return "integer" end
+    return _native_type(value)=="number" and "float" or nil
+end
+local function _pack_values(...) return {n=_native_select("#",...),...} end
+local function _unpack_values(values,first,last)
+    return _native_unpack(values,first or 1,last or #values)
+end
+local function _target_hex64(value)
+    if I.isint(value) then
+        return _native_string_format("%08x",value.hi).._native_string_format("%08x",value.lo)
+    end
+    return _native_string_format("%016x",value)
+end
 --<<ENDTARGET_RUNTIME_API>>
 
 --<<TARGET_INSTRUCTION_XOR>>
-local function _ixor(a,b) return a~b end
-local function _integrity_xor(a,b) return a~b end
+local _ixn={}
+for a=0,15 do
+    local row={};_ixn[a]=row
+    for b=0,15 do
+        local x,y,value,p=a,b,0,1
+        for _=1,4 do
+            local ax,by=x%2,y%2
+            if ax~=by then value=value+p end
+            x=math.floor(x/2);y=math.floor(y/2);p=p*2
+        end
+        row[b]=value
+    end
+end
+local function _ixor(a,b)
+    local value,p=0,1
+    for _=1,12 do
+        local an,bn=a%16,b%16
+        value=value+_ixn[an][bn]*p
+        a=math.floor(a/16);b=math.floor(b/16);p=p*16
+    end
+    return value
+end
+local function _ifield48(value,shift,width)
+    return math.floor(value/2^shift)%width
+end
+local function _integrity_xor(a,b)
+    local word,mask
+    if not I.isint(a) and _native_type(a)=='table' then word,mask=a,b
+    elseif not I.isint(b) and _native_type(b)=='table' then word,mask=b,a
+    else return _ixor(a,b) end
+    local lo,hi=_ixor(word[1],mask),word[2]
+    if hi>=2147483648 then
+        return -((4294967295-hi)*4294967296.0+(4294967296.0-lo))
+    end
+    return hi*4294967296.0+lo
+end
 --<<ENDTARGET_INSTRUCTION_XOR>>
 
 --<<TARGET_BLOB_CIPHER>>
-local _KAE_PRIMES={0x07,0x0B,0x0D,0x11,0x13,0x17,0x1D,0x1F}
-
+local _KAE_PRIMES={7,11,13,17,19,23,29,31}
 local function _gf_mul(a,b)
     local p=0
     for _=1,8 do
-        if b&1~=0 then p=p~a end
-        local hi=a&0x80
-        a=(a<<1)&0xFF
-        if hi~=0 then a=a~0x1B end
-        b=b>>1
+        if b%2~=0 then p=_ixor(p,a) end
+        local high=a>=128
+        a=(a*2)%256
+        if high then a=_ixor(a,27) end
+        b=math.floor(b/2)
     end
     return p
 end
-
 local _KAE_SBOX do
     local function _gf_inv(x)
         if x==0 then return 0 end
-        local r,base,exp=1,x,254
-        while exp>0 do
-            if exp&1~=0 then r=_gf_mul(r,base) end
-            base=_gf_mul(base,base); exp=exp>>1
+        local result,base,exponent=1,x,254
+        while exponent>0 do
+            if exponent%2~=0 then result=_gf_mul(result,base) end
+            base=_gf_mul(base,base);exponent=math.floor(exponent/2)
         end
-        return r
+        return result
     end
+    local function _bit(value,index) return math.floor(value/2^index)%2 end
     local function _affine(x)
-        local c,result=0x63,0
+        local constant,result=99,0
         for i=0,7 do
-            local bit=((x>>i)&1)~((x>>((i+4)%8))&1)~((x>>((i+5)%8))&1)~
-                      ((x>>((i+6)%8))&1)~((x>>((i+7)%8))&1)~((c>>i)&1)
-            result=result|(bit<<i)
+            local bit=(_bit(x,i)+_bit(x,(i+4)%8)+_bit(x,(i+5)%8)+
+                       _bit(x,(i+6)%8)+_bit(x,(i+7)%8)+_bit(constant,i))%2
+            result=result+bit*2^i
         end
         return result
     end
     _KAE_SBOX={}
     for i=0,255 do _KAE_SBOX[i]=_affine(_gf_inv(i)) end
 end
-
-local function _kae_derive(key_bytes, length)
-    local K,prev={},0x6A
+local function _kae_derive(key_bytes,length)
+    local keys,previous={},106
     for i=0,length-1 do
         local k0=key_bytes[i%#key_bytes+1]
-        local raw=_gf_mul(_KAE_SBOX[(k0~i~(i>>3))&0xFF],_KAE_PRIMES[i%8+1])
-        local ki=raw~((prev<<3|prev>>5)&0xFF)~((i*0x97)&0xFF)
-        K[i+1]=ki; prev=ki
+        local index=_ixor(_ixor(k0,i),math.floor(i/8))%256
+        local raw=_gf_mul(_KAE_SBOX[index],_KAE_PRIMES[i%8+1])
+        local rotated=(previous*8)%256+math.floor(previous/32)
+        local key=_ixor(_ixor(raw,rotated),(i*151)%256)%256
+        keys[i+1]=key;previous=key
     end
-    return K
+    return keys
 end
-
-local function kae_decrypt(blob, key)
+local function kae_decrypt(blob,key)
     local nonce={}
     for i=1,8 do nonce[i]=string.byte(blob,i) end
-    local n=#blob-8
-    local key_ints={}
-    for i=1,#key do key_ints[i]=string.byte(key,i) end
+    local length=#blob-8
+    local key_bytes={}
+    for i=1,#key do key_bytes[i]=string.byte(key,i) end
     local blended={}
-    for i=0,n+7 do
-        blended[i+1]=(key_ints[i%#key_ints+1]~nonce[i%8+1]~_KAE_SBOX[i&0xFF])&0xFF
+    for i=0,length+7 do
+        blended[i+1]=_ixor(_ixor(key_bytes[i%#key_bytes+1],nonce[i%8+1]),
+                            _KAE_SBOX[i%256])%256
     end
-    local RK=_kae_derive(blended,n)
-    local pt={}
-    for i=1,n do pt[i]=string.byte(blob,8+i)~RK[i] end
+    local round_keys=_kae_derive(blended,length)
+    local plain={}
+    for i=1,length do plain[i]=_ixor(string.byte(blob,8+i),round_keys[i])%256 end
     local chunks={}
-    for i=1,#pt,4096 do
-        local last=i+4095; if last>#pt then last=#pt end
-        chunks[#chunks+1]=string.char(table.unpack(pt,i,last))
+    for i=1,#plain,4096 do
+        local last=i+4095;if last>#plain then last=#plain end
+        chunks[#chunks+1]=string.char(_unpack_values(plain,i,last))
     end
     return table.concat(chunks)
 end
@@ -91,17 +140,18 @@ local function _crc32(data)
         for i=0,255 do
             local c=i
             for _=1,8 do
-                if c&1~=0 then c=0xEDB88320~(c>>1) else c=c>>1 end
+                if c%2~=0 then c=_ixor(3988292384,math.floor(c/2))
+                else c=math.floor(c/2) end
             end
             _CRC_TABLE[i]=c
         end
     end
-    local crc=0xFFFFFFFF
+    local crc=4294967295
     for i=1,#data do
         local b=string.byte(data,i)
-        crc=_CRC_TABLE[(crc~b)&0xFF]~(crc>>8)
+        crc=_ixor(_CRC_TABLE[_ixor(crc,b)%256],math.floor(crc/256))
     end
-    return crc~0xFFFFFFFF
+    return _ixor(crc,4294967295)
 end
 --<<ENDTARGET_CRC>>
 
@@ -156,30 +206,41 @@ local function make_reader(blob)
     function r.u64()
         local lo=r.u32(); local hi=r.u32()
         --<<TARGET_WORD_READ>>
-        return lo|(hi*0x100000000)
-        --<<ENDTARGET_WORD_READ>>
+return {lo,hi}
+--<<ENDTARGET_WORD_READ>>
     end
     function r.iword()
         local lo=r.u32(); local hi=r.u32()
         --<<TARGET_INSTRUCTION_READ>>
-        return lo|(hi*0x100000000)
-        --<<ENDTARGET_INSTRUCTION_READ>>
+return lo+(hi%65536)*4294967296.0
+--<<ENDTARGET_INSTRUCTION_READ>>
     end
     function r.i64()
         --<<TARGET_SIGNED_READ>>
-        local lo=r.u32(); local hi=r.u32()
-        if hi==0 then return lo end
-        if hi==0xFFFFFFFF then return lo-0x100000000 end
-        if hi>=0x80000000 then
-            return -((~hi&0xFFFFFFFF)*0x100000000+((~lo&0xFFFFFFFF)+1))
+local lo,hi=r.u32(),r.u32()
+        if hi>=2147483648 then
+            return -((4294967295-hi)*4294967296.0+(4294967296.0-lo))
         end
-        return hi*0x100000000+lo
-        --<<ENDTARGET_SIGNED_READ>>
+        return hi*4294967296.0+lo
+--<<ENDTARGET_SIGNED_READ>>
     end
     function r.f64()
         --<<TARGET_FLOAT_READ>>
-        local v=string.unpack('<d',blob,pos); pos=pos+8; return v
-        --<<ENDTARGET_FLOAT_READ>>
+local lo,hi=0,0
+        for i=3,0,-1 do
+            lo=lo*256+string.byte(blob,pos+i)
+            hi=hi*256+string.byte(blob,pos+4+i)
+        end
+        pos=pos+8
+        local sign=hi>=2147483648 and -1 or 1
+        local exponent=math.floor(hi/1048576)%2048
+        local fraction=(hi%1048576)*4294967296.0+lo
+        local value
+        if exponent==2047 then value=fraction==0 and math.huge or 0/0
+        elseif exponent==0 then value=math.ldexp(fraction,-1074)
+        else value=math.ldexp(1+fraction/4503599627370496.0,exponent-1023) end
+        return sign*value
+--<<ENDTARGET_FLOAT_READ>>
     end
     function r.str()
         local len=r.u32(); if len==0 then return nil end
@@ -200,7 +261,12 @@ local _IT={seed=0,layout=0,vmc=1,script=0,line=0}
 -- exec가 같은 _ksd를 쓰므로 한 run 안에서 항상 round-trip(실행 정확성 보장).
 local _ksd=0
 --<<TARGET_INSTRUCTION_STATE_KEY>>
-local function _ikey48(value) return value end
+local function _ikey48(value)
+    if I.isint(value) then
+        return value.lo+(value.hi%65536)*4294967296.0
+    end
+    return value%281474976710656.0
+end
 --<<ENDTARGET_INSTRUCTION_STATE_KEY>>
 --<<KSTREAM>>
 local function _ksm(i)
@@ -240,26 +306,28 @@ local function read_proto(r, acc_state)
     p.vm_id=r.u8()
     local n=r.u32(); p.code={}
     --<<TARGET_PROTO_CODE>>
-    for i=1,n do
+for i=1,n do
         local raw64=r.iword()
         --<<TARGET_INSTRUCTION_FIELDS>>
-        local enc_op      = raw64 & 0x7F
-        local enc_variant = (raw64>>_SH_V) & 0xFF
+        local enc_op=raw64%128
+        local enc_variant=math.floor(raw64/2^_SH_V)%256
         --<<ENDTARGET_INSTRUCTION_FIELDS>>
-        local acc=acc_state[1]; local idx=acc_state[2]
-        local actual_op      = enc_op      ~ (acc & 0x7F)
-        local actual_variant = enc_variant ~ ((acc>>7) & 0xFF)
-        local actual_vop     = actual_op | (actual_variant<<7)
-        acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
-        acc_state[2] = idx + 1
+        local acc=acc_state[1];local idx=acc_state[2]
+        local actual_op=_ixor(enc_op,acc%128)
+        local actual_variant=_ixor(enc_variant,math.floor(acc/128)%256)
+        local actual_vop=actual_op+actual_variant*128
+        acc_state[1]=(acc+actual_vop+idx)%65536
+        acc_state[2]=idx+1
         --<<TARGET_WORD_REKEY>>
-        raw64 = (raw64 & ~_MASK_OV) | actual_op | (actual_variant<<_SH_V)
+        local _variant_scale=2^_SH_V
+        raw64=raw64-(raw64%128)-(math.floor(raw64/_variant_scale)%256)*_variant_scale+
+              actual_op+actual_variant*_variant_scale
         --<<ENDTARGET_WORD_REKEY>>
         p.code[i]=_ixor(raw64,_ksm(i))
     end
-    --<<ENDTARGET_PROTO_CODE>>
+--<<ENDTARGET_PROTO_CODE>>
     --<<TARGET_PROTO_METADATA>>
-    p.avalanche={}
+p.avalanche={}
     for i=1,n do
         local an=r.u8()
         if an>0 then
@@ -284,43 +352,57 @@ local function read_proto(r, acc_state)
             p.graph_sites[i]=sites
         end
     end
-    n=r.u16(); p.block_routes={}
+    n=r.u16();p.block_routes={}
     for i=1,n do
-        local rn=r.u8(); local route={}
+        local rn=r.u8();local route={}
         for j=1,rn do route[j]=r.u32() end
         p.block_routes[i]=route
     end
-    n=r.u32(); p.constants={}
+    n=r.u32();p.constants={}
     for i=1,n do
         local tag=r.u8()
-        if     tag==CTAG_NIL   then p.constants[i]={CK_NIL}
-        elseif tag==CTAG_BOOL  then p.constants[i]={CK_BOOL,r.u8()~=0}
-        elseif tag==CTAG_INT   then p.constants[i]={CK_INT,r.i64()}
+        if tag==CTAG_NIL then p.constants[i]={CK_NIL}
+        elseif tag==CTAG_BOOL then p.constants[i]={CK_BOOL,r.u8()~=0}
+        elseif tag==CTAG_INT then p.constants[i]={CK_INT,r.i64()}
         elseif tag==CTAG_FLOAT then p.constants[i]={CK_FLOAT,r.f64()}
-        elseif tag==CTAG_STR   then local _s=r.str() or ""; p.constants[i]={CK_STR,_kss(_s)}
+        elseif tag==CTAG_STR then local _s=r.str() or '';p.constants[i]={CK_STR,_kss(_s)}
         elseif tag==CTAG_IEXPR then
-            local _e=r.u64(); local _pn=r.u8(); local _p={}
+            local _e=r.u64();local _pn=r.u8();local _p={}
             for _j=1,_pn do
                 local _op=r.u8()
                 if _op==1 then _p[_j]={_op,r.u32()} else _p[_j]={_op} end
             end
             p.constants[i]={CK_IEXPR,_e,_p}
-        else error("bad const tag "..tostring(tag)) end
+        else error('bad const tag '..tostring(tag)) end
     end
-    --<<ENDTARGET_PROTO_METADATA>>
+--<<ENDTARGET_PROTO_METADATA>>
     n=r.u32(); p.upvalues={}
     --<<TARGET_PROTO_CHILDREN>>
-    for i=1,n do p.upvalues[i]={instack=r.u8(),idx=r.u8()} end
-    n=r.u32(); p.protos={}
+for i=1,n do
+        p.upvalues[i]={instack=r.u8(),idx=r.u8()}
+    end
+    n=r.u32();p.protos={}
     for i=1,n do p.protos[i]=read_proto(r,acc_state) end
-    --<<ENDTARGET_PROTO_CHILDREN>>
+--<<ENDTARGET_PROTO_CHILDREN>>
     return p
 end
 
 --<<TARGET_INTEGRITY_MIX>>
+local _IU32=4294967296
+local function _iu32(value)
+    if I.isint(value) then return value.lo end
+    return value%_IU32
+end
+local function _imul32(a,b)
+    local a0,a1=a%65536,math.floor(a/65536)
+    local b0,b1=b%65536,math.floor(b/65536)
+    return (a0*b0+((a0*b1+a1*b0)%65536)*65536)%_IU32
+end
 local function _imix(proto)
-    return (_IT.seed~((_IT.vmc&0xFFFF)<<11)~_IT.layout~
-            ((proto.vm_id&0xFF)<<23)~((#proto.code&0xFFFF)*0x45D9F3B))&0xFFFFFFFF
+    local value=_ixor(_iu32(_IT.seed),(_iu32(_IT.vmc)%65536)*2048)
+    value=_ixor(value,_iu32(_IT.layout))
+    value=_ixor(value,(_iu32(proto.vm_id)%256)*8388608)
+    return _ixor(value,_imul32(#proto.code%65536,73244475))%_IU32
 end
 --<<ENDTARGET_INTEGRITY_MIX>>
 
@@ -328,24 +410,24 @@ end
 local function _ieval(prog,proto)
     local st,sp={},0
     for i=1,#prog do
-        local ins=prog[i]; local op=ins[1]
-        if op==1 then sp=sp+1; st[sp]=ins[2]&0xFFFFFFFF
-        elseif op==2 then sp=sp+1; st[sp]=_IT.seed&0xFFFFFFFF
-        elseif op==3 then sp=sp+1; st[sp]=_IT.vmc&0xFFFFFFFF
-        elseif op==4 then sp=sp+1; st[sp]=_IT.layout&0xFFFFFFFF
-        elseif op==5 then sp=sp+1; st[sp]=proto.vm_id&0xFFFFFFFF
-        elseif op==6 then sp=sp+1; st[sp]=#proto.code&0xFFFFFFFF
-        elseif op==10 then sp=sp+1; st[sp]=_IT.script&0xFFFFFFFF
-        elseif op==11 then sp=sp+1; st[sp]=_IT.line&0xFFFFFFFF
+        local ins=prog[i];local op=ins[1]
+        if op==1 then sp=sp+1;st[sp]=_iu32(ins[2])
+        elseif op==2 then sp=sp+1;st[sp]=_iu32(_IT.seed)
+        elseif op==3 then sp=sp+1;st[sp]=_iu32(_IT.vmc)
+        elseif op==4 then sp=sp+1;st[sp]=_iu32(_IT.layout)
+        elseif op==5 then sp=sp+1;st[sp]=_iu32(proto.vm_id)
+        elseif op==6 then sp=sp+1;st[sp]=#proto.code%_IU32
+        elseif op==10 then sp=sp+1;st[sp]=_iu32(_IT.script)
+        elseif op==11 then sp=sp+1;st[sp]=_iu32(_IT.line)
         else
-            local b=st[sp]; local a=st[sp-1]; sp=sp-1
-            if op==7 then st[sp]=(a~b)&0xFFFFFFFF
-            elseif op==8 then st[sp]=(a+b)&0xFFFFFFFF
-            elseif op==9 then st[sp]=(a*(b|1))&0xFFFFFFFF
-            else st[sp]=(a~b)&0xFFFFFFFF end
+            local b=st[sp];local a=st[sp-1];sp=sp-1
+            if op==7 then st[sp]=_ixor(a,b)%_IU32
+            elseif op==8 then st[sp]=(a+b)%_IU32
+            elseif op==9 then st[sp]=_imul32(a,b-(b%2)+1)
+            else st[sp]=_ixor(a,b)%_IU32 end
         end
     end
-    return st[sp]&0xFFFFFFFF
+    return st[sp]%_IU32
 end
 --<<ENDTARGET_INTEGRITY_EXPRESSION>>
 
@@ -356,7 +438,7 @@ local function kval(k,proto)
     if k[1]==CK_STR and k[2] then return _kss(k[2]) end
     if k[1]==CK_IEXPR then
         --<<TARGET_INTEGRITY_DECODE>>
-        return k[2]~_ieval(k[3],proto)
+        return _integrity_xor(k[2],_ieval(k[3],proto))
         --<<ENDTARGET_INTEGRITY_DECODE>>
     end
     return k[2]
@@ -365,17 +447,16 @@ end
 
 local function decode(ins,key)
     --<<TARGET_INSTRUCTION_DECODE>>
-    ins=ins~key
-    local op     =  ins         & 0x7F
-    local A      = (ins >> _SH_A) & 0xFF
-    local B      = (ins >> _SH_B) & 0x1FF
-    local C      = (ins >> _SH_C) & 0x1FF
-    local variant= (ins >> _SH_V) & 0xFF
-    local Bx     = (ins >> _SH_C) & 0x3FFFF
-    local sBx    = Bx - 131071
-    local vop    = op | (variant << 7)
-    return vop,A,B,C,Bx,sBx
-    --<<ENDTARGET_INSTRUCTION_DECODE>>
+ins=_ixor(ins,key)
+    local op=ins%128
+    local A=math.floor(ins/2^_SH_A)%256
+    local B=math.floor(ins/2^_SH_B)%512
+    local C=math.floor(ins/2^_SH_C)%512
+    local variant=math.floor(ins/2^_SH_V)%256
+    local Bx=math.floor(ins/2^_SH_C)%262144
+    local sBx=Bx-131071
+    return op+variant*128,A,B,C,Bx,sBx
+--<<ENDTARGET_INSTRUCTION_DECODE>>
 end
 
 local function get_environment(upvals) return upvals.environment end
@@ -384,7 +465,7 @@ local function bind_environment(fn,values,parent)
     return fn
 end
 --<<TARGET_SOURCE_VALUE>>
-local function _source_value(v) return v end
+local function _source_value(v) return I.isint(v) and I.number(v) or v end
 --<<ENDTARGET_SOURCE_VALUE>>
 
 local exec, _EX, _NX
@@ -393,10 +474,143 @@ local exec, _EX, _NX
 local _VF=setmetatable({},{__mode="kv"})
 
 --<<TARGET_PRIVATE_MIX>>
+local function _pmul64(hi,lo,khi,klo)
+    local a0,a1,a2,a3=lo%65536,math.floor(lo/65536),hi%65536,math.floor(hi/65536)
+    local b0,b1,b2,b3=klo%65536,math.floor(klo/65536),khi%65536,math.floor(khi/65536)
+    local value=a0*b0
+    local r0=value%65536;local carry=math.floor(value/65536)
+    value=carry+a0*b1+a1*b0
+    local r1=value%65536;carry=math.floor(value/65536)
+    value=carry+a0*b2+a1*b1+a2*b0
+    local r2=value%65536;carry=math.floor(value/65536)
+    value=carry+a0*b3+a1*b2+a2*b1+a3*b0
+    local r3=value%65536
+    return r2+r3*65536,r0+r1*65536
+end
+local _private_literals={}
+local function _pint(text)
+    local value=_private_literals[text]
+    if not value then
+        local hi,lo=0,0
+        for index=1,#text do
+            local digit=string.byte(text,index)-48
+            hi,lo=_pmul64(hi,lo,0,10)
+            lo=lo+digit
+            if lo>=4294967296 then lo=lo-4294967296;hi=(hi+1)%4294967296 end
+        end
+        value=I.make(hi,lo);_private_literals[text]=value
+    end
+    return value
+end
+local function _pword(value)
+    if I.isint(value) then return value.hi,value.lo end
+    if value>=0 then return math.floor(value/4294967296)%4294967296,value%4294967296 end
+    local magnitude=-value
+    local lo=(-magnitude)%4294967296
+    local hi=(4294967295-math.floor(magnitude/4294967296)+(lo==0 and 1 or 0))%4294967296
+    return hi,lo
+end
+local function _peq(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return ahi==bhi and alo==blo
+end
+local function _plow(value,modulus)
+    local _,lo=_pword(value)
+    return lo%modulus
+end
+local function _pmod(value,modulus)
+    local hi,lo=_pword(value)
+    local limb=4294967296%modulus
+    local result=((hi%modulus)*limb+(lo%modulus))%modulus
+    if hi>=2147483648 then result=(result-(limb*limb)%modulus)%modulus end
+    return result
+end
+local function _padd(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    local lo=alo+blo
+    return I.make((ahi+bhi+math.floor(lo/4294967296))%4294967296,lo%4294967296)
+end
+local function _pneg(a)
+    local hi,lo=_pword(a);lo=(-lo)%4294967296
+    return I.make((4294967295-hi+(lo==0 and 1 or 0))%4294967296,lo)
+end
+local function _psub(a,b) return _padd(a,_pneg(b)) end
+local function _pmul(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    local hi,lo=_pmul64(ahi,alo,bhi,blo)
+    return I.make(hi,lo)
+end
+local function _pmul_low(a,b,modulus)
+    local _,lo=_pmul64(0,a,0,b)
+    return lo%modulus
+end
+local function _pand_limb(a,b) return (a+b-_ixor(a,b))/2 end
+local function _por_limb(a,b) return (a+b+_ixor(a,b))/2 end
+local function _pband(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return I.make(_pand_limb(ahi,bhi),_pand_limb(alo,blo))
+end
+local function _pxor(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return I.make(_ixor(ahi,bhi),_ixor(alo,blo))
+end
+local function _pbor(a,b)
+    local ahi,alo=_pword(a);local bhi,blo=_pword(b)
+    return I.make(_por_limb(ahi,bhi),_por_limb(alo,blo))
+end
+local function _pnot(a)
+    local hi,lo=_pword(a)
+    return I.make(4294967295-hi,4294967295-lo)
+end
+local function _pshift_count(value)
+    if not I.isint(value) then return value end
+    if value.hi<2147483648 then return value.hi==0 and value.lo or 64 end
+    local lo=(-value.lo)%4294967296
+    local hi=(4294967295-value.hi+(lo==0 and 1 or 0))%4294967296
+    return hi==0 and lo<64 and -lo or -64
+end
+local function _plow_shift(value,count,modulus,right)
+    local hi,lo=_pword(value)
+    count=_pshift_count(count)
+    if right then count=-count end
+    if count>=32 then return 0 end
+    if count>=0 then return ((lo%2^(32-count))*2^count)%modulus end
+    count=-count
+    if count>=64 then return 0 end
+    if count>=32 then return math.floor(hi/2^(count-32))%modulus end
+    return (math.floor(lo/2^count)+(hi%2^count)*2^(32-count))%modulus
+end
+local _pshl,_pshr
+_pshl=function(a,n)
+    local hi,lo=_pword(a);n=_pshift_count(n)
+    if n<0 then return _pshr(a,-n) end
+    if n>=64 then return I.make(0,0) end
+    if n==0 then return I.make(hi,lo) end
+    if n>=32 then return I.make((lo%2^(64-n))*2^(n-32),0) end
+    return I.make((hi%2^(32-n))*2^n+math.floor(lo/2^(32-n)),(lo%2^(32-n))*2^n)
+end
+_pshr=function(a,n)
+    local hi,lo=_pword(a);n=_pshift_count(n)
+    if n<0 then return _pshl(a,-n) end
+    if n>=64 then return I.make(0,0) end
+    if n==0 then return I.make(hi,lo) end
+    if n>=32 then return I.make(0,math.floor(hi/2^(n-32))) end
+    return I.make(math.floor(hi/2^n),math.floor(lo/2^n)+(hi%2^n)*2^(32-n))
+end
+local function _pmix_words(hi,lo)
+    local function shift_xor(n)
+        local shifted_hi=math.floor(hi/2^n)
+        local shifted_lo=math.floor(lo/2^n)+(hi%2^n)*2^(32-n)
+        hi,lo=_ixor(hi,shifted_hi),_ixor(lo,shifted_lo)
+    end
+    shift_xor(30);hi,lo=_pmul64(hi,lo,3210233709,484763065)
+    shift_xor(27);hi,lo=_pmul64(hi,lo,2496678331,321982955)
+    shift_xor(31)
+    return hi,lo
+end
 local function _pmix(x)
-    x=(x~(x>>30))*-4658895280553007687
-    x=(x~(x>>27))*-7723592293110705685
-    return (x~(x>>31))&-1
+    local hi,lo=_pmix_words(_pword(x))
+    return I.make(hi,lo)
 end
 --<<ENDTARGET_PRIVATE_MIX>>
 
@@ -427,20 +641,58 @@ end
 --<<TARGET_ARGUMENT_PACKET>>
 local _AC=0
 local _AN={}
+local _AU32=4294967296
+local function _aword(value)
+    if I.isint(value) then return {value.hi,value.lo} end
+    if _native_type(value)=='table' then return value end
+    if value<0 then
+        local magnitude=-value
+        local lo=(-magnitude)%_AU32
+        return {(4294967295-math.floor(magnitude/_AU32)+(lo==0 and 1 or 0))%_AU32,lo}
+    end
+    return {math.floor(value/_AU32)%_AU32,value%_AU32}
+end
+local function _axor_word(a,b)
+    a,b=_aword(a),_aword(b)
+    return {_ixor(a[1],b[1]),_ixor(a[2],b[2])}
+end
+local function _aadd_word(a,b)
+    a,b=_aword(a),_aword(b)
+    local lo=a[2]+b[2]
+    return {(a[1]+b[1]+math.floor(lo/_AU32))%_AU32,lo%_AU32}
+end
+local function _amix_word(value)
+    value=_aword(value)
+    local hi,lo=_pmix_words(value[1],value[2])
+    return {hi,lo}
+end
+local function _aword_key(value)
+    value=_aword(value)
+    return tostring(value[1])..':'..tostring(value[2])
+end
+local function _ashift_counter(value)
+    return {math.floor(value/2048)%_AU32,(value%2048)*2097152}
+end
 local function _aseed(q)
-    return q[__VM_AP_SEED__]~__VM_ARG_MASK__~(_IT.layout or 0)~_ksd
+    local seed=_axor_word(q[__VM_AP_SEED__],__VM_ARG_MASK__)
+    seed=_axor_word(seed,_IT.layout or 0)
+    return _axor_word(seed,_ksd)
 end
 local function _akey(seed,i)
-    return _pmix(seed~(i*-7046029254386353131)~__VM_ARG_KEY__)
+    local hi,lo=_pmul64(0,i%_AU32,2654435769,2135587861)
+    return _aword_key(_amix_word(_axor_word(_axor_word(seed,{hi,lo}),__VM_ARG_KEY__)))
 end
 local function _apack(values,n,flow)
     if not _AY then values.n=n; return values end
     _AC=_AC+1
-    local seed=_pmix(_PN~(_IT.seed or 0)~(flow or 0)~n~(_AC<<21))
+    local seed=_axor_word(_PN,_IT.seed or 0)
+    seed=_axor_word(seed,flow or 0)
+    seed=_axor_word(seed,n)
+    seed=_amix_word(_axor_word(seed,_ashift_counter(_AC)))
     local q={
         [__VM_AP_MARK__]=__VM_ARG_TAG__,
-        [__VM_AP_SEED__]=seed~__VM_ARG_MASK__~(_IT.layout or 0)~_ksd,
-        [__VM_AP_COUNT__]=n~(seed&0x7FFFFFFF),
+        [__VM_AP_SEED__]=_axor_word(_axor_word(_axor_word(seed,__VM_ARG_MASK__),_IT.layout or 0),_ksd),
+        [__VM_AP_COUNT__]=_ixor(n,seed[2]%2147483648),
         [__VM_AP_DATA__]={},
     }
     local data=q[__VM_AP_DATA__]
@@ -448,14 +700,17 @@ local function _apack(values,n,flow)
         local v=values[i]
         data[_akey(seed,i)]=(v==nil and _AN or v)
     end
-    local pads=(seed&3)+1
-    for i=1,pads do data[_pmix(seed~i~__VM_ARG_PAD__)]=_pmix(seed+i) end
+    local pads=seed[2]%4+1
+    for i=1,pads do
+        local pad=_amix_word(_axor_word(_axor_word(seed,i),__VM_ARG_PAD__))
+        data[_aword_key(pad)]=_amix_word(_aadd_word(seed,i))
+    end
     return q
 end
 local function _acount(q)
     if q and q[__VM_AP_MARK__]==__VM_ARG_TAG__ then
         local seed=_aseed(q)
-        return q[__VM_AP_COUNT__]~(seed&0x7FFFFFFF)
+        return _ixor(q[__VM_AP_COUNT__],seed[2]%2147483648)
     end
     return q and (q.n or #q) or 0
 end
@@ -463,7 +718,7 @@ local function _aget(q,i)
     if q and q[__VM_AP_MARK__]==__VM_ARG_TAG__ then
         if i>_acount(q) then return nil end
         local v=q[__VM_AP_DATA__][_akey(_aseed(q),i)]
-        if v==nil then error("argument packet mismatch "..i.."/".._acount(q)) end
+        if v==nil then error('argument packet mismatch '..i..'/'.._acount(q)) end
         if v==_AN then return nil end
         return v
     end
@@ -1923,7 +2178,77 @@ end
 --<<ENDNEXT_ROUTER>>
 
 --<<TARGET_FUNCTION_DUMP>>
-local function _function_dump(fn) return string.dump(fn,true) end
+local function _normalize_function_dump(data)
+    assert(#data>=12 and data:sub(1,6)=="\27Lua\81\0","expected standard Lua 5.1 dump")
+    local endian,int_size,size_t,instruction_size,number_size,integral=_native_string_byte(data,7,12)
+    assert((endian==0 or endian==1) and (int_size==4 or int_size==8) and
+           (size_t==4 or size_t==8) and instruction_size==4 and number_size==8 and integral==0,
+           "unsupported Lua 5.1 dump ABI")
+    local position=13
+    local output={"KarityDump51\0"}
+    local function take(size)
+        assert(size>=0 and position+size<=#data+1,"truncated Lua 5.1 dump")
+        local value=data:sub(position,position+size-1)
+        position=position+size
+        return value
+    end
+    local function uint(size)
+        local raw=take(size)
+        local value=0
+        for index=1,size do
+            local byte=_native_string_byte(raw,endian==1 and size-index+1 or index)
+            value=value*256+byte
+            assert(value<=4294967295,"Lua 5.1 dump field exceeds canonical width")
+        end
+        return value
+    end
+    local function put_uint(value)
+        local bytes={}
+        for index=1,4 do
+            bytes[index]=_native_string_char(value%256);value=_native_math_floor(value/256)
+        end
+        output[#output+1]=_native_table_concat(bytes)
+    end
+    local function count()
+        local value=uint(int_size)
+        assert(value<=2147483647,"negative Lua 5.1 dump count")
+        return value
+    end
+    local function str(keep)
+        local size=uint(size_t)
+        local raw=take(size)
+        assert(size==0 or raw:sub(-1)=="\0","unterminated Lua 5.1 dump string")
+        if keep then put_uint(size);output[#output+1]=raw end
+    end
+    local proto
+    proto=function()
+        str(false)
+        put_uint(uint(int_size));put_uint(uint(int_size))
+        output[#output+1]=take(4)
+        local total=count();put_uint(total)
+        for index=1,total do put_uint(uint(4)) end
+        total=count();put_uint(total)
+        for index=1,total do
+            local tag=take(1);output[#output+1]=tag
+            if tag=="\1" then output[#output+1]=take(1)
+            elseif tag=="\3" then
+                local raw=take(8);output[#output+1]=endian==1 and raw or raw:reverse()
+            elseif tag=="\4" then str(true)
+            else assert(tag=="\0","unknown Lua 5.1 dump constant tag") end
+        end
+        total=count();put_uint(total)
+        for index=1,total do proto() end
+        take(count()*int_size)
+        for index=1,count() do str(false);take(int_size*2) end
+        for index=1,count() do str(false) end
+    end
+    proto()
+    assert(position==#data+1,"unexpected Lua 5.1 dump tail")
+    return _native_table_concat(output)
+end
+local function _function_dump(fn)
+    return _normalize_function_dump(_native_string_dump(fn))
+end
 --<<ENDTARGET_FUNCTION_DUMP>>
 
 local function run(blob,rand_tail,self_func)
@@ -1988,20 +2313,20 @@ local function run(blob,rand_tail,self_func)
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
     --<<TARGET_FAKE_CONSTANT_SKIP>>
-    local _fn=r.u32()
+local _fn=r.u32()
     for _=1,_fn do
         local _ft=r.u8()
-        if     _ft==CTAG_NIL then
+        if _ft==CTAG_NIL then
         elseif _ft==CTAG_BOOL then r.u8()
         elseif _ft==CTAG_INT then r.i64()
         elseif _ft==CTAG_FLOAT then r.f64()
         elseif _ft==CTAG_STR then r.str()
         elseif _ft==CTAG_IEXPR then
-            r.i64(); local _pn=r.u8()
-            for _j=1,_pn do local _op=r.u8(); if _op==1 then r.u32() end end
+            r.i64();local _pn=r.u8()
+            for _j=1,_pn do local _op=r.u8();if _op==1 then r.u32() end end
         end
     end
-    --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
+--<<ENDTARGET_FAKE_CONSTANT_SKIP>>
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
     --<<RUN_ENTRY>>

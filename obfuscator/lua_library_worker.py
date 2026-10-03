@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes as C
+import os
 from pathlib import Path
 import sys
 
@@ -9,6 +10,17 @@ import sys
 def run(library: str, operation: str, source: bytes, lua_version: str = "5.3") -> bytes:
     if lua_version not in {"5.1", "5.3"}:
         raise ValueError("unsupported Lua library version")
+    if os.name == "nt":
+        # The isolated, hidden worker must report loader failures on stderr,
+        # rather than waiting for an invisible Windows error dialog.
+        kernel = C.WinDLL('kernel32', use_last_error=True)
+        get_mode = kernel.GetErrorMode
+        get_mode.argtypes = []
+        get_mode.restype = C.c_uint
+        set_mode = kernel.SetErrorMode
+        set_mode.argtypes = [C.c_uint]
+        set_mode.restype = C.c_uint
+        set_mode(get_mode() | 0x0001 | 0x0002 | 0x8000)
     try:
         dll = C.CDLL(library)
     except OSError as exc:

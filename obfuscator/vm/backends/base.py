@@ -156,10 +156,32 @@ class VMBackend:
         from .handler_layout import validate_layout
         layout = lowered.backend_data["layout"]
         validate_layout(layout.functions, layout.vm_maps)
+        self.validate_lowered(lowered)
         return lowered
 
-    def compose_runtime(self, source: str, lowered: LoweredIR) -> str:
+    def validate_lowered(self, lowered: LoweredIR) -> None:
+        """Validate additional invariants owned by the backend representation."""
+
+    def compose_runtime(self, source: str, lowered: LoweredIR, *, target=None) -> str:
         raise NotImplementedError('a VM backend must select its runtime executor')
+
+    def emit_handlers(self, source: str, lowered: LoweredIR, variants) -> str:
+        raise NotImplementedError('a VM backend must own its handler emission')
+
+    def serialize_program(self, lowered: LoweredIR, context: BackendContext) -> bytes:
+        """Serialize the backend's physical program, including host constants."""
+        import time
+        from .handler_codec import serialize
+        layout = lowered.backend_data['layout']
+        materialization = lowered.backend_data.get('materialization')
+        started = time.perf_counter()
+        blob = serialize(materialization.functions if materialization else layout.functions,
+                         layout=layout.instruction_layout, constant_tags=layout.constant_tags,
+                         vm_count=layout.vm_count,
+                         integrity_options={'enabled': lowered.policy.get('integrity_constants', False)})
+        context.profile.append({'phase': 'serialize_blob',
+                                'elapsed': round(time.perf_counter() - started, 6)})
+        return blob
 
     def emit(self, lowered: LoweredIR, context: BackendContext) -> str:
         if lowered.backend != self.name:

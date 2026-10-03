@@ -1,19 +1,46 @@
+-- Lua 5.1 target runtime template; maintained independently from Lua 5.3.
 -- MOV runtime fragments. Host Lua handlers are wired by mov/builder.py.
 --<<SHARED>>
 local _mov_kits
 local _mov_div_steps=__MOV_DIV_STEPS__
 local _mov_closures=setmetatable({},{__mode="kv"})
 --<<TARGET_MOV_FLOAT_STORAGE>>
+local function _mov_f64_words(value)
+    local sign=(value<0 or (value==0 and 1/value<0)) and 2147483648 or 0
+    value=math.abs(value)
+    local exponent,fraction=0,0
+    if value~=value then exponent=2047;fraction=2251799813685248.0
+    elseif value==math.huge then exponent=2047
+    elseif value~=0 then
+        local mantissa,power=math.frexp(value)
+        exponent=power+1022
+        if exponent<=0 then exponent=0;fraction=math.ldexp(value,1074)
+        else fraction=(mantissa*2-1)*4503599627370496.0 end
+    end
+    return fraction%4294967296.0,sign+exponent*1048576+math.floor(fraction/4294967296.0)
+end
+local function _mov_f64_value(lo,hi)
+    local sign=hi>=2147483648 and -1 or 1
+    local exponent=math.floor(hi/1048576)%2048
+    local fraction=(hi%1048576)*4294967296.0+lo
+    local value
+    if exponent==2047 then value=fraction==0 and math.huge or 0/0
+    elseif exponent==0 then value=math.ldexp(fraction,-1074)
+    else value=math.ldexp(1+fraction/4503599627370496.0,exponent-1023) end
+    return sign*value
+end
 local function _mov_f64_digits(value,encode)
-    local bits=string.unpack("<i8",string.pack("<d",value))
+    local lo,hi=_mov_f64_words(value)
     local digits={}
-    for j=0,15 do digits[j]=encode[(bits>>(j*4))&15] end
+    for j=0,7 do digits[j]=encode[math.floor(lo/2^(j*4))%16] end
+    for j=0,7 do digits[8+j]=encode[math.floor(hi/2^(j*4))%16] end
     return digits
 end
 local function _mov_f64_from_digits(digits,decode,offset)
-    local bits=0; offset=offset or 0
-    for j=15,0,-1 do bits=(bits<<4)|decode[digits[offset+j]] end
-    return string.unpack("<d",string.pack("<i8",bits))
+    local lo,hi=0,0; offset=offset or 0
+    for j=7,0,-1 do lo=lo*16+decode[digits[offset+j]] end
+    for j=15,8,-1 do hi=hi*16+decode[digits[offset+j]] end
+    return _mov_f64_value(lo,hi)
 end
 --<<ENDTARGET_MOV_FLOAT_STORAGE>>
 local function _mov_uint(r)
@@ -93,9 +120,14 @@ end
         if d then
             if regs[i]~=nil then return regs[i] end
             --<<TARGET_INTEGER_DIGITS>>
-            local v=0
-            for j=15,0,-1 do v=(v<<4)|_mdecode[d[j]] end
-            --<<ENDTARGET_INTEGER_DIGITS>>
+local lo,hi=0,0
+for j=7,0,-1 do lo=lo*16+_mdecode[d[j]] end
+for j=15,8,-1 do hi=hi*16+_mdecode[d[j]] end
+local v
+if hi>=2147483648 then
+    v=-((4294967295-hi)*4294967296.0+(4294967296.0-lo))
+else v=hi*4294967296.0+lo end
+--<<ENDTARGET_INTEGER_DIGITS>>
             regs[i]=v
             return v
         end

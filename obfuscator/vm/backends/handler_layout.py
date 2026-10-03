@@ -182,16 +182,27 @@ def validate_layout(function: PhysicalFunction, vm_maps: list) -> None:
         if aliases and item.vop not in allowed:
             raise ValueError(f"missing handler target: {function.source.id}:{index}")
         instruction = item.instruction
+        if instruction.operation == "BLOCK_ROUTE":
+            if not 0 <= instruction.a < len(function.routes):
+                raise ValueError("invalid block route index")
+        if instruction.operation == "BLOCK_GOTO":
+            if not 0 <= instruction.bx <= size:
+                raise ValueError("invalid block goto target")
         if instruction.operation in {"JUMP", "FOR_LOOP", "FOR_PREP", "ITER_LOOP"}:
             if not 0 <= index + 1 + instruction.sbx <= size:
                 raise ValueError(f"invalid physical jump: {function.source.id}:{index}")
         if any(not 0 <= slot <= 254 for slot in item.avalanche):
             raise ValueError("invalid avalanche scratch slot")
         for family, site, seed, state_key, policy in item.graph_sites:
-            if not (0 <= family <= 8 and site > 0 and seed > 0 and state_key > 0 and 0 <= policy <= 3):
+            if not (all(type(value) is int for value in (family, site, seed, state_key, policy))
+                    and 0 <= family <= 8 and 0 < site <= 0xFFFFFFFF
+                    and 0 < seed <= 0xFFFFFFFF and 0 < state_key <= 0xFFFF
+                    and 0 <= policy <= 3):
                 raise ValueError("invalid graph descriptor")
     for route in function.routes:
-        if not route or any(not 1 <= target <= size for target in route):
+        if not 1 <= len(route) <= 255:
+            raise ValueError("invalid block route length")
+        if any(type(target) is not int or not 1 <= target <= size for target in route):
             raise ValueError("invalid block route target")
     for child in function.children:
         validate_layout(child, vm_maps)

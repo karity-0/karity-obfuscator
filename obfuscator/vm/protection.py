@@ -101,6 +101,50 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
                     or type(requirement['auxiliary_count']) is not int
                     or requirement['auxiliary_count'] not in (2, 3)):
                 raise ValueError('invalid semantic alias multiplicity')
+        runtime_variants = state.get("runtime_variants")
+        if runtime_variants is not None:
+            if function_id != ir.root.id or len(runtime_variants) != state.get("vm_count"):
+                raise ValueError("invalid runtime variant VM placement")
+            for variant, aliases in zip(runtime_variants, requirements):
+                counts = dict(aliases["operations"])
+                modes = dict(variant.get("semantic_alias_modes", ()))
+                routes = dict(variant.get("helper_route_cycles", ()))
+                if (variant.get("dispatcher") not in {
+                        "ifelseif", "tailcall", "bsearch", "split4", "split6",
+                        "bsplit4", "bsplit6", "table"
+                    } or set(modes) != set(counts)
+                    or any(len(modes[name]) != counts[name]
+                           or any(type(value) is not bool for value in modes[name])
+                           for name in counts)
+                    or not all(type(value) is int and 0 <= value < 8
+                               for value in variant.get("decoy_body_variants", ()))
+                    or not 1 <= variant.get("helper_variant_count", 0) <= 4
+                    or variant.get("helper_fetch_variant") not in (0, 1, 2)
+                    or set(routes) != set(_HELPER_NAMES)
+                    or any(not cycle or any(
+                        type(value) is not int
+                        or not 0 <= value < variant["helper_variant_count"]
+                        for value in cycle
+                    ) for cycle in routes.values())):
+                    raise ValueError("invalid planned runtime variant")
+    blob_form = plan.functions.get(ir.root.id, {}).get("blob_form")
+    if blob_form is not None and blob_form not in {"string", "table", "numeric"}:
+        raise ValueError("invalid planned blob representation")
+    representation_routes = plan.functions.get(ir.root.id, {}).get(
+        "representation_routes"
+    )
+    if representation_routes is not None:
+        routes = dict(representation_routes)
+        expected = {
+            "arithmetic": set(_ARITHMETIC_ROUTE_KINDS),
+            "semantic": set(_SEMANTIC_ROUTE_KINDS),
+        }
+        if (set(routes) != set(expected)
+                or any(set(dict(routes[group])) != names
+                       for group, names in expected.items())
+                or any(type(route) is not bool
+                       for entries in routes.values() for _, route in entries)):
+            raise ValueError("invalid planned representation routes")
     occurrence_ids = set()
     for instruction_id, state in plan.instructions.items():
         for kind, argument in state.get("instruction_forms", ()):
@@ -190,6 +234,18 @@ _PARAMETER_OPTIONS = frozenset((
     "junk_rate", "integrity_constant_rate", "block_variant_count",
     "block_variant_max_instructions", "helper_variant_count",
 ))
+
+_DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
+_HELPER_NAMES = ("rget", "rset", "_flow", "_sem")
+_ARITHMETIC_ROUTE_KINDS = (
+    "ADD", "SUB", "MUL", "BIT_AND", "BIT_OR", "BIT_XOR",
+    "SHIFT_LEFT", "SHIFT_RIGHT", "NEGATE", "BIT_NOT",
+)
+_SEMANTIC_ROUTE_KINDS = (
+    "VALUE", "TABLE_GET", "TABLE_SET", "EQUAL", "LESS_THAN", "LESS_EQUAL",
+    "TRUTH", "MOD", "POW", "DIV", "FLOOR_DIV", "LOGICAL_NOT", "LENGTH",
+    "CONCAT", "NEW_TABLE", "SET_LIST", "CLOSURE", "VARARG",
+)
 
 
 def _enabled(name: str, value: Any) -> bool:
@@ -397,6 +453,108 @@ class ProtectionPlanner:
              'auxiliary_count': rng.randint(2, 3)}
             for _ in range(count)
         )
+
+        # Runtime protection topology is part of the requested protection,
+        # rather than an emitter-side coin toss. Names and opcode numbers are
+        # deliberately absent: backends still own physical encodings.
+        root_state = functions[ir.root.id]
+        alias_requirements = root_state["alias_requirements"]
+        semantic_rate = max(0.0, min(
+            1.0, float(self.options.get("semantic_diversity_rate", 0.35))
+        ))
+        helper_count = max(1, min(
+            4, int(self.options.get("helper_variant_count", 3))
+        ))
+        helper_rate = max(0.0, min(
+            1.0, float(self.options.get("helper_diversity_rate", 0.35))
+        ))
+        dispatcher = self.options.get("dispatcher_type") or "ifelseif"
+        blob_form = self.options.get("blob_form") or "string"
+        root_state["blob_form"] = (
+            rng.choice(("string", "table", "numeric"))
+            if blob_form == "random" else blob_form
+        )
+        root_state["representation_routes"] = (
+            ("arithmetic", tuple(
+                (name, bool(rng.getrandbits(1)))
+                for name in _ARITHMETIC_ROUTE_KINDS
+            )),
+            ("semantic", tuple(
+                (name, bool(rng.getrandbits(1)))
+                for name in _SEMANTIC_ROUTE_KINDS
+            )),
+        )
+
+        used_operations = [set() for _ in range(count)]
+        forced_indirect_aliases: list[dict[str, set[int]]] = [
+            {} for _ in range(count)
+        ]
+        for function, placement in zip(ordered, placements):
+            used_operations[placement].update(
+                instruction.operation
+                for block in function.blocks for instruction in block.instructions
+            )
+            alias_counts = dict(alias_requirements[placement]["operations"])
+            for block in function.blocks:
+                for instruction in block.instructions:
+                    # The direct SET_LIST specialization cannot consume the
+                    # following extension word. Keep the alias selected by an
+                    # extended batch on the complete semantic implementation.
+                    if instruction.operation == "SET_LIST" and any(
+                        operand.role == "batch" and operand.value > 511
+                        for operand in instruction.operands
+                    ):
+                        alias = (instructions[instruction.id]["alias_variant"]
+                                 % alias_counts["SET_LIST"])
+                        forced_indirect_aliases[placement].setdefault(
+                            "SET_LIST", set()
+                        ).add(alias)
+
+        runtime_variants = []
+        for vm_id in range(count):
+            counts = dict(alias_requirements[vm_id]["operations"])
+            semantic_alias_modes = []
+            for name in sorted(semantic_operations):
+                aliases = counts[name]
+                semantic_alias_modes.append((
+                    name,
+                    tuple(False if index == 0 or index in forced_indirect_aliases[
+                              vm_id
+                          ].get(name, ()) else rng.random() < semantic_rate
+                          for index in range(aliases)),
+                ))
+
+            real_handler_count = sum(
+                counts[name] for name in used_operations[vm_id] if name in counts
+            )
+            if self.options.get("fake_handlers", False) and real_handler_count:
+                decoy_count = rng.randint(
+                    real_handler_count // 2, real_handler_count * 2 + 1
+                )
+                decoy_body_variants = tuple(rng.randrange(8) for _ in range(decoy_count))
+            else:
+                decoy_body_variants = ()
+
+            helper_route_cycles = []
+            for helper in _HELPER_NAMES:
+                routes = []
+                for _ in range(16):
+                    routes.append(
+                        rng.randrange(1, helper_count)
+                        if helper_count > 1 and rng.random() < helper_rate else 0
+                    )
+                helper_route_cycles.append((helper, tuple(routes)))
+
+            runtime_variants.append({
+                "dispatcher": rng.choice(_DISPATCH_KINDS) if dispatcher == "mixed" else dispatcher,
+                "decoy_body_variants": decoy_body_variants,
+                "mutate_handlers": bool(self.options.get("mutate_handlers", False)),
+                "semantic_alias_modes": tuple(semantic_alias_modes),
+                "helper_variant_count": helper_count,
+                "helper_fetch_variant": rng.randrange(3),
+                "helper_route_cycles": tuple(helper_route_cycles),
+            })
+        root_state["runtime_variants"] = tuple(runtime_variants)
 
         # Reserve concrete occurrence identities after target selection so each
         # physical variant/split consumes its own planned descriptor.

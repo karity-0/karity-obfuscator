@@ -34,8 +34,9 @@ def _native_arithmetic(runtime: str) -> str:
 """ + runtime[end:]
 
 
-def build_runtime(classic: str, kits: list[VMKit]) -> str:
-    template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
+def build_runtime(classic: str, kits: list[VMKit], *, template=None) -> str:
+    if template is None:
+        template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
     template = template.replace("__MOV_DIV_STEPS__", "{" + ",".join(
         f"[{i}]={{{i - 1},{str(i > 1).lower()},{max(i - 4, 0)},{str(i > 4).lower()}}}"
         for i in range(1, 65)
@@ -51,12 +52,13 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     handlers = classic[a:b]
     # A VM tail call returns a frame transition, consumed by the outer
     # trampoline. Native functions still use Lua's normal call semantics.
-    handlers = handlers.replace(
-        "local res = table.pack(fn(table.unpack(ca,1,ca_n)))",
-        """local target=_mov_closures[fn]
+    tail_start = handlers.index("--<<VM_TAIL_DISPATCH>>")
+    tail_end = handlers.index("--<<ENDVM_TAIL_DISPATCH>>", tail_start)
+    handlers = handlers[:tail_start] + """local target=_mov_closures[fn]
+            local res
             if target then ca.n=ca_n; return {mov_tail=target,args=ca} end
-            local res = table.pack(fn(table.unpack(ca,1,ca_n)))""",
-    )
+            res=table.pack(fn(table.unpack(ca,1,ca_n)))
+            """ + handlers[tail_end + len("--<<ENDVM_TAIL_DISPATCH>>"):]
     handlers = handlers.replace("elseif op==30 then pc=pc+sBx",
                                 'elseif op==30 then error("unexpected MOV host jump")')
     # Every host opcode crosses the same indirect call boundary. Keep frame
@@ -113,9 +115,9 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
         definitions.append(definition)
     runtime = runtime[:start] + "\n".join(definitions) + runtime[end:]
     runtime = runtime.replace("local exec, _EX", "local _EX; local _mov_dispatch={}", 1)
-    runtime = runtime.replace("_EX={exec}", """local function _mov_invoke(proto,upvals,args)
+    runtime = runtime.replace("_EX={exec}", """local function _mov_invoke(proto,upvals,args,va_in,source_parents)
         while true do
-            local w=_mov_dispatch[proto.vm_id+1](proto,upvals,args)
+            local w=_mov_dispatch[proto.vm_id+1](proto,upvals,args,nil,source_parents)
             if not w.mov_tail then return w end
             proto=w.mov_tail[1]; upvals=w.mov_tail[2]; args=w.args
         end

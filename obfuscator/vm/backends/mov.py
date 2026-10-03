@@ -17,10 +17,12 @@ class MovBackend(VMBackend):
         SHARED_OPTIONS,
     )
 
-    def compose_runtime(self, source, lowered):
+    def compose_runtime(self, source, lowered, *, target=None):
         from .runtime_templates import classic_executor, direct_executor
         from ..mov.builder import build_runtime
-        executor = build_runtime(classic_executor(), lowered.backend_data['kits'])
+        executor = build_runtime(target.runtime_template('classic_exec.lua') if target else classic_executor(),
+                                 lowered.backend_data['kits'],
+                                 template=target.runtime_template('mov_exec.lua') if target else None)
         source = direct_executor(source, executor)
         return source.replace('local proto=read_proto(r,acc_state)',
                               'local proto=read_proto(r,acc_state); _mov_read(r,proto)')
@@ -28,6 +30,32 @@ class MovBackend(VMBackend):
     def build_vm_map(self, program, assignments, vm_id, used_vops, alias_requirements):
         from .handler_ir import OPERATIONS
         return {op: [op] for op in range(len(OPERATIONS))}, {}, {}, {}
+
+    def emit_handlers(self, source, lowered, variants):
+        # Microcode dispatch and HOST handlers are composed by the MOV builder.
+        return source
+
+    def serialize_program(self, lowered, context):
+        from ..mov.serializer import serialize
+        from ..backend import unsupported_vm_options
+        blob = super().serialize_program(lowered, context)
+        programs = lowered.backend_data['programs']
+        count = lowered.backend_data['layout'].vm_count
+        storage_stats = {}
+        extension = serialize(programs, lowered.backend_data['kits'], storage_stats,
+                              linked=lowered.backend_data['linked'])
+        context.profile.append({
+            'phase': 'mov_lowering', 'elapsed': 0.0,
+            'prototypes': len(programs), 'effective_vms': count,
+            'vm_prototypes': [sum(p.vm_id == i for p in programs) for i in range(count)],
+            'digit_encoding': 'per_vm_permutation',
+            'lowered_sites': sum(p.lowered_sites for p in programs),
+            'micro_instructions': sum(len(p.code) for p in programs),
+            'extension_bytes': len(extension), **storage_stats,
+            'dispatcher': 'mov_microcode',
+            'unsupported_options': sorted(unsupported_vm_options(self.name)),
+        })
+        return blob + extension
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)

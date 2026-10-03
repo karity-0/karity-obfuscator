@@ -1,6 +1,7 @@
 """Canonical dump parity across native Lua 5.1 size and endian layouts."""
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -55,7 +56,17 @@ def main():
     try:
         from lupa.lua51 import LuaRuntime
         lua=LuaRuntime(encoding=None)
-        normalize=lua.execute((ROOT/'obfuscator/vm/targets/dump51.lua').read_bytes())
+        from obfuscator.vm.targets.lua51 import Lua51Target
+        runtime=Lua51Target().runtime_template('vm.lua')
+        prepared=Lua51Target().prepare_runtime(
+            runtime,SimpleNamespace(backend_data={},backend='classic'))
+        dump_hook=prepared.split('--<<TARGET_FUNCTION_DUMP>>',1)[1].split(
+            '--<<ENDTARGET_FUNCTION_DUMP>>',1)[0]
+        native_aliases=('local _native_string_dump,_native_string_byte,_native_string_char='
+                        'string.dump,string.byte,string.char;'
+                        'local _native_table_concat,_native_math_floor=table.concat,math.floor;')
+        normalize=lua.execute((native_aliases+dump_hook+
+                               ';return _normalize_function_dump').encode())
     except ImportError:
         normalize=None
     for endian in (0,1):
@@ -71,7 +82,6 @@ def main():
         assert first!=second and normalize(first)==normalize(second)
         third=dump(b'return function(beta) return beta+2 end',b'@second')
         assert normalize(third)!=normalize(first)
-        from obfuscator.vm.targets.lua51 import Lua51Target
         source = Lua51Target().lower_source('return function(...) return true end')
         original = lua.execute(source.encode())
         tampered_source = source.replace('number has no integer representation',

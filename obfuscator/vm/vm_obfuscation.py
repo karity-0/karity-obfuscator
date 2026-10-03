@@ -399,7 +399,7 @@ def fused_handler_body(op1: int, op2: int) -> str:
     # (decode/read_proto와 동일 레이아웃 공유). 반드시 레이아웃 인라인 전에 emit됨.
     lines = [
         "local _fav=_avd[pc]",
-        "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
+        "local _ei=_ixor(_cd[pc],_ksm(pc)); pc=pc+1",
         "local _fa=(_ei>>_SH_A)&0xFF",
         "local _fb=(_ei>>_SH_B)&0x1FF",
         "local _fc=(_ei>>_SH_C)&0x1FF",
@@ -497,7 +497,8 @@ _DIRECT_SEMANTIC_BODIES = {
 
 
 def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
-                    semantic_diversity_rate: float = 0.0) -> str:
+                    semantic_diversity_rate: float = 0.0,
+                    semantic_alias_modes: dict[int, tuple[bool, ...]] | None = None) -> str:
     """
     vm.lua의 op==N 체인을 파싱해서:
     1. 각 원본 op의 alias vop들에 대해 state 전이가 다른 핸들러를 생성
@@ -520,8 +521,12 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
             # Keep one graph-backed alias as the baseline. Other aliases may
             # lower the same operation directly so table/upvalue/control
             # semantics do not all converge on _sem.
-            if (i > 0 and orig_op in _DIRECT_SEMANTIC_BODIES and
-                    random.random() < semantic_diversity_rate):
+            planned_modes = ((semantic_alias_modes or {}).get(orig_op))
+            direct = (
+                planned_modes[i] if planned_modes is not None and i < len(planned_modes)
+                else i > 0 and random.random() < semantic_diversity_rate
+            )
+            if orig_op in _DIRECT_SEMANTIC_BODIES and direct:
                 alias_body = _DIRECT_SEMANTIC_BODIES[orig_op]
             new_blocks[vop] = _make_alias_body(alias_body, transition, pre)
 
@@ -545,8 +550,9 @@ _FAKE_BODIES = [
 ]
 
 
-def _make_fake_block() -> str:
-    return random.choice(_FAKE_BODIES)
+def _make_fake_block(variant: int | None = None) -> str:
+    return (_FAKE_BODIES[variant % len(_FAKE_BODIES)]
+            if variant is not None else random.choice(_FAKE_BODIES))
 
 
 # ---------------------------------------------------------------------------
@@ -557,6 +563,7 @@ def prune_and_inject_handlers(
     used_ops: set[int],
     fake_handlers: bool = True,
     mutate: bool = True,
+    fake_body_variants: tuple[int, ...] | None = None,
 ) -> str:
     """
     used_ops에 없는 opcode 핸들러를 제거하고, 비어있는 opcode 번호에
@@ -575,7 +582,18 @@ def prune_and_inject_handlers(
     # 사용되는 핸들러만 남김
     blocks = {op: body for op, body in blocks.items() if op in used_ops}
 
-    if fake_handlers:
+    if fake_handlers and fake_body_variants is not None:
+        for variant in fake_body_variants:
+            attempts = 0
+            while attempts < 100:
+                attempts += 1
+                fake_vop = random.randint(0, 0x7FFF)
+                if fake_vop not in blocks:
+                    blocks[fake_vop] = _make_fake_block(variant)
+                    break
+            else:
+                raise RuntimeError("unable to allocate planned fake handler")
+    elif fake_handlers:
         # 가짜 핸들러: used_ops 주변 vop 공간에서 랜덤 샘플
         # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
         n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
@@ -947,22 +965,27 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
             raise RuntimeError(f"execution kit: helper {helper} not found")
         if helper == "rget":
             before = clone
-            clone = clone.replace(
-                "return _rdecode(((regs[p1]+_RS[p2])-b)*inv,_RT[p4])",
-                "local _v=((regs[p1]+_RS[p2])-b)*inv; local _k=_RT[p4]; "
+            clone = re.sub(
+                r"return _rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
+                r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),_RT\[p4\]\)",
+                lambda match: "local _v="+match.group(1)+"; local _k=_RT[p4]; "
                 "if _k==1 then return _v elseif _k==2 then return _v~=0 "
                 "elseif _k==3 then return nil end; return _RO[_v]",
-                1,
+                clone, count=1, flags=re.S,
             )
             if clone == before:
                 raise RuntimeError("execution kit: rget specialization did not match")
         elif helper == "rset":
             before = clone
-            clone = clone.replace(
-                "local payload,kind=_rvalue(v,epoch)\n"
-                "        local a,b=_rparams(i,epoch)\n"
-                "        _rstore(i,a*payload+b,epoch,kind)",
-                "local payload,kind\n"
+            def private_expression(expression):
+                return ("(--<<TARGET_PRIVATE_EXPRESSION>>\n"+expression+
+                        "\n--<<ENDTARGET_PRIVATE_EXPRESSION>>\n)")
+            clone = re.sub(
+                r"local payload,kind=_rvalue\(v,epoch\)\s*"
+                r"local a,b=_rparams\(i,epoch\)\s*"
+                r"_rstore\(i,(\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
+                r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),epoch,kind\)",
+                lambda match: "local payload,kind\n"
                 "        if math.type(v)==\"integer\" then payload,kind=v,1\n"
                 "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n"
                 "        elseif v==nil then payload,kind=_rmix(epoch~_RZ~0x4E494C),3\n"
@@ -972,12 +995,14 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                 "_RO[payload]=v; if not (type(v)==\"number\" and v~=v) then "
                 "_RI[_value_key(v)]=payload end end; kind=4\n"
                 "        end\n"
-                "        local a,b=_rparams(i,epoch); local encoded=a*payload+b\n"
-                "        _PD[_rpos(5,i)]=nil; local share=_rmix(epoch~_RZ~"
-                "((i+3)*-3372029247567499371)); local p1,p2,p3,p4=_rpositions(i)\n"
-                "        regs[p1]=encoded-share; _RS[p2]=share; _RE[p3]=epoch; "
+                "        local a,b=_rparams(i,epoch); local encoded="+match.group(1)+"\n"
+                "        _PD[_rpos(5,i)]=nil; local share=_rmix("+
+                private_expression("epoch~_RZ~((i+3)*-3372029247567499371)")+
+                "); local p1,p2,p3,p4=_rpositions(i)\n"
+                "        regs[p1]="+private_expression("encoded-share")+
+                "; _RS[p2]=share; _RE[p3]=epoch; "
                 "_RT[p4]=kind; _RL[i]=true; _ss_value(i,encoded,epoch,kind)",
-                1,
+                clone, count=1, flags=re.S,
             )
             if clone == before:
                 raise RuntimeError("execution kit: rset specialization did not match")
@@ -989,10 +1014,17 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
 
 
 def _rewrite_helper_calls(source: str, helper: str, names: list[str],
-                          rate: float) -> str:
+                          rate: float,
+                          route_cycle: tuple[int, ...] | None = None) -> str:
     pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(helper)}(?=\s*\()")
+    occurrence = 0
 
     def replace(match: re.Match) -> str:
+        nonlocal occurrence
+        if route_cycle is not None:
+            route = route_cycle[occurrence % len(route_cycle)]
+            occurrence += 1
+            return names[route]
         if len(names) == 1 or random.random() >= rate:
             return match.group(0)
         return random.choice(names[1:])
@@ -1000,15 +1032,15 @@ def _rewrite_helper_calls(source: str, helper: str, names: list[str],
     return pattern.sub(replace, source)
 
 
-def _inline_fetch_decode(vm_code: str) -> str:
+def _inline_fetch_decode(vm_code: str, variant: int | None = None) -> str:
     start_marker, end_marker = "--<<FETCH>>", "--<<ENDFETCH>>"
     start = vm_code.index(start_marker)
     end = vm_code.index(end_marker, start) + len(end_marker)
     layouts = [
         (
             "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
-            "local _dk=(_S[611] or 0)~(_XF[1] or 0); "
-            "local _dw=((_cd[pc]~_ksm(pc))~_dk)~_dk; local _av=_avd[_ip]; "
+            "local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); "
+            "local _dw=_ixor(_ixor(_ixor(_cd[pc],_ksm(pc)),_dk),_dk); local _av=_avd[_ip]; "
             "local _lo=_dw&0x7F; local _hi=(_dw>>_SH_V)&0xFF; "
             "local op=_lo|(_hi<<7); local A=(_dw>>_SH_A)&0xFF; "
             "local B=(_dw>>_SH_B)&0x1FF; local C=(_dw>>_SH_C)&0x1FF; "
@@ -1017,8 +1049,8 @@ def _inline_fetch_decode(vm_code: str) -> str:
         ),
         (
             "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
-            "local _dk=(_S[611] or 0)~(_XF[1] or 0); "
-            "local ins=(_cd[pc]~_ksm(pc))~_dk; local _dw=ins~_dk; "
+            "local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); "
+            "local ins=_ixor(_ixor(_cd[pc],_ksm(pc)),_dk); local _dw=_ixor(ins,_dk); "
             "local C=(_dw>>_SH_C)&0x1FF; local B=(_dw>>_SH_B)&0x1FF; "
             "local A=(_dw>>_SH_A)&0xFF; local Bx=(_dw>>_SH_C)&0x3FFFF; "
             "local op=(_dw&0x7F)|(((_dw>>_SH_V)&0xFF)<<7); "
@@ -1026,8 +1058,8 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "_route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)"
         ),
         (
-            "_av_read(); local _ip=pc; local _dk=(_S[611] or 0)~(_XF[1] or 0); "
-            "local ins=(_cd[pc]~_ksm(pc))~_dk; local _dw=ins~_dk; "
+            "_av_read(); local _ip=pc; local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); "
+            "local ins=_ixor(_ixor(_cd[pc],_ksm(pc)),_dk); local _dw=_ixor(ins,_dk); "
             "local Bx=(_dw>>_SH_C)&0x3FFFF; local sBx=Bx-131071; "
             "local A=(_dw>>_SH_A)&0xFF; local C=Bx&0x1FF; "
             "local B=(_dw>>_SH_B)&0x1FF; local op=(_dw&0x7F)|"
@@ -1036,17 +1068,22 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "_ss_step(_ip,op,A,B,C)"
         ),
     ]
-    return vm_code[:start] + random.choice(layouts) + vm_code[end:]
+    selected = random.choice(layouts) if variant is None else layouts[variant % len(layouts)]
+    return vm_code[:start] + selected + vm_code[end:]
 
 
 def apply_execution_kit(vm_code: str, helper_variant_count: int = 3,
-                        helper_diversity_rate: float = 0.35) -> str:
+                        helper_diversity_rate: float = 0.35,
+                        variant_plan: dict | None = None) -> str:
     """Compile one VM's fetch and hot helper topology at build time.
 
     Runtime selection is deliberately avoided: each call site is wired to a
     concrete implementation, so there is no replacement selector choke point.
     """
-    count = max(1, min(4, int(helper_variant_count)))
+    count = max(1, min(4, int(
+        variant_plan.get("helper_variant_count", helper_variant_count)
+        if variant_plan is not None else helper_variant_count
+    )))
     rate = max(0.0, min(1.0, float(helper_diversity_rate)))
     helper_names = {}
     for helper in _HELPER_MARKERS:
@@ -1057,10 +1094,15 @@ def apply_execution_kit(vm_code: str, helper_variant_count: int = 3,
     # dispatcher handlers, split/fuse handlers, and call continuations.
     split_at = vm_code.index(_HELPER_MARKERS["_sem"][1]) + len(_HELPER_MARKERS["_sem"][1])
     prefix, suffix = vm_code[:split_at], vm_code[split_at:]
+    planned_routes = dict(variant_plan.get("helper_route_cycles", ())) if variant_plan else {}
     for helper, names in helper_names.items():
-        suffix = _rewrite_helper_calls(suffix, helper, names, rate)
+        suffix = _rewrite_helper_calls(
+            suffix, helper, names, rate, planned_routes.get(helper)
+        )
     vm_code = prefix + suffix
-    vm_code = _inline_fetch_decode(vm_code)
+    vm_code = _inline_fetch_decode(
+        vm_code, variant_plan.get("helper_fetch_variant") if variant_plan else None
+    )
     for start_marker, end_marker in _HELPER_MARKERS.values():
         vm_code = vm_code.replace(start_marker, "").replace(end_marker, "")
     return vm_code
@@ -1118,53 +1160,17 @@ end"""
     return vm_code[:start] + "_NX={" + ",".join(routers) + "}" + vm_code[end:]
 
 
-def build_exec_variants(vm_code: str, n: int, vm_maps: list,
-                        used_ops_list: list[set[int]],
-                        fake_handlers: bool = True, mutate: bool = True,
-                        dispatch: str = "ifelseif",
-                        dispatch_target_hiding: bool = False,
-                        helper_variant_count: int = 3,
-                        helper_diversity_rate: float = 0.35,
-                        semantic_diversity_rate: float = 0.35,
-                        classic_runtime: bool = False) -> str:
-    """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립.
+def build_exec_variants(vm_code: str, n: int, render) -> str:
+    """Assemble N executors rendered by the owning backend.
 
-    dispatch: "ifelseif"(전부 if-elseif) | "tailcall"(전부 테이블+꼬리호출) |
-              "bsearch"(전부 op 이진탐색) | "mixed"(VM마다 랜덤). 각 _ex{k}는
-              별도 함수 스코프라 tailcall이 쓰는 local _H/_step이 서로 충돌하지
-              않는다.
+    The callback receives the unchanged template and zero-based VM index.
+    It owns handler transforms, dispatch, naming and backend-specific routing.
     """
     s = vm_code.index(_EXEC_MARK_START)
     e = vm_code.index(_EXEC_MARK_END)
     template = vm_code[s + len(_EXEC_MARK_START):e]
-
-    defs = []
-    for k in range(n):
-        vop_map, split_map, fuse_map, defer_map = vm_maps[k]
-        c = apply_vop_to_vm(template, vop_map, semantic_diversity_rate)
-        c = prune_and_inject_handlers(c, used_ops_list[k],
-                                      fake_handlers=fake_handlers, mutate=mutate)
-        c = apply_split_to_vm(c, split_map, mutate=mutate)
-        c = apply_fuse_to_vm(c, fuse_map, mutate=mutate)
-        c = apply_defer_to_vm(c, defer_map, mutate=mutate)
-        # exec 정의 head 이름만 _ex{k}로 변경 (make_closure는 이미 _EX로 라우팅)
-        c = c.replace("exec = function", f"_ex{k} = function", 1)
-        # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)
-        c = _apply_dispatch(c, _resolve_dispatch(dispatch))
-        if not classic_runtime:
-            c = apply_execution_kit(c, helper_variant_count, helper_diversity_rate)
-        if dispatch_target_hiding:
-            c = apply_dispatch_target_hiding(c)
-        if not classic_runtime:
-            c = c.replace("_NX", f"_NX[{k + 1}]")
-        defs.append(c)
-
-    # 마커 영역 → N벌 정의로 치환
+    defs = [render(template, k) for k in range(n)]
     vm_code = vm_code[:s] + "\n".join(defs) + vm_code[e + len(_EXEC_MARK_END):]
-    # 포워드 선언 + 라우팅 테이블
     names = ",".join(f"_ex{k}" for k in range(n))
     vm_code = vm_code.replace("local exec, _EX", f"local {names}, _EX", 1)
-    vm_code = vm_code.replace("_EX={exec}", "_EX={" + names + "}", 1)
-    if not classic_runtime:
-        vm_code = build_next_router_kit(vm_code, n)
-    return vm_code
+    return vm_code.replace("_EX={exec}", "_EX={" + names + "}", 1)

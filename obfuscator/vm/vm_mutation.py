@@ -186,9 +186,9 @@ def _math_junk(c: list[int]) -> str:
     """math 라이브러리 호출 junk (결과는 항상 0)."""
     zv = _zv(c)
     return random.choice([
-        f"local {zv}=math.max(A or 0,B or 0)*0",
-        f"local {zv}=math.abs((sBx or 0)*0)",
-        f"local {zv}=math.floor((pc or 0)*0)",
+        f"local {zv}=math.max(_source_value(A or 0),_source_value(B or 0))*0",
+        f"local {zv}=math.abs(_source_value((sBx or 0)*0))",
+        f"local {zv}=math.floor(_source_value((pc or 0)*0))",
     ])
 
 

@@ -31,6 +31,7 @@ local A,B,Bx,C,sBx,pc,regs=3,7,0,0,0,1,{{}}
 local function make_values(a,b) return {{a,b}},2 end
 local function consume(values,count) return values[1]+values[2]+count end
 local function rset() end
+local function _source_value(value) return value end
 local function run_assigned()
 {assigned}
 end

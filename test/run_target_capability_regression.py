@@ -44,6 +44,10 @@ def main():
     configured = TargetProfile.from_config({'target': {'lua_version': '5.1'}})
     assert configured.lua_version == '5.1'
     validate_pass_target('vm', configured)
+    # Build-time compilation does not imply a dynamic loader in the target VM.
+    no_loader = TargetProfile(lua_version='5.1', disabled_capabilities={'text_chunk_load'})
+    validate_pass_target('vm', no_loader)
+
     validate_pass_target('string_encode', configured)
     for name, profile in (('boolean_obf', configured),
                           ('localize_globals', configured),

@@ -262,6 +262,27 @@ def check_runtime_composition():
     # Executor selection follows the backend contract, not a recognized name.
     assert _load_vm(RenamedClassic(), None) == _load_vm(ClassicBackend(), None)
     assert 'local exec, _EX, _NX' not in _load_vm(RenamedClassic(), None)
+    from obfuscator.vm.targets.lua51 import Lua51Target
+    from obfuscator.vm.targets.lua53 import Lua53Target
+    from obfuscator.vm.backends.karity import KarityBackend
+    from obfuscator.vm.backends.mov import MovBackend
+    from obfuscator.vm.mov.layout import make_kits
+    from types import SimpleNamespace
+    lowered=SimpleNamespace(backend_data={'kits':make_kits(1)})
+    with patch.object(Lua53Target,'runtime_template',side_effect=AssertionError('5.3 template read')):
+        for backend in (ClassicBackend(),KarityBackend(),MovBackend()):
+            source=_load_vm(backend,lowered,target=Lua51Target())
+            if backend.name == 'mov':
+                assert '_mov_f64_words' in source
+            assert 'local function _ixor(a,b)' in source
+            assert 'Lua 5.1 target runtime template' in source
+    for target in (Lua51Target(),Lua53Target()):
+        try:
+            target.runtime_template('../vm.lua')
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('invalid runtime template accepted')
 
 
 def check_alias_planning():
@@ -272,8 +293,28 @@ def check_alias_planning():
     planner = ProtectionPlanner({"vm_count": 2})
     plan = planner.build(ir)
     requirements = plan.functions[ir.root.id]['alias_requirements']
+    runtime_variants = plan.functions[ir.root.id]['runtime_variants']
     assert planner.build(ir).dump() == plan.dump()
     assert len(requirements) == 2
+    assert len(runtime_variants) == 2
+    assert plan.functions[ir.root.id]['blob_form'] in {'string', 'table', 'numeric'}
+    representation_routes = dict(plan.functions[ir.root.id]['representation_routes'])
+    assert set(representation_routes) == {'arithmetic', 'semantic'}
+    assert all(
+        type(route) is bool
+        for entries in representation_routes.values() for _, route in entries
+    )
+    for variant, requirement in zip(runtime_variants, requirements):
+        assert variant['dispatcher'] == 'ifelseif'
+        assert not variant['decoy_body_variants']
+        assert len(dict(variant['semantic_alias_modes'])) == len(requirement['operations'])
+        assert all(
+            len(dict(variant['semantic_alias_modes'])[name]) == count
+            for name, count in requirement['operations']
+        )
+        assert set(dict(variant['helper_route_cycles'])) == {
+            'rget', 'rset', '_flow', '_sem'
+        }
     for seed in (2, 400):
         random.seed(seed)
         for name in ('classic', 'karity'):
@@ -301,6 +342,31 @@ def check_alias_planning():
         assert 'alias multiplicity' in str(error)
     else:
         raise AssertionError('invalid alias count accepted')
+    bad_runtime = dict(runtime_variants[0])
+    bad_runtime['helper_fetch_variant'] = 99
+    invalid[ir.root.id] = dict(
+        plan.functions[ir.root.id],
+        runtime_variants=(bad_runtime, *runtime_variants[1:]),
+    )
+    try:
+        protect(ir, replace(plan, functions=invalid))
+    except ValueError as error:
+        assert 'runtime variant' in str(error)
+    else:
+        raise AssertionError('invalid runtime variant accepted')
+    bad_routes = tuple(
+        (group, entries + (("UNKNOWN", False),) if group == "semantic" else entries)
+        for group, entries in plan.functions[ir.root.id]['representation_routes']
+    )
+    invalid[ir.root.id] = dict(
+        plan.functions[ir.root.id], representation_routes=bad_routes
+    )
+    try:
+        protect(ir, replace(plan, functions=invalid))
+    except ValueError as error:
+        assert 'representation routes' in str(error)
+    else:
+        raise AssertionError('invalid representation route accepted')
 
 
 def check_backend_layouts():
@@ -316,7 +382,57 @@ def check_backend_layouts():
         lowered = backend.optimize(backend.lower(protect(ir, plan), context), context)
         assert lowered.dump() == (ROOT / "test/fixtures/ir" / f"{name}_layout.ir").read_text(encoding="utf-8")
         layout = lowered.backend_data["layout"]
+        # Backend ownership must preserve the physical byte format and RNG
+        # consumption, including MOV's linked tape after the common prefix.
+        from obfuscator.vm.backends.handler_codec import serialize
+        state = random.getstate()
+        expected = serialize(layout.functions, layout=layout.instruction_layout,
+                             constant_tags=layout.constant_tags, vm_count=layout.vm_count,
+                             integrity_options={'enabled': False})
+        if name == 'mov':
+            from obfuscator.vm.mov.serializer import serialize as serialize_mov
+            expected += serialize_mov(lowered.backend_data['programs'],
+                                      lowered.backend_data['kits'], {},
+                                      linked=lowered.backend_data['linked'])
+        expected_state = random.getstate()
+        random.setstate(state)
+        assert backend.serialize_program(lowered, context) == expected
+        assert random.getstate() == expected_state
         if name != "mov":
+            from copy import deepcopy
+            def reject_dispatch(change, message):
+                bad = deepcopy(lowered)
+                change(bad.backend_data['layout'])
+                try:
+                    backend.optimize(bad, context)
+                except ValueError as error:
+                    assert message in str(error), str(error)
+                else:
+                    raise AssertionError('invalid backend dispatcher accepted')
+            def collide(layout):
+                values = next(iter(layout.vm_maps[0][0].values()))
+                values[1] = values[0]
+            def overflow(layout):
+                next(iter(layout.vm_maps[0][0].values())).append(32768)
+            def prune(layout):
+                aliases = {v for values in layout.vm_maps[0][0].values() for v in values}
+                target = next(item.vop for item in layout.functions.code if item.vop in aliases)
+                layout.used_ops[0].remove(target)
+            # Directly use the backend-specific validator where common target
+            # validation could fail first for an alias changed by corruption.
+            bad = deepcopy(lowered)
+            collide(bad.backend_data['layout'])
+            try:
+                backend.validate_lowered(bad)
+            except ValueError as error:
+                assert 'colliding' in str(error)
+            else:
+                raise AssertionError('colliding dispatcher accepted')
+            reject_dispatch(overflow, '15-bit')
+            reject_dispatch(prune, 'pruned handler')
+            if name == 'classic':
+                reject_dispatch(lambda layout: layout.vm_maps[0][3].update({0: 32767}),
+                                'deferred handlers')
             original = layout.functions.code[0]
             layout.functions.code[0] = replace(original, vop=0xFFFFFF)
             try:
@@ -339,6 +455,139 @@ def check_backend_layouts():
                     pass
                 else:
                     raise AssertionError("invalid microcode accepted")
+
+
+def check_dispatch_sequences():
+    from copy import deepcopy
+    ir=build_semantic_ir(proto([abc(13,0,1,2),abc(14,0,1,2),abc(38,0,2)]))
+    for name in ('classic','karity'):
+        random.seed(9424)
+        backend=get_backend(name)
+        context=BackendContext({'block_variant_rate':0.0})
+        lowered=backend.lower(protect(ir,ProtectionPlanner(context.options).build(ir)),context)
+        layout=lowered.backend_data['layout']
+        aliases,splits,fuses,defers=layout.vm_maps[0]
+        first=replace(layout.functions.code[0],instruction=lowered.program.code[0],graph_sites=(),avalanche=())
+        second=replace(first,instruction=lowered.program.code[1],vop=aliases[14][0])
+        layout.graph_sites.clear()
+        layout.used_ops[0].update(aliases[13]+aliases[14])
+        def check(code, message=None, routes=()):
+            bad=deepcopy(lowered)
+            bad.backend_data['layout'].functions.code=code
+            bad.backend_data['layout'].functions.routes=list(routes)
+            bad.backend_data['layout'].used_ops[0].update(item.vop for item in code if item.vop in {
+                vop for values in aliases.values() for vop in values})
+            try:
+                backend.optimize(bad,context)
+            except ValueError as error:
+                assert message and message in str(error),str(error)
+            else:
+                assert message is None, 'corrupt dispatcher sequence accepted'
+        check([replace(first,vop=aliases[13][0])])
+        check([replace(first,vop=aliases[14][0])],'operation differs')
+        for values in splits[13].values():
+            group=[replace(first,vop=vop) for vop in values]
+            check(group)
+            check(group[1:],'split handler sequence')
+            check(list(reversed(group)),'split handler sequence')
+            changed=list(group)
+            changed[-1]=replace(changed[-1],instruction=replace(first.instruction,a=1))
+            check(changed,'split handler sequence')
+        pair=(13,14)
+        assert pair in fuses
+        fused=replace(first,vop=fuses[pair])
+        check([fused,second])
+        check([fused],'fused operand slot')
+        check([fused,replace(second,vop=aliases[13][0])],'fused operand slot')
+        from obfuscator.vm.backends.handler_ir import HandlerInstruction
+        for composite in ([fused,second], [replace(first,vop=vop) for vop in splits[13]['3']]):
+            for op in (30,39,40,42,59):
+                for target in (1,2,len(composite)+1):
+                    instruction=HandlerInstruction(op).with_bx(target if op==59 else 131071+target-1)
+                    jump=replace(first,instruction=instruction,vop=aliases[op][0])
+                    check([jump,*composite], 'composite handler interior' if target==2 else None)
+            for op in (3,31,32,33,34,35):
+                skip=replace(first,instruction=HandlerInstruction(op,c=1),vop=aliases[op][0])
+                check([skip,*composite],'composite handler interior')
+            check(composite,routes=[[1]])
+            check(composite,'composite handler interior',routes=[[2]])
+        if name=='karity':
+            check([replace(first,vop=defers[13])])
+            check([replace(first,vop=defers[14])],'operation differs')
+
+
+def check_graph_layout_validation():
+    from copy import deepcopy
+    ir = build_semantic_ir(proto([abx(1, 0, 0), abc(13, 1, 0, 0), abc(38, 1, 2)]))
+    for name in ('classic', 'karity'):
+        random.seed(9422)
+        backend = get_backend(name)
+        context = BackendContext({'graph_execution_rate': 1.0})
+        plan = ProtectionPlanner(context.options).build(ir)
+        lowered = backend.optimize(backend.lower(protect(ir, plan), context), context)
+        layout = lowered.backend_data['layout']
+        index = next(i for i, item in enumerate(layout.functions.code) if item.graph_sites)
+        def reject(change, message):
+            bad = deepcopy(lowered)
+            change(bad.backend_data['layout'])
+            try:
+                backend.optimize(bad, context)
+            except ValueError as error:
+                assert message in str(error), str(error)
+            else:
+                raise AssertionError('invalid graph layout accepted')
+        def descriptor_change(layout, field, value):
+            item = layout.functions.code[index]
+            descriptor = list(item.graph_sites[0])
+            descriptor[field] = value
+            layout.functions.code[index] = replace(item, graph_sites=(tuple(descriptor), *item.graph_sites[1:]))
+        for field, value in ((1, 1 << 32), (2, 1 << 32), (3, 1 << 16), (3, 1.5)):
+            reject(lambda layout: descriptor_change(layout, field, value), 'invalid graph descriptor')
+        reject(lambda layout: descriptor_change(layout, 2, 1), 'differs from protection plan')
+        family = layout.functions.code[index].graph_sites[0][0]
+        reject(lambda layout: descriptor_change(layout, 0, (family + 1) % 9),
+               'family differs from backend policy')
+        def duplicate(layout):
+            item = layout.functions.code[index]
+            layout.functions.code[index] = replace(item, graph_sites=(*item.graph_sites, item.graph_sites[0]))
+        reject(duplicate, 'duplicate physical graph site')
+        reject(lambda layout: layout.graph_sites.clear(), 'inventory mismatch')
+        reject(lambda layout: layout.graph_sites.add(1), 'inventory mismatch')
+
+
+def check_block_route_validation():
+    from copy import deepcopy
+    from obfuscator.vm.backends.handler_layout import validate_layout
+    ir = build_semantic_ir(proto([abx(1, 0, 0), abc(13, 1, 0, 0), abc(38, 1, 2)]))
+    context = BackendContext({'block_variant_rate': 1.0})
+    random.seed(9423)
+    backend = get_backend('karity')
+    lowered = backend.optimize(backend.lower(protect(ir, ProtectionPlanner(context.options).build(ir)), context), context)
+    layout = lowered.backend_data['layout']
+    assert layout.functions.routes
+    def reject(change, message):
+        bad = deepcopy(layout.functions)
+        change(bad)
+        try:
+            validate_layout(bad, layout.vm_maps)
+        except ValueError as error:
+            assert message in str(error), str(error)
+        else:
+            raise AssertionError('invalid block control flow accepted')
+    def change_instruction(function, operation, transform):
+        index = next(i for i, item in enumerate(function.code) if item.instruction.operation == operation)
+        item = function.code[index]
+        function.code[index] = replace(item, instruction=transform(item.instruction))
+    reject(lambda f: change_instruction(f, 'BLOCK_ROUTE', lambda i: replace(i, a=len(f.routes))), 'route index')
+    reject(lambda f: change_instruction(f, 'BLOCK_GOTO', lambda i: i.with_bx(len(f.code) + 1)), 'goto target')
+    reject(lambda f: f.routes.__setitem__(0, []), 'route length')
+    reject(lambda f: f.routes.__setitem__(0, [1] * 256), 'route length')
+    reject(lambda f: f.routes[0].__setitem__(0, len(f.code) + 1), 'route target')
+    reject(lambda f: f.routes[0].__setitem__(0, 1.5), 'route target')
+    # The one-past-end zero-based PC is a legal exit for BLOCK_GOTO.
+    boundary = deepcopy(layout.functions)
+    change_instruction(boundary, 'BLOCK_GOTO', lambda i: i.with_bx(len(boundary.code)))
+    validate_layout(boundary, layout.vm_maps)
 
 
 def check_semantic_protection():
@@ -378,6 +627,9 @@ def main() -> int:
     check_runtime_composition()
     check_alias_planning()
     check_backend_layouts()
+    check_dispatch_sequences()
+    check_graph_layout_validation()
+    check_block_route_validation()
     check_typed_frontend()
     check_extended_setlist()
     from obfuscator.vm.vm_pass import VMPass
