@@ -9,7 +9,7 @@ import random
 import re
 
 from .backends.handler_ir import HandlerFunction
-from .vm_mutation import mutate_handlers, _lua_depth_delta
+from .vm_mutation import mutate_handlers, planned_mutation_seeds, _lua_depth_delta
 
 _LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
 
@@ -337,7 +337,8 @@ def _rebuild_chain(blocks: dict[int, str]) -> str:
 # ---------------------------------------------------------------------------
 def apply_split_to_vm(vm_code: str,
                       split_map: dict[int, dict[str, tuple[int, ...]]],
-                      mutate: bool = True, *, native_state: bool = False) -> str:
+                      mutate: bool = True, *, native_state: bool = False,
+                      mutation_seed: int | None = None) -> str:
     """split_map의 각 (orig_op, parts) 조합에 대해 분할 핸들러를 체인에 추가.
 
     split 핸들러는 실제로 실행되는 진짜 로직이므로, real/fake 핸들러와
@@ -352,14 +353,20 @@ def apply_split_to_vm(vm_code: str,
     blocks = _parse_handler_blocks(chain)
 
     split_blocks: dict[int, str] = {}
+    identities: dict[int, str] = {}
     for orig_op, parts_map in split_map.items():
         for parts_str, vops in parts_map.items():
             bodies = split_handler_bodies(orig_op, int(parts_str))
-            for vop, body in zip(vops, bodies):
+            for part, (vop, body) in enumerate(zip(vops, bodies)):
                 split_blocks[vop] = body
+                identities[vop] = f"split:{orig_op}:{parts_str}:{part}"
 
     if mutate:
-        split_blocks = mutate_handlers(split_blocks, native_state=native_state)
+        split_blocks = mutate_handlers(
+            split_blocks, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
 
     blocks.update(split_blocks)
     new_chain = _rebuild_chain(blocks)
@@ -438,7 +445,8 @@ def fused_handler_body(op1: int, op2: int, *, native_state: bool = False) -> str
 
 def apply_fuse_to_vm(vm_code: str,
                      fuse_map: dict[tuple[int, int], int],
-                     mutate: bool = True, *, native_state: bool = False) -> str:
+                     mutate: bool = True, *, native_state: bool = False,
+                     mutation_seed: int | None = None) -> str:
     """fuse_map의 각 (op1, op2) 쌍에 대해 합쳐진 핸들러를 체인에 추가.
 
     fused 핸들러도 실제로 실행되는 진짜 로직이므로 real/split/fake와
@@ -451,11 +459,17 @@ def apply_fuse_to_vm(vm_code: str,
     blocks = _parse_handler_blocks(chain)
 
     fuse_blocks: dict[int, str] = {}
+    identities: dict[int, str] = {}
     for (op1, op2), vop in fuse_map.items():
         fuse_blocks[vop] = fused_handler_body(op1, op2, native_state=native_state)
+        identities[vop] = f"fuse:{op1}:{op2}"
 
     if mutate:
-        fuse_blocks = mutate_handlers(fuse_blocks, native_state=native_state)
+        fuse_blocks = mutate_handlers(
+            fuse_blocks, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
 
     blocks.update(fuse_blocks)
     new_chain = _rebuild_chain(blocks)
@@ -464,7 +478,8 @@ def apply_fuse_to_vm(vm_code: str,
 
 def apply_defer_to_vm(vm_code: str,
                       defer_map: dict[int, int],
-                      mutate: bool = True, *, native_state: bool = False) -> str:
+                      mutate: bool = True, *, native_state: bool = False,
+                      mutation_seed: int | None = None) -> str:
     """Insert lazy producer handlers whose result is completed by a later rget."""
     if not defer_map:
         return vm_code
@@ -477,6 +492,7 @@ def apply_defer_to_vm(vm_code: str,
         25: "__VM_PENDING_UNM__",
     }
     deferred: dict[int, str] = {}
+    identities: dict[int, str] = {}
     for op, vop in defer_map.items():
         if op in (13, 14):
             body = (
@@ -491,8 +507,13 @@ def apply_defer_to_vm(vm_code: str,
         else:
             raise ValueError(f"non-deferable op: {op}")
         deferred[vop] = body
+        identities[vop] = f"defer:{op}"
     if mutate:
-        deferred = mutate_handlers(deferred, native_state=native_state)
+        deferred = mutate_handlers(
+            deferred, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
     blocks.update(deferred)
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
@@ -510,9 +531,9 @@ _DIRECT_SEMANTIC_BODIES = {
     11: " rset(A,_carry(_tnew(),_av,11))\n        ",
     12: " local _t=rget(B); rset(A+1,_carry(_t,_av,112)); rset(A,_carry(_tget(_t,rget(C)),_av,12))\n        ",
     28: " rset(A,_carry(_tlen(rget(B)),_av,28))\n        ",
-    31: " if not _branch(_carry(rget(B)==rget(C),_av,31),A~=0,_av,31) then pc=pc+1 end\n        ",
-    32: " if not _branch(_carry(rget(B)<rget(C),_av,32),A~=0,_av,32) then pc=pc+1 end\n        ",
-    33: " if not _branch(_carry(rget(B)<=rget(C),_av,33),A~=0,_av,33) then pc=pc+1 end\n        ",
+    31: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left==right,_av,31),A~=0,_av,31) then pc=pc+1 end\n        ",
+    32: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left<right,_av,32),A~=0,_av,32) then pc=pc+1 end\n        ",
+    33: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left<=right,_av,33),A~=0,_av,33) then pc=pc+1 end\n        ",
     34: " if not _branch(_carry(not not rget(A),_av,34),C~=0,_av,34) then pc=pc+1 end\n        ",
     35: " local _v=rget(B); if _branch(_carry(not not _v,_av,35),C~=0,_av,35) then rset(A,_v) else pc=pc+1 end\n        ",
     43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _tset(_t,_b+_i,_v[_i]) end; _touch(_av,43)\n        ",
@@ -524,7 +545,8 @@ _DIRECT_SEMANTIC_BODIES = {
 def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
                     semantic_diversity_rate: float = 0.0,
                     semantic_alias_modes: dict[int, tuple[bool, ...]] | None = None,
-                    *, native_state: bool = False) -> str:
+                    *, native_state: bool = False,
+                    alias_transition_indices: dict[int, tuple[int, ...]] | None = None) -> str:
     """
     vm.lua의 op==N 체인을 파싱해서:
     1. 각 원본 op의 alias vop들에 대해 state 전이가 다른 핸들러를 생성
@@ -539,7 +561,17 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
         if orig_op not in orig_bodies:
             continue
         body = orig_bodies[orig_op]
-        transitions = _pick_transitions(len(aliases), native_state=native_state)
+        pool = _ST_TRANSITIONS_NATIVE if native_state else _ST_TRANSITIONS
+        if alias_transition_indices is None:
+            transitions = _pick_transitions(len(aliases), native_state=native_state)
+        else:
+            indices = alias_transition_indices.get(orig_op)
+            if (indices is None or len(indices) != len(aliases)
+                    or len(set(indices)) != len(indices)
+                    or any(type(index) is not int or not 0 <= index < len(pool)
+                           for index in indices)):
+                raise ValueError("planned handler alias transitions are incomplete")
+            transitions = [pool[index] for index in indices]
         for i, vop in enumerate(aliases):
             transition = transitions[i % len(transitions)]
             pre = (i % 2 == 0)
@@ -605,6 +637,8 @@ def prune_and_inject_handlers(
     fake_body_variants: tuple[int, ...] | None = None,
     *,
     native_state: bool = False,
+    mutation_seed: int | None = None,
+    mutation_identities: dict[int, str] | None = None,
 ) -> str:
     """
     used_ops에 없는 opcode 핸들러를 제거하고, 비어있는 opcode 번호에
@@ -622,15 +656,18 @@ def prune_and_inject_handlers(
 
     # 사용되는 핸들러만 남김
     blocks = {op: body for op, body in blocks.items() if op in used_ops}
+    identities = {op: identity for op, identity in (mutation_identities or {}).items()
+                  if op in blocks}
 
     if fake_handlers and fake_body_variants is not None:
-        for variant in fake_body_variants:
+        for fake_index, variant in enumerate(fake_body_variants):
             attempts = 0
             while attempts < 100:
                 attempts += 1
                 fake_vop = random.randint(0, 0x7FFF)
                 if fake_vop not in blocks:
                     blocks[fake_vop] = _make_fake_block(variant, native_state=native_state)
+                    identities[fake_vop] = f"fake:{fake_index}"
                     break
             else:
                 raise RuntimeError("unable to allocate planned fake handler")
@@ -639,16 +676,23 @@ def prune_and_inject_handlers(
         # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
         n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
         attempts = 0
+        fake_index = 0
         while len(blocks) - len(used_ops) < n_fake and attempts < n_fake * 10:
             attempts += 1
             fake_vop = random.randint(0, 0x7FFF)
             if fake_vop not in blocks:
                 blocks[fake_vop] = _make_fake_block(native_state=native_state)
+                identities[fake_vop] = f"fake:{fake_index}"
+                fake_index += 1
 
     # CFF/junk는 real + fake 모든 핸들러에 균일하게 적용: CFF 유무가
     # real/fake를 구별하는 oracle이 되지 않도록 구조적 대칭을 유지한다.
     if mutate:
-        blocks = mutate_handlers(blocks, native_state=native_state)
+        blocks = mutate_handlers(
+            blocks, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
 
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
@@ -1040,19 +1084,19 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
         if helper == "rget":
             before = clone
             decode = (
-                "if _k==1 then return _v elseif _k==2 then return not _peq(_v,0) "
-                "elseif _k==3 then return nil end; "
+                "if _k==1 then value=_v elseif _k==2 then value=not _peq(_v,0) "
+                "elseif _k==3 then value=nil else "
                 "local _hi,_lo=_pword(_v); "
                 "if _hi~=0 or _lo==0 then error('register vault index mismatch') end; "
-                "return _RO[_lo]"
+                "value=_RO[_lo] end"
                 if native_exact_word else
-                "if _k==1 then return _v elseif _k==2 then return _v~=0 "
-                "elseif _k==3 then return nil end; return _RO[_v]"
+                "if _k==1 then value=_v elseif _k==2 then value=_v~=0 "
+                "elseif _k==3 then value=nil else value=_RO[_v] end"
             )
             clone = re.sub(
-                r"return _rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
+                r"local value=_rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
                 r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),_RT\[p4\]\)",
-                lambda match: "local _v="+match.group(1)+"; local _k=_RT[p4]; "+decode,
+                lambda match: "local _v="+match.group(1)+"; local _k=_RT[p4]; local value; "+decode,
                 clone, count=1, flags=re.S,
             )
             if clone == before:
@@ -1081,7 +1125,9 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                     "_RI[_value_key(v)]=payload end end; kind=4\n",
                     "        end\n",
                     "        local a,b=_rparams(i,epoch); local encoded=", match.group(1), "\n",
-                    "        _PD[_rpos(5,i)]=nil; local share=_rmix(",
+                    # Cloned rset inlines _rstore, including its cache invalidation.
+                    "        ", "_MJ._RC[i]=nil; " if native_exact_word else "_RC[i]=nil; ",
+                    "_PD[_rpos(5,i)]=nil; local share=_rmix(",
                     private_expression("epoch~_RZ~((i+3)*-3372029247567499371)"),
                     "); local p1,p2,p3,p4=_rpositions(i)\n",
                     "        regs[p1]=", private_expression("encoded-share"),

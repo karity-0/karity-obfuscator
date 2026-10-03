@@ -43,6 +43,34 @@ class MovBackend(VMBackend):
         # Microcode dispatch and HOST handlers are composed by the MOV builder.
         return source
 
+    def validate_lowered(self, lowered):
+        from .runtime_layout import iter_functions
+        from ..mov.adapter import bind_slots
+        from ..mov.validate import validate_host_bindings, validate_linked
+        programs = lowered.backend_data.get("programs")
+        if programs is None:
+            raise ValueError("MOV lowered microprograms are missing")
+        functions = tuple(iter_functions(lowered.backend_data["layout"].functions))
+        if len(programs) != len(functions):
+            raise ValueError("MOV microprogram count differs from physical functions")
+        slots = lowered.backend_data.get("mov_slots")
+        if slots != bind_slots(lowered.protected_ir, lowered.backend_data["layout"]):
+            raise ValueError("MOV semantic/control slots differ from protected IR or layout")
+        for program, function, bound in zip(programs, functions, slots):
+            if program.vm_id != function.vm_id:
+                raise ValueError("MOV microprogram VM differs from physical function")
+            if len(bound.slots) != len(function.code):
+                raise ValueError("MOV HOST slot count differs from physical function")
+            validate_host_bindings(
+                program, bound.slots,
+            )
+        kits = lowered.backend_data.get("kits")
+        linked = lowered.backend_data.get("linked")
+        if kits is not None or linked is not None:
+            if kits is None or linked is None:
+                raise ValueError("MOV optimized codebook or linked tape is missing")
+            validate_linked(programs, kits, linked)
+
     def emit_runtime_body(self, source, lowered, *, target):
         # MOV owns its microcode/host runtime above.  The remaining VM tokens
         # are direct-runtime tokens, but their resolution is still a MOV
@@ -79,11 +107,15 @@ class MovBackend(VMBackend):
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
-        from .runtime_layout import iter_functions
+        from ..mov.adapter import bind_slots
         from ..mov.lower import lower
+        lowered.backend_data["mov_slots"] = bind_slots(
+            protected_ir, lowered.backend_data["layout"],
+        )
         lowered.backend_data["programs"] = tuple(
-            lower([item.instruction for item in function.code], function.vm_id)
-            for function in iter_functions(lowered.backend_data["layout"].functions))
+            lower(bound.slots, bound.vm_id)
+            for bound in lowered.backend_data["mov_slots"])
+        self.validate_lowered(lowered)
         return lowered
 
     def optimize(self, lowered, context):
@@ -101,5 +133,10 @@ class MovBackend(VMBackend):
             "before": before, "after": sum(len(program.code) for program in programs),
             "stored": sum(len(tape) for tape in linked[0]), "shared_recipes": linked[2],
         }
+        self.validate_lowered(lowered)
         return lowered
+
+    def emit(self, lowered, context):
+        self.validate_lowered(lowered)
+        return super().emit(lowered, context)
 

@@ -11,6 +11,7 @@ class PhysicalInstruction:
     vop: int
     avalanche: tuple[int, ...]
     graph_sites: tuple[tuple[int, int, int, int, int], ...]
+    logical_index: int | None = None
 
 
 @dataclass
@@ -22,6 +23,7 @@ class PhysicalFunction:
     integrity_indices: set[int]
     stream_integrity: bool
     children: list[PhysicalFunction]
+    canonical: tuple[int, ...] = ()
 
 
 def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
@@ -31,8 +33,8 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
                    block_variant_max_instructions=6) -> PhysicalFunction:
     vop_map, split_map, fuse_map, defer_map = vm_map
     emitted = []
-    def emit(instruction, vop):
-        emitted.append((instruction, vop))
+    def emit(instruction, vop, logical_index=None):
+        emitted.append((instruction, vop, logical_index))
     # --- split/fuse 결정 + jump offset 보정 ---
     iexpr_indices = set(targets["integrity_constants"]) if integrity_enabled else set()
     stream_enabled = bool(iexpr_indices) and proto.max_stack_size <= 253 and not targets["open_register_extent"]
@@ -91,12 +93,12 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         if unit[0] == "iexpr_stream":
             for pseudo_raw in _as_iexpr_stream(raw, temp0, temp1):
                 pseudo_op = pseudo_raw.op
-                emit(pseudo_raw, planned_alias(pseudo_op, i))
+                emit(pseudo_raw, planned_alias(pseudo_op, i), i)
                 emitted_av.append(())
                 emitted_sites.append(())
                 physical += 1
         elif unit[0] == "normal":
-            emit(emit_raw, planned_alias(emit_op, i))
+            emit(emit_raw, planned_alias(emit_op, i), i)
             emitted_av.append(add_slots.get(i, ()))
             desc = graph_descriptor(emit_op, i)
             emitted_sites.append((desc,) if desc is not None else ())
@@ -105,13 +107,13 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
             # 같은 raw 명령어를 각 part vop으로 반복 방출
             vops = split_map[orig_op][str(unit[2])]  # type: ignore[index]
             for vop in vops:
-                emit(emit_raw, vop)
+                emit(emit_raw, vop, i)
                 emitted_av.append(add_slots.get(i, ()))
                 desc = graph_descriptor(orig_op, i)
                 emitted_sites.append((desc,) if desc is not None else ())
                 physical += 1
         elif unit[0] == "defer":
-            emit(emit_raw, defer_map[orig_op])  # type: ignore[index]
+            emit(emit_raw, defer_map[orig_op], i)  # type: ignore[index]
             emitted_av.append(add_slots.get(i, ()))
             desc = graph_descriptor(orig_op, i)
             emitted_sites.append((desc,) if desc is not None else ())
@@ -119,7 +121,7 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         else:  # fuse: fused vop 슬롯(instr1) + operand 슬롯(instr2)
             op2 = code[unit[2]].op
             fuse_vop = fuse_map[(orig_op, op2)]  # type: ignore[index]
-            emit(raw, fuse_vop)
+            emit(raw, fuse_vop, i)
             emitted_av.append(add_slots.get(i, ()))
             descriptors = []
             desc = graph_descriptor(orig_op, i)
@@ -130,7 +132,7 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
                 descriptors.append(desc)
             emitted_sites.append(tuple(descriptors))
             # operand 슬롯: dispatch 안 되지만 acc 동기화 위해 정상 슬롯으로 방출
-            emit(code[unit[2]], planned_alias(op2, unit[2]))
+            emit(code[unit[2]], planned_alias(op2, unit[2]), unit[2])
             emitted_av.append(add_slots.get(unit[2], ()))
             emitted_sites.append(())
             physical += 2
@@ -164,9 +166,11 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         )
 
     return PhysicalFunction(proto, vm_id, [
-        PhysicalInstruction(instruction, vop, avalanche, sites)
-        for (instruction, vop), avalanche, sites in zip(emitted, emitted_av, emitted_sites)
-    ], block_routes, iexpr_indices, stream_enabled, [])
+        PhysicalInstruction(instruction, vop, avalanche, sites, logical_index)
+        for (instruction, vop, logical_index), avalanche, sites in zip(
+            emitted, emitted_av, emitted_sites
+        )
+    ], block_routes, iexpr_indices, stream_enabled, [], tuple(canonical))
 
 
 def validate_layout(function: PhysicalFunction, vm_maps: list) -> None:

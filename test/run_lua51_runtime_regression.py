@@ -559,6 +559,26 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
     ).run(repeated_pending)
     LuaRuntime(encoding=None).execute(output.encode())
     print('lua51-repeated-pending-operands-ok karity', flush=True)
+    comparison_source = '''local x=11;local y=x+1
+    assert(y==y and not (y<y) and y<=y)
+    local calls=0
+    local t=setmetatable({},{__lt=function(a,b) calls=calls+1;return true end})
+    assert(t<t and calls==1)
+    local n=0/0;assert(not (n==n))'''
+    for diversity in (0.0, 1.0):
+        random.seed(5824)
+        vm = VMPass(
+            target=TargetProfile('5.1', 'karity'),
+            vm_options={'fake_handlers': False, 'mutate_handlers': False,
+                        'junk_instructions': False, 'blob_form': 'string',
+                        'cross_instruction_rate': 1.0,
+                        'semantic_diversity_rate': diversity,
+                        'graph_execution_rate': 0.0},
+        )
+        output = vm.run(comparison_source)
+        assert vm.last_lowered_ir.backend_data['optimization']['comparison_reads_coalesced'] >= 3
+        LuaRuntime(encoding=None).execute(output.encode())
+    print('lua51-repeated-comparison-operands-ok karity', flush=True)
     table_source = '''local key={}
     local function_key=function() end
     local t={[false]=false,[key]='object',-123456,3.25}
@@ -601,7 +621,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
         else:
             result=run_source(output)
             assert result==(0,b'',b''),result
-    print('lua51-runtime-regression-ok builds=29 numeric-lengths=21 closed-upvalues=6 closure-backends=3 escape-boundaries=3 metamethod-yield-rejections=3 table-targets=2')
+    print('lua51-runtime-regression-ok builds=31 numeric-lengths=21 closed-upvalues=6 closure-backends=3 escape-boundaries=3 metamethod-yield-rejections=3 comparison-builds=2 table-targets=2')
     return 0
 
 

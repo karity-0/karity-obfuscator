@@ -21,6 +21,8 @@ optimization after=3
 optimization before=3
 optimization shared_recipes=0
 optimization stored=3
+mov-host f0:p0 vm=0 source=f0:i0 origin=semantic operation=LOAD_CONST
+mov-host f0:p1 vm=0 source=f0:i1 origin=semantic operation=RETURN
 micro-program 0 vm=0 entries=3 instructions=3 lowered-sites=0 recipes=-
   m1 HOST a=0 b=1 c=0 d=0 mode=0
   m2 HOST a=0 b=2 c=0 d=0 mode=0

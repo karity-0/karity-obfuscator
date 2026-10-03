@@ -17,7 +17,6 @@ from obfuscator.vm.protection import (
     UnsupportedProtectionError, resolve_capabilities, protect,
 )
 from obfuscator.vm.semantic_ir import build_semantic_ir, validate_semantic_ir, IRValidationError
-from obfuscator.vm.mov.lower import lower as lower_mov
 
 
 def abc(op: int, a: int = 0, b: int = 0, c: int = 0) -> int:
@@ -306,6 +305,12 @@ def check_alias_planning():
     )
     for variant, requirement in zip(runtime_variants, requirements):
         assert variant['dispatcher'] == 'ifelseif'
+        assert type(variant['mutation_seed']) is int
+        transitions = dict(variant['alias_transition_indices'])
+        assert set(transitions) == set(dict(requirement['operations']))
+        assert all(len(set(indices)) == len(indices)
+                   and all(0 <= index < 8 for index in indices)
+                   for indices in transitions.values())
         assert not variant['decoy_body_variants']
         assert len(dict(variant['semantic_alias_modes'])) == len(requirement['operations'])
         assert all(
@@ -354,6 +359,37 @@ def check_alias_planning():
         assert 'runtime variant' in str(error)
     else:
         raise AssertionError('invalid runtime variant accepted')
+    bad_runtime = dict(runtime_variants[0], mutation_seed=1.5)
+    invalid[ir.root.id] = dict(
+        plan.functions[ir.root.id],
+        runtime_variants=(bad_runtime, *runtime_variants[1:]),
+    )
+    try:
+        protect(ir, replace(plan, functions=invalid))
+    except ValueError as error:
+        assert 'runtime variant' in str(error)
+    else:
+        raise AssertionError('invalid planned mutation seed accepted')
+    bad_runtime = dict(runtime_variants[0])
+    bad_transitions = list(bad_runtime['alias_transition_indices'])
+    name, indices = bad_transitions[0]
+    bad_transitions[0] = (name, (indices[0],) * len(indices))
+    bad_runtime['alias_transition_indices'] = tuple(bad_transitions)
+    invalid[ir.root.id] = dict(
+        plan.functions[ir.root.id],
+        runtime_variants=(bad_runtime, *runtime_variants[1:]),
+    )
+    try:
+        protect(ir, replace(plan, functions=invalid))
+    except ValueError as error:
+        assert 'runtime variant' in str(error)
+    else:
+        raise AssertionError('duplicate planned alias transition accepted')
+    from obfuscator.vm.vm_pass import VMPass
+    with patch('obfuscator.vm.vm_obfuscation._pick_transitions',
+               side_effect=AssertionError('alias transition reselected during emission')):
+        VMPass(vm_options={'backend': 'classic', 'fake_handlers': False,
+                           'mutate_handlers': False}).run('return 7')
     bad_routes = tuple(
         (group, entries + (("UNKNOWN", False),) if group == "semantic" else entries)
         for group, entries in plan.functions[ir.root.id]['representation_routes']
@@ -367,9 +403,35 @@ def check_alias_planning():
         assert 'representation routes' in str(error)
     else:
         raise AssertionError('invalid representation route accepted')
+    rotation = plan.functions[ir.root.id]['runtime_rotation_policy']
+    assert rotation['boundaries'] == ('frame-snapshot', 'graph-completion')
+    assert rotation['initial_ticks'] in (1, 2, 3)
+    assert rotation['period'] in (1024, 2048)
+    invalid[ir.root.id] = dict(
+        plan.functions[ir.root.id],
+        runtime_rotation_policy=dict(rotation, period=777),
+    )
+    try:
+        protect(ir, replace(plan, functions=invalid))
+    except ValueError as error:
+        assert 'runtime rotation policy' in str(error), str(error)
+    else:
+        raise AssertionError('invalid planned register rotation accepted')
+    changed_ir = build_semantic_ir(proto(
+        [abx(1, 0, 1), abc(38, 0, 2)], [proto([abc(38, 0, 1)])]
+    ))
+    assert changed_ir.generation != ir.generation
+    try:
+        protect(changed_ir, plan)
+    except ValueError as error:
+        assert 'different IR generation' in str(error), str(error)
+    else:
+        raise AssertionError('changed source accepted a stale protection plan')
+    protect(changed_ir, planner.build(changed_ir))
 
 
 def check_backend_layouts():
+    from copy import deepcopy
     from obfuscator.vm.mov.ir import Instruction, Op, Host
     from obfuscator.vm.mov.validate import validate_program
     from obfuscator.vm.backends.handler_layout import validate_layout
@@ -431,6 +493,30 @@ def check_backend_layouts():
             reject_dispatch(overflow, '15-bit')
             reject_dispatch(prune, 'pruned handler')
             if name == 'classic':
+                state = lowered.backend_data['classic_state']
+                assert state.functions[0].source_positions == (
+                    ('f0:i0', (0,)), ('f0:i1', (1,)))
+                assert state.vms[0].handler_map() == layout.vm_maps[0]
+                assert state.vms[0].handler_map() is not layout.vm_maps[0]
+                assert lowered.dump().count('classic-source ') == 2
+                with patch('obfuscator.vm.backends.handler_emission.single_handlers',
+                           side_effect=lambda source, *args, **kwargs: source) as render:
+                    assert backend.emit_handlers('body', lowered,
+                                                 backend.runtime_variants(lowered)) == 'body'
+                assert render.call_args.kwargs['handler_map'] == state.vms[0].handler_map()
+                assert render.call_args.kwargs['used_ops'] == set(state.vms[0].used_aliases)
+                stale = deepcopy(lowered)
+                stale_state = stale.backend_data['classic_state']
+                stale_vms = list(stale_state.vms)
+                stale_vms[0] = replace(stale_vms[0], used_aliases=frozenset())
+                stale.backend_data['classic_state'] = replace(
+                    stale_state, vms=tuple(stale_vms))
+                try:
+                    backend.emit(stale, context)
+                except ValueError as error:
+                    assert 'differs from layout or plan' in str(error), str(error)
+                else:
+                    raise AssertionError('Classic emitted stale dispatcher state')
                 reject_dispatch(lambda layout: layout.vm_maps[0][3].update({0: 32767}),
                                 'deferred handlers')
             original = layout.functions.code[0]
@@ -444,7 +530,34 @@ def check_backend_layouts():
             layout.functions.code[0] = original
         else:
             program = lowered.backend_data["programs"][0]
+            bound = lowered.backend_data["mov_slots"][0]
+            assert [(slot.source_id, slot.origin, slot.operation)
+                    for slot in bound.slots] == [
+                        ('f0:i0', 'semantic', 'LOAD_CONST'),
+                        ('f0:i1', 'semantic', 'RETURN'),
+                    ]
+            assert 'mov-host f0:p0' in lowered.dump()
             assert lowered.backend_data["linked"]
+            stale_link = deepcopy(lowered)
+            tapes, entries, recipe_count = stale_link.backend_data['linked']
+            entries[0][0] = entries[0][-1]
+            try:
+                backend.emit(stale_link, context)
+            except ValueError as error:
+                assert 'linked tape differs' in str(error), str(error)
+            else:
+                raise AssertionError('MOV emitted stale linked entries')
+            stale_codebook = deepcopy(lowered)
+            kit = stale_codebook.backend_data['kits'][0]
+            opcodes = dict(kit.opcodes)
+            opcodes[Op.LOOKUP] = opcodes[Op.MOVE]
+            stale_codebook.backend_data['kits'][0] = replace(kit, opcodes=opcodes)
+            try:
+                backend.emit(stale_codebook, context)
+            except ValueError as error:
+                assert 'reused ID' in str(error), str(error)
+            else:
+                raise AssertionError('MOV emitted a reused opcode codebook ID')
             for invalid in (Instruction(Op.SELECT, 30, 99999, 1),
                             Instruction(Op.LOOKUP, 99999, 1, 1),
                             Instruction(Op.HOST, Host.PREPARE, 1)):
@@ -455,6 +568,143 @@ def check_backend_layouts():
                     pass
                 else:
                     raise AssertionError("invalid microcode accepted")
+            for changed in (
+                Instruction(Op.HOST, Host.COPY, 1),
+                Instruction(Op.HOST, Host.EXEC, 2),
+            ):
+                stale = deepcopy(lowered)
+                micro = stale.backend_data["programs"][0]
+                code = list(micro.code)
+                code[micro.entries[0] - 1] = changed
+                stale.backend_data["programs"] = (replace(micro, code=code),)
+                validate_program(stale.backend_data["programs"][0])
+                try:
+                    backend.emit(stale, context)
+                except ValueError as error:
+                    assert 'physical host operation' in str(error), str(error)
+                else:
+                    raise AssertionError('MOV emitted a misbound physical HOST entry')
+            stale_slots = deepcopy(lowered)
+            stale_bound = stale_slots.backend_data['mov_slots'][0]
+            stale_slots.backend_data['mov_slots'] = (
+                replace(stale_bound, slots=(
+                    replace(stale_bound.slots[0], origin='linker-control'),
+                    *stale_bound.slots[1:],
+                )),
+            )
+            try:
+                backend.emit(stale_slots, context)
+            except ValueError as error:
+                assert 'semantic/control slots differ' in str(error), str(error)
+            else:
+                raise AssertionError('MOV emitted stale semantic/control slots')
+            wrong_semantic = deepcopy(lowered)
+            original = wrong_semantic.backend_data['layout'].functions.code[0]
+            wrong_semantic.backend_data['layout'].functions.code[0] = replace(
+                original, instruction=replace(original.instruction, op=13))
+            try:
+                backend.emit(wrong_semantic, context)
+            except ValueError as error:
+                assert 'physical operation differs from semantic origin' in str(error)
+            else:
+                raise AssertionError('MOV accepted a mismatched semantic operation')
+            integrity_options = {'integrity_constants': True,
+                                 'integrity_constant_rate': 1.0}
+            integrity_context = BackendContext(integrity_options)
+            integrity_plan = ProtectionPlanner(integrity_options).build(ir)
+            integrity = backend.lower(protect(ir, integrity_plan), integrity_context)
+            integrity_slots = integrity.backend_data['mov_slots'][0].slots
+            assert len(integrity_slots) == 14
+            assert all(slot.origin == 'integrity-stream'
+                       for slot in integrity_slots[:-1])
+            assert integrity_slots[-1].origin == 'semantic'
+            broken_stream = deepcopy(integrity)
+            first = broken_stream.backend_data['layout'].functions.code[0]
+            broken_stream.backend_data['layout'].functions.code[0] = replace(
+                first, instruction=replace(first.instruction, op=50))
+            try:
+                backend.validate_lowered(broken_stream)
+            except ValueError as error:
+                assert 'integrity stream differs' in str(error), str(error)
+            else:
+                raise AssertionError('MOV accepted a malformed integrity HOST stream')
+            from obfuscator.vm import VMPass
+            random.seed(71)
+            conditional = VMPass(vm_options={'backend': 'mov'})
+            conditional.run('local x=1;if x==1 then return x else return 2 end')
+            origins = [slot.origin
+                       for function in conditional.last_lowered_ir.backend_data['mov_slots']
+                       for slot in function.slots]
+            assert origins.count('linker-control') == 2
+            conditional_lowered = conditional.last_lowered_ir
+            conditional_function = conditional_lowered.backend_data['layout'].functions
+            control_slots = conditional_lowered.backend_data['mov_slots'][0].slots
+            jump_indices = [index for index, slot in enumerate(control_slots)
+                            if slot.operation == 'JUMP']
+            assert jump_indices and all(
+                control_slots[index].target_pc == index + 2 + control_slots[index].sbx
+                for index in jump_indices
+            )
+            assert 'origin=linker-control operation=JUMP target=' in conditional_lowered.dump()
+            bad_offset = deepcopy(conditional_lowered)
+            bad_code = bad_offset.backend_data['layout'].functions.code
+            jump_index = jump_indices[0]
+            jump_item = bad_code[jump_index]
+            bad_code[jump_index] = replace(
+                jump_item, instruction=jump_item.instruction.with_bx(
+                    jump_item.instruction.bx + 1,
+                ),
+            )
+            try:
+                backend.validate_lowered(bad_offset)
+            except ValueError as error:
+                assert 'physical jump differs from semantic control target' in str(error)
+            else:
+                raise AssertionError('MOV accepted a mismatched physical jump offset')
+            bad_logical = deepcopy(conditional_lowered)
+            logical_index = conditional_function.code[jump_index].logical_index
+            logical_code = bad_logical.backend_data['layout'].functions.source.code
+            logical_code[logical_index] = logical_code[logical_index].with_bx(
+                logical_code[logical_index].bx + 1,
+            )
+            try:
+                backend.validate_lowered(bad_logical)
+            except ValueError as error:
+                assert 'handler jump differs from semantic successor' in str(error)
+            else:
+                raise AssertionError('MOV accepted a mismatched logical jump target')
+
+            closing_ir = build_semantic_ir(proto([
+                abx(30, 1, 131071), abc(38, 0, 1),
+            ]))
+            random.seed(9421)
+            closing_context = BackendContext({})
+            closing_lowered = backend.lower(
+                protect(closing_ir, ProtectionPlanner({}).build(closing_ir)),
+                closing_context,
+            )
+            closing_slots = closing_lowered.backend_data['mov_slots'][0].slots
+            closing_index = next(index for index, slot in enumerate(closing_slots)
+                                 if slot.operation == 'JUMP')
+            assert closing_slots[closing_index].close_from == 0
+            closing_program = closing_lowered.backend_data['programs'][0]
+            closing_entry = closing_program.entries[closing_index]
+            assert closing_program.code[closing_entry - 1] == Instruction(
+                Op.HOST, Host.CLOSE, closing_index + 1,
+            )
+            bad_close = deepcopy(closing_lowered)
+            closing_code = bad_close.backend_data['layout'].functions.code
+            closing_item = closing_code[closing_index]
+            closing_code[closing_index] = replace(
+                closing_item,
+                instruction=replace(closing_item.instruction, a=0),
+            )
+            try:
+                backend.validate_lowered(bad_close)
+            except ValueError as error:
+                assert 'physical close boundary differs from semantic jump' in str(error)
+            else:
+                raise AssertionError('MOV accepted a physical close without its semantic boundary')
 
 
 def check_karity_state_model():
@@ -493,6 +743,10 @@ def check_karity_state_model():
     state = lowered.backend_data["karity_state"]
     transitions = state.functions[0].transitions
     pending = next(item for item in transitions if item.pending_write is not None)
+    active_defers = lowered.backend_data["layout"].vm_maps[0][3]
+    referenced_vops = {item.vop for item in lowered.backend_data["layout"].functions.code}
+    assert active_defers and all(vop in referenced_vops for vop in active_defers.values())
+    assert lowered.backend_data["optimization"]["deferred_handlers_after"] == len(active_defers)
     assert pending.operation == "ADD"
     assert pending.pending_guard == ("all-inputs-integer-kind", "runtime-poly-lazy")
     assert any(
@@ -513,6 +767,50 @@ def check_karity_state_model():
     assert f"karity-transition function=f0 pc={materializer.pc} " in state_dump
     assert "materialized=(0,)" in state_dump
     assert "boundary=host-return" in state_dump
+
+    # The mapper allocates an ADD producer even when the planner selects only
+    # ordinary forms. Karity must remove that dead handler, without changing
+    # physical PCs, descriptors, or the register-state projection.
+    no_defer_options = {"cross_instruction_rate": 0.0, "graph_execution_rate": 0.0}
+    random.seed(9531)
+    no_defer_context = BackendContext(no_defer_options)
+    no_defer_plan = ProtectionPlanner(no_defer_options).build(ir)
+    no_defer_lowered = backend.lower(protect(ir, no_defer_plan), no_defer_context)
+    before_layout = no_defer_lowered.backend_data["layout"]
+    assert before_layout.vm_maps[0][3]
+    before_code = tuple(before_layout.functions.code)
+    before_state = no_defer_lowered.backend_data["karity_state"]
+    backend.optimize(no_defer_lowered, no_defer_context)
+    assert not before_layout.vm_maps[0][3]
+    assert tuple(before_layout.functions.code) == before_code
+    assert no_defer_lowered.backend_data["karity_state"] == before_state
+    assert no_defer_lowered.backend_data["optimization"]["dead_deferred_handlers"] > 0
+    assert "outcome=elided" in no_defer_lowered.dump()
+    validate_state(no_defer_lowered)
+    optimized_dump = no_defer_lowered.dump()
+    assert backend.optimize(no_defer_lowered, no_defer_context).dump() == optimized_dump
+    stale_deferred_map = deepcopy(no_defer_lowered)
+    stale_deferred_map.backend_data["layout"].vm_maps[0][3][13] = 32767
+    try:
+        backend.optimize(stale_deferred_map, no_defer_context)
+    except ValueError as error:
+        assert "changed after optimization" in str(error), str(error)
+    else:
+        raise AssertionError("Karity accepted an unplanned deferred handler after optimization")
+    try:
+        backend.emit(stale_deferred_map, no_defer_context)
+    except ValueError as error:
+        assert "changed after optimization" in str(error), str(error)
+    else:
+        raise AssertionError("Karity emitted a changed deferred handler map")
+    invalid_producer = deepcopy(lowered)
+    invalid_producer.backend_data["layout"].vm_maps[0][3].clear()
+    try:
+        backend.validate_lowered(invalid_producer)
+    except ValueError as error:
+        assert "operation differs" in str(error), str(error)
+    else:
+        raise AssertionError("Karity accepted removal of a live deferred handler")
 
     repeated_read_ir = build_semantic_ir(proto([
         abc(13, 0, 1, 2), abc(13, 0, 0, 0), abc(38, 0, 2),
@@ -539,7 +837,7 @@ def check_karity_state_model():
     )
     assert len(repeated_read.native_inputs) == 2
     assert repeated_read.resolved_pending == (0,)
-    if repeated_read.graph_descriptors:
+    if repeated_read.graph_descriptors and repeated_read.graph_descriptors[0][0] != 0:
         assert repeated_read.materialized == (0,)
         assert repeated_read.maybe_materialized == ()
     else:
@@ -548,6 +846,104 @@ def check_karity_state_model():
     assert all(value.producers == (prior_producer.pc,)
                for value in repeated_read.native_inputs)
     validate_state(repeated_read_lowered)
+
+    # The direct ADD handler can finish a pending predecessor in encoded
+    # storage and avoid native rget when both inputs are integer-kind.
+    direct_plan = ProtectionPlanner(options).build(repeated_read_ir)
+    repeated_instructions = [instruction for block in repeated_read_ir.root.blocks
+                             for instruction in block.instructions]
+    direct_plan.instructions[repeated_instructions[1].id]["instruction_forms"] = (
+        ("normal", 1),
+    )
+    direct_context = BackendContext(options)
+    direct_lowered = backend.optimize(
+        backend.lower(protect(repeated_read_ir, direct_plan), direct_context),
+        direct_context,
+    )
+    direct_reads = direct_lowered.backend_data["karity_state"].functions[0].transitions
+    direct_add = next(item for item in direct_reads
+                      if item.operation == "ADD" and item.reads == (0, 0))
+    assert direct_add.pending_write is None
+    assert direct_add.encoded_fast_path
+    assert direct_add.resolved_pending == (0,)
+    assert direct_add.materialized == ()
+    assert direct_add.maybe_materialized == (0,)
+    validate_state(direct_lowered)
+
+    # An active graph bypasses both deferred-lazy and direct linear fast paths.
+    # The first ADD remains an ungraphed pending producer, while the second
+    # must decode it and store a non-pending encoded result.
+    graphed_options = {**options, "graph_execution_rate": 1.0}
+    graph_plan = ProtectionPlanner(graphed_options).build(repeated_read_ir)
+    graph_plan.instructions[repeated_instructions[0].id]["graph_family"] = 0
+    graph_plan.instructions[repeated_instructions[1].id]["graph_family"] = 1
+    graph_context = BackendContext(graphed_options)
+    graph_lowered = backend.optimize(
+        backend.lower(protect(repeated_read_ir, graph_plan), graph_context),
+        graph_context,
+    )
+    graph_reads = graph_lowered.backend_data["karity_state"].functions[0].transitions
+    graph_add = next(item for item in graph_reads
+                     if item.operation == "ADD" and item.reads == (0, 0))
+    assert graph_add.graph_descriptors[0][0] == 1
+    assert graph_add.pending_write is None
+    assert not graph_add.encoded_fast_path
+    assert graph_add.resolved_pending == (0,)
+    assert graph_add.materialized == (0,)
+    assert graph_add.maybe_materialized == ()
+    validate_state(graph_lowered)
+
+    impossible_pending = deepcopy(graph_lowered)
+    graph_state = impossible_pending.backend_data["karity_state"]
+    graph_function = graph_state.functions[0]
+    impossible_pending.backend_data["karity_state"] = replace(
+        graph_state,
+        functions=(replace(
+            graph_function,
+            transitions=tuple(
+                replace(item, pending_write=0,
+                        pending_guard=("all-inputs-integer-kind", "runtime-poly-lazy"))
+                if item.pc == graph_add.pc else item
+                for item in graph_function.transitions
+            ),
+        ),) + graph_state.functions[1:],
+    )
+    try:
+        validate_state(impossible_pending)
+    except ValueError as error:
+        assert "graphed deferred handler cannot leave a pending value" in str(error)
+    else:
+        raise AssertionError("Karity accepted a pending result from an active graph")
+
+    # A comparison may read the same pending register twice.  Its handler
+    # resolves the pending value once, then shares that value before semantic
+    # comparison or graph execution can change the register epoch.
+    comparison_ir = build_semantic_ir(proto([
+        abc(13, 1, 2, 3), abc(31, 0, 1, 1),
+        abc(38, 0, 1), abc(38, 0, 1),
+    ]))
+    random.seed(9531)
+    comparison_context = BackendContext(options)
+    comparison_lowered = backend.optimize(
+        backend.lower(
+            protect(comparison_ir, ProtectionPlanner(options).build(comparison_ir)),
+            comparison_context,
+        ),
+        comparison_context,
+    )
+    comparisons = (
+        comparison_lowered.backend_data['karity_state'].functions[0].transitions
+    )
+    comparison = next(item for item in comparisons if item.operation == 'EQUAL')
+    assert comparison.reads == (1, 1)
+    assert comparison.resolved_pending == (1,)
+    assert comparison.materialized == (1,)
+    assert comparison_lowered.backend_data['optimization']['comparison_reads_coalesced'] == 1
+    assert any(event['kind'] == 'comparison-materialization'
+               and event['source'] == comparison.source_id
+               for event in comparison_lowered.backend_data['optimization_events'])
+    assert 'comparison_reads_coalesced=1' in comparison_lowered.dump()
+    validate_state(comparison_lowered)
 
     # Closure creation captures a register box, not its transient native value.
     # Keep the pending producer/epoch attached to that capture until a later
@@ -729,6 +1125,23 @@ def check_dispatch_sequences():
             bad.backend_data['layout'].functions.routes=list(routes)
             bad.backend_data['layout'].used_ops[0].update(item.vop for item in code if item.vop in {
                 vop for values in aliases.values() for vop in values})
+            if name == 'classic':
+                # This test constructs a new physical layout on purpose. Keep
+                # Classic's independent lowered projection synchronized so the
+                # dispatcher validator, rather than the stale-state gate, is
+                # what the sequence assertions exercise.
+                from obfuscator.vm.backends.classic_state import lower_state
+                from obfuscator.vm.backends.runtime_variants import resolve_runtime_variants
+                bad.backend_data['classic_state'] = lower_state(
+                    bad.backend_data['layout'], resolve_runtime_variants(bad))
+            elif name == 'karity':
+                # Likewise, keep the synthetic Karity projection synchronized
+                # while this test targets physical dispatcher sequences.
+                from obfuscator.vm.backends.karity_state import lower_state
+                root = bad.protection_plan.functions[bad.semantic_ir.root.id]
+                bad.backend_data['karity_state'] = lower_state(
+                    bad.backend_data['layout'], root['representation_routes'],
+                    root['runtime_rotation_policy'])
             try:
                 backend.optimize(bad,context)
             except ValueError as error:
@@ -770,7 +1183,18 @@ def check_dispatch_sequences():
 
 def check_graph_layout_validation():
     from copy import deepcopy
+    from obfuscator.vm.backends.karity_state import validate_state
+    from obfuscator.vm.backends.runtime_emitter import _apply_handler_graphs
+    from obfuscator.vm.targets.lua53 import Lua53Target
     ir = build_semantic_ir(proto([abx(1, 0, 0), abc(13, 1, 0, 0), abc(38, 1, 2)]))
+    target = Lua53Target()
+    for routes in (None, (), (("arithmetic", ()), ("semantic", ()))):
+        try:
+            _apply_handler_graphs("", representation_routes=routes)
+        except ValueError as error:
+            assert "representation routes" in str(error), str(error)
+        else:
+            raise AssertionError("Karity runtime reselected an unplanned route")
     for name in ('classic', 'karity'):
         random.seed(9422)
         backend = get_backend(name)
@@ -780,6 +1204,106 @@ def check_graph_layout_validation():
         layout = lowered.backend_data['layout']
         index = next(i for i, item in enumerate(layout.functions.code) if item.graph_sites)
         if name == 'karity':
+            state = lowered.backend_data['karity_state']
+            planned_routes = plan.functions[ir.root.id]['representation_routes']
+            assert state.representation_routes == planned_routes
+            assert 'karity-routes arithmetic ' in lowered.dump()
+            sites, families = state.occurrence_inventory()
+            assert sites == layout.graph_sites
+            assert families
+            with patch('obfuscator.vm.backends.runtime_emitter._apply_handler_graphs',
+                       return_value='rendered') as render:
+                body = backend.emit_runtime_body('body', lowered, target=target)
+            assert body.source == 'rendered'
+            assert render.call_args.kwargs['representation_routes'] == state.representation_routes
+            rotation = dict(state.rotation_policy)
+            with patch('obfuscator.vm.backends.runtime_emitter._apply_handler_graphs',
+                       side_effect=lambda source, *args, **kwargs: source) as render:
+                body = backend.emit_runtime_body(
+                    '__VM_RMAP_INITIAL_TICKS__ __VM_RMAP_PERIOD_MASK__ '
+                    '__VM_RMAP_PERIOD__', lowered, target=target)
+            assert body.source == (
+                f"{rotation['initial_ticks']} {rotation['period'] - 1} "
+                f"{rotation['period']}"
+            )
+            assert render.call_args.args[0] == body.source
+            stale_routes = deepcopy(lowered)
+            stale_root = stale_routes.protection_plan.functions[ir.root.id]
+            stale_root['representation_routes'] = tuple(
+                (group, tuple((route_name, not enabled if index == 0 and group == 'arithmetic'
+                               else enabled)
+                              for index, (route_name, enabled) in enumerate(entries)))
+                for group, entries in planned_routes
+            )
+            try:
+                backend.emit_runtime_body('body', stale_routes, target=target)
+            except ValueError as error:
+                assert 'differs from physical layout' in str(error), str(error)
+            else:
+                raise AssertionError('Karity emitted stale planned representation routes')
+            try:
+                backend.optimize(stale_routes, context)
+            except ValueError as error:
+                assert 'differs from physical layout' in str(error), str(error)
+            else:
+                raise AssertionError('Karity optimizer repaired a stale planned route')
+            stale_rotation = deepcopy(lowered)
+            stale_rotation.protection_plan.functions[ir.root.id][
+                'runtime_rotation_policy']['initial_ticks'] = (
+                    1 if rotation['initial_ticks'] != 1 else 2
+                )
+            try:
+                backend.emit_runtime_body('body', stale_rotation, target=target)
+            except ValueError as error:
+                assert 'differs from physical layout or protection plan' in str(error)
+            else:
+                raise AssertionError('Karity emitted a stale rotation policy')
+            with patch('obfuscator.vm.backends.runtime_emitter._compile_occurrence_graph_func',
+                       return_value='function()end') as compile_graph:
+                body = backend.emit_runtime_body('__VM_OCCURRENCE_GRAPHS__', lowered,
+                                                 target=target)
+            assert compile_graph.call_count == 8
+            assert body.graph_sites == len(sites) and body.graph_families == 8
+            assert body.source.count('function()end') == 8
+            random.seed(9423)
+            before_graph = random.getstate()
+            graph_source = '__VM_ARG_MASK__ __VM_OCCURRENCE_GRAPHS__'
+            first_graph = backend.emit_runtime_body(
+                graph_source, lowered, target=target,
+            ).source
+            assert random.getstate() == before_graph
+            for _ in range(100):
+                random.random()
+            after_noise = random.getstate()
+            second_graph = backend.emit_runtime_body(
+                graph_source, lowered, target=target,
+            ).source
+            assert random.getstate() == after_noise
+            assert second_graph == first_graph
+            off_context = BackendContext({'graph_execution_rate': 0.0})
+            off_plan = ProtectionPlanner(off_context.options).build(ir)
+            off_lowered = backend.optimize(
+                backend.lower(protect(ir, off_plan), off_context), off_context)
+            off_sites, off_families = (
+                off_lowered.backend_data['karity_state'].occurrence_inventory())
+            assert off_sites == off_lowered.backend_data['layout'].graph_sites
+            assert off_families <= {0}
+            with patch('obfuscator.vm.backends.runtime_emitter._compile_occurrence_graph_func',
+                       return_value='function()end') as compile_graph:
+                off_body = backend.emit_runtime_body('__VM_OCCURRENCE_GRAPHS__',
+                                                     off_lowered, target=target)
+            assert compile_graph.call_count == 0
+            assert off_body.graph_sites == len(off_sites)
+            assert off_body.graph_families == 0
+            assert '{}--[[KARITY_EXACT_END]]' in off_body.source
+            bad_inventory = deepcopy(lowered)
+            bad_inventory.backend_data['layout'].graph_sites.clear()
+            try:
+                validate_state(bad_inventory)
+            except ValueError as error:
+                assert 'graph inventory' in str(error), str(error)
+            else:
+                raise AssertionError('Karity accepted a stale graph inventory')
             graph_state = lowered.backend_data['karity_state'].functions[0]
             graph_transition = next(
                 item for item in graph_state.transitions if item.graph_dependencies
@@ -806,7 +1330,6 @@ def check_graph_layout_validation():
                 state, functions=tuple(functions)
             )
             try:
-                from obfuscator.vm.backends.karity_state import validate_state
                 validate_state(bad_state)
             except ValueError as error:
                 assert 'stale representation epoch' in str(error), str(error)

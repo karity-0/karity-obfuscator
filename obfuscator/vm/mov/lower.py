@@ -1,5 +1,5 @@
-"""Lower typed handler operations into MOV microcode."""
-from ..backends.handler_ir import HandlerInstruction
+"""Lower semantic-bound HOST/control slots into MOV microcode."""
+from .adapter import MovHostSlot
 from .ir import Host, Instruction as I, Op, Program
 from .division import divide
 from .float_compare import compare as compare_floats
@@ -60,7 +60,7 @@ def _multiply(out: list[I]) -> None:
     out.append(I(Op.HOST, Host.COMMIT))
 
 
-def lower(code: list[HandlerInstruction], vm_id: int = 0) -> Program:
+def lower(code: list[MovHostSlot] | tuple[MovHostSlot, ...], vm_id: int = 0) -> Program:
     out: list[I] = []
     entries: list[int] = []
     pending: list[tuple[int, str]] = []
@@ -89,9 +89,11 @@ def lower(code: list[HandlerInstruction], vm_id: int = 0) -> Program:
                 out.append(I(Op.HOST, Host.COPY, ip))
                 out.append(I(Op.SELECT, 30, 20, 20, mode=1))
         elif op == "JUMP":
-            if raw.a:
+            if raw.close_from is not None:
                 out.append(I(Op.HOST, Host.CLOSE, ip))
-            jumps.append((len(out), ip + 1 + raw.sbx))
+            if raw.target_pc is None:
+                raise ValueError("MOV jump lacks a semantic control target")
+            jumps.append((len(out), raw.target_pc))
             out.append(I(Op.SELECT, 30))
         else:
             out.append(I(Op.HOST, Host.EXEC, ip))

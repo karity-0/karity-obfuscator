@@ -59,6 +59,7 @@ class KarityTransition:
     close_from: int | None
     pending_write: int | None
     pending_guard: tuple[str, ...]
+    encoded_fast_path: bool
     resolved_pending: tuple[int, ...]
     materialized: tuple[int, ...]
     maybe_materialized: tuple[int, ...]
@@ -86,9 +87,32 @@ class KarityFunctionState:
 @dataclass(frozen=True)
 class KarityState:
     functions: tuple[KarityFunctionState, ...]
+    representation_routes: tuple[tuple[str, tuple[tuple[str, bool], ...]], ...]
+    rotation_policy: tuple[tuple[str, object], ...]
+
+    def occurrence_inventory(self) -> tuple[frozenset[int], frozenset[int]]:
+        """Physical graph sites and their runtime families, including dead routes."""
+        descriptors = (
+            descriptor
+            for function in self.functions
+            for transition in function.transitions
+            for descriptor in transition.graph_descriptors
+        )
+        pairs = tuple((family, site) for family, site, *_ in descriptors)
+        return (frozenset(site for _, site in pairs),
+                frozenset(family for family, _ in pairs))
 
     def dump(self) -> str:
-        lines = []
+        lines = [
+            f"karity-routes {group} "
+            + ",".join(f"{name}:{int(graph)}" for name, graph in routes)
+            for group, routes in self.representation_routes
+        ]
+        policy = dict(self.rotation_policy)
+        lines.append(
+            f"karity-rotation boundaries={','.join(policy['boundaries'])} "
+            f"initial-ticks={policy['initial_ticks']} period={policy['period']}"
+        )
         for function in self.functions:
             transitions = function.transitions
             lines.append(
@@ -97,6 +121,7 @@ class KarityState:
                 f"materializations={sum(len(item.materialized) for item in transitions)} "
                 f"conditional-materializations={sum(len(item.maybe_materialized) for item in transitions)} "
                 f"pending-resolutions={sum(len(item.resolved_pending) for item in transitions)} "
+                f"encoded-fast-paths={sum(item.encoded_fast_path for item in transitions)} "
                 f"native-values={sum(len(item.native_inputs) for item in transitions)} "
                 f"native-boundaries={sum(item.native_boundary for item in transitions)} "
                 f"graph-sites={sum(len(item.graph_sites) for item in transitions)}"
@@ -125,6 +150,7 @@ class KarityState:
                     f"source={transition.source_id} op={transition.operation} "
                     f"reads={transition.reads} writes={transition.writes} "
                     f"pending={transition.pending_write} guard={transition.pending_guard} "
+                    f"encoded-fast-path={transition.encoded_fast_path} "
                     f"resolved-pending={transition.resolved_pending} "
                     f"materialized={transition.materialized} "
                     f"maybe-materialized={transition.maybe_materialized} "
@@ -138,6 +164,7 @@ class KarityState:
 
 
 _DEFERRED_OPERATIONS = frozenset(("ADD", "SUB", "NEGATE"))
+_LINEAR_OPERATIONS = _DEFERRED_OPERATIONS
 _TERMINALS = frozenset(("RETURN", "TAIL_CALL"))
 _CONDITIONALS = frozenset((
     "EQUAL", "LESS_THAN", "LESS_EQUAL", "TEST", "TEST_SET",
@@ -382,13 +409,11 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
         register for register in read_registers
         if values[register].representation in {Representation.PENDING, Representation.MAYBE_PENDING}
     )
-    # Deferred handlers first snapshot integer-kind operands in encoded form.
-    # A pending input is always resolved to encoded storage by that snapshot,
-    # but the randomized lazy path may avoid rget; only its fallback decodes
-    # pending inputs for the native operation.
-    deferred_snapshot = transition.pending_write is not None and not transition.graph_descriptors
-    maybe_materialized = resolved_pending if deferred_snapshot else ()
-    materialized = resolved_pending if not deferred_snapshot else ()
+    # Deferred snapshots and direct linear arithmetic both finish pending
+    # producers into encoded storage first. Their integer fast paths may then
+    # avoid rget; only the native fallback decodes those operands.
+    maybe_materialized = resolved_pending if transition.encoded_fast_path else ()
+    materialized = resolved_pending if not transition.encoded_fast_path else ()
     for register in resolved_pending:
         current = values[register]
         values[register] = RegisterState(Representation.ENCODED, current.epoch)
@@ -414,6 +439,7 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
 
 def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
     split_parts, internal, deferred = _forms(function, vm_map)
+    aliases = vm_map[0]
     transitions: list[KarityTransition] = []
     for pc, item in enumerate(function.code):
         reads, writes = _operation_accesses(item.instruction, function.source.max_stack_size)
@@ -421,10 +447,25 @@ def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
         split = split_parts.get(item.vop)
         if split is not None and split[0] != split[1] - 1:
             writes = ()
-        pending_write = writes[0] if item.vop in deferred and item.instruction.operation in _DEFERRED_OPERATIONS and writes else None
+        # A deferred opcode with an active graph cannot take the lazy branch:
+        # _defer1r/_defer2r fall through to native arithmetic and rset.
+        ungraphed = not item.graph_sites or item.graph_sites[0][0] == 0
+        pending_write = (
+            writes[0] if (item.vop in deferred
+                          and item.instruction.operation in _DEFERRED_OPERATIONS
+                          and writes and ungraphed) else None
+        )
         pending_guard = (
             ("all-inputs-integer-kind", "runtime-poly-lazy")
             if pending_write is not None else ()
+        )
+        direct_linear = (
+            item.instruction.operation in _LINEAR_OPERATIONS
+            and item.vop in aliases.get(item.instruction.op, ())
+        )
+        encoded_fast_path = (
+            (pending_write is not None or direct_linear)
+            and ungraphed
         )
         boxes_created = tuple(sorted(set(
             captures + (_register(item.instruction.a) if item.instruction.operation == "CLOSURE" else ())
@@ -443,6 +484,7 @@ def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
             close_from=close_from,
             pending_write=pending_write,
             pending_guard=pending_guard,
+            encoded_fast_path=encoded_fast_path,
             resolved_pending=(),
             materialized=(),
             maybe_materialized=(),
@@ -492,11 +534,20 @@ def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
     )
 
 
-def lower_state(layout) -> KarityState:
-    return KarityState(tuple(
-        _function_state(function, layout.vm_maps[function.vm_id])
-        for function in iter_functions(layout.functions)
-    ))
+def lower_state(layout, representation_routes, rotation_policy) -> KarityState:
+    if representation_routes is None:
+        raise ValueError("Karity lowered state requires planned representation routes")
+    if rotation_policy is None:
+        raise ValueError("Karity lowered state requires planned runtime rotation policy")
+    return KarityState(
+        tuple(
+            _function_state(function, layout.vm_maps[function.vm_id])
+            for function in iter_functions(layout.functions)
+        ),
+        tuple((group, tuple((name, route) for name, route in routes))
+              for group, routes in representation_routes),
+        tuple(sorted(rotation_policy.items())),
+    )
 
 
 def _validate_producers(function: KarityFunctionState, register: int,
@@ -549,6 +600,9 @@ def validate_state(lowered) -> None:
             if transition.pending_write is not None:
                 if transition.operation not in _DEFERRED_OPERATIONS:
                     raise ValueError("Karity pending producer has an unsupported operation")
+                if (transition.graph_descriptors
+                        and transition.graph_descriptors[0][0] != 0):
+                    raise ValueError("Karity graphed deferred handler cannot leave a pending value")
                 if transition.pending_write not in transition.writes:
                     raise ValueError("Karity pending producer does not write its destination")
                 if transition.pending_guard != ("all-inputs-integer-kind", "runtime-poly-lazy"):
@@ -570,9 +624,13 @@ def validate_state(lowered) -> None:
             if any(register not in transition.resolved_pending
                    for register in (*transition.materialized, *transition.maybe_materialized)):
                 raise ValueError("Karity materialization does not resolve a pending input")
-            if (transition.maybe_materialized
-                    and (transition.pending_write is None or transition.graph_descriptors)):
-                raise ValueError("Karity conditional materialization has no deferred snapshot path")
+            if (transition.maybe_materialized and not transition.encoded_fast_path):
+                raise ValueError("Karity conditional materialization has no encoded fast path")
+            if (transition.encoded_fast_path
+                    and (transition.operation not in _LINEAR_OPERATIONS
+                         or (transition.graph_descriptors
+                             and transition.graph_descriptors[0][0] != 0))):
+                raise ValueError("Karity encoded fast path has an invalid operation or graph route")
             if transition.reachable and len(transition.native_inputs) != len(transition.reads):
                 raise ValueError("Karity reachable transition is missing native inputs")
             if (any(value.representation is not Representation.NATIVE
@@ -637,9 +695,19 @@ def validate_state(lowered) -> None:
                 raise ValueError("Karity graph dependency site is duplicated")
             seen_sites.update(transition.graph_sites)
 
+    sites, families = actual.occurrence_inventory()
+    if sites != lowered.backend_data["layout"].graph_sites:
+        raise ValueError("Karity graph inventory differs from physical layout")
+    if any(not 0 <= family <= 8 for family in families):
+        raise ValueError("Karity graph family is outside the runtime bank")
+
     # Validate the projection's own transition contracts before checking that
     # it is a fresh snapshot.  Otherwise every malformed state fails only the
     # equality check below and the more useful invariants above are unreachable.
-    expected = lower_state(lowered.backend_data["layout"])
+    root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
+    expected = lower_state(
+        lowered.backend_data["layout"], root["representation_routes"],
+        root["runtime_rotation_policy"],
+    )
     if actual != expected:
-        raise ValueError("Karity lowered state differs from physical layout")
+        raise ValueError("Karity lowered state differs from physical layout or protection plan")

@@ -11,7 +11,9 @@ from lua_runtime import lua_executable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from obfuscator.vm.vm_mutation import mutate_handler_body
+from obfuscator.vm.vm_mutation import (
+    mutate_handler_body, mutate_handlers, planned_mutation_seeds,
+)
 
 
 
@@ -25,6 +27,32 @@ r,n=make_values(A,B)
 local entry={empty={},r=r,n=n}
 local joined='x'..tostring(entry.n)
 return consume(entry.r,entry.n)+#joined-2"""
+
+    # Production mutation topology is keyed by the plan's stable handler ID,
+    # not by a backend-allocated vop or unrelated emitter RNG consumption.
+    for native_state in (False, True):
+        seed = 0x1294A0BD1177CAFE
+        first_seed = planned_mutation_seeds(seed, {17: "alias:13:0"})
+        second_seed = planned_mutation_seeds(seed, {27001: "alias:13:0"})
+        random.seed(1122)
+        before = random.getstate()
+        first = mutate_handlers({17: assigned_body}, native_state=native_state,
+                                planned_seeds=first_seed)[17]
+        assert random.getstate() == before
+        random.getrandbits(64)
+        second = mutate_handlers({27001: assigned_body}, native_state=native_state,
+                                 planned_seeds=second_seed)[27001]
+        assert first == second
+        assert first != mutate_handlers(
+            {17: assigned_body}, native_state=native_state,
+            planned_seeds=planned_mutation_seeds(seed, {17: "alias:13:1"}),
+        )[17]
+    try:
+        mutate_handlers({17: assigned_body}, planned_seeds={})
+    except ValueError as error:
+        assert "identities are incomplete" in str(error)
+    else:
+        raise AssertionError("mutation accepted a missing planned identity")
 
     for seed in range(100):
         random.seed(seed)

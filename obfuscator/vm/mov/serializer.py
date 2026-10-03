@@ -20,6 +20,8 @@ def serialize(programs: list[Program], kits: list[VMKit], stats: dict | None = N
     if linked is None:
         from .optimizer import link_programs
         linked = link_programs(programs, len(kits))
+    from .validate import validate_linked
+    validate_linked(programs, kits, linked)
     tapes, entries, recipe_count = linked
     if stats is not None:
         stats.update(stored_micro_instructions=sum(len(t) for t in tapes),

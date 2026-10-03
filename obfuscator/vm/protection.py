@@ -108,6 +108,7 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
             for variant, aliases in zip(runtime_variants, requirements):
                 counts = dict(aliases["operations"])
                 modes = dict(variant.get("semantic_alias_modes", ()))
+                transitions = dict(variant.get("alias_transition_indices", ()))
                 routes = dict(variant.get("helper_route_cycles", ()))
                 if (variant.get("dispatcher") not in {
                         "ifelseif", "tailcall", "bsearch", "split4", "split6",
@@ -116,6 +117,14 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
                     or any(len(modes[name]) != counts[name]
                            or any(type(value) is not bool for value in modes[name])
                            for name in counts)
+                    or set(transitions) != set(counts)
+                    or any(len(transitions[name]) != counts[name]
+                           or len(set(transitions[name])) != counts[name]
+                           or any(type(value) is not int or not 0 <= value < 8
+                                  for value in transitions[name])
+                           for name in counts)
+                    or type(variant.get("mutation_seed")) is not int
+                    or not 0 <= variant["mutation_seed"] < 1 << 64
                     or not all(type(value) is int and 0 <= value < 8
                                for value in variant.get("decoy_body_variants", ()))
                     or not 1 <= variant.get("helper_variant_count", 0) <= 4
@@ -145,6 +154,16 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
                 or any(type(route) is not bool
                        for entries in routes.values() for _, route in entries)):
             raise ValueError("invalid planned representation routes")
+    rotation_policy = plan.functions.get(ir.root.id, {}).get("runtime_rotation_policy")
+    if rotation_policy is not None:
+        if (not isinstance(rotation_policy, dict)
+                or set(rotation_policy) != {"boundaries", "initial_ticks", "period"}
+                or rotation_policy["boundaries"] != ("frame-snapshot", "graph-completion")
+                or type(rotation_policy["initial_ticks"]) is not int
+                or rotation_policy["initial_ticks"] not in (1, 2, 3)
+                or type(rotation_policy["period"]) is not int
+                or rotation_policy["period"] not in (1024, 2048)):
+            raise ValueError("invalid planned runtime rotation policy")
     occurrence_ids = set()
     for instruction_id, state in plan.instructions.items():
         for kind, argument in state.get("instruction_forms", ()):
@@ -514,6 +533,7 @@ class ProtectionPlanner:
         for vm_id in range(count):
             counts = dict(alias_requirements[vm_id]["operations"])
             semantic_alias_modes = []
+            alias_transition_indices = []
             for name in sorted(semantic_operations):
                 aliases = counts[name]
                 semantic_alias_modes.append((
@@ -522,6 +542,9 @@ class ProtectionPlanner:
                               vm_id
                           ].get(name, ()) else rng.random() < semantic_rate
                           for index in range(aliases)),
+                ))
+                alias_transition_indices.append((
+                    name, tuple(rng.sample(range(8), aliases)),
                 ))
 
             real_handler_count = sum(
@@ -549,7 +572,9 @@ class ProtectionPlanner:
                 "dispatcher": rng.choice(_DISPATCH_KINDS) if dispatcher == "mixed" else dispatcher,
                 "decoy_body_variants": decoy_body_variants,
                 "mutate_handlers": bool(self.options.get("mutate_handlers", False)),
+                "mutation_seed": rng.getrandbits(64),
                 "semantic_alias_modes": tuple(semantic_alias_modes),
+                "alias_transition_indices": tuple(alias_transition_indices),
                 "helper_variant_count": helper_count,
                 "helper_fetch_variant": rng.randrange(3),
                 "helper_route_cycles": tuple(helper_route_cycles),
@@ -573,6 +598,13 @@ class ProtectionPlanner:
                         descriptors.append((site, rng.randint(0x10000, 0xFFFFFFFF),
                                             rng.randint(4000, 0xFFFF), rng.randrange(4)))
                     instructions[instruction.id]["occurrence_descriptors"] = tuple(descriptors)
+        # Runtime register-map rotation remains data-dependent, but its legal
+        # trigger boundaries and cadence are stable protection policy.
+        root_state["runtime_rotation_policy"] = {
+            "boundaries": ("frame-snapshot", "graph-completion"),
+            "initial_ticks": rng.choice((1, 2, 3)),
+            "period": rng.choice((1024, 2048)),
+        }
 
 
 

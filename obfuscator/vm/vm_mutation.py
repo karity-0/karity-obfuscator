@@ -1,7 +1,38 @@
 from __future__ import annotations
 from ..names import NameAllocator
-import random
+from contextvars import ContextVar
+import hashlib
+import random as _random_module
 import re
+
+
+_ACTIVE_RNG: ContextVar[_random_module.Random | None] = ContextVar(
+    "vm_mutation_rng", default=None,
+)
+
+
+class _MutationRandom:
+    """Route an individual planned handler through its own random stream."""
+
+    def __getattr__(self, name):
+        return getattr(_ACTIVE_RNG.get() or _random_module, name)
+
+
+random = _MutationRandom()
+
+
+def planned_mutation_seeds(seed: int, identities: dict[int, str]) -> dict[int, int]:
+    """Derive opcode-independent streams from stable planned handler IDs."""
+    if type(seed) is not int or not 0 <= seed < 1 << 64:
+        raise ValueError("invalid planned handler mutation seed")
+    key = seed.to_bytes(8, "little")
+    return {
+        opcode: int.from_bytes(
+            hashlib.blake2b(identity.encode("utf-8"), key=key, digest_size=8).digest(),
+            "little",
+        )
+        for opcode, identity in identities.items()
+    }
 
 _RETURN_RE      = re.compile(r'\breturn\b')
 _TOP_RETURN_RE  = re.compile(r'^\s*return\b')   # 라인 시작이 return (블록 최상위)
@@ -572,17 +603,23 @@ def mutate_handler_body(body: str, c: list[int], *, native_state: bool = False) 
 
 
 def mutate_handlers(blocks: dict[int, str], rate: float = 1.0,
-                    *, native_state: bool = False) -> dict[int, str]:
+                    *, native_state: bool = False,
+                    planned_seeds: dict[int, int] | None = None) -> dict[int, str]:
+    if planned_seeds is not None and set(planned_seeds) != set(blocks):
+        raise ValueError("planned handler mutation identities are incomplete")
     new: dict[int, str] = {}
     for op, body in blocks.items():
-        if random.random() < rate:
-            # Handler bodies occupy disjoint dispatcher branches.  Sharing a
-            # monotonically growing temporary-name counter across them only
-            # inflates the enclosing executor's local-variable set and can
-            # exceed Lua 5.1's 200-local limit under fake/mutated handlers.
-            # Restarting here is lexical-safe and keeps each CFF body bounded.
-            c: list[int] = [0]
-            new[op] = mutate_handler_body(body, c, native_state=native_state)
-        else:
-            new[op] = body
+        token = (_ACTIVE_RNG.set(_random_module.Random(planned_seeds[op]))
+                 if planned_seeds is not None else None)
+        try:
+            if random.random() < rate:
+                # Each branch has a separate lexical scope and temporary
+                # counter; this also respects Lua 5.1's 200-local limit.
+                c: list[int] = [0]
+                new[op] = mutate_handler_body(body, c, native_state=native_state)
+            else:
+                new[op] = body
+        finally:
+            if token is not None:
+                _ACTIVE_RNG.reset(token)
     return new

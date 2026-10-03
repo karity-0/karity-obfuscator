@@ -21,26 +21,49 @@ class KarityBackend(VMBackend):
 
     def validate_lowered(self, lowered):
         from .handler_validation import validate_handler_dispatch
+        from .karity_state import validate_state
         validate_handler_dispatch(lowered, delayed=True)
+        validate_state(lowered)
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
         from .karity_state import lower_state
+        root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
         lowered.backend_data["karity_state"] = lower_state(
-            lowered.backend_data["layout"]
+            lowered.backend_data["layout"], root["representation_routes"],
+            root["runtime_rotation_policy"],
         )
         return lowered
 
     def optimize(self, lowered, context):
-        # Layout validators run before this backend-local projection so they
-        # retain their precise dispatcher errors for malformed test layouts.
-        # Refreshing the projection afterwards makes it an exact snapshot of
-        # the validated physical layout, not a second source of lowering data.
+        # Validate first so corrupt dispatchers keep their precise errors.
+        # The optimizer only removes producer handlers that no physical
+        # instruction references; the state projection must remain identical.
         super().optimize(lowered, context)
         from .karity_state import lower_state, validate_state
-        lowered.backend_data["karity_state"] = lower_state(
-            lowered.backend_data["layout"]
-        )
+        from .karity_optimizer import deferred_signature, optimize_layout
+        layout = lowered.backend_data["layout"]
+        signature = lowered.backend_data.get("karity_optimized_deferred_signature")
+        if signature is not None:
+            if deferred_signature(layout) != signature:
+                raise ValueError("Karity deferred handler map changed after optimization")
+            validate_state(lowered)
+            return lowered
+        root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
+        routes = root["representation_routes"]
+        rotation = root["runtime_rotation_policy"]
+        before_state = lower_state(layout, routes, rotation)
+        lowered.backend_data["karity_state"] = before_state
+        validate_state(lowered)
+        statistics, events = optimize_layout(layout)
+        after_state = lower_state(layout, routes, rotation)
+        if after_state != before_state:
+            raise ValueError("Karity optimizer changed representation transitions")
+        lowered.backend_data["karity_state"] = after_state
+        lowered.backend_data["optimization"] = statistics
+        lowered.backend_data["optimization_events"] = events
+        lowered.backend_data["karity_optimized_deferred_signature"] = deferred_signature(layout)
+        super().optimize(lowered, context)
         validate_state(lowered)
         return lowered
 
@@ -49,7 +72,12 @@ class KarityBackend(VMBackend):
         # this gate also protects direct backend callers from emitting a stale
         # pending/epoch projection.
         from .karity_state import validate_state
+        from .karity_optimizer import deferred_signature
         validate_state(lowered)
+        signature = lowered.backend_data.get("karity_optimized_deferred_signature")
+        if (signature is not None
+                and deferred_signature(lowered.backend_data["layout"]) != signature):
+            raise ValueError("Karity deferred handler map changed after optimization")
         return super().emit(lowered, context)
 
     def _policy(self, options: dict[str, Any]) -> dict[str, Any]:
@@ -85,20 +113,36 @@ class KarityBackend(VMBackend):
             source = build_exec_variants(source, count, render)
         else:
             source = wire_exec_router(render(source, 0), 0)
-        return build_next_router_kit(source, count)
+        source = build_next_router_kit(source, count)
+        if not lowered.policy.get("semantic_state_threading", False):
+            # These calls belong to Karity's encoded-register and graph
+            # runtime. Keep disabled profiles free of per-instruction
+            # semantic-state work while leaving cold helper definitions intact.
+            source = source.replace("; _ss_step(_ip,op,A,B,C)", "")
+            source = source.replace("\n        _ss_value(slot,encoded,epoch,kind)", "")
+            source = source.replace("; _ss_value(i,encoded,epoch,kind)", "")
+        return source
 
     def emit_runtime_body(self, source, lowered, *, target):
         # Graph and representation-route construction belongs to Karity.  The
         # common emitter only owns the target-finalization/output-pass stages
         # that must run after this late-generated code exists.
-        from .runtime_emitter import _apply_handler_graphs
-        prepared = lowered.backend_data["layout"]
-        root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
-        graph_family_count = 8
-        return RuntimeBody(
-            source=_apply_handler_graphs(
+        from .runtime_emitter import _apply_handler_graphs, karity_graph_encoding
+        from .karity_state import validate_state
+        validate_state(lowered)
+        state = lowered.backend_data["karity_state"]
+        rotation = dict(state.rotation_policy)
+        source = source.replace("__VM_RMAP_INITIAL_TICKS__", str(rotation["initial_ticks"]))
+        source = source.replace("__VM_RMAP_PERIOD_MASK__", str(rotation["period"] - 1))
+        source = source.replace("__VM_RMAP_PERIOD__", str(rotation["period"]))
+        sites, families = state.occurrence_inventory()
+        graph_enabled = lowered.policy["graph_execution_rate"] > 0
+        if families - {0} and not graph_enabled:
+            raise ValueError("Karity active graph descriptors exist under a disabled graph policy")
+        graph_family_count = 8 if graph_enabled else 0
+        with karity_graph_encoding(lowered.protection_plan):
+            rendered = _apply_handler_graphs(
                 source,
-                prepared.graph_sites,
                 graph_family_count,
                 runtime_polymorphism_rate=lowered.policy[
                     "runtime_polymorphism_rate"
@@ -118,14 +162,16 @@ class KarityBackend(VMBackend):
                 branch_virtualization=bool(
                     lowered.policy.get("branch_virtualization", False)
                 ),
-                representation_routes=root["representation_routes"],
+                representation_routes=state.representation_routes,
                 preserve_native_numbers=target.user_number_model == "binary64",
                 private_state_native=target.lua_version == "5.1",
                 native_graph_control=getattr(target, "native_graph_control", False),
-            ),
+            )
+        return RuntimeBody(
+            source=rendered,
             phase="vm_output:handler_graphs",
             implementation="_apply_handler_graphs",
             backend="pre_output_pipeline",
-            graph_sites=len(prepared.graph_sites),
+            graph_sites=len(sites),
             graph_families=graph_family_count,
         )

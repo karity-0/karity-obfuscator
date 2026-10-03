@@ -19,7 +19,23 @@ class ClassicBackend(VMBackend):
 
     def validate_lowered(self, lowered):
         from .handler_validation import validate_handler_dispatch
+        from .classic_state import validate_state
         validate_handler_dispatch(lowered, delayed=False)
+        validate_state(lowered)
+
+    def lower(self, protected_ir, context):
+        lowered = super().lower(protected_ir, context)
+        from .classic_state import lower_state
+        lowered.backend_data["classic_state"] = lower_state(
+            lowered.backend_data["layout"], super().runtime_variants(lowered),
+        )
+        return lowered
+
+    def runtime_variants(self, lowered):
+        from .classic_state import validate_state
+        validate_state(lowered)
+        return tuple(vm.variant.as_dict()
+                     for vm in lowered.backend_data["classic_state"].vms)
 
     def optimize(self, lowered, context):
         # Validate the shared physical layout first, then apply only Classic's
@@ -41,13 +57,25 @@ class ClassicBackend(VMBackend):
         self.validate_lowered(lowered)
         return lowered
 
+    def emit(self, lowered, context):
+        self.validate_lowered(lowered)
+        return super().emit(lowered, context)
+
     def emit_handlers(self, source, lowered, variants):
         from .handler_emission import single_handlers
         from ..vm_obfuscation import apply_dispatch_target_hiding, build_exec_variants
-        count = lowered.backend_data['layout'].vm_count
+        state = lowered.backend_data["classic_state"]
+        expected_variants = tuple(vm.variant.as_dict() for vm in state.vms)
+        if tuple(variants) != expected_variants:
+            raise ValueError("Classic emitted runtime variants differ from lowered state")
+        count = len(state.vms)
         def render(template, index):
-            result = single_handlers(template, lowered, variants[index], vm_index=index,
-                                     executor_name=f'_ex{index}' if count > 1 else None)
+            vm = state.vms[index]
+            result = single_handlers(
+                template, lowered, vm.variant.as_dict(), vm_index=index,
+                executor_name=f'_ex{index}' if count > 1 else None,
+                handler_map=vm.handler_map(), used_ops=set(vm.used_aliases),
+            )
             if lowered.policy.get('dispatcher_target_hiding', False):
                 result = apply_dispatch_target_hiding(result, native_state=True)
             return result

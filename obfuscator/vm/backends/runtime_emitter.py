@@ -4,11 +4,14 @@ import subprocess
 import tempfile
 import secrets
 import string
-import random
+import random as _random_module
+import hashlib
 import time
 import zlib
 import os
 import re
+from contextlib import contextmanager
+from contextvars import ContextVar
 from pathlib import Path
 
 from obfuscator.passes.base import PostPass
@@ -16,11 +19,44 @@ from obfuscator.toolchain import LuaToolchain, LIBRARY_DUMP_FUNCTION
 from obfuscator.vm.backends.handler_codec import (
     patch_integrity_sources,
 )
-from obfuscator.vm.backends.handler_ir import OPERATIONS
 from obfuscator.vm.kae_blob import encrypt_blob
 from obfuscator.vm.vm_variants import apply_instr_layout
 from obfuscator.vm.output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from obfuscator.vm.runtime_trace import apply_runtime_trace
+
+
+_GRAPH_ENCODING_RNG: ContextVar[_random_module.Random | None] = ContextVar(
+    "karity_graph_encoding_rng", default=None,
+)
+
+
+class _EmitterRandom:
+    """Use an isolated stream only while rendering Karity graph encodings."""
+
+    def __getattr__(self, name):
+        return getattr(_GRAPH_ENCODING_RNG.get() or _random_module, name)
+
+
+random = _EmitterRandom()
+
+
+@contextmanager
+def karity_graph_encoding(plan):
+    """Keep graph-DAG encoding independent of unrelated emitter RNG use.
+
+    The protection plan fixes selected semantic sites and routes.  Its stable
+    dump seeds only equivalent backend encodings, not new protection policy.
+    """
+    digest = hashlib.blake2b(
+        plan.dump().encode("utf-8"), digest_size=16, person=b"karity-graphs",
+    ).digest()
+    token = _GRAPH_ENCODING_RNG.set(
+        _random_module.Random(int.from_bytes(digest, "little"))
+    )
+    try:
+        yield
+    finally:
+        _GRAPH_ENCODING_RNG.reset(token)
 
 
 
@@ -1034,7 +1070,6 @@ _SEMANTIC_ROUTE_NAMES = {
 
 def _apply_handler_graphs(
     vm_code: str,
-    graph_sites: set[int] | None = None,
     graph_family_count: int = 8,
     runtime_polymorphism_rate: float = 0.0,
     semantic_state_threading: bool = False,
@@ -1048,9 +1083,18 @@ def _apply_handler_graphs(
     native_graph_control: bool = False,
 ) -> str:
     name_allocator = NameAllocator(readable=True)
-    planned_routes = dict(representation_routes or ())
-    planned_arithmetic = dict(planned_routes.get("arithmetic", ()))
-    planned_semantic = dict(planned_routes.get("semantic", ()))
+    if representation_routes is None:
+        raise ValueError("Karity runtime requires planned representation routes")
+    planned_routes = dict(representation_routes)
+    if set(planned_routes) != {"arithmetic", "semantic"}:
+        raise ValueError("Karity runtime has incomplete representation routes")
+    planned_arithmetic = dict(planned_routes["arithmetic"])
+    planned_semantic = dict(planned_routes["semantic"])
+    if (set(planned_arithmetic) != set(_ARITH_ROUTE_NAMES.values())
+            or set(planned_semantic) != set(_SEMANTIC_ROUTE_NAMES.values())
+            or any(type(route) is not bool for route in
+                   (*planned_arithmetic.values(), *planned_semantic.values()))):
+        raise ValueError("Karity runtime has invalid representation routes")
     threshold = max(0, min(0x10000, round(runtime_polymorphism_rate * 0x10000)))
     vm_code = vm_code.replace("__VM_POLY_THRESHOLD__", str(threshold))
     vm_code = vm_code.replace(
@@ -1161,10 +1205,7 @@ def _apply_handler_graphs(
     arithmetic_route_b: list[str] = []
     for kind, slot in slots.items():
         share = random.randint(0x10000, 0x7FFFFFFF)
-        route = (
-            int(planned_arithmetic[_ARITH_ROUTE_NAMES[kind]])
-            if planned_arithmetic else random.getrandbits(1)
-        )
+        route = int(planned_arithmetic[_ARITH_ROUTE_NAMES[kind]])
         arithmetic_route_a.append(f'[{slot}]=tonumber("{share}")')
         arithmetic_route_b.append(f'[{slot}]=tonumber("{share ^ route}")')
     bundle = (
@@ -1289,10 +1330,7 @@ def _apply_handler_graphs(
     semantic_route_b: list[str] = []
     for kind, tag in zip(semantic_kinds, data_tags):
         share = random.randint(0x10000, 0x7FFFFFFF)
-        route = (
-            int(planned_semantic[_SEMANTIC_ROUTE_NAMES[kind]])
-            if planned_semantic else random.getrandbits(1)
-        )
+        route = int(planned_semantic[_SEMANTIC_ROUTE_NAMES[kind]])
         semantic_route_a.append(f'[{tag}]=tonumber("{share}")')
         semantic_route_b.append(f'[{tag}]=tonumber("{share ^ route}")')
     semantic_graphs = (
@@ -1638,37 +1676,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     protection_plan = lowered_ir.protection_plan
     protected_semantic_ir = lowered_ir.semantic_ir
     root_protection = protection_plan.functions[protected_semantic_ir.root.id]
-    planned_runtime_variants = []
-    semantic_variants_active = lowered_ir.resolution.is_active("semantic_variants")
-    helper_variants_active = lowered_ir.resolution.is_active("helper_variants")
-    decoy_handlers_active = lowered_ir.resolution.is_active("decoy_handlers")
-    handler_mutation_active = lowered_ir.resolution.is_active("handler_mutation")
-    for variant, aliases in zip(
-        root_protection["runtime_variants"], root_protection["alias_requirements"]
-    ):
-        concrete = dict(variant)
-        named_modes = dict(variant["semantic_alias_modes"])
-        counts = dict(aliases["operations"])
-        concrete["semantic_alias_modes"] = {
-            opcode: (
-                named_modes.get(
-                    name, (False,) * counts.get(name, aliases["auxiliary_count"])
-                ) if semantic_variants_active
-                else (False,) * counts.get(name, aliases["auxiliary_count"])
-            )
-            for opcode, name in enumerate(OPERATIONS)
-        }
-        if not helper_variants_active:
-            concrete["helper_variant_count"] = 1
-            concrete["helper_route_cycles"] = tuple(
-                (name, (0,)) for name in ("rget", "rset", "_flow", "_sem")
-            )
-        if not decoy_handlers_active:
-            concrete["decoy_body_variants"] = ()
-        if not handler_mutation_active:
-            concrete["mutate_handlers"] = False
-        planned_runtime_variants.append(concrete)
-    planned_runtime_variants = tuple(planned_runtime_variants)
+    planned_runtime_variants = backend_adapter.runtime_variants(lowered_ir)
     output_transform = context.output_transform or _obfuscate_vm_output
 
     prepared = lowered_ir.backend_data["layout"]
@@ -1699,18 +1707,6 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
             f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
         )
     vm_code = backend_adapter.emit_handlers(vm_code, lowered_ir, planned_runtime_variants)
-
-    # Keep disabled profiles free of semantic-threading calls on the hot
-    # fetch/write paths.  The local helpers remain as cold template code,
-    # but no per-instruction function-call overhead survives.
-    if not lowered_ir.policy.get("semantic_state_threading", False):
-        vm_code = vm_code.replace("; _ss_step(_ip,op,A,B,C)", "")
-        vm_code = vm_code.replace(
-            "\n        _ss_value(slot,encoded,epoch,kind)", ""
-        )
-        vm_code = vm_code.replace(
-            "; _ss_value(i,encoded,epoch,kind)", ""
-        )
 
     # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
     # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.

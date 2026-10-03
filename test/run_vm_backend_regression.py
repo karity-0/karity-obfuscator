@@ -5,6 +5,7 @@ import random
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 from lua_runtime import lua_executable
 
 
@@ -65,6 +66,94 @@ def check_classic_optimizer() -> None:
     assert close_events[0]["reason"] == "upvalue-close"
 
 
+def check_karity_cross_instruction_cache() -> None:
+    """Measure a hit on a later instruction, not merely a duplicate operand."""
+    from lupa.lua51 import LuaRuntime as Lua51Runtime
+    from obfuscator.vm.targets.lua51 import Lua51Target
+    from obfuscator.vm.targets.lua53 import Lua53Target
+    from obfuscator.vm.targets.profile import TargetProfile
+
+    source = (
+        "local anchor=7; local sum=0; "
+        "for i=1,80 do local a=anchor; local b=anchor; "
+        "sum=sum+a+b end; assert(sum==1120)"
+    )
+    def execute(version, output):
+        if version == "5.1":
+            try:
+                Lua51Runtime(encoding=None).execute(output.encode())
+            except Exception as error:
+                return str(error)
+            return None
+        with tempfile.TemporaryDirectory(prefix="karity-cache-") as temp:
+            path = Path(temp) / "output.lua"
+            path.write_text(output, encoding="utf-8")
+            result = subprocess.run([lua_executable(), str(path)], capture_output=True,
+                                    timeout=120)
+        return result.stderr.decode(errors="replace") if result.returncode else None
+
+    for version, target_class, cache in (
+            ("5.1", Lua51Target, "_MJ._RC"),
+            ("5.3", Lua53Target, "_RC")):
+        original = target_class.runtime_template
+        cache_options = options("karity")
+        cache_options.update({"helper_variant_count": 4, "helper_diversity_rate": 1.0})
+        mode = "cross"
+
+        def instrument(self, name):
+            template = original(self, name)
+            if name != "vm.lua":
+                return template
+            reads = f"local cached={cache}[i]"
+            hit = "if cached then return cached[1] end"
+            store = f"{cache}[i]={{value}}"
+            nil_store = f"{cache}[i]={{nil}}"
+            for marker in (reads, hit, store, nil_store):
+                if template.count(marker) != 1:
+                    raise AssertionError(f"Karity cache instrumentation lost {marker}")
+            if mode == "cross":
+                check = ("if cached then if cached[2]~=pc then "
+                         "error('cross-instruction-cache-hit') end; return cached[1] end")
+            else:
+                check = ("if cached then if cached[3]~=_RE[_rpos(3,i)] then "
+                         "error('stale-register-cache') end; return cached[1] end")
+            template = template.replace(hit, check)
+            return (template.replace(store, f"{cache}[i]={{value,pc,_RE[_rpos(3,i)]}}")
+                    .replace(nil_store, f"{cache}[i]={{nil,pc,_RE[_rpos(3,i)]}}"))
+
+        random.seed(7719)
+        normal_output = VMPass(
+            target=TargetProfile(version, "karity"),
+            vm_options=cache_options, vm_output_passes=[],
+        ).run(source)
+        if f"{cache}[i]=nil" not in normal_output:
+            raise AssertionError(f"Karity {version} cloned rset omitted cache invalidation")
+        normal_error = execute(version, normal_output)
+        if normal_error is not None:
+            raise AssertionError(f"Karity {version} normal cache runtime failed: {normal_error}")
+        random.seed(7719)
+        with patch.object(target_class, "runtime_template", instrument):
+            output = VMPass(
+                target=TargetProfile(version, "karity"),
+                vm_options=cache_options, vm_output_passes=[],
+            ).run(source)
+        error = execute(version, output)
+        if error is None or "cross-instruction-cache-hit" not in error:
+            raise AssertionError(
+                f"Karity {version} did not reuse a read across instructions: {error}"
+            )
+        mode = "stale"
+        random.seed(7719)
+        with patch.object(target_class, "runtime_template", instrument):
+            checked_output = VMPass(
+                target=TargetProfile(version, "karity"),
+                vm_options=cache_options, vm_output_passes=[],
+            ).run(source)
+        stale_error = execute(version, checked_output)
+        if stale_error is not None:
+            raise AssertionError(f"Karity {version} reused a stale register: {stale_error}")
+
+
 
 def options(backend: str, dispatcher: str = "ifelseif") -> dict:
     return {
@@ -120,6 +209,14 @@ def run_output(source: str, backend: str, dispatcher: str = "ifelseif",
     # VMPass accounts for the outer pipeline's signature when deriving its
     # source-bound key; Pipeline is responsible for prepending that signature.
     output = output_prefix + vm.run(source)
+    if backend in ("karity", "default") and not selected_options["semantic_state_threading"]:
+        for call in ("_ss_step(_ip,op,A,B,C)",
+                     "_ss_value(i,encoded,epoch,kind)"):
+            if call in output:
+                raise AssertionError(f"disabled Karity semantic-state call survived: {call}")
+        if output.count("_ss_value(slot,encoded,epoch,kind)") != output.count(
+                "local function _ss_value(slot,encoded,epoch,kind)"):
+            raise AssertionError("disabled Karity register-write semantic-state call survived")
     if "__call" in output or "VM_DISPATCH_ENTRY" in output:
         raise AssertionError(f"dispatcher signature leaked for {backend}/{dispatcher}")
     if vm.backend != ("karity" if backend == "default" else backend):
@@ -150,6 +247,7 @@ def run_output(source: str, backend: str, dispatcher: str = "ifelseif",
 
 def main() -> int:
     check_classic_optimizer()
+    check_karity_cross_instruction_cache()
     base_config = {
         "passes": ["vm"],
         "vm_output_passes": [],
@@ -247,6 +345,27 @@ def main() -> int:
     )
     if stdout != b"44\n":
         raise AssertionError(f"Karity repeated pending operand mismatch: {stdout!r}")
+
+    comparison_source = (
+        'local x=11; local y=x+1; '
+        'assert(y==y and not (y<y) and y<=y); '
+        'local calls=0; local t=setmetatable({}, '
+        '{__lt=function(a,b) calls=calls+1; return true end}); '
+        'assert(t<t and calls==1); '
+        'local n=0/0; assert(not (n==n)); '
+        'print(calls)'
+    )
+    for diversity in (0.0, 1.0):
+        stdout = run_output(
+            comparison_source, "karity",
+            vm_options={"cross_instruction_rate": 1.0,
+                        "semantic_diversity_rate": diversity,
+                        "graph_execution_rate": 0.0},
+        )
+        if stdout != b"1\n":
+            raise AssertionError(
+                f"Karity repeated comparison operand mismatch: {stdout!r}"
+            )
 
     print("vm-backend-regression-ok backends=classic,karity,mov "
           "annotation_cases=26 classic_dispatchers=7 alias=default")

@@ -1,5 +1,9 @@
 backend-ir v1 backend=classic kind=classic-handler-ir
 generation=5d60c6afca64e752d1f33446
+classic-vm 0 aliases=140 used=5 splits=1 fuses=0 decoys=0 mutate=False dispatcher=ifelseif
+classic-placement f0 vm=0
+  classic-source f0:i0 pcs=0
+  classic-source f0:i1 pcs=1
 active handler_aliases
 policy block_variant_rate=0.0
 policy cross_instruction_rate=0.0

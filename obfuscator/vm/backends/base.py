@@ -43,6 +43,9 @@ class LoweredIR:
         materialization = self.backend_data.get("materialization")
         if materialization is not None:
             lines.extend(materialization.dump().splitlines())
+        classic_state = self.backend_data.get("classic_state")
+        if classic_state is not None:
+            lines.extend(classic_state.dump().splitlines())
         karity_state = self.backend_data.get("karity_state")
         if karity_state is not None:
             lines.extend(karity_state.dump().splitlines())
@@ -92,6 +95,8 @@ class LoweredIR:
                 f"{key}={event[key]}" for key in sorted(event)
             )
             lines.append(f"optimization-event {detail}")
+        for bound in self.backend_data.get("mov_slots", ()):
+            lines.extend(bound.dump().splitlines())
         programs = self.backend_data.get("programs", ())
         for program_index, program in enumerate(programs):
             recipes = ",".join(sorted(program.recipe_offsets)) or "-"
@@ -193,6 +198,11 @@ class VMBackend:
 
     def emit_handlers(self, source: str, lowered: LoweredIR, variants) -> str:
         raise NotImplementedError('a VM backend must own its handler emission')
+
+    def runtime_variants(self, lowered: LoweredIR) -> tuple[dict, ...]:
+        """Consume the stable per-VM plan through this backend's ABI."""
+        from .runtime_variants import resolve_runtime_variants
+        return resolve_runtime_variants(lowered)
 
     def emit_runtime_body(
         self,

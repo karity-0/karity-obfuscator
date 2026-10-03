@@ -72,8 +72,15 @@ def optimize_program(program: Program) -> Program:
         if instruction.op == Op.LOOKUP:
             if instruction.a not in (instruction.b, instruction.c):
                 redundant |= instruction == lookup_candidate
-                lookup_candidate = instruction
-            else:
+                if not redundant:
+                    # An unrelated lookup can intervene without changing the
+                    # candidate's result, table, or key scratch slots.
+                    if (lookup_candidate is None or instruction.a in (
+                            lookup_candidate.a, lookup_candidate.b,
+                            lookup_candidate.c)):
+                        lookup_candidate = instruction
+            elif lookup_candidate is not None and instruction.a in (
+                    lookup_candidate.a, lookup_candidate.b, lookup_candidate.c):
                 lookup_candidate = None
         elif instruction.op == Op.MOVE and instruction.mode == 0:
             if lookup_candidate is not None and instruction.a in (

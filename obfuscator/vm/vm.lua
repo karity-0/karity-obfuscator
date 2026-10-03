@@ -520,6 +520,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="k"})
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
+    -- Native reads may be shared across instructions until a representation
+    -- write, rotation, pending producer, or native escape boundary occurs.
+    local _RC    = {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
                    (--<<TARGET_PRIVATE_EXPRESSION>>
                     (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
@@ -789,6 +792,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<ENDTARGET_REGISTER_MAP>>
 
     local function _rstore(slot,encoded,epoch,kind)
+        _RC[slot]=nil
         _PD[_rpos(5,slot)]=nil
         local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
                            epoch~_RZ~((slot+3)*-3372029247567499371)
@@ -829,14 +833,18 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<RGET>>
     local function rget(i)
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
+        local cached=_RC[i]
+        if cached then return cached[1] end
         local p1,p2,p3,p4=_rpositions(i)
         local epoch=_RE[p3]
-        if epoch==nil then return nil end
+        if epoch==nil then _RC[i]={nil}; return nil end
         local _,b,inv=_rparams(i,epoch)
-        return _rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
-                         ((regs[p1]+_RS[p2])-b)*inv
-                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
-                        ),_RT[p4])
+        local value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
+                              ((regs[p1]+_RS[p2])-b)*inv
+                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                             ),_RT[p4])
+        _RC[i]={value}
+        return value
     end
     --<<ENDRGET>>
 
@@ -863,6 +871,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<ENDRSET>>
 
     local function _rrotate(slot,salt)
+        _RC[slot]=nil
         local p1,p2,p3=_rpositions(slot)
         local old_epoch=_RE[p3]
         if old_epoch==nil then return end
@@ -893,6 +902,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _rmap_rotate(salt)
+        _RC={}
         local old_generation=_MG[1]
         local step=(--<<TARGET_PRIVATE_LOW_EXPRESSION:1024>>
                     ((_rmix(_RZ~salt~old_generation)&0x3FF)|1)
@@ -929,7 +939,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rmap_tick(salt)
         _MG[2]=(_MG[2] or 0)+1
-        if _MG[2]<=2 or (_MG[2]&1023)==0 then
+        if _MG[2]<=__VM_RMAP_INITIAL_TICKS__ or (_MG[2]&__VM_RMAP_PERIOD_MASK__)==0 then
             _rmap_rotate(salt~(_SY and (_SS[1] or 0) or 0))
         end
     end
@@ -1010,6 +1020,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function get_upvalue(box)
+        _RC={}
         if box.get then return box.get() end
         if not _UY then return box.v end
         local q=_UV[box]
@@ -1089,6 +1100,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function set_upvalue(box,v)
+        _RC={}
         if box.set then box.set(v)
         elseif not _UY then box.v=v
         else box.v=v; _UV[box]=nil; get_upvalue(box) end
@@ -1123,6 +1135,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _tget(t,k)
+        _RC={}
         local m=_TM[t]
         if not m or m[__VM_TB_EXPOSED__] then return t[k] end
         local physical=_tkey(m,k,false)
@@ -1139,6 +1152,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _tset(t,k,v)
+        _RC={}
         local m=_TM[t]
         if not m or m[__VM_TB_EXPOSED__] then t[k]=v; return end
         local physical=_tkey(m,k,v~=nil)
@@ -1166,6 +1180,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _tlen(t)
+        _RC={}
         local m=_TM[t]
         if not m or m[__VM_TB_EXPOSED__] then return #t end
         local n=0
@@ -1207,6 +1222,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function make_closure(sub)
+        _RC={}
         local new_uv={}
         for i,uv in ipairs(sub.upvalues) do
             if uv.instack==1 then
@@ -1377,6 +1393,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _branch(v,expected,av,tag)
+        _RC={}
         if not _BY then return v==expected end
         local k=(_S[611] or 0)~(_SS[1] or 0)~(_XF[2] or 0)~
                 (pc<<17)~tag~__VM_BRANCH_SEED__
@@ -1389,6 +1406,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     --<<SEM>>
     local function _sem(tag,x,y,z)
+        if tag~=__VM_DATA_VALUE__ then _RC={} end
         if _TY then
             if tag==__VM_OP_NEWTABLE__ then return _tnew() end
             if tag==__VM_DATA_GET__ then return _tget(x,y) end
@@ -1452,6 +1470,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith2(a,b,av,slot,desc)
+        _RC={}
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
         local arithmetic=_AR[1][route]
@@ -1474,6 +1493,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith1(a,av,slot,desc)
+        _RC={}
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
         local arithmetic=_AR[1][route]
@@ -1593,6 +1613,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 local l1,l2=_pending_fragment(left,scale,epoch~token)
                 local r1,r2=_pending_fragment(right,scale,epoch~token~1)
                 _PD[_rpos(5,dst)]={token,l1,l2,r1,r2,epoch,bias}
+                _RC[dst]=nil
                 _RL[dst]=true
                 return
             end
@@ -1613,6 +1634,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 local scale,bias=_rparams(dst,epoch)
                 local p1,p2=_pending_fragment(value,scale,epoch~token)
                 _PD[_rpos(5,dst)]={token,p1,p2,nil,nil,epoch,bias}
+                _RC[dst]=nil
                 _RL[dst]=true
                 return
             end
@@ -1678,6 +1700,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _native_call(fn,args,a,c,av,tail,tag,...)
+        _RC={}
         local count=args.n
         if not tail then _touch(av,tag) end
         for i=1,count do args[i]=_texpose(args[i]) end
@@ -1775,9 +1798,18 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local t={}; for i=B,C do t[#t+1]=rget(i) end
             rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
         elseif op==30 then if A>0 then close_upvalues(A-1) end; pc=_jump(sBx,_av,30)
-        elseif op==31 then if not _branch(_carry(_sem(__VM_CMP_EQ__,rget(B),rget(C),nil),_av,31),A~=0,_av,31) then pc=pc+1 end
-        elseif op==32 then if not _branch(_carry(_sem(__VM_CMP_LT__,rget(B),rget(C),nil),_av,32),A~=0,_av,32) then pc=pc+1 end
-        elseif op==33 then if not _branch(_carry(_sem(__VM_CMP_LE__,rget(B),rget(C),nil),_av,33),A~=0,_av,33) then pc=pc+1 end
+        elseif op==31 then
+            local left=rget(B); local right
+            if B==C then right=left else right=rget(C) end
+            if not _branch(_carry(_sem(__VM_CMP_EQ__,left,right,nil),_av,31),A~=0,_av,31) then pc=pc+1 end
+        elseif op==32 then
+            local left=rget(B); local right
+            if B==C then right=left else right=rget(C) end
+            if not _branch(_carry(_sem(__VM_CMP_LT__,left,right,nil),_av,32),A~=0,_av,32) then pc=pc+1 end
+        elseif op==33 then
+            local left=rget(B); local right
+            if B==C then right=left else right=rget(C) end
+            if not _branch(_carry(_sem(__VM_CMP_LE__,left,right,nil),_av,33),A~=0,_av,33) then pc=pc+1 end
         elseif op==34 then if not _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(A),nil,nil),_av,34),C~=0,_av,34) then pc=pc+1 end
         elseif op==35 then
             if _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(B),nil,nil),_av,35),C~=0,_av,35) then rset(A,rget(B)) else pc=pc+1 end
