@@ -6,7 +6,8 @@ from ..vm_obfuscation import (
 
 
 def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
-                    handler_map=None, used_ops=None):
+                    handler_map=None, used_ops=None,
+                    comparison_specializations=frozenset()):
     layout = lowered.backend_data['layout']
     vops, splits, fuses, defers = (
         handler_map if handler_map is not None else layout.vm_maps[vm_index]
@@ -24,9 +25,10 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
         or '--<<TARGET_KARITY_EXEC_STATE>>' in source
     )
     source = apply_vop_to_vm(
-        source, vops, 0.0, variant['semantic_alias_modes'],
+        source, vops, variant['semantic_alias_modes'],
         native_state=native_state,
         alias_transition_indices=variant['alias_transition_indices'],
+        comparison_specializations=comparison_specializations,
     )
     source = prune_and_inject_handlers(
         source, used_ops, fake_handlers=bool(variant['decoy_body_variants']),

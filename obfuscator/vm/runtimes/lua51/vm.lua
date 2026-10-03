@@ -7,7 +7,7 @@
 -- metatable nor an arithmetic dispatcher with user-visible Lua values.
 local _PRIVATE_WORD_MARKER={}
 local function _is_private_word(value)
-    return _native_type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER
+    return _native_type(value)=="table" and _native_rawget(value,"_private_word")==_PRIVATE_WORD_MARKER
 end
 local function _is_private_state(value)
     return _is_private_word(value)
@@ -204,7 +204,7 @@ local function from_base36(s)
     local chunks={}
     for j=1,#bytes,4096 do
         local last=j+4095; if last>#bytes then last=#bytes end
-        chunks[#chunks+1]=string.char(table.unpack(bytes,j,last))
+        chunks[#chunks+1]=string.char(_unpack_values(bytes,j,last))
     end
     return table.concat(chunks)
 end
@@ -307,7 +307,7 @@ local function _kss(s)
     local chunks={}
     for i=1,#out,4096 do
         local last=i+4095; if last>#out then last=#out end
-        chunks[#chunks+1]=string.char(table.unpack(out,i,last))
+        chunks[#chunks+1]=string.char(_unpack_values(out,i,last))
     end
     return table.concat(chunks)
 end
@@ -480,9 +480,10 @@ ins=_ixor(ins,key)
 --<<ENDTARGET_INSTRUCTION_DECODE>>
 end
 
-local function get_environment(upvals) return upvals.environment end
+local function get_environment(upvals) return getfenv(upvals.environment) end
 local function bind_environment(fn,values,parent)
-    values.environment=get_environment(parent)
+    setfenv(fn,get_environment(parent))
+    values.environment=fn
     return fn
 end
 --<<TARGET_SOURCE_VALUE>>
@@ -684,8 +685,8 @@ local _AU32=4294967296
 local function _aword(value)
     -- This packet helper is also extracted for standalone target tests, so
     -- keep its pair check local instead of capturing the loader sentinel.
-    if _native_type(value)=='table' and value._private_word~=nil then
-        return {value.hi,value.lo}
+    if _native_type(value)=='table' and _native_rawget(value,'_private_word')~=nil then
+        return {_native_rawget(value,'hi'),_native_rawget(value,'lo')}
     end
     if _native_type(value)=='table' then return value end
     if value<0 then
@@ -1152,7 +1153,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _rvalue(v,epoch)
-        if math.type(v)=="integer" then return v,1 end
+        if _number_kind(v)=="integer" then return v,1 end
         if type(v)=="boolean" then return v and 1 or 0,2 end
         if v==nil then
             return _rmix((--<<TARGET_PRIVATE_EXPRESSION>>
@@ -1190,6 +1191,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     --<<RSET>>
     local function rset(i,v)
+        if i<proto.max_stack_size then v=_source_value(v) end
         local seal=_seal_next
         _seal_next=nil
         local salt=0
@@ -1383,7 +1385,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
                              ))
             local payload,kind
-            if math.type(v)=="integer" then payload,kind=v,1
+            if _number_kind(v)=="integer" then payload,kind=v,1
             elseif type(v)=="boolean" then payload,kind=(v and 1 or 0),2
             elseif v==nil then payload,kind=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
                                                   epoch~__VM_UV_NIL__
@@ -1500,7 +1502,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local left=m[__VM_TB_LEFT__][physical]
         if left==nil then return nil end
         local right=m[__VM_TB_RIGHT__][physical]
-        if type(left)=="number" and math.type(left)=="integer" and
+        if type(left)=="number" and _number_kind(left)=="integer" and
            type(right)=="number" then return (--<<TARGET_PRIVATE_EXPRESSION>>
                                               left+right
                                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
@@ -1519,7 +1521,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             m[__VM_TB_RIGHT__][physical]=nil
             return
         end
-        if math.type(v)=="integer" then
+        if _number_kind(v)=="integer" then
             local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
                               m[__VM_TB_SALT__]~physical~(_SS[1] or 0)~__VM_TABLE_SHARE__
                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
@@ -1533,7 +1535,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             m[__VM_TB_LEFT__][physical]=v
             m[__VM_TB_RIGHT__][physical]=false
         end
-        _ss_value(-47,physical,m[__VM_TB_SALT__],math.type(v)=="integer" and 1 or 4)
+        _ss_value(-47,physical,m[__VM_TB_SALT__],_number_kind(v)=="integer" and 1 or 4)
     end
 
     local function _tlen(t)
@@ -1556,7 +1558,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local x=m[__VM_TB_LEFT__][physical]
             if x~=nil then
                 local right=m[__VM_TB_RIGHT__][physical]
-                if type(x)=="number" and math.type(x)=="integer" and
+                if type(x)=="number" and _number_kind(x)=="integer" and
                    type(right)=="number" then x=(--<<TARGET_PRIVATE_EXPRESSION>>
                                                 x+right
                                                 --<<ENDTARGET_PRIVATE_EXPRESSION>>
@@ -1594,7 +1596,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local metadata={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
         local fn=function(...)
             local sub,new_uv=metadata[__VM_META_PROTO__],metadata[__VM_META_UPVALS__]
-            local _av=table.pack(...)
+            local _av=_pack_values(...)
             local w=_CG[__VM_ROUTE_ENTER__](_NX,{
                 [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=sub,
                 [__VM_Q_UPVALS__]=new_uv,
@@ -1602,7 +1604,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             for i=1,w[__VM_RES_COUNT__] do
                 w[__VM_RES_VALUES__][i]=_texpose(w[__VM_RES_VALUES__][i])
             end
-            return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
+            return _unpack_values(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
         end
         _VF[fn]=metadata
         return bind_environment(fn,new_uv,upvals)
@@ -1666,11 +1668,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     -- exact hi:lo packet key; operation-bank indices remain native and small.
     --<<TARGET_51_KARITY_GRAPH_STATE>>
     local function _int2(a, b)
-        return math.type(a)=="integer" and math.type(b)=="integer" and 2 or 1
+        return _number_kind(a)=="integer" and _number_kind(b)=="integer" and 2 or 1
     end
 
     local function _int1(a)
-        return math.type(a)=="integer" and 2 or 1
+        return _number_kind(a)=="integer" and 2 or 1
     end
 
     local function _cross(delta)
@@ -1812,7 +1814,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _couple_direct(v,desc,hit)
         local rv=0
-        if math.type(v)=="integer" then rv=v end
+        if _number_kind(v)=="integer" then rv=v end
         local mixed=_pxor(_pxor(_pxor(_pxor(desc[2],desc[3]),rv),_st),hit or 0)
         local key=desc[4]
         _S[key]=_pxor(_S[key] or 0,mixed)
@@ -1827,7 +1829,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _seal_result(v,desc,hit)
-        if math.type(v)=="integer" then
+        if _number_kind(v)=="integer" then
             _seal_next={desc,hit,_st}
         end
         return v
@@ -2107,7 +2109,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local count=args.n
         if not tail then _touch(av,tag) end
         for i=1,count do args[i]=_texpose(args[i]) end
-        local result=table.pack(fn(table.unpack(args,1,count)))
+        local result=_pack_values(_source_call(fn,upvals,_kk,_unpack_values(args,1,count)))
         if tail then return _leave(result,result.n,av,tag) end
         if c==0 then
             for i=1,result.n do rset(a+i-1,result[i]) end
@@ -2277,7 +2279,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             q=_flow(q,_av,41); local qa=_cf(q,__VM_CF_A__,41)
             local qc=_cf(q,__VM_CF_C__,41)
             local _it=rget(qa); local _is=_texpose(rget(qa+1)); local _ic=_texpose(rget(qa+2))
-            local res=table.pack(_it(_is,_ic))
+            local res=_pack_values(_it(_is,_ic))
             for i=1,qc do rset(qa+2+i,res[i]) end
 
         elseif op==42 then
@@ -2540,12 +2542,12 @@ local _fn=r.u32()
     --<<RUN_ENTRY>>
     ctx.CG[__VM_ROUTE_ENTER__](ctx.NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=ctx.apack({},0,crc)})
+         [__VM_Q_UPVALS__]={env_box,environment=self_func},[__VM_Q_ARGS__]=ctx.apack({},0,crc)})
     --<<ENDRUN_ENTRY>>
     --<<RUNTIME_TRACE>>
-    ctx.io.stderr:write("karity-vm-trace:",ctx.string.format("%016x",_PX),
+    ctx.io.stderr:write("karity-vm-trace:",_target_hex64(_PX),
                     " blocks:",_PBC," blocktrace:",
-                    ctx.string.format("%016x",_PBH),"\n")
+                    _target_hex64(_PBH),"\n")
     --<<ENDRUNTIME_TRACE>>
 end
 

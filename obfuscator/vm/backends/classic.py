@@ -15,7 +15,10 @@ class ClassicBackend(VMBackend):
 
     def compose_runtime(self, source, lowered, *, target=None):
         from .runtime_templates import classic_executor, direct_executor
-        return direct_executor(source, target.runtime_template('classic_exec.lua') if target else classic_executor())
+        return direct_executor(
+            source, target.runtime_template('classic_exec.lua') if target else classic_executor(),
+            target=target,
+        )
 
     def validate_lowered(self, lowered):
         from .handler_validation import validate_handler_dispatch

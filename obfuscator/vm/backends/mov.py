@@ -29,7 +29,7 @@ class MovBackend(VMBackend):
         executor = build_runtime(executor_template, lowered.backend_data['kits'],
                                  template=target.runtime_template('mov_exec.lua') if target else None,
                                  target=target)
-        source = direct_executor(source, executor)
+        source = direct_executor(source, executor, target=target)
         source = source.replace('local proto=read_proto(r,acc_state)',
                                 'local proto=read_proto(r,acc_state); _mov_read(r,proto)')
         return source.replace('local proto=ctx.read_proto(r,acc_state)',

@@ -9,7 +9,7 @@ REGRESSIONS = (
     "strip_info",
     "meme_strings",
     "rename", "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",
-    "vm_ir", "lua_frontend", "lua51_word", "lua51_runtime", "lua51_pass_matrix", "lua51_semantic_matrix", "dump51", "lua51_toolchain", "closure_gc", "target_capability", "image_resolver", "host_materialization", "native_lowering", "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
+    "vm_ir", "cross_backend_generated", "lua_frontend", "lua51_word", "lua51_runtime", "lua51_pass_matrix", "lua51_semantic_matrix", "dump51", "lua51_toolchain", "closure_gc", "target_capability", "image_resolver", "host_materialization", "native_lowering", "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
     "vm_output_emitter", "vm_choke", "gui", "signature", "line_state",
     "function_boundary", "function_loop", "function_nested", "toolchain",
 )

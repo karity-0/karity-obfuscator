@@ -8,9 +8,15 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from obfuscator.parser51 import Lua51Parser
 from obfuscator.vm.frontends.lua51 import build_semantic_ir
+from obfuscator.vm.targets.lua51 import Lua51Target
 
 
 def main():
+    target = Lua51Target()
+    api_source = ('local text="math.type table.pack table.unpack";'
+                  '-- table.pack and math.type remain comments\n'
+                  'return _number_kind,_pack_values,_unpack_values')
+    assert target._check_native_runtime_api(api_source) == api_source
     data=(ROOT/'test/fixtures/ir/lua51_closure.luac').read_bytes()
     ir=build_semantic_ir(Lua51Parser(data).parse())
     assert ir.dump()==(ROOT/'test/fixtures/ir/lua51_closure.ir').read_text(encoding='utf-8')
@@ -22,6 +28,16 @@ def main():
         print('lua-frontend-regression-ok native Lua 5.1 execution skipped: lupa.lua51 unavailable')
         return 0
     lua=LuaRuntime(encoding=None)
+    alias_source = target.lower_source(
+        'return function() local text="_native_type _native_string_dump";'
+        '-- _native_type remains a comment\n'
+        'return text,_native_type(7),_native_string_byte("A",1) end'
+    )
+    assert '"_native_type _native_string_dump"' in alias_source
+    assert '-- _native_type remains a comment' in alias_source
+    assert lua.execute(alias_source.encode())() == (
+        b'_native_type _native_string_dump', b'number', 65,
+    )
     integers=lua.execute((ROOT/'obfuscator/vm/targets/int64.lua').read_bytes())
     rng=random.Random(1117)
     wrap=lambda x:(x+(1<<63))%(1<<64)-(1<<63)
@@ -84,7 +100,7 @@ def main():
     # Lua 5.1 arithmetic graph variants must not feed native lua_Number values
     # through the VM's exact-integer/bitwise trace representation. In particular,
     # fractional operands and the sign of zero remain native target semantics.
-    from obfuscator.vm.backends.runtime_emitter import (
+    from obfuscator.vm.backends.karity_graphs import (
         _compile_call_route_func, _compile_control_graph_func,
         _compile_integer_graph_func, _compile_loop_ir_func,
         _compile_occurrence_graph_func, _compile_semantic_ir_func,

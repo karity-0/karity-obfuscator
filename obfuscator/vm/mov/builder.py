@@ -71,10 +71,13 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None
     # trampoline. Native functions still use Lua's normal call semantics.
     tail_start = handlers.index("--<<VM_TAIL_DISPATCH>>")
     tail_end = handlers.index("--<<ENDVM_TAIL_DISPATCH>>", tail_start)
-    handlers = handlers[:tail_start] + """local target=_mov_closures[fn]
+    pack_values, unpack_values = (
+        target.value_packet_api() if target else ('table.pack', 'table.unpack')
+    )
+    handlers = handlers[:tail_start] + f"""local target=_mov_closures[fn]
             local res
-            if target then ca.n=ca_n; return {mov_tail=target,args=ca} end
-            res=table.pack(fn(table.unpack(ca,1,ca_n)))
+            if target then ca.n=ca_n; return {{mov_tail=target,args=ca}} end
+            res={pack_values}(fn({unpack_values}(ca,1,ca_n)))
             """ + handlers[tail_end + len("--<<ENDVM_TAIL_DISPATCH>>"):]
     handlers = handlers.replace("elseif op==30 then pc=pc+sBx",
                                 'elseif op==30 then error("unexpected MOV host jump")')

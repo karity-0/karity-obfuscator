@@ -174,13 +174,6 @@ _ST_TRANSITIONS_NATIVE = [
     "_st=_MJ._c_xor(_MJ._c_xor(_MJ._c_xor(_st,A),B),C)%256",
 ]
 
-def _pick_transitions(n: int, *, native_state: bool = False) -> list[str]:
-    """n개의 서로 다른 전이 패턴을 랜덤 선택."""
-    pool = (_ST_TRANSITIONS_NATIVE if native_state else _ST_TRANSITIONS)[:]
-    random.shuffle(pool)
-    return pool[:n]
-
-
 def _make_alias_body(body: str, transition: str, pre: bool) -> str:
     """body에 state 전이를 앞(pre=True) 또는 뒤(pre=False)에 삽입.
 
@@ -543,15 +536,17 @@ _DIRECT_SEMANTIC_BODIES = {
 
 
 def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
-                    semantic_diversity_rate: float = 0.0,
                     semantic_alias_modes: dict[int, tuple[bool, ...]] | None = None,
                     *, native_state: bool = False,
-                    alias_transition_indices: dict[int, tuple[int, ...]] | None = None) -> str:
+                    alias_transition_indices: dict[int, tuple[int, ...]] | None = None,
+                    comparison_specializations=frozenset()) -> str:
     """
     vm.lua의 op==N 체인을 파싱해서:
     1. 각 원본 op의 alias vop들에 대해 state 전이가 다른 핸들러를 생성
     2. 원본 op 번호 대신 alias vop 번호로 체인 재조립
     """
+    if semantic_alias_modes is None or alias_transition_indices is None:
+        raise ValueError("handler aliases require planned modes and transitions")
     chain_start, chain_end = _find_chain(vm_code)
     chain = vm_code[chain_start:chain_end]
     orig_bodies = _parse_handler_blocks(chain)
@@ -562,16 +557,17 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
             continue
         body = orig_bodies[orig_op]
         pool = _ST_TRANSITIONS_NATIVE if native_state else _ST_TRANSITIONS
-        if alias_transition_indices is None:
-            transitions = _pick_transitions(len(aliases), native_state=native_state)
-        else:
-            indices = alias_transition_indices.get(orig_op)
-            if (indices is None or len(indices) != len(aliases)
-                    or len(set(indices)) != len(indices)
-                    or any(type(index) is not int or not 0 <= index < len(pool)
-                           for index in indices)):
-                raise ValueError("planned handler alias transitions are incomplete")
-            transitions = [pool[index] for index in indices]
+        indices = alias_transition_indices.get(orig_op)
+        if (indices is None or len(indices) != len(aliases)
+                or len(set(indices)) != len(indices)
+                or any(type(index) is not int or not 0 <= index < len(pool)
+                       for index in indices)):
+            raise ValueError("planned handler alias transitions are incomplete")
+        planned_modes = semantic_alias_modes.get(orig_op)
+        if (planned_modes is None or len(planned_modes) != len(aliases)
+                or any(type(mode) is not bool for mode in planned_modes)):
+            raise ValueError("planned handler alias modes are incomplete")
+        transitions = [pool[index] for index in indices]
         for i, vop in enumerate(aliases):
             transition = transitions[i % len(transitions)]
             pre = (i % 2 == 0)
@@ -579,13 +575,16 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
             # Keep one graph-backed alias as the baseline. Other aliases may
             # lower the same operation directly so table/upvalue/control
             # semantics do not all converge on _sem.
-            planned_modes = ((semantic_alias_modes or {}).get(orig_op))
-            direct = (
-                planned_modes[i] if planned_modes is not None and i < len(planned_modes)
-                else i > 0 and random.random() < semantic_diversity_rate
-            )
+            direct = planned_modes[i]
             if orig_op in _DIRECT_SEMANTIC_BODIES and direct:
                 alias_body = _DIRECT_SEMANTIC_BODIES[orig_op]
+            if vop in comparison_specializations:
+                if orig_op not in (31, 32, 33):
+                    raise ValueError("comparison specialization targets a non-comparison alias")
+                guard = "if B==C then right=left else right=rget(C) end"
+                if guard not in alias_body:
+                    raise ValueError("comparison handler lacks its materialization guard")
+                alias_body = alias_body.replace(guard, "right=left", 1)
             new_blocks[vop] = _make_alias_body(alias_body, transition, pre)
 
     new_chain = _rebuild_chain(new_blocks)
@@ -620,10 +619,9 @@ _FAKE_BODIES_NATIVE = [
 ]
 
 
-def _make_fake_block(variant: int | None = None, *, native_state: bool = False) -> str:
+def _make_fake_block(variant: int, *, native_state: bool = False) -> str:
     bodies = _FAKE_BODIES_NATIVE if native_state else _FAKE_BODIES
-    return (bodies[variant % len(bodies)]
-            if variant is not None else random.choice(bodies))
+    return bodies[variant % len(bodies)]
 
 
 # ---------------------------------------------------------------------------
@@ -641,14 +639,18 @@ def prune_and_inject_handlers(
     mutation_identities: dict[int, str] | None = None,
 ) -> str:
     """
-    used_ops에 없는 opcode 핸들러를 제거하고, 비어있는 opcode 번호에
-    동작 없는 가짜 핸들러를 무작위로 채워넣는다.
+    used_ops에 없는 opcode 핸들러를 제거하고, plan이 정한 가짜 핸들러
+    변형을 비어있는 opcode 번호에 배치한다.
 
     체인 형태(if op==N then ... elseif op==M then ... else error(...) end)는 유지된다.
 
     fake_handlers: 빈 vop 슬롯에 더미 핸들러를 채울지 여부
     mutate: CFF/opaque predicate/junk 등 mutate_handlers를 적용할지 여부
     """
+    if fake_handlers and fake_body_variants is None:
+        raise ValueError("fake handlers require planned body variants")
+    if mutate and mutation_seed is None:
+        raise ValueError("handler mutation requires a planned seed")
     chain_start, chain_end = _find_chain(vm_code)
     chain = vm_code[chain_start:chain_end]
 
@@ -671,20 +673,6 @@ def prune_and_inject_handlers(
                     break
             else:
                 raise RuntimeError("unable to allocate planned fake handler")
-    elif fake_handlers:
-        # 가짜 핸들러: used_ops 주변 vop 공간에서 랜덤 샘플
-        # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
-        n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
-        attempts = 0
-        fake_index = 0
-        while len(blocks) - len(used_ops) < n_fake and attempts < n_fake * 10:
-            attempts += 1
-            fake_vop = random.randint(0, 0x7FFF)
-            if fake_vop not in blocks:
-                blocks[fake_vop] = _make_fake_block(native_state=native_state)
-                identities[fake_vop] = f"fake:{fake_index}"
-                fake_index += 1
-
     # CFF/junk는 real + fake 모든 핸들러에 균일하게 적용: CFF 유무가
     # real/fake를 구별하는 oracle이 되지 않도록 구조적 대칭을 유지한다.
     if mutate:
@@ -719,13 +707,6 @@ _TAILCALL_TAIL_RE     = re.compile(
 DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
 
 
-def _resolve_dispatch(dispatch: str) -> str:
-    """단일 exec에 적용할 구체 디스패치 종류. 'mixed'면 종류 랜덤."""
-    if dispatch == "mixed":
-        return random.choice(DISPATCH_KINDS)
-    return dispatch
-
-
 _SPLIT_KIND_RE = re.compile(r'^(b?)split(\d+)$')
 
 
@@ -748,8 +729,10 @@ def _apply_dispatch(vm_code: str, kind: str) -> str:
 
 
 def apply_dispatch(vm_code: str, dispatch: str) -> str:
-    """단일 exec에 dispatcher_type을 해석·적용(mixed면 랜덤). 단일 VM 경로용."""
-    return _apply_dispatch(vm_code, _resolve_dispatch(dispatch))
+    """Apply only the concrete dispatcher selected by the protection plan."""
+    if dispatch not in {"ifelseif", "bsearch", *DISPATCH_KINDS}:
+        raise ValueError(f"dispatcher requires a planned concrete kind: {dispatch}")
+    return _apply_dispatch(vm_code, dispatch)
 
 
 _DISPATCH_TARGET_EQ_RE = re.compile(r"\bop==(\d+)")
@@ -1114,7 +1097,8 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
             def specialize_rset(match):
                 return "".join((
                     "local payload,kind\n",
-                    "        if math.type(v)==\"integer\" then payload,kind=v,1\n",
+                    "        if ", "_number_kind" if native_exact_word else "math.type",
+                    "(v)==\"integer\" then payload,kind=v,1\n",
                     "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n",
                     "        elseif v==nil then payload,kind=_rmix(", nil_payload, "),3\n",
                     "        else\n",

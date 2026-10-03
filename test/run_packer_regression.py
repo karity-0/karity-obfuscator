@@ -101,7 +101,7 @@ def build(source: Path, output: Path, *, config: str, timeout: float, vm: bool, 
     if result.returncode != 0:
         raise AssertionError(
             "build failed\n"
-            f"command: {' '.join(command)}\n"
+            f"command: {' '.join(map(str, command))}\n"
             f"stdout:\n{decode(result.stdout)}\n"
             f"stderr:\n{decode(result.stderr)}"
         )

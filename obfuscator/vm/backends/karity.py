@@ -22,8 +22,16 @@ class KarityBackend(VMBackend):
     def validate_lowered(self, lowered):
         from .handler_validation import validate_handler_dispatch
         from .karity_state import validate_state
+        from .karity_optimizer import comparison_specializations
         validate_handler_dispatch(lowered, delayed=True)
         validate_state(lowered)
+        specialized = lowered.backend_data.get("comparison_specializations")
+        if ("karity_optimized_deferred_signature" in lowered.backend_data
+                and specialized is None):
+            raise ValueError("Karity optimized comparison specialization is missing")
+        if (specialized is not None and specialized != comparison_specializations(
+                lowered.backend_data["layout"])):
+            raise ValueError("Karity comparison specialization differs from physical layout")
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
@@ -55,13 +63,14 @@ class KarityBackend(VMBackend):
         before_state = lower_state(layout, routes, rotation)
         lowered.backend_data["karity_state"] = before_state
         validate_state(lowered)
-        statistics, events = optimize_layout(layout)
+        statistics, events, specialized = optimize_layout(layout)
         after_state = lower_state(layout, routes, rotation)
         if after_state != before_state:
             raise ValueError("Karity optimizer changed representation transitions")
         lowered.backend_data["karity_state"] = after_state
         lowered.backend_data["optimization"] = statistics
         lowered.backend_data["optimization_events"] = events
+        lowered.backend_data["comparison_specializations"] = specialized
         lowered.backend_data["karity_optimized_deferred_signature"] = deferred_signature(layout)
         super().optimize(lowered, context)
         validate_state(lowered)
@@ -71,9 +80,8 @@ class KarityBackend(VMBackend):
         # ``VMBuildPipeline`` always optimizes before emission, but retaining
         # this gate also protects direct backend callers from emitting a stale
         # pending/epoch projection.
-        from .karity_state import validate_state
         from .karity_optimizer import deferred_signature
-        validate_state(lowered)
+        self.validate_lowered(lowered)
         signature = lowered.backend_data.get("karity_optimized_deferred_signature")
         if (signature is not None
                 and deferred_signature(lowered.backend_data["layout"]) != signature):
@@ -100,11 +108,15 @@ class KarityBackend(VMBackend):
         from ..vm_obfuscation import (apply_execution_kit, apply_dispatch_target_hiding,
                                       wire_exec_router, build_next_router_kit, build_exec_variants)
         count = lowered.backend_data['layout'].vm_count
+        specializations = lowered.backend_data.get(
+            'comparison_specializations', tuple(frozenset() for _ in range(count))
+        )
         def render(template, index):
             variant = variants[index]
             native_state = '--<<TARGET_KARITY_EXEC_STATE>>' in template
             result = single_handlers(template, lowered, variant, vm_index=index,
-                                     executor_name=f'_ex{index}' if count > 1 else None)
+                                     executor_name=f'_ex{index}' if count > 1 else None,
+                                     comparison_specializations=specializations[index])
             result = apply_execution_kit(result, variant['helper_variant_count'], 0.0, variant)
             if lowered.policy.get('dispatcher_target_hiding', False):
                 result = apply_dispatch_target_hiding(result, native_state=native_state)
@@ -127,7 +139,7 @@ class KarityBackend(VMBackend):
         # Graph and representation-route construction belongs to Karity.  The
         # common emitter only owns the target-finalization/output-pass stages
         # that must run after this late-generated code exists.
-        from .runtime_emitter import _apply_handler_graphs, karity_graph_encoding
+        from .karity_graphs import _apply_handler_graphs, karity_graph_encoding
         from .karity_state import validate_state
         validate_state(lowered)
         state = lowered.backend_data["karity_state"]
@@ -163,9 +175,7 @@ class KarityBackend(VMBackend):
                     lowered.policy.get("branch_virtualization", False)
                 ),
                 representation_routes=state.representation_routes,
-                preserve_native_numbers=target.user_number_model == "binary64",
-                private_state_native=target.lua_version == "5.1",
-                native_graph_control=getattr(target, "native_graph_control", False),
+                **target.graph_runtime_options(),
             )
         return RuntimeBody(
             source=rendered,

@@ -209,6 +209,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     --<<ENDRGET>>
     --<<RSET>>
     local function rset(i,v)
+        if i<proto.max_stack_size then v=_source_value(v) end
         regs[i]=v
         local box=boxes[i]
         if box and not box.set then box.v=v end
@@ -366,8 +367,8 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         local metadata={sub,new_uv}
         local fn=function(...)
             local sub,new_uv=metadata[1],metadata[2]
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...),nil,nil)
-            return table.unpack(w.r, 1, w.n)
+            local w=_EX[sub.vm_id+1](sub, new_uv, _pack_values(...),nil,{})
+            return _unpack_values(w.r, 1, w.n)
         end
         _VF[fn]=metadata
         return bind_environment(fn,new_uv,upvals)
@@ -432,9 +433,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if vm and _source_parents then
                 local parents={upvals.environment}
                 for i=1,#(_source_parents or {}) do parents[#parents+1]=_source_parents[i] end
-                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],table.pack(table.unpack(ca,1,ca_n)),nil,parents)
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],_pack_values(_unpack_values(ca,1,ca_n)),nil,parents)
                 res=w.r;res.n=w.n
-            else res=table.pack(fn(table.unpack(ca,1,ca_n))) end
+            else res=_pack_values(_source_call(fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))) end
             if C==0 then
                 _store_values(A,res,res.n); top=A+res.n-1
             elseif C>1 then
@@ -450,9 +451,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             --<<VM_TAIL_DISPATCH>>
             local vm=_VF[fn];local res
             if vm and _source_parents then
-                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],table.pack(table.unpack(ca,1,ca_n)),nil,_source_parents)
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],_pack_values(_unpack_values(ca,1,ca_n)),nil,_source_parents)
                 res=w.r;res.n=w.n
-            else res=table.pack(fn(table.unpack(ca,1,ca_n))) end
+            else res=_pack_values(_source_call(fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))) end
             --<<ENDVM_TAIL_DISPATCH>>
             return {r=res, n=res.n}
 
@@ -478,7 +479,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         elseif op==40 then rset(A,rget(A)-rget(A+2)); pc=pc+sBx
 
         elseif op==41 then
-            local res=table.pack(rget(A)(rget(A+1),rget(A+2)))
+            local res=_pack_values(rget(A)(rget(A+1),rget(A+2)))
             _store_values(A+3,res,C)
 
         elseif op==42 then

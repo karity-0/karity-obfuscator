@@ -17,6 +17,25 @@ class Lua53Target:
             raise ValueError(f'unknown runtime template: {name}')
         return (root/name if name=='vm.lua' else root/'runtimes'/name).read_text(encoding='utf-8')
 
+    def direct_runtime_entry(self):
+        return '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},table.pack())'
+
+    def value_packet_api(self):
+        return 'table.pack', 'table.unpack'
+
+    def runtime_entry_symbol(self):
+        return 'run'
+
+    def blob_decode_call(self):
+        return 'from_base36(blob)'
+
+    def graph_runtime_options(self):
+        return {
+            'preserve_native_numbers': False,
+            'private_state_native': False,
+            'native_graph_control': False,
+        }
+
     def compile(self, script, toolchain):
         from ..backends.runtime_emitter import _compile
         return _compile(script, toolchain)

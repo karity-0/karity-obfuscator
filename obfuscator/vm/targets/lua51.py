@@ -43,6 +43,52 @@ _NATIVE_HOOK_NAMES = {
 _TARGET_MARKER_RE = re.compile(
     r'--<<(?P<end>END)?TARGET_(?P<name>[A-Z0-9_]+)>>'
 )
+_NATIVE_API_MEMBERS = {
+    '_native_string_dump': 'string.dump',
+    '_native_string_byte': 'string.byte',
+    '_native_string_char': 'string.char',
+    '_native_string_format': 'string.format',
+    '_native_table_concat': 'table.concat',
+    '_native_math_floor': 'math.floor',
+    '_native_math_ceil': 'math.ceil',
+    '_native_math': 'math', '_native_string': 'string',
+    '_native_table': 'table', '_native_debug': 'debug',
+    '_native_type': 'type', '_native_tostring': 'tostring',
+    '_native_tonumber': 'tonumber', '_native_select': 'select',
+    '_native_error': 'error', '_native_rawget': 'rawget',
+    '_native_rawset': 'rawset', '_native_getfenv': 'getfenv',
+    '_native_setfenv': 'setfenv', '_native_unpack': 'unpack',
+}
+_NATIVE_ALIASES = {
+    name: '_native_api.' + member for name, member in _NATIVE_API_MEMBERS.items()
+}
+
+
+def _replace_lua_nodes(source, replacements):
+    """Replace exact Lua syntax nodes, never text inside strings or comments."""
+    from ...passes.ts_utils import parse
+
+    context = parse(source)
+    matches = []
+    for node in context.walk():
+        mapping = replacements.get(node.type)
+        if mapping is None:
+            continue
+        replacement = mapping.get(context.text(node))
+        if replacement is not None:
+            matches.append((context.cs(node), context.ce(node) + 1, replacement))
+    # A selected call or member expression owns its nested identifiers. Pick
+    # the widest node at a start position, then apply disjoint edits in reverse.
+    matches.sort(key=lambda item: (item[0], item[0] - item[1]))
+    selected = []
+    occupied_until = -1
+    for start, end, replacement in matches:
+        if start >= occupied_until:
+            selected.append((start, end, replacement))
+            occupied_until = end
+    for start, end, replacement in reversed(selected):
+        source = source[:start] + replacement + source[end:]
+    return source
 
 
 def _promote_native_hook_markers(source):
@@ -56,6 +102,64 @@ def _promote_native_hook_markers(source):
         end = match.group('end') or ''
         return f'--<<{end}TARGET_51_NATIVE_{name}>>'
     return _TARGET_MARKER_RE.sub(promote, source)
+
+
+def _compact_executor_captures(source):
+    """Bank immutable helper bindings, not user values or mutable VM state.
+
+    Run after private-graph lowering: that lowering can introduce new helper
+    references even after the backend's executor was finalized.
+    """
+    from ...passes.ts_utils import parse
+    from ...passes.rename_ts import resolve_bindings, _apply_replacements_once
+
+    ctx = parse(source)
+    bindings, free_names, _, _, _ = resolve_bindings(ctx)
+    used_names = {b.original for b in bindings} | free_names
+    replacements = []
+    bank_index = 0
+    for node in ctx.walk():
+        if node.type not in ('function_definition', 'function_declaration'):
+            continue
+        params = node.child_by_field_name('parameters')
+        if params is None or not re.match(r'\(\s*proto\s*,\s*upvals\s*,', ctx.text(params)):
+            continue
+        captured = [b for b in bindings
+                    if not node.start_byte <= b.nodes[0].start_byte < node.end_byte
+                    and any(node.start_byte <= n.start_byte < node.end_byte
+                            for n in b.nodes[1:])]
+        if len(captured) < 55:
+            continue
+        helpers = []
+        for binding in captured:
+            declaration = binding.nodes[0].parent
+            if declaration.type != 'function_declaration' or declaration.children[0].type != 'local':
+                continue
+            # A reassigned local function is a mutable cell and cannot be copied.
+            if any(n.parent.type == 'variable_list' or
+                   (n.parent.type == 'function_declaration' and
+                    n.parent.child_by_field_name('name') == n)
+                   for n in binding.nodes[1:]):
+                continue
+            helpers.append(binding)
+        if not helpers:
+            continue
+        bank_index += 1
+        bank = f'_native_capture_bank_{bank_index}'
+        while bank in used_names:
+            bank += '_'
+        used_names.add(bank)
+        statement = node
+        while statement.parent is not None and statement.parent.type not in ('block', 'chunk'):
+            statement = statement.parent
+        position = ctx.cs(statement)
+        replacements.append((position, position - 1,
+                             'local ' + bank + '={' + ','.join(b.original for b in helpers) + '}\n'))
+        for index, binding in enumerate(helpers, 1):
+            for reference in binding.nodes[1:]:
+                if node.start_byte <= reference.start_byte < node.end_byte:
+                    replacements.append((ctx.cs(reference), ctx.ce(reference), f'{bank}[{index}]'))
+    return _apply_replacements_once(source, replacements)
 
 
 def _translate_preserving_native_hooks(source, *, translate_general=False):
@@ -132,6 +236,26 @@ class Lua51Target:
             raise ValueError(f'unknown runtime template: {name}')
         return (_ROOT.parent/'runtimes'/'lua51'/name).read_text(encoding='utf-8')
 
+    def direct_runtime_entry(self):
+        return ('_EX[proto.vm_id+1](proto,{env_box,environment=self_func},'
+                '_pack_values(),nil,{})')
+
+    def value_packet_api(self):
+        return '_pack_values', '_unpack_values'
+
+    def runtime_entry_symbol(self):
+        return '_EX.run'
+
+    def blob_decode_call(self):
+        return 'ctx.from_base36(blob)'
+
+    def graph_runtime_options(self):
+        return {
+            'preserve_native_numbers': True,
+            'private_state_native': True,
+            'native_graph_control': True,
+        }
+
     def compile(self, script, toolchain=None):
         bytecode = run_tool(script, "compile", toolchain)
         normalize_dump(bytecode)  # Reject non-binary64 or nonstandard compiler ABIs.
@@ -143,20 +267,32 @@ class Lua51Target:
         return build_semantic_ir(Lua51Parser(bytecode).parse())
 
     @staticmethod
-    def _lower_runtime_api(source):
-        source=source.replace('math.type','_number_kind')
-        source=source.replace('table.pack','_pack_values')
-        source=source.replace('table.unpack','_unpack_values')
-        source=source.replace('_isC(_pack_values)', '_isC(_native_select)')
-        source=source.replace('_isC(_unpack_values)', '_isC(_native_unpack)')
-        source=source.replace('ctx.string.format("%016x",_PX)', '_target_hex64(_PX)')
-        source=source.replace('ctx.string.format("%016x",_PBH)', '_target_hex64(_PBH)')
-        source=source.replace('string.format("%016x",_PX)', '_target_hex64(_PX)')
-        source=source.replace('string.format("%016x",_PBH)', '_target_hex64(_PBH)')
+    def _check_native_runtime_api(source):
+        """Reject late fragments that bypass the Lua 5.1 generator contract."""
+        from ...passes.ts_utils import parse
+
+        context = parse(source)
+        forbidden_members = {'math.type', 'table.pack', 'table.unpack'}
+        forbidden_calls = {
+            '_isC(_pack_values)', '_isC(_unpack_values)',
+            'ctx.string.format("%016x",_PX)',
+            'ctx.string.format("%016x",_PBH)',
+            'string.format("%016x",_PX)',
+            'string.format("%016x",_PBH)',
+        }
+        for node in context.walk():
+            expression = context.text(node)
+            if ((node.type == 'dot_index_expression' and expression in forbidden_members)
+                    or (node.type == 'function_call' and expression in forbidden_calls)):
+                nearby = source[max(0, context.cs(node) - 60):context.ce(node) + 61]
+                raise ValueError(
+                    f'Lua 5.1 runtime generator emitted an unsupported API: '
+                    f'{expression} near {nearby!r}'
+                )
         return source
 
     def numeric_blob_decoder(self, source):
-        # This expression is inserted after runtime API preparation. Emit the
+        # This expression is inserted after runtime preparation. Emit the
         # native byte storage operation here, before hashing the final function.
         return '''(--<<TARGET_USER_EXPRESSION>>
 (function(t)
@@ -206,31 +342,11 @@ end)(blob)
                 source, 'EXEC_PRIVATE_BINDINGS', 'local _private_ops=_private_ops',
             )
             self._private_op_names = names
-        source=source.replace("local env_box={v=_ENV}", "local env_box={v=getfenv(1)}")
-        source=source.replace("{env_box,environment=env_box.v}", "{env_box,environment=self_func}")
-        source=source.replace("local function get_environment(upvals) return upvals.environment end",
-                              "local function get_environment(upvals) return getfenv(upvals.environment) end")
-        source=source.replace("values.environment=get_environment(parent)",
-                              "setfenv(fn,get_environment(parent));values.environment=fn")
-        source=source.replace("local function rset(i,v)",
-                              "local function rset(i,v) if i<proto.max_stack_size then v=_source_value(v) end")
-        source=source.replace("_mdigits[_ma]=d; _mstrings[_ma]=nil; regs[_ma]=nil",
-                              "_mdigits[_ma]=d; _mstrings[_ma]=nil; regs[_ma]=nil; "
-                              "if _ma<proto.max_stack_size then rset(_ma,_source_value(rget(_ma))) end")
         if lowered.backend in ("classic", "mov"):
             environment_source = (
                 "local function _source_environments(upvals,parents) "
                 "local result={upvals.environment};for i=1,#(parents or {}) do "
                 "result[#result+1]=parents[i] end;return result end\n"
-            )
-            caller = "_source_parents"
-            source = source.replace(
-                "_EX[sub.vm_id+1](sub, new_uv, table.pack(...),nil,nil)",
-                "_EX[sub.vm_id+1](sub, new_uv, table.pack(...),nil,{})",
-            )
-            source = source.replace(
-                "_EX[proto.vm_id+1](proto,{env_box,environment=self_func},table.pack())",
-                "_EX[proto.vm_id+1](proto,{env_box,environment=self_func},table.pack(),nil,{})",
             )
         else:
             environment_source = (
@@ -240,7 +356,6 @@ end)(blob)
                 "result[#result+1]=parent.environment;"
                 "frame=frame[__VM_FR_PARENT__] end;return result end\n"
             )
-            caller = "_kk"
         source_call = (
             "local function _source_call(fn,upvals,frame,...) "
             "if fn~=_native_getfenv and fn~=_native_setfenv then return fn(...) end;"
@@ -259,15 +374,7 @@ end)(blob)
             + source_call
             + "local function _source_value(v)",
         )
-        source=source.replace(
-            "fn(table.unpack(ca,1,ca_n))",
-            f"_source_call(fn,upvals,{caller},table.unpack(ca,1,ca_n))",
-        )
-        source=source.replace(
-            "fn(table.unpack(args,1,count))",
-            f"_source_call(fn,upvals,{caller},table.unpack(args,1,count))",
-        )
-        source=self._lower_runtime_api(source)
+        source=self._check_native_runtime_api(source)
         if self._native_classic:
             # Private-state expressions must be lowered before optional output
             # passes erase the comment markers that delimit their exact-word
@@ -354,8 +461,16 @@ end
             random.shuffle(pool)
             functions = list(_TAMPER_ALWAYS) + pool[:random.randint(3,7)]
             random.shuffle(functions)
+            # The shared pool names Lua 5.3 APIs. Select stock Lua 5.1 C
+            # functions before emitting this late fragment; the Lua helpers
+            # _pack_values/_unpack_values themselves are not C functions.
+            native_c_functions = {
+                'table.pack': '_native_select',
+                'table.unpack': '_native_unpack',
+            }
             lines.extend(f'if not _isC({fn}) then _t=_t+{weight()} end'
-                         for fn in functions)
+                         for fn in (native_c_functions.get(name, name)
+                                    for name in functions))
             k1=random.randrange(1,0x100000000)|1
             mixes = [
                 f'_imul32(_t,{k1})',
@@ -372,7 +487,7 @@ end
         # extraction after prepare_runtime(). At this point the randomized
         # layout tokens are concrete, so lower only known instruction-word
         # locals without changing ordinary 32-bit state expressions.
-        source=self._lower_runtime_api(source)
+        source=self._check_native_runtime_api(source)
         shifted = re.compile(r'\((?P<value>_dw|_ei|ei)>>(?P<shift>\d+)\)&0x(?P<mask>[0-9A-Fa-f]+)')
         def field(match):
             width=int(match.group('mask'),16)+1
@@ -410,29 +525,21 @@ end
         return _promote_native_hook_markers(source)
 
     def lower_source(self, source):
-        native_aliases = {
-            '_native_string_dump': 'string.dump',
-            '_native_string_byte': 'string.byte',
-            '_native_string_char': 'string.char',
-            '_native_string_format': 'string.format',
-            '_native_table_concat': 'table.concat',
-            '_native_math_floor': 'math.floor',
-            '_native_math_ceil': 'math.ceil',
-            '_native_math': 'math', '_native_string': 'string',
-            '_native_table': 'table', '_native_debug': 'debug',
-            '_native_type': 'type', '_native_tostring': 'tostring',
-            '_native_tonumber': 'tonumber', '_native_select': 'select',
-            '_native_error': 'error', '_native_rawget': 'rawget',
-            '_native_rawset': 'rawset', '_native_getfenv': 'getfenv',
-            '_native_setfenv': 'setfenv', '_native_unpack': 'unpack',
-        }
-        for name in sorted(native_aliases, key=len, reverse=True):
-            source = re.sub(rf'\b{re.escape(name)}\b', native_aliases[name], source)
+        source = _replace_lua_nodes(source, {'identifier': _NATIVE_ALIASES})
         prelude = (
             "local math,string,table,debug,type,tostring,tonumber,select,error,"
             "rawget,rawset,getfenv,setfenv,unpack="
             "math,string,table,debug,type,tostring,tonumber,select,error,"
             "rawget,rawset,getfenv,setfenv,unpack\n"
+        )
+        # Native API references share one capture, even when an executor's
+        # nested helpers use many C functions. This bank stores the original
+        # functions/libraries directly; it adds no wrapper or value dispatcher.
+        # Keep it distinct from _ENV, which may be shadowed for source globals.
+        prelude += (
+            "local _native_api={math=math,string=string,table=table,debug=debug,"
+            "type=type,tostring=tostring,tonumber=tonumber,select=select,error=error,"
+            "rawget=rawget,rawset=rawset,getfenv=getfenv,setfenv=setfenv,unpack=unpack}\n"
         )
         if getattr(self, '_native_mov_uint', False):
             prelude += '''local function _target_mov_uint(read_u8)
@@ -467,8 +574,9 @@ end
         if anchor:
             # Include the integer/API/dump helpers in the self-hashed function.
             prelude += "\n--[[TARGET51_PRELUDE_END]]\n"
-            return translated[:anchor.end()] + "\n" + prelude + translated[anchor.end():]
-        return prelude + translated
+            return _compact_executor_captures(
+                translated[:anchor.end()] + "\n" + prelude + translated[anchor.end():])
+        return _compact_executor_captures(prelude + translated)
 
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state

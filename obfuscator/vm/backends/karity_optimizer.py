@@ -8,6 +8,8 @@ transitions; the emitter then never generates those dead producer bodies.
 Comparison handlers also reuse one rget result when both operands name the
 same register.  The first read resolves any pending value; no write, call,
 graph evaluation, or epoch rotation occurs before the second operand read.
+When every physical use of one comparison alias has equal operands, specialize
+that alias's emitted handler to omit the runtime equality guard entirely.
 """
 from __future__ import annotations
 
@@ -23,7 +25,25 @@ def deferred_signature(layout) -> tuple[tuple[tuple[int, int], ...], ...]:
     return tuple(tuple(sorted(defers.items())) for _, _, _, defers in layout.vm_maps)
 
 
-def optimize_layout(layout) -> tuple[dict[str, int | str], tuple[dict[str, object], ...]]:
+def comparison_specializations(layout) -> tuple[frozenset[int], ...]:
+    """Aliases whose every physical comparison reads one identical register."""
+    observed: list[dict[int, list[bool]]] = [{} for _ in layout.vm_maps]
+    for function in iter_functions(layout.functions):
+        aliases = layout.vm_maps[function.vm_id][0]
+        for item in function.code:
+            instruction = item.instruction
+            if (instruction.operation in _COMPARISONS
+                    and item.vop in aliases.get(instruction.op, ())):
+                observed[function.vm_id].setdefault(item.vop, []).append(
+                    instruction.b == instruction.c
+                )
+    return tuple(frozenset(vop for vop, uses in vm.items() if all(uses))
+                 for vm in observed)
+
+
+def optimize_layout(layout) -> tuple[
+    dict[str, int | str], tuple[dict[str, object], ...], tuple[frozenset[int], ...]
+]:
     referenced = [set() for _ in layout.vm_maps]
     coalesced = []
     for function in iter_functions(layout.functions):
@@ -60,10 +80,17 @@ def optimize_layout(layout) -> tuple[dict[str, int | str], tuple[dict[str, objec
         "kind": "comparison-materialization", "outcome": "coalesced",
         "reason": "same-register-within-instruction",
     } for function, pc, source in coalesced)
+    specialized = comparison_specializations(layout)
+    events.extend({
+        "vm": vm_id, "vop": vop,
+        "kind": "comparison-alias-specialization", "outcome": "applied",
+        "reason": "all-physical-uses-share-one-register",
+    } for vm_id, aliases in enumerate(specialized) for vop in sorted(aliases))
     return ({
         "backend": "karity",
         "deferred_handlers_before": before,
         "deferred_handlers_after": after,
         "dead_deferred_handlers": before - after,
         "comparison_reads_coalesced": len(coalesced),
-    }, tuple(events))
+        "comparison_aliases_specialized": sum(map(len, specialized)),
+    }, tuple(events), specialized)

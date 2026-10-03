@@ -42,10 +42,10 @@ def main():
                       [('I','int64.lua')])
     prelude += ('local _legacy_is_private,_legacy_private_number,_legacy_private_marker='
                 'I.isint,I.number,I.private_marker;'
-                'local _native_type=type;'
+                'local _native_type,_native_rawget=type,rawget;'
                 'local _PRIVATE_WORD_MARKER=_legacy_private_marker;'
                 'local function _is_private_word(value) '
-                'return type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER end;')
+                'return type(value)=="table" and rawget(value,"_private_word")==_PRIVATE_WORD_MARKER end;')
     shim = lua.execute((prelude + 'return (function() ' +
                         (folder/'lua51_shim.lua').read_text(encoding='utf-8')+' end)()').encode())
     native_rekey=lua.eval(b'''function(value,op,variant,shift)
@@ -354,7 +354,7 @@ count=_acount,get=_aget,seed=_aseed,key=_akey,wordkey=_aword_key}
 local _native_type=type
 local _PRIVATE_WORD_MARKER={}
 local function _is_private_word(value)
-    return type(value)=='table' and value._private_word==_PRIVATE_WORD_MARKER
+    return type(value)=='table' and rawget(value,'_private_word')==_PRIVATE_WORD_MARKER
 end
 '''+private_mix+'''
 local _MJ={}
@@ -384,7 +384,7 @@ end''').encode())
 local _native_type=type
 local _PRIVATE_WORD_MARKER={}
 local function _is_private_word(value)
-    return type(value)=='table' and value._private_word==_PRIVATE_WORD_MARKER
+    return type(value)=='table' and rawget(value,'_private_word')==_PRIVATE_WORD_MARKER
 end
 '''+private_mix+'''
 local _RX,_SS={},{}

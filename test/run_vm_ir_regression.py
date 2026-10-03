@@ -284,6 +284,52 @@ def check_runtime_composition():
             raise AssertionError('invalid runtime template accepted')
 
 
+def check_target_runtime_bindings():
+    from obfuscator.toolchain import LuaToolchain
+    from obfuscator.vm.targets.profile import TargetProfile
+    from obfuscator.vm.vm_pass import VMPass
+    from lupa.lua51 import LuaRuntime
+
+    class VersionBlindTarget:
+        """Delegate actual target operations but forbid version rediscovery."""
+        def __init__(self, target):
+            self.target = target
+
+        def __getattr__(self, name):
+            if name == 'lua_version':
+                raise AssertionError('runtime generation inspected the target version')
+            return getattr(self.target, name)
+
+    source = (
+        'local function f(a) return a+2.25 end; '
+        'assert(f(1.5)==3.75); assert(1/(-0.0)==-math.huge); print("bindings-ok")'
+    )
+    for version in ('5.1', '5.3'):
+        for index, backend in enumerate(('classic', 'karity', 'mov')):
+            random.seed(19100 + index)
+            vm = VMPass(target=TargetProfile(version, backend), vm_options={
+                'vm_count': 1, 'blob_form': 'numeric', 'integrity_constants': True,
+                'fake_handlers': False, 'mutate_handlers': False,
+                'junk_instructions': False, 'graph_execution_rate': 1.0,
+            })
+            vm._backend.target = VersionBlindTarget(vm._backend.target)
+            output = vm.run(source)
+            if version == '5.1':
+                runtime = LuaRuntime(encoding=None)
+                printed = []
+                runtime.globals()[b'print'] = lambda value: printed.append(value)
+                runtime.execute(output.encode())
+                assert printed == [b'bindings-ok']
+            else:
+                with tempfile.TemporaryDirectory() as folder:
+                    path = Path(folder) / 'output.lua'
+                    path.write_text(output, encoding='utf-8')
+                    result = subprocess.run([LuaToolchain().lua(), str(path)],
+                                            capture_output=True, timeout=120)
+                    assert result.returncode == 0, result.stderr
+                    assert result.stdout.strip() == b'bindings-ok', result.stdout
+
+
 def check_alias_planning():
     from obfuscator.vm.backends.handler_ir import OPERATIONS
     ir = build_semantic_ir(proto([abx(1, 0, 0), abc(38, 0, 2)],
@@ -386,10 +432,29 @@ def check_alias_planning():
     else:
         raise AssertionError('duplicate planned alias transition accepted')
     from obfuscator.vm.vm_pass import VMPass
-    with patch('obfuscator.vm.vm_obfuscation._pick_transitions',
-               side_effect=AssertionError('alias transition reselected during emission')):
-        VMPass(vm_options={'backend': 'classic', 'fake_handlers': False,
-                           'mutate_handlers': False}).run('return 7')
+    from obfuscator.vm.vm_obfuscation import (
+        apply_dispatch, apply_vop_to_vm, prune_and_inject_handlers,
+    )
+    for emit_unplanned, expected in (
+        (lambda: apply_vop_to_vm('invalid runtime', {0: [1]}),
+         'planned modes and transitions'),
+        (lambda: prune_and_inject_handlers('invalid runtime', {0},
+                                           fake_handlers=True, mutate=False),
+         'planned body variants'),
+        (lambda: prune_and_inject_handlers('invalid runtime', {0},
+                                           fake_handlers=False, mutate=True),
+         'planned seed'),
+        (lambda: apply_dispatch('invalid runtime', 'mixed'),
+         'planned concrete kind'),
+    ):
+        try:
+            emit_unplanned()
+        except ValueError as error:
+            assert expected in str(error), str(error)
+        else:
+            raise AssertionError('handler emission reselected an unplanned policy')
+    VMPass(vm_options={'backend': 'classic', 'fake_handlers': False,
+                       'mutate_handlers': False}).run('return 7')
     bad_routes = tuple(
         (group, entries + (("UNKNOWN", False),) if group == "semantic" else entries)
         for group, entries in plan.functions[ir.root.id]['representation_routes']
@@ -939,6 +1004,53 @@ def check_karity_state_model():
     assert comparison.resolved_pending == (1,)
     assert comparison.materialized == (1,)
     assert comparison_lowered.backend_data['optimization']['comparison_reads_coalesced'] == 1
+    specialized = comparison_lowered.backend_data['comparison_specializations']
+    assert comparison_lowered.backend_data['optimization']['comparison_aliases_specialized'] == 1
+    assert len(specialized) == 1 and len(specialized[0]) == 1
+    from obfuscator.vm.targets.lua51 import Lua51Target
+    from obfuscator.vm.vm_obfuscation import (
+        _find_chain, _parse_handler_blocks, apply_vop_to_vm,
+    )
+    variant = backend.runtime_variants(comparison_lowered)[0]
+    rendered = apply_vop_to_vm(
+        Lua51Target().runtime_template('vm.lua'),
+        comparison_lowered.backend_data['layout'].vm_maps[0][0],
+        variant['semantic_alias_modes'], native_state=True,
+        alias_transition_indices=variant['alias_transition_indices'],
+        comparison_specializations=specialized[0],
+    )
+    start, end = _find_chain(rendered)
+    blocks = _parse_handler_blocks(rendered[start:end])
+    body = blocks[next(iter(specialized[0]))]
+    assert 'right=left' in body and 'if B==C then right=left' not in body
+    stale_comparison = deepcopy(comparison_lowered)
+    stale_comparison.backend_data['comparison_specializations'] = (frozenset(),)
+    try:
+        backend.validate_lowered(stale_comparison)
+    except ValueError as error:
+        assert 'comparison specialization' in str(error), str(error)
+    else:
+        raise AssertionError('Karity accepted a stale comparison specialization')
+    missing_comparison = deepcopy(comparison_lowered)
+    del missing_comparison.backend_data['comparison_specializations']
+    try:
+        backend.emit(missing_comparison, comparison_context)
+    except ValueError as error:
+        assert 'comparison specialization is missing' in str(error), str(error)
+    else:
+        raise AssertionError('Karity emitted without its optimized comparison state')
+    from obfuscator.vm.backends.karity_optimizer import comparison_specializations
+    from obfuscator.vm.backends.runtime_layout import iter_functions
+    mixed_layout = deepcopy(comparison_lowered.backend_data['layout'])
+    physical = next(iter(iter_functions(mixed_layout.functions)))
+    comparison_item = next(item for item in physical.code
+                           if item.instruction.operation == 'EQUAL')
+    physical.code.append(replace(
+        comparison_item,
+        instruction=replace(comparison_item.instruction,
+                            c=comparison_item.instruction.c + 1),
+    ))
+    assert comparison_specializations(mixed_layout) == (frozenset(),)
     assert any(event['kind'] == 'comparison-materialization'
                and event['source'] == comparison.source_id
                for event in comparison_lowered.backend_data['optimization_events'])
@@ -1181,10 +1293,59 @@ def check_dispatch_sequences():
             check([replace(first,vop=defers[14])],'operation differs')
 
 
+def check_graph_dag_scheduling():
+    from obfuscator.vm.backends.karity_graphs import _random_topological_order
+    from obfuscator.vm.backends import runtime_emitter
+    assert not hasattr(runtime_emitter, '_random_topological_order')
+    assert not hasattr(runtime_emitter, '_apply_handler_graphs')
+    # Direct runtimes consume token names, not Karity's arithmetic compiler
+    # specs. Common prototype-key renaming must remain available independently.
+    tokens = runtime_emitter._CLASSIC_ARITHMETIC_TOKENS
+    rendered = runtime_emitter._apply_classic_runtime_tokens(' '.join(tokens))
+    assert len(rendered.split()) == len(tokens)
+    assert all(part.isdigit() for part in rendered.split())
+    assert runtime_emitter._rename_vm_keys('return proto.num_params') != 'return proto.num_params'
+
+    # Non-contiguous IDs, independent roots, a diamond and repeated edges
+    # exercise ordering without assuming a particular randomized schedule.
+    nodes = {
+        9: {"deps": (4, 7)},
+        4: {"deps": (1,)},
+        7: {"deps": (1, 1)},
+        1: {"deps": ()},
+        20: {"deps": ()},
+    }
+    for seed in range(16):
+        with patch('obfuscator.vm.backends.karity_graphs.random', random.Random(seed)):
+            order = _random_topological_order(nodes, 'arithmetic')
+        with patch('obfuscator.vm.backends.karity_graphs.random', random.Random(seed)):
+            assert _random_topological_order(nodes, 'arithmetic') == order
+        assert len(order) == len(nodes) and set(order) == set(nodes)
+        positions = {node_id: index for index, node_id in enumerate(order)}
+        assert all(positions[dep] < positions[node_id]
+                   for node_id, node in nodes.items() for dep in node['deps'])
+    assert _random_topological_order({}, 'value') == []
+    for nodes, detail in (
+        ({3: {"deps": (8,)}}, 'node 3 references missing dependency 8'),
+        ({3: {"deps": (3,)}}, 'contains a cycle; blocked nodes (3,)'),
+        ({1: {"deps": ()}, 3: {"deps": (8,)}, 8: {"deps": (3,)},
+          9: {"deps": (8,)}}, 'contains a cycle; blocked nodes (3, 8, 9)'),
+    ):
+        with patch('obfuscator.vm.backends.karity_graphs.random.randrange', return_value=0) as choose:
+            try:
+                _random_topological_order(nodes, 'value')
+            except RuntimeError as error:
+                assert f'generated value graph {detail}' == str(error), str(error)
+            else:
+                raise AssertionError('graph scheduler accepted malformed dependencies')
+            if 'missing dependency' in detail:
+                choose.assert_not_called()
+
+
 def check_graph_layout_validation():
     from copy import deepcopy
     from obfuscator.vm.backends.karity_state import validate_state
-    from obfuscator.vm.backends.runtime_emitter import _apply_handler_graphs
+    from obfuscator.vm.backends.karity_graphs import _apply_handler_graphs
     from obfuscator.vm.targets.lua53 import Lua53Target
     ir = build_semantic_ir(proto([abx(1, 0, 0), abc(13, 1, 0, 0), abc(38, 1, 2)]))
     target = Lua53Target()
@@ -1211,13 +1372,13 @@ def check_graph_layout_validation():
             sites, families = state.occurrence_inventory()
             assert sites == layout.graph_sites
             assert families
-            with patch('obfuscator.vm.backends.runtime_emitter._apply_handler_graphs',
+            with patch('obfuscator.vm.backends.karity_graphs._apply_handler_graphs',
                        return_value='rendered') as render:
                 body = backend.emit_runtime_body('body', lowered, target=target)
             assert body.source == 'rendered'
             assert render.call_args.kwargs['representation_routes'] == state.representation_routes
             rotation = dict(state.rotation_policy)
-            with patch('obfuscator.vm.backends.runtime_emitter._apply_handler_graphs',
+            with patch('obfuscator.vm.backends.karity_graphs._apply_handler_graphs',
                        side_effect=lambda source, *args, **kwargs: source) as render:
                 body = backend.emit_runtime_body(
                     '__VM_RMAP_INITIAL_TICKS__ __VM_RMAP_PERIOD_MASK__ '
@@ -1258,7 +1419,7 @@ def check_graph_layout_validation():
                 assert 'differs from physical layout or protection plan' in str(error)
             else:
                 raise AssertionError('Karity emitted a stale rotation policy')
-            with patch('obfuscator.vm.backends.runtime_emitter._compile_occurrence_graph_func',
+            with patch('obfuscator.vm.backends.karity_graphs._compile_occurrence_graph_func',
                        return_value='function()end') as compile_graph:
                 body = backend.emit_runtime_body('__VM_OCCURRENCE_GRAPHS__', lowered,
                                                  target=target)
@@ -1288,7 +1449,7 @@ def check_graph_layout_validation():
                 off_lowered.backend_data['karity_state'].occurrence_inventory())
             assert off_sites == off_lowered.backend_data['layout'].graph_sites
             assert off_families <= {0}
-            with patch('obfuscator.vm.backends.runtime_emitter._compile_occurrence_graph_func',
+            with patch('obfuscator.vm.backends.karity_graphs._compile_occurrence_graph_func',
                        return_value='function()end') as compile_graph:
                 off_body = backend.emit_runtime_body('__VM_OCCURRENCE_GRAPHS__',
                                                      off_lowered, target=target)
@@ -1433,11 +1594,13 @@ def main() -> int:
     check_common_optimization()
     check_semantic_protection()
     check_runtime_composition()
+    check_target_runtime_bindings()
     check_alias_planning()
     check_backend_layouts()
     check_karity_state_model()
     check_dispatch_sequences()
     check_graph_layout_validation()
+    check_graph_dag_scheduling()
     check_block_route_validation()
     check_typed_frontend()
     check_extended_setlist()

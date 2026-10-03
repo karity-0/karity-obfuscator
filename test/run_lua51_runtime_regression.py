@@ -14,10 +14,100 @@ from obfuscator.passes.minify import MinifyPass
 from obfuscator.passes.remove_comment import RemoveCommentPass
 
 
+def check_native_marker_probe():
+    from lupa.lua51 import LuaRuntime
+    # Type recognition is not a user table read. Probe the actual asset, not
+    # a copied reference helper, and make any accidental __index call fatal.
+    target = Lua51Target()
+    api = target.runtime_template('vm.lua').split('--<<TARGET_RUNTIME_API>>', 1)[1].split(
+        '--<<ENDTARGET_RUNTIME_API>>', 1)[0]
+    probe = LuaRuntime(encoding=None).execute(target.lower_source(api + '''
+return function()
+    local value=setmetatable({}, {__index=function() error('private probe invoked __index') end})
+    assert(not _is_private_word(value) and _number_kind(value)==nil)
+    local named={_private_word=false,hi=1,lo=2}
+    assert(not _is_private_word(named) and _number_kind(named)==nil)
+    local word={_private_word=_PRIVATE_WORD_MARKER,hi=0,lo=3}
+    assert(_is_private_word(word) and _number_kind(word)=='integer')
+end
+''').encode())
+    probe()
+
+
+def check_executor_capture_bank():
+    from lupa.lua51 import LuaRuntime
+    from obfuscator.vm.targets.lua51 import _compact_executor_captures
+    helpers = '\n'.join(f'local function helper{i}() return {i} end' for i in range(70))
+    source = helpers + '''
+local function mutable() return 1 end
+local function exec(proto,upvals,args)
+    local function helper0() return 100 end
+    return ''' + '+'.join(f'helper{i}()' for i in range(70)) + ''',mutable()
+end
+mutable=function() return 9 end
+return exec({}, {})
+'''
+    runtime = LuaRuntime(unpack_returned_tuples=True)
+    try:
+        runtime.execute(source)
+    except Exception as error:
+        assert 'more than 60 upvalues' in str(error), str(error)
+    else:
+        raise AssertionError('capture stress fixture did not exceed native limit')
+    lowered = _compact_executor_captures(source)
+    assert '_native_capture_bank_' in lowered
+    assert runtime.execute(lowered) == (sum(range(70)) + 100, 9)
+    declaration_assignment = source.replace('mutable=function() return 9 end',
+                                            'function mutable() return 9 end')
+    assert runtime.execute(_compact_executor_captures(declaration_assignment)) == (
+        sum(range(70)) + 100, 9)
+
+
 def main():
     from lupa.lua51 import LuaRuntime
-    from obfuscator.vm.vm_obfuscation import _inline_fetch_decode
-    from obfuscator.vm.backends.runtime_emitter import (
+    from obfuscator.vm.targets.lua53 import Lua53Target
+    assert '_pack_values(),nil,{})' in Lua51Target().direct_runtime_entry()
+    assert 'table.pack()' in Lua53Target().direct_runtime_entry()
+    assert Lua51Target().value_packet_api() == ('_pack_values', '_unpack_values')
+    assert Lua53Target().value_packet_api() == ('table.pack', 'table.unpack')
+    check_native_marker_probe()
+    check_executor_capture_bank()
+    assert Lua51Target._check_native_runtime_api(
+        'return "math.type table.pack table.unpack" -- table.pack\n'
+    ).startswith('return "math.type')
+    for legacy_api in ('math.type(1)', 'table.pack(1)', 'table.unpack({1})',
+                       '_isC(_pack_values)', 'string.format("%016x",_PX)'):
+        try:
+            Lua51Target._check_native_runtime_api('return ' + legacy_api)
+        except ValueError as error:
+            assert 'unsupported API' in str(error), str(error)
+        else:
+            raise AssertionError(f'Lua 5.1 accepted late compatibility API: {legacy_api}')
+    for name in ('vm.lua', 'classic_exec.lua', 'mov_exec.lua'):
+        asset = Lua51Target().runtime_template(name)
+        assert not re.search(r'\b(?:math\.type|table\.pack|table\.unpack)\b', asset), name
+        assert 'ctx.string.format("%016x"' not in asset, name
+        if name == 'classic_exec.lua':
+            assert '_source_call(fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))' in asset
+            assert '_EX[sub.vm_id+1](sub, new_uv, _pack_values(...),nil,{})' in asset
+        if name == 'vm.lua':
+            assert '_source_call(fn,upvals,_kk,_unpack_values(args,1,count))' in asset
+            assert 'getfenv(upvals.environment)' in asset
+            assert 'setfenv(fn,get_environment(parent))' in asset
+            assert '[__VM_Q_UPVALS__]={env_box,environment=self_func}' in asset
+        assert 'if i<proto.max_stack_size then v=_source_value(v) end' in asset
+        if name == 'mov_exec.lua':
+            assert 'rset(_ma,_source_value(rget(_ma)))' in asset
+    from obfuscator.vm.vm_obfuscation import _clone_local_helper, _inline_fetch_decode
+    template = Lua51Target().runtime_template('vm.lua')
+    random.seed(5838)
+    cloned, names = _clone_local_helper(template, 'rset', 2)
+    assert len(names) == 2
+    assert cloned.count('if _number_kind(v)=="integer"') == (
+        template.count('if _number_kind(v)=="integer"') + 1
+    )
+    assert 'math.type(v)' not in cloned
+    from obfuscator.vm.backends.karity_graphs import (
         _compile_call_route_func, _compile_control_graph_func,
         _compile_occurrence_graph_func, _compile_loop_ir_func,
         _compile_semantic_ir_func,
@@ -30,6 +120,12 @@ def main():
           for kind in ('FORLOOP', 'FORPREP', 'TFORLOOP')),
         lambda **options: _compile_semantic_ir_func('IDIV', **options),
     )
+    random.seed(5839)
+    native_occurrence = _compile_occurrence_graph_func(
+        917331, native_control=True, native_number_kind=True,
+    )
+    assert '_number_kind(' in native_occurrence
+    assert 'math.type(' not in native_occurrence
     for index, compile_graph in enumerate(graph_compilers):
         random.seed(5840 + index)
         native_graph = compile_graph(native_control=True)
@@ -79,7 +175,7 @@ def main():
                 (word >> 30) & 0xff, (word >> 20) & 0x1ff,
                 (word >> 11) & 0x1ff, bx, bx - 131071,
             )
-    from obfuscator.vm.backends.runtime_emitter import _semantic_source
+    from obfuscator.vm.backends.karity_graphs import _semantic_source
     native_idiv = _semantic_source(
         "IDIV", "a", "b", "unused", native_user_arithmetic=True,
     )
@@ -577,6 +673,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
         )
         output = vm.run(comparison_source)
         assert vm.last_lowered_ir.backend_data['optimization']['comparison_reads_coalesced'] >= 3
+        assert vm.last_lowered_ir.backend_data['optimization']['comparison_aliases_specialized'] >= 3
         LuaRuntime(encoding=None).execute(output.encode())
     print('lua51-repeated-comparison-operands-ok karity', flush=True)
     table_source = '''local key={}

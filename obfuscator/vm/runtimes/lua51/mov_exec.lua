@@ -150,6 +150,7 @@ else v=hi*4294967296.0+lo end
         return regs[i]
     end
     local function rset(i,v)
+        if i<proto.max_stack_size then v=_source_value(v) end
         _mdigits[i]=nil; _mstrings[i]=nil; regs[i]=v
     end
     -- Lua 5.1 numbers are binary64 values, never Lua 5.3 integers. Only
@@ -269,7 +270,7 @@ else v=hi*4294967296.0+lo end
                 end
             elseif op==25 then
                 x=_mzero; y=_mov_digits(B)
-                if not y and math.type(rget(B))=="float" then
+                if not y and _number_kind(rget(B))=="float" then
                     x=_mov_float_digits(rget(B)); y=x; _ms[325]=true
                 end
             elseif op==26 then x=_mov_digits(B); y=_mones
@@ -278,7 +279,7 @@ else v=hi*4294967296.0+lo end
             _ms[192]=false
             _ms[320]=false
             if op>=31 then
-                local left,right=math.type(rget(B)),math.type(rget(C))
+                local left,right=_number_kind(rget(B)),_number_kind(rget(C))
                 if left and right then
                     _ms[198]=left=="float"; _ms[199]=right=="float"
                     if _ms[198] then x=_mov_float_digits(rget(B)) end
@@ -310,6 +311,7 @@ else v=hi*4294967296.0+lo end
             local d={}
             for j=0,15 do d[j]=_ms[64+j] end
             _mdigits[_ma]=d; _mstrings[_ma]=nil; regs[_ma]=nil
+            if _ma<proto.max_stack_size then rset(_ma,_source_value(rget(_ma))) end
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==3 then
             local ip=q[3]
