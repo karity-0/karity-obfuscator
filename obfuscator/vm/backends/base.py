@@ -43,6 +43,9 @@ class LoweredIR:
         materialization = self.backend_data.get("materialization")
         if materialization is not None:
             lines.extend(materialization.dump().splitlines())
+        karity_state = self.backend_data.get("karity_state")
+        if karity_state is not None:
+            lines.extend(karity_state.dump().splitlines())
         for request in self.resolution.active:
             lines.append(f"active {request.feature}")
         for request in self.resolution.disabled:
@@ -84,6 +87,11 @@ class LoweredIR:
                     lines.append(f"  route {index} targets={','.join(map(str, targets))}")
         for key, value in sorted(self.backend_data.get("optimization", {}).items()):
             lines.append(f"optimization {key}={value}")
+        for event in self.backend_data.get("optimization_events", ()):
+            detail = " ".join(
+                f"{key}={event[key]}" for key in sorted(event)
+            )
+            lines.append(f"optimization-event {detail}")
         programs = self.backend_data.get("programs", ())
         for program_index, program in enumerate(programs):
             recipes = ",".join(sorted(program.recipe_offsets)) or "-"
@@ -101,12 +109,30 @@ class LoweredIR:
         return "\n".join(lines) + "\n"
 
 
+@dataclass(frozen=True)
+class RuntimeBody:
+    """Backend-owned transformation of the completed VM function source.
+
+    The shared emitter deliberately knows nothing about whether a backend
+    resolves direct tokens, emits graphs, or supplies another representation.
+    Backends return the profiling metadata with the transformed body so the
+    common output-pass/finalization sequence remains identical for every
+    runtime.
+    """
+
+    source: str
+    phase: str
+    implementation: str
+    backend: str
+    graph_sites: int = 0
+    graph_families: int = 0
+
+
 class VMBackend:
     domain = ExecutionDomain.VM
     name = ""
     description = ""
     lowered_kind = ""
-    direct_runtime = False
     mov_microcode = False
     capabilities = BackendCapabilities("", frozenset(), frozenset())
 
@@ -167,6 +193,24 @@ class VMBackend:
 
     def emit_handlers(self, source: str, lowered: LoweredIR, variants) -> str:
         raise NotImplementedError('a VM backend must own its handler emission')
+
+    def emit_runtime_body(
+        self,
+        source: str,
+        lowered: LoweredIR,
+        *,
+        target,
+    ) -> RuntimeBody:
+        """Apply backend-specific runtime representation after handler emission.
+
+        ``source`` is the complete VM closure, immediately before shared
+        target finalization and VM output passes.  A backend must not run those
+        later stages itself: they include integrity-sensitive target lowering
+        and must cover every late-generated helper.
+        """
+        raise NotImplementedError(
+            'a VM backend must own its runtime-body emission'
+        )
 
     def serialize_program(self, lowered: LoweredIR, context: BackendContext) -> bytes:
         """Serialize the backend's physical program, including host constants."""

@@ -521,8 +521,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
-                   (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
+                   (--<<TARGET_PRIVATE_EXPRESSION>>
+                    (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
                     ((_PY~=0 and _PN) or 0))|1)
+                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                   )
     local _MG    = _fr and _fr[__VM_FR_MAP_STATE__] or
                    {(--<<TARGET_PRIVATE_LOW_EXPRESSION:1024>>
                      ((_IT.seed~proto.vm_id~#code~
@@ -1582,7 +1585,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if not desc or desc[1]==0 then
             local left=_pending_snapshot(lhs)
-            local right=_pending_snapshot(rhs)
+            local right
+            if lhs==rhs then right=left else right=_pending_snapshot(rhs) end
             if left and right and _poly_lazy(token~dst~lhs~(rhs<<8)) then
                 local epoch=_rnext(dst,token~lhs~(rhs<<8))
                 local scale,bias=_rparams(dst,epoch)
@@ -1593,7 +1597,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 return
             end
         end
-        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+        local left=rget(lhs)
+        local right
+        if lhs==rhs then right=left else right=rget(rhs) end
+        rset(dst,_arith2(left,right,av,slot,desc))
     end
 
     local function _defer1r(dst,src,av,slot,token)
@@ -1618,7 +1625,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if linear and (not desc or desc[1]==0) and
            _elinear2(dst,lhs,rhs,linear) then return end
-        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+        local left=rget(lhs)
+        local right
+        if lhs==rhs then right=left else right=rget(rhs) end
+        rset(dst,_arith2(left,right,av,slot,desc))
     end
 
     local function _arith1r(dst,src,av,slot,linear)

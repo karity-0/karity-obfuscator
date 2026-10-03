@@ -4,10 +4,13 @@ local floor,abs=math.floor,math.abs
 local U32,U16=4294967296,65536
 local M={}
 local mt={}
+local private_marker={}
 local function make(hi,lo)
     return setmetatable({hi=hi%U32,lo=lo%U32},mt)
 end
-local function isint(x) return getmetatable(x)==mt end
+local function isint(x)
+    return getmetatable(x)==mt or (type(x)=="table" and x._private_word==private_marker)
+end
 local function neg(x)
     local lo=(-x.lo)%U32
     return make(U32-1-x.hi+(lo==0 and 1 or 0),lo)
@@ -155,6 +158,7 @@ local function text(a)
     return out
 end
 M.make,M.from,M.isint,M.number,M.parse,M.text=make,from,isint,number,parse,text
+M.private_marker=private_marker
 M.add,M.sub,M.mul,M.neg,M.eq,M.lt=add,sub,mul,neg,eq,lt
 M.band=function(a,b) return bits(a,b,1) end
 M.bxor=function(a,b) return bits(a,b,2) end

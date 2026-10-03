@@ -82,10 +82,12 @@ def main():
         assert first!=second and normalize(first)==normalize(second)
         third=dump(b'return function(beta) return beta+2 end',b'@second')
         assert normalize(third)!=normalize(first)
-        source = Lua51Target().lower_source('return function(...) return true end')
+        target = Lua51Target()
+        target._native_mov_uint = True
+        source = target.lower_source('return function(...) return true end')
         original = lua.execute(source.encode())
-        tampered_source = source.replace('number has no integer representation',
-                                         'integer conversion rejected')
+        tampered_source = source.replace('MOV field overflow',
+                                         'MOV field width rejected')
         assert tampered_source != source
         tampered = lua.execute(tampered_source.encode())
         dump_function = lua.eval(b'string.dump')

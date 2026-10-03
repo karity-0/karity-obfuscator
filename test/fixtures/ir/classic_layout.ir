@@ -17,3 +17,8 @@ handler-function f0
 physical-function f0 vm=0 instructions=2
   p0 LOAD_CONST vop=18660 source=f0:i0 a=0 b=0 c=0 scratch=() graphs=()
   p1 RETURN vop=17819 source=f0:i1 a=0 b=2 c=0 scratch=() graphs=()
+optimization after=2
+optimization backend=classic
+optimization before=2
+optimization jump_chain_redirects=0
+optimization jump_chain_rejections=0

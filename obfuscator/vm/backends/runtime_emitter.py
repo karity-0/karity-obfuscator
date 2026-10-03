@@ -409,6 +409,7 @@ def _random_topological_order(nodes: dict[int, dict], label: str) -> list[int]:
 def _compile_integer_graph_func(
     op_kind: str,
     preserve_native_numbers: bool = False,
+    private_state_native: bool = False,
 ) -> str:
     """Compile an arithmetic DAG into one specialized straight-line handler."""
     name_allocator = NameAllocator(readable=True)
@@ -440,13 +441,20 @@ def _compile_integer_graph_func(
     native_operation = (
         preserve_native_numbers and op_kind in {"ADD", "SUB", "MUL", "UNM"}
     )
+    # Lua 5.1's Karity asset keeps user arithmetic as ordinary binary64
+    # operations, but its graph bookkeeping and bitwise graph routes need an
+    # exact private-word result.  Keep that decision at this code-generation
+    # boundary: a target must never rediscover the graph's value domain by
+    # translating the completed VM function.
+    native_private_operation = private_state_native and not native_operation
+    native_exact_state = native_operation or native_private_operation
     trace_seed = (
         f"{_hex64()}~({state}[611] or 0)"
-        if native_operation
+        if native_exact_state
         else f"({a}~{b})~{_hex64()}~({state}[611] or 0)"
     )
     trace_initialization = (
-        _target_private_expression(trace_seed) if native_operation else f"({trace_seed})"
+        _target_private_expression(trace_seed) if native_exact_state else f"({trace_seed})"
     )
     lines = [
         f"function({a},{b},{state},{slots},{regs},{active},{boxes})",
@@ -466,13 +474,25 @@ def _compile_integer_graph_func(
                     f"{name}={_target_user_expression(expression)};"
                     f"{trace}={_target_private_expression(f'{trace}~{node_id + 1}')};"
                 )
+            elif native_private_operation:
+                # The result is exposed to the normal handler ABI, while the
+                # opaque route expression itself remains an exact word.  The
+                # explicit boundary avoids reintroducing the old generic
+                # target helper for bitwise graph operations.
+                expression = _target_private_expression(
+                    _make_integer_expr(op_kind, a, b)
+                )
+                lines.append(
+                    f"{name}=_source_value({expression});"
+                    f"{trace}={_target_private_expression(f'{trace}~{node_id + 1}')};"
+                )
             else:
                 lines.append(
                     f"{name}={_make_integer_expr(op_kind, a, b)};"
                     f"{trace}=({trace}~({name}|(~{name})));"
                 )
         elif node["kind"] == "zero":
-            if native_operation:
+            if native_exact_state:
                 lines.append(
                     f"{name}=0;"
                     f"{trace}={_target_private_expression(f'{trace}~{node_id + 1}')};"
@@ -490,7 +510,7 @@ def _compile_integer_graph_func(
         elif node["kind"] == "identity":
             source = deps[0]
             zero_expr = "+".join(deps[1:])
-            if native_operation:
+            if native_exact_state:
                 lines.append(
                     f"{name}={source};"
                     f"{trace}={_target_private_expression(f'{trace}~{node_id + 1}')};"
@@ -509,7 +529,7 @@ def _compile_integer_graph_func(
                     f"{name}={expr};{trace}=({trace}~({name}&{name})~({zero_expr}));"
                 )
         else:
-            if native_operation:
+            if native_exact_state:
                 lines.append(
                     f"{name}={deps[0]};"
                     f"{trace}={_target_private_expression(f'{trace}~{node_id + 1}')};"
@@ -525,7 +545,7 @@ def _compile_integer_graph_func(
     mixed_source = trace if native_operation else f"{out}~{trace}"
     mixed_expression = f"{mixed_source}~(({index}*{_hex64()})&-1)"
     state_expression = f"({state}[{state_key}] or 0)~{mixed}~{slot}"
-    if native_operation:
+    if native_exact_state:
         mixed_expression = _target_private_expression(mixed_expression)
         state_expression = _target_private_expression(state_expression)
     else:
@@ -539,7 +559,7 @@ def _compile_integer_graph_func(
         f"end end end;return {out} end",
     ])
     result = "".join(lines)
-    if not native_operation:
+    if not native_exact_state:
         return ("--<<TARGET_PRIVATE_GRAPH>>\n" + result +
                 "\n--<<ENDTARGET_PRIVATE_GRAPH>>\n")
     return result
@@ -609,16 +629,30 @@ def _compile_value_graph_func() -> str:
     return "".join(lines)
 
 
-def _compiled_label_blocks(entry: str, blocks: list[tuple[str, str]]) -> str:
+def _graph_edge(label: str, *, native_control: bool) -> str:
+    return f"return {label}()" if native_control else f"goto {label}"
+
+
+def _compiled_label_blocks(
+    entry: str, blocks: list[tuple[str, str]], *, native_control: bool = False,
+) -> str:
     """Lay graph blocks out randomly while preserving explicit build-time edges."""
     shuffled = list(blocks)
     random.shuffle(shuffled)
+    if native_control:
+        # Lua 5.1 has no goto. Each scoped block is an explicitly linked
+        # tail-call node; declaration before assignment permits forward edges.
+        names = ",".join(label for label, _ in shuffled)
+        functions = ";".join(
+            f"{label}=function() {body} end" for label, body in shuffled
+        )
+        return f"do local {names};{functions};return {entry}() end;"
     return f"goto {entry};" + "".join(
         f"::{label}::do {body} end;" for label, body in shuffled
     )
 
 
-def _compile_call_route_func() -> str:
+def _compile_call_route_func(*, native_control: bool = False) -> str:
     name_allocator = NameAllocator(readable=True)
     terminal, query = [name_allocator.allocate("helper") for _ in range(2)]
     count = random.randint(14, 22)
@@ -645,7 +679,7 @@ def _compile_call_route_func() -> str:
             )
             body = (
                 f"{query}[__VM_Q_TRACE__]={trace_expr};"
-                f"goto {labels[1]}"
+                f"{_graph_edge(labels[1], native_control=native_control)}"
             )
         elif i == 1:
             salt = _hex64()
@@ -657,8 +691,8 @@ def _compile_call_route_func() -> str:
                 f"if {_target_user_expression(f'{query}[__VM_Q_BUDGET__]>0')} then "
                 f"{query}[__VM_Q_BUDGET__]="
                 f"{_target_user_expression(f'{query}[__VM_Q_BUDGET__]-1')};"
-                f"goto {labels[0]} end;"
-                f"goto {labels[2]}"
+                f"{_graph_edge(labels[0], native_control=native_control)} end;"
+                f"{_graph_edge(labels[2], native_control=native_control)}"
             )
         else:
             primary = i + 1
@@ -673,7 +707,8 @@ def _compile_call_route_func() -> str:
             body = (
                 f"{query}[__VM_Q_TRACE__]={trace_expr};"
                 f"if {branch_expr} "
-                f"then goto {labels[primary]} end;goto {labels[alternate]}"
+                f"then {_graph_edge(labels[primary], native_control=native_control)} end;"
+                f"{_graph_edge(labels[alternate], native_control=native_control)}"
             )
         blocks.append((label, body))
     seed = _hex64()
@@ -688,11 +723,11 @@ def _compile_call_route_func() -> str:
         f"function({terminal},{query}){query}[__VM_Q_TRACE__]="
         f"({query}[__VM_Q_TRACE__] or {initial_trace});{query}[__VM_Q_BUDGET__]="
         f"({query}[__VM_Q_BUDGET__] or {initial_budget});"
-        + _compiled_label_blocks(labels[0], blocks) + "end"
+        + _compiled_label_blocks(labels[0], blocks, native_control=native_control) + "end"
     )
 
 
-def _compile_control_graph_func() -> str:
+def _compile_control_graph_func(*, native_control: bool = False) -> str:
     name_allocator = NameAllocator(readable=True)
     packet, state = [name_allocator.allocate("helper") for _ in range(2)]
     count = random.randint(12, 18)
@@ -735,7 +770,8 @@ def _compile_control_graph_func() -> str:
                 f"{packet}[__VM_CF_KEY__]=n;{packet}[__VM_CF_TRACE__]="
                 f"{next_trace};{state}[{state_key}]={next_state};"
                 f"if {branch_expr} "
-                f"then goto {labels[primary]} end;goto {labels[alternate]}"
+                f"then {_graph_edge(labels[primary], native_control=native_control)} end;"
+                f"{_graph_edge(labels[alternate], native_control=native_control)}"
             )
         blocks.append((label, body))
     seed = _hex64()
@@ -745,11 +781,13 @@ def _compile_control_graph_func() -> str:
     return (
         f"function({packet},{state}){packet}[__VM_CF_TRACE__]=({packet}[__VM_CF_TRACE__] "
         f"or {initial_trace});"
-        + _compiled_label_blocks(labels[0], blocks) + "end"
+        + _compiled_label_blocks(labels[0], blocks, native_control=native_control) + "end"
     )
 
 
-def _compile_occurrence_graph_func(family_seed: int) -> str:
+def _compile_occurrence_graph_func(
+    family_seed: int, *, native_control: bool = False,
+) -> str:
     name_allocator = NameAllocator(readable=True)
     bank, pick, a, b, state, slots, regs, active, boxes, ledger, vm_state = [
         name_allocator.allocate("helper") for _ in range(11)
@@ -805,8 +843,9 @@ def _compile_occurrence_graph_func(family_seed: int) -> str:
             branch_expr = _target_private_expression(f"(({trace}~{site})&1)==0")
             body = (
                 f"{trace}={next_trace};{state}[{state_key}]={next_state};"
-                f"if {branch_expr} then goto {labels[primary]} end;"
-                f"goto {labels[alternate]}"
+                f"if {branch_expr} then "
+                f"{_graph_edge(labels[primary], native_control=native_control)} end;"
+                f"{_graph_edge(labels[alternate], native_control=native_control)}"
             )
         blocks.append((label, body))
     initial_trace = _target_private_expression(
@@ -817,11 +856,11 @@ def _compile_occurrence_graph_func(family_seed: int) -> str:
         f"function({bank},{pick},{a},{b},{state},{slots},{regs},{active},{boxes},"
         f"{ledger},{vm_state},{site},{selector},{state_key},{policy})"
         f"local {trace}={initial_trace};"
-        + _compiled_label_blocks(labels[0], blocks) + "end"
+        + _compiled_label_blocks(labels[0], blocks, native_control=native_control) + "end"
     )
 
 
-def _compile_loop_ir_func(kind: str) -> str:
+def _compile_loop_ir_func(kind: str, *, native_control: bool = False) -> str:
     name_allocator = NameAllocator(readable=True)
     packet, state = [name_allocator.allocate("helper") for _ in range(2)]
     trace = name_allocator.allocate("helper")
@@ -840,7 +879,7 @@ def _compile_loop_ir_func(kind: str) -> str:
         take = _target_user_expression("(d>0 and v<=l) or (d<=0 and v>=l)")
         bodies.extend([
             f"{advance};{state}[{state_key}]={loop_state};"
-            f"goto {labels[1]}",
+            f"{_graph_edge(labels[1], native_control=native_control)}",
             f"local v={packet}[__VM_CF_VALUE__];local d={packet}[__VM_CF_STEP__];"
             f"local l={packet}[__VM_CF_LIMIT__];{packet}[__VM_CF_TAKE__]="
             f"{take}",
@@ -858,11 +897,9 @@ def _compile_loop_ir_func(kind: str) -> str:
             f"{_target_user_expression(f'{packet}[__VM_CF_VALUE__]~=nil')}"
         )
     for _ in range(random.randint(7, 11)):
-        if bodies:
-            bodies[-1] += f";goto "
         next_label = name_allocator.allocate("helper")
         if bodies:
-            bodies[-1] += next_label
+            bodies[-1] += ";" + _graph_edge(next_label, native_control=native_control)
         labels.append(next_label)
         salt = _hex64()
         next_trace = _target_private_expression(
@@ -880,11 +917,13 @@ def _compile_loop_ir_func(kind: str) -> str:
     initial_trace = _target_private_expression(f"{seed}~({state}[611] or 0)")
     return (
         f"function({packet},{state})local {trace}={initial_trace};"
-        + _compiled_label_blocks(labels[0], blocks) + "end"
+        + _compiled_label_blocks(labels[0], blocks, native_control=native_control) + "end"
     )
 
 
-def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
+def _semantic_source(
+    kind: str, x: str, y: str, z: str, *, native_user_arithmetic: bool = False,
+) -> str:
     if kind == "GET": return f"local r={_target_user_expression(f'{x}[{y}]')};"
     if kind == "SET": return _target_user_statement(f"{x}[{y}]={z}") + f"local r={z};"
     if kind == "EQ": return f"local r={_target_user_expression(f'{x}=={y}')};"
@@ -892,9 +931,20 @@ def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
     if kind == "LE": return f"local r={_target_user_expression(f'{x}<={y}')};"
     if kind == "TRUTH": return f"local r=(not not {x});"
     if kind == "MOD": return f"local r={_target_user_expression(f'{x}%{y}')};"
-    if kind == "POW": return f"local r=({x}^{y});"
-    if kind == "DIV": return f"local r=({x}/{y});"
-    if kind == "IDIV": return f"local r=({x}//{y});"
+    if kind == "POW":
+        expression = f"{x}^{y}"
+        if native_user_arithmetic:
+            return f"local r={_target_user_expression(expression)};"
+        return f"local r=({expression});"
+    if kind == "DIV":
+        expression = f"{x}/{y}"
+        if native_user_arithmetic:
+            return f"local r={_target_user_expression(expression)};"
+        return f"local r=({expression});"
+    if kind == "IDIV":
+        if native_user_arithmetic:
+            return f"local r={_target_user_expression(f'math.floor({x}/{y})')};"
+        return f"local r=({x}//{y});"
     if kind == "NOT": return f"local r=(not {x});"
     if kind == "LEN": return f"local r=(#{x});"
     if kind == "CONCAT":
@@ -914,10 +964,15 @@ def _semantic_source(kind: str, x: str, y: str, z: str) -> str:
     return f"local r={x};"
 
 
-def _compile_semantic_ir_func(kind: str) -> str:
+def _compile_semantic_ir_func(
+    kind: str, *, native_user_arithmetic: bool = False,
+    native_control: bool = False,
+) -> str:
     name_allocator = NameAllocator(readable=True)
     x, y, z, state = [name_allocator.allocate("helper") for _ in range(4)]
-    direct = _semantic_source(kind, x, y, z)
+    direct = _semantic_source(
+        kind, x, y, z, native_user_arithmetic=native_user_arithmetic,
+    )
     trace = name_allocator.allocate("helper")
     result = name_allocator.allocate("helper")
     state_key = random.randint(3301, 3900)
@@ -926,7 +981,7 @@ def _compile_semantic_ir_func(kind: str) -> str:
     # The semantic source may read the result again (notably CONCAT), so bind
     # every standalone result reference to the compiler-owned local.
     first = re.sub(r"\br\b", result, direct).replace("local " + result, result)
-    blocks.append((labels[0], first + f"goto {labels[1]}"))
+    blocks.append((labels[0], first + _graph_edge(labels[1], native_control=native_control)))
     for i in range(1, len(labels) - 1):
         salt = _hex64()
         next_trace = _target_private_expression(
@@ -937,14 +992,14 @@ def _compile_semantic_ir_func(kind: str) -> str:
         )
         blocks.append((labels[i],
             f"{trace}={next_trace};{state}[{state_key}]={next_state};"
-            f"goto {labels[i + 1]}"))
+            f"{_graph_edge(labels[i + 1], native_control=native_control)}"))
     blocks.append((labels[-1], f"return {result}"))
     seed = _hex64()
     initial_trace = _target_private_expression(f"{seed}~({state}[611] or 0)")
     heavy = (
         f"function({x},{y},{z},{state})local {result};local {trace}="
         f"{initial_trace};"
-        + _compiled_label_blocks(labels[0], blocks) + "end"
+        + _compiled_label_blocks(labels[0], blocks, native_control=native_control) + "end"
     )
     direct_func = f"function({x},{y},{z},{state}){direct}return r end"
     return "{" + heavy + "," + direct_func + "}"
@@ -989,6 +1044,8 @@ def _apply_handler_graphs(
     branch_virtualization: bool = False,
     representation_routes: tuple | None = None,
     preserve_native_numbers: bool = False,
+    private_state_native: bool = False,
+    native_graph_control: bool = False,
 ) -> str:
     name_allocator = NameAllocator(readable=True)
     planned_routes = dict(representation_routes or ())
@@ -1048,23 +1105,37 @@ def _apply_handler_graphs(
             arithmetic_indices[kind] = dense_index
             x, y = name_allocator.allocate("helper"), name_allocator.allocate("helper")
             if arity == 1:
-                operation = (
-                    _target_user_expression(f"{operator}{x}")
-                    if kind == "UNM"
-                    else _target_private_expression(f"{operator}{x}")
-                )
-                native = f"function({x})return {operation} end"
+                if kind == "UNM" and preserve_native_numbers:
+                    native = (f"function({x})if _pisword({x}) then return _pneg({x}) end;"
+                              f"return {_target_user_expression(f'{operator}{x}')} end")
+                else:
+                    operation = (
+                        _target_user_expression(f"{operator}{x}")
+                        if kind == "UNM"
+                        else _target_private_expression(f"{operator}{x}")
+                    )
+                    native = f"function({x})return {operation} end"
             else:
-                operation = (
-                    _target_user_expression(f"{x}{operator}{y}")
-                    if kind in {"ADD", "SUB", "MUL"}
-                    else _target_private_expression(f"{x}{operator}{y}")
-                )
-                native = f"function({x},{y})return {operation} end"
+                if kind in {"ADD", "SUB", "MUL"} and preserve_native_numbers:
+                    private_op = {"ADD": "_padd", "SUB": "_psub", "MUL": "_pmul"}[kind]
+                    native = (f"function({x},{y})if _pisword({x}) or _pisword({y}) then "
+                              f"return {private_op}({x},{y}) end;"
+                              f"return {_target_user_expression(f'{x}{operator}{y}')} end")
+                else:
+                    operation = (
+                        _target_user_expression(f"{x}{operator}{y}")
+                        if kind in {"ADD", "SUB", "MUL"}
+                        else _target_private_expression(f"{x}{operator}{y}")
+                    )
+                    native = f"function({x},{y})return {operation} end"
             native_entries.append(f"{{{native},{native}}}")
             graph_entries.append(
                 "{" + ",".join(
-                    _compile_integer_graph_func(kind, preserve_native_numbers)
+                    _compile_integer_graph_func(
+                        kind,
+                        preserve_native_numbers,
+                        private_state_native,
+                    )
                     for _ in range(4)
                 ) + "}"
             )
@@ -1110,7 +1181,15 @@ def _apply_handler_graphs(
         inverse = pow(multiplier, -1, 1 << 64)
         signed_multiplier = multiplier if multiplier < (1 << 63) else multiplier - (1 << 64)
         signed_inverse = inverse if inverse < (1 << 63) else inverse - (1 << 64)
-        affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
+        if private_state_native:
+            # These are full-width private affine factors, not user numbers.
+            # Lua 5.1 must parse their decimal digits before binary64 can
+            # round a literal; the generic source translator used to do so.
+            affine_pairs.append(
+                f'{{_pint("{multiplier}"),_pint("{inverse}")}}'
+            )
+        else:
+            affine_pairs.append(f"{{{signed_multiplier},{signed_inverse}}}")
     vm_code = vm_code.replace(
         "__VM_AFFINE_POOL__",
         _exact_graph_source("{" + ",".join(affine_pairs) + "}"),
@@ -1148,23 +1227,29 @@ def _apply_handler_graphs(
         "__VM_ROUTE_LEAVE__": call_tags[3],
     }
     call_graph = (
-        "{[" + str(call_tags[2]) + "]=" + _compile_call_route_func()
-        + ",[" + str(call_tags[3]) + "]=" + _compile_call_route_func() + "}"
+        "{[" + str(call_tags[2]) + "]="
+        + _compile_call_route_func(native_control=native_graph_control)
+        + ",[" + str(call_tags[3]) + "]="
+        + _compile_call_route_func(native_control=native_graph_control) + "}"
     )
     vm_code = vm_code.replace(
         "__VM_CALL_GRAPHS__", _exact_graph_source(call_graph)
     )
     control_graphs = "{" + ",".join(
-        _compile_control_graph_func() for _ in range(2)
+        _compile_control_graph_func(native_control=native_graph_control)
+        for _ in range(2)
     ) + "}"
     vm_code = vm_code.replace(
         "__VM_CONTROL_GRAPHS__", _exact_graph_source(control_graphs)
     )
     loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
     loop_graphs = (
-        "{[" + str(loop_tags[0]) + "]=" + _compile_loop_ir_func("FORLOOP")
-        + ",[" + str(loop_tags[1]) + "]=" + _compile_loop_ir_func("FORPREP")
-        + ",[" + str(loop_tags[2]) + "]=" + _compile_loop_ir_func("TFORLOOP") + "}"
+        "{[" + str(loop_tags[0]) + "]="
+        + _compile_loop_ir_func("FORLOOP", native_control=native_graph_control)
+        + ",[" + str(loop_tags[1]) + "]="
+        + _compile_loop_ir_func("FORPREP", native_control=native_graph_control)
+        + ",[" + str(loop_tags[2]) + "]="
+        + _compile_loop_ir_func("TFORLOOP", native_control=native_graph_control) + "}"
     )
     vm_code = vm_code.replace(
         "__VM_LOOP_GRAPHS__", _exact_graph_source(loop_graphs)
@@ -1186,7 +1271,10 @@ def _apply_handler_graphs(
         semantic_share_b: list[str] = []
         for dense_index, (kind, tag) in enumerate(semantic_order, 1):
             share = random.randint(0x10000, 0x7FFFFFFF)
-            semantic_entries.append(_compile_semantic_ir_func(kind))
+            semantic_entries.append(_compile_semantic_ir_func(
+                kind, native_user_arithmetic=preserve_native_numbers,
+                native_control=native_graph_control,
+            ))
             semantic_share_a.append(f'[{tag}]=tonumber("{share}")')
             semantic_share_b.append(
                 f'[{tag}]=tonumber("{share ^ dense_index}")'
@@ -1232,7 +1320,10 @@ def _apply_handler_graphs(
     ), pending_tokens):
         vm_code = vm_code.replace(token, str(value))
     occurrence_graphs = "{" + ",".join(
-        _compile_occurrence_graph_func(random.randint(0x10000, 0x7FFFFFFF))
+        _compile_occurrence_graph_func(
+            random.randint(0x10000, 0x7FFFFFFF),
+            native_control=native_graph_control,
+        )
         for _ in range(graph_family_count)
     ) + "}"
     vm_code = vm_code.replace(
@@ -1574,18 +1665,12 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
             concrete["mutate_handlers"] = False
         planned_runtime_variants.append(concrete)
     planned_runtime_variants = tuple(planned_runtime_variants)
-    direct_runtime = backend_adapter.direct_runtime
-    graph_execution_rate = lowered_ir.policy["graph_execution_rate"]
-    cross_instruction_rate = lowered_ir.policy["cross_instruction_rate"]
-    block_variant_rate = lowered_ir.policy["block_variant_rate"]
     output_transform = context.output_transform or _obfuscate_vm_output
 
     prepared = lowered_ir.backend_data["layout"]
     instr_layout = prepared.instruction_layout
     constant_tags, constant_kinds = prepared.constant_tags, prepared.constant_kinds
     constant_tag_names = tuple(constant_tags)
-    graph_sites = prepared.graph_sites
-    graph_family_count = 8
     materialization = lowered_ir.backend_data.get("materialization")
     blob = backend_adapter.serialize_program(lowered_ir, context)
 
@@ -1645,73 +1730,47 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         vm_code = vm_code.replace("from_base36(blob)",
                                   "from_base36(table.concat(blob))", 1)
     elif blob_form == "numeric":
-        vm_code = vm_code.replace("from_base36(blob)", target.numeric_blob_decoder(_NUMERIC_DECODE), 1)
+        decode_call = (
+            "ctx.from_base36(blob)"
+            if target.lua_version == "5.1"
+            else "from_base36(blob)"
+        )
+        vm_code = vm_code.replace(
+            decode_call, target.numeric_blob_decoder(_NUMERIC_DECODE), 1,
+        )
 
     # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
     _phase_start = time.perf_counter()
 
+    runtime_entry = "_EX.run" if target.lua_version == "5.1" else "run"
     vm_func_src = (
         f'return function(...)\n'
         f'local k1,k2,k3,k4,k5,k6,k7 = ... '
-        f'{vm_code} return run end'
+        f'{vm_code} return {runtime_entry} end'
     )
 
-    # VM output passes 자체를 세분화해서 측정.
-    # Handler graphs are generated before VM output passes so identifiers,
-    # literals, and whitespace in those backends join the same pipeline.
-    _graph_start = time.perf_counter()
-    _graph_input_bytes = len(vm_func_src.encode("utf-8"))
-
-    if direct_runtime:
-        vm_func_src = _apply_classic_runtime_tokens(vm_func_src)
-    else:
-        vm_func_src = _apply_handler_graphs(
-            vm_func_src,
-            graph_sites,
-            graph_family_count,
-            runtime_polymorphism_rate=lowered_ir.policy[
-                "runtime_polymorphism_rate"
-            ],
-            semantic_state_threading=bool(
-                lowered_ir.policy.get("semantic_state_threading", False)
-            ),
-            argument_virtualization=bool(
-                lowered_ir.policy.get("argument_virtualization", False)
-            ),
-            upvalue_virtualization=bool(
-                lowered_ir.policy.get("upvalue_virtualization", False)
-            ),
-            table_virtualization=bool(
-                lowered_ir.policy.get("table_virtualization", False)
-            ),
-            branch_virtualization=bool(
-                lowered_ir.policy.get("branch_virtualization", False)
-            ),
-            representation_routes=root_protection["representation_routes"],
-            preserve_native_numbers=target.user_number_model == "binary64",
-        )
-
-    _graph_elapsed = time.perf_counter() - _graph_start
-    _graph_output_bytes = len(vm_func_src.encode("utf-8"))
+    # Backend-local runtime construction must precede target finalization and
+    # output passes: graphs, direct tokens, and any future representation all
+    # need the same identifier, syntax, and integrity treatment.  The shared
+    # emitter intentionally makes no backend-kind decision here.
+    _runtime_body_start = time.perf_counter()
+    _runtime_body_input_bytes = len(vm_func_src.encode("utf-8"))
+    runtime_body = backend_adapter.emit_runtime_body(
+        vm_func_src, lowered_ir, target=target,
+    )
+    vm_func_src = runtime_body.source
+    _runtime_body_elapsed = time.perf_counter() - _runtime_body_start
+    _runtime_body_output_bytes = len(vm_func_src.encode("utf-8"))
     graph_detail = {
-        "phase": (
-            f"vm_output:{backend_adapter.name}_runtime" if direct_runtime
-            else "vm_output:handler_graphs"
-        ),
-        "class": (
-            "_apply_classic_runtime_tokens" if direct_runtime
-            else "_apply_handler_graphs"
-        ),
-        "elapsed": round(_graph_elapsed, 6),
-        "input_bytes": _graph_input_bytes,
-        "output_bytes": _graph_output_bytes,
-        "delta_bytes": _graph_output_bytes - _graph_input_bytes,
-        "graph_sites": 0 if direct_runtime else len(graph_sites),
-        "graph_families": 0 if direct_runtime else graph_family_count,
-        "backend": (
-            f"{backend_adapter.name}_runtime" if direct_runtime
-            else "pre_output_pipeline"
-        ),
+        "phase": runtime_body.phase,
+        "class": runtime_body.implementation,
+        "elapsed": round(_runtime_body_elapsed, 6),
+        "input_bytes": _runtime_body_input_bytes,
+        "output_bytes": _runtime_body_output_bytes,
+        "delta_bytes": _runtime_body_output_bytes - _runtime_body_input_bytes,
+        "graph_sites": runtime_body.graph_sites,
+        "graph_families": runtime_body.graph_families,
+        "backend": runtime_body.backend,
     }
 
     # Graph banks and blob decoders may introduce target API operations too.

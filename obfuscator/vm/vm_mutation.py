@@ -26,42 +26,68 @@ def _zv(c: list[int]) -> str:
 # Opaque Predicates
 # ---------------------------------------------------------------------------
 
-def _op_expr() -> str:
+def _op_expr(native_state: bool = False) -> str:
+    if native_state:
+        return random.choice([
+            "(A+B*C)", "_c_xor(Bx,_c_and(pc,255))", "_c_or(A,B+C)",
+            "(sBx+(A*B))", "(_c_xor(A,B)+_c_and(C*Bx,65535))",
+            "(pc+_c_or(A,Bx))",
+        ])
     return random.choice([
         "(A+B*C)", "(Bx~(pc&0xFF))", "(A|(B+C))",
         "(sBx+(A*B))", "((A~B)+(C*Bx)&0xFFFF)", "(pc+(A|Bx))",
     ])
 
 
-def _always_true() -> str:
-    v = _op_expr()
+def _always_true(native_state: bool = False) -> str:
+    v = _op_expr(native_state)
     k = random.randint(1, 0x3FFF)
-    base = random.choice([
-        f"({v})*({v}+1)&1==0",
-        f"({v})~({v})==0",
-        f"({v})~{k}~{k}==({v})",
-        f"({v})-({v})==0",
-        f"(not not ({v}))==(not not ({v}))",
-    ])
+    if native_state:
+        base = random.choice([
+            f"_c_and(({v})*(({v})+1),1)==0",
+            f"_c_xor(({v}),({v}))==0",
+            f"_c_xor(_c_xor(({v}),{k}),{k})==({v})",
+            f"({v})-({v})==0",
+            f"(not not ({v}))==(not not ({v}))",
+        ])
+    else:
+        base = random.choice([
+            f"({v})*({v}+1)&1==0",
+            f"({v})~({v})==0",
+            f"({v})~{k}~{k}==({v})",
+            f"({v})-({v})==0",
+            f"(not not ({v}))==(not not ({v}))",
+        ])
     if random.random() < 0.4:
-        v2 = _op_expr()
-        base = f"({base}) and (({v2})~({v2})==0)"
+        v2 = _op_expr(native_state)
+        check = (f"_c_xor(({v2}),({v2}))==0" if native_state
+                 else f"({v2})~({v2})==0")
+        base = f"({base}) and ({check})"
     return base
 
 
-def _always_false() -> str:
-    v = _op_expr()
+def _always_false(native_state: bool = False) -> str:
+    v = _op_expr(native_state)
     k  = random.randint(1, 0x3FFF)
     k2 = k + random.randint(1, 500)
-    base = random.choice([
-        f"({v})~=({v})",
-        f"(({v})~({v}))~=0",
-        f"(({v})+{k})==(({v})+{k2})",
-        f"({v})*0~=0",
-        f"(not ({v}==({v})))",
-    ])
+    if native_state:
+        base = random.choice([
+            f"({v})~=({v})",
+            f"_c_xor(({v}),({v}))~=0",
+            f"(({v})+{k})==(({v})+{k2})",
+            f"({v})*0~=0",
+            f"(not ({v}==({v})))",
+        ])
+    else:
+        base = random.choice([
+            f"({v})~=({v})",
+            f"(({v})~({v}))~=0",
+            f"(({v})+{k})==(({v})+{k2})",
+            f"({v})*0~=0",
+            f"(not ({v}==({v})))",
+        ])
     if random.random() < 0.4:
-        v2 = _op_expr()
+        v2 = _op_expr(native_state)
         base = f"({base}) or (({v2})~=({v2}) and false)"
     return base
 
@@ -70,10 +96,21 @@ def _always_false() -> str:
 # 코드 조각 생성 — 기본 패턴
 # ---------------------------------------------------------------------------
 
-def _arith_expr() -> str:
+def _arith_expr(native_state: bool = False) -> str:
     """순수 표현식. rset 인자 등에 사용 (statement 아님)."""
     k    = random.randint(1, 0xFFFF)
     slot = random.randint(0, 3)
+    if native_state:
+        return random.choice([
+            f"_c_xor(_c_xor(A or 0,{k}),{k})",
+            f"_c_and(Bx or 0,65535)",
+            f"_c_and(pc+_c_or(A,0),65535)",
+            f"_c_and(C*B+A,255)",
+            f"_c_and(_c_xor(sBx,A),524287)",
+            f"_c_and(_c_xor(B,C),255)",
+            f"_c_and(_c_xor(_c_xor(A,B),C),255)",
+            f"regs[{slot}] and 0 or (A*0)",
+        ])
     return random.choice([
         f"(A or 0)~{k}~{k}",
         f"(Bx or 0)&0xFFFF",
@@ -86,19 +123,28 @@ def _arith_expr() -> str:
     ])
 
 
-def _junk_ref(var: str, c: list[int]) -> str:
+def _junk_ref(var: str, c: list[int], native_state: bool = False) -> str:
     zv = _zv(c)
     k  = random.randint(1, 0xFFFF)
     return random.choice([
-        f"local {zv}=({var} and 0 or 0)~{k}; {zv}={zv}~{zv}",
+        (f"local {zv}=_c_xor(({var} and 0 or 0),{k}); {zv}=_c_xor({zv},{zv})"
+         if native_state else f"local {zv}=({var} and 0 or 0)~{k}; {zv}={zv}~{zv}"),
         f"local {zv}=type({var})==\"nil\" and 0 or 0",
         f"local {zv}=({var}~=nil) and 0 or 0",
     ])
 
 
-def _live_arith(c: list[int]) -> str:
+def _live_arith(c: list[int], native_state: bool = False) -> str:
     zv = _zv(c)
     k  = random.randint(1, 0xFFFF)
+    if native_state:
+        return random.choice([
+            f"local {zv}=_c_xor(A or 0,{k}); {zv}=_c_xor({zv},{k})",
+            f"local {zv}=_c_xor(_c_xor(Bx or 0,{k}),{k})",
+            f"local {zv}=_c_and(pc+_c_or(A,0),65535)",
+            f"local {zv}=_c_and(C*B+A,255)",
+            f"local {zv}=_c_and(_c_xor(sBx,A),524287)",
+        ])
     return random.choice([
         f"local {zv}=(A or 0)~{k}; {zv}={zv}~{k}",
         f"local {zv}=(Bx or 0)~{k}~{k}",
@@ -108,12 +154,12 @@ def _live_arith(c: list[int]) -> str:
     ])
 
 
-def _dead_lines(c: list[int]) -> list[str]:
+def _dead_lines(c: list[int], native_state: bool = False) -> list[str]:
     zv1 = _zv(c); zv2 = _zv(c)
     slot = random.randint(0, 3); val = random.randint(0, 0xFF)
     return [
         f"local {zv1}={val}",
-        f"if {_always_false()} then",
+        f"if {_always_false(native_state)} then",
         f"  rset({slot},{zv1})",
         f"  local {zv2}=regs[{slot}]",
         f"  rset(A,{zv2})",
@@ -121,21 +167,21 @@ def _dead_lines(c: list[int]) -> list[str]:
     ]
 
 
-def _live_read_lines(c: list[int]) -> list[str]:
+def _live_read_lines(c: list[int], native_state: bool = False) -> list[str]:
     zv = _zv(c); slot = random.randint(0, 3)
     return [
         f"local {zv}=regs[{slot}]",
-        f"if {_always_true()} then {zv}={zv} end",
+        f"if {_always_true(native_state)} then {zv}={zv} end",
     ]
 
 
-def _fake_rset_lines(c: list[int]) -> list[str]:
+def _fake_rset_lines(c: list[int], native_state: bool = False) -> list[str]:
     """always_false 가드로 보호된 fake rset() 블록."""
-    lines = [f"if {_always_false()} then"]
+    lines = [f"if {_always_false(native_state)} then"]
     for _ in range(random.randint(1, 2)):
         choice = random.randint(0, 4)
         if choice == 0:
-            lines.append(f"  rset(A,{_arith_expr()})")
+            lines.append(f"  rset(A,{_arith_expr(native_state)})")
         elif choice == 1:
             zv   = _zv(c)
             slot = random.randint(0, 3)
@@ -145,14 +191,14 @@ def _fake_rset_lines(c: list[int]) -> list[str]:
             zv      = _zv(c)
             s1, s2  = random.randint(0, 3), random.randint(0, 3)
             lines.append(f"  local {zv}=regs[{s1}]")
-            lines.append(f"  rset({s2},{_arith_expr()})")
+            lines.append(f"  rset({s2},{_arith_expr(native_state)})")
             lines.append(f"  rset(A,{zv})")
         elif choice == 3:
             lines.append(f"  rset(B,regs[C])")
         else:
             zv = _zv(c)
-            lines.append(f"  local {zv}={_arith_expr()}")
-            lines.append(f"  if {_always_true()} then rset(A,{zv}) end")
+            lines.append(f"  local {zv}={_arith_expr(native_state)}")
+            lines.append(f"  if {_always_true(native_state)} then rset(A,{zv}) end")
     lines.append("end")
     return lines
 
@@ -161,16 +207,17 @@ def _fake_rset_lines(c: list[int]) -> list[str]:
 # 코드 조각 생성 — 확장 junk 패턴
 # ---------------------------------------------------------------------------
 
-def _table_junk_lines(c: list[int]) -> list[str]:
+def _table_junk_lines(c: list[int], native_state: bool = False) -> list[str]:
     """테이블 생성·참조 junk."""
     zv = _zv(c)
     choice = random.randint(0, 2)
     if choice == 0:
-        return [f"local {zv}={{(A or 0)&0xFF}}; {zv}=nil"]
+        value = "_c_and(A or 0,255)" if native_state else "(A or 0)&0xFF"
+        return [f"local {zv}={{{value}}}; {zv}=nil"]
     elif choice == 1:
         return [
             f"local {zv}={{}}",
-            f"if {_always_false()} then {zv}[pc]=(Bx or 0) end",
+            f"if {_always_false(native_state)} then {zv}[pc]=(Bx or 0) end",
             f"{zv}=nil",
         ]
     else:
@@ -192,13 +239,13 @@ def _math_junk(c: list[int]) -> str:
     ])
 
 
-def _string_junk(c: list[int]) -> list[str]:
+def _string_junk(c: list[int], native_state: bool = False) -> list[str]:
     """string 관련 junk."""
     zv = _zv(c)
     if random.randint(0, 1) == 0:
         return [
             f"local {zv}=tostring(pc or 0)",
-            f"if {_always_false()} then {zv}=nil end",
+            f"if {_always_false(native_state)} then {zv}=nil end",
         ]
     else:
         s = "0" * random.randint(1, 8)
@@ -215,21 +262,21 @@ def _type_junk(c: list[int]) -> str:
     ])
 
 
-def _any_junk_lines(c: list[int]) -> list[str]:
+def _any_junk_lines(c: list[int], native_state: bool = False) -> list[str]:
     """모든 junk 패턴 중 랜덤 선택."""
     choice = random.randint(0, 6)
     if choice == 0:
-        return [_live_arith(c)]
+        return [_live_arith(c, native_state)]
     elif choice == 1:
-        return _dead_lines(c)
+        return _dead_lines(c, native_state)
     elif choice == 2:
-        return _live_read_lines(c)
+        return _live_read_lines(c, native_state)
     elif choice == 3:
-        return _table_junk_lines(c)
+        return _table_junk_lines(c, native_state)
     elif choice == 4:
         return [_math_junk(c)]
     elif choice == 5:
-        return _string_junk(c)
+        return _string_junk(c, native_state)
     else:
         return [_type_junk(c)]
 
@@ -252,7 +299,8 @@ def _lua_depth_delta(line: str) -> int:
     return opens - closes
 
 
-def _interleave_junk(lines: list[str], c: list[int], rate: float = 0.4) -> list[str]:
+def _interleave_junk(lines: list[str], c: list[int], rate: float = 0.4,
+                     native_state: bool = False) -> list[str]:
     """실코드 라인 사이에 junk를 끼워넣는다. depth=0 경계에서만 삽입."""
     result: list[str] = []
     depth  = 0
@@ -260,7 +308,7 @@ def _interleave_junk(lines: list[str], c: list[int], rate: float = 0.4) -> list[
         result.append(ln)
         depth += _lua_depth_delta(ln)
         if depth <= 0 and not _TOP_RETURN_RE.match(ln) and random.random() < rate:
-            result.extend(_any_junk_lines(c))
+            result.extend(_any_junk_lines(c, native_state))
     return result
 
 
@@ -327,29 +375,30 @@ def _new_state(used: set[int]) -> int:
             used.add(s); return s
 
 
-def _make_dead_body(c: list[int]) -> list[str]:
+def _make_dead_body(c: list[int], native_state: bool = False) -> list[str]:
     """dead state body — 확장된 junk 패턴 포함."""
     lines: list[str] = []
     r = random.random()
     if r < 0.25:
-        lines.extend(_any_junk_lines(c))
-        lines.extend(_fake_rset_lines(c))
+        lines.extend(_any_junk_lines(c, native_state))
+        lines.extend(_fake_rset_lines(c, native_state))
     elif r < 0.50:
-        lines.extend(_dead_lines(c))
+        lines.extend(_dead_lines(c, native_state))
     elif r < 0.75:
-        lines.extend(_live_read_lines(c))
-        lines.extend(_fake_rset_lines(c))
+        lines.extend(_live_read_lines(c, native_state))
+        lines.extend(_fake_rset_lines(c, native_state))
     else:
-        lines.extend(_any_junk_lines(c))
-        lines.extend(_dead_lines(c))
+        lines.extend(_any_junk_lines(c, native_state))
+        lines.extend(_dead_lines(c, native_state))
         if random.random() < 0.5:
-            lines.extend(_live_read_lines(c))
+            lines.extend(_live_read_lines(c, native_state))
     if random.random() < 0.2:
-        lines.extend(_fake_rset_lines(c))
+        lines.extend(_fake_rset_lines(c, native_state))
     return lines
 
 
-def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
+def _build_cff(real_chunks: list[list[str]], c: list[int],
+               native_state: bool = False) -> str:
     """
     real_chunks를 state machine으로 분산.
 
@@ -384,7 +433,7 @@ def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
         chain_len = min(random.randint(1, 3), len(dead_ids) - i)
         chain     = dead_ids[i:i + chain_len]
         for j, sid in enumerate(chain):
-            body     = _make_dead_body(c)
+            body     = _make_dead_body(c, native_state)
             next_sid = chain[j + 1] if j + 1 < chain_len else 0
             dead_entries.append((sid, body, next_sid))
         i += chain_len
@@ -420,7 +469,7 @@ def _build_cff(real_chunks: list[list[str]], c: list[int]) -> str:
             if random.random() < 0.35 and all_ids:
                 fake_tgt = random.choice(all_ids)
                 parts.append(
-                    f"    if {_always_false()} then {sv}={enc(fake_tgt)} end"
+                    f"    if {_always_false(native_state)} then {sv}={enc(fake_tgt)} end"
                 )
             parts.append(f"    {sv}={enc(dead_next_map[st])}")
 
@@ -439,11 +488,65 @@ def _extract_real_lines(body: str) -> list[str]:
             if ln.strip() and not ln.strip().startswith("--")]
 
 
-def mutate_handler_body(body: str, c: list[int]) -> str:
+def _native_scratch_locals(source: str, first: int, last: int) -> str:
+    """Move a native CFF's ordinary locals into executor-owned scratch slots.
+
+    Lua 5.1 limits a function prototype to 200 local variables.  A mutated
+    dispatcher may contain dozens of mutually exclusive CFF branches, so even
+    the locals hoisted from their real handler snippets can exhaust that limit.
+    The native executors provide one ``_MJ`` table per invocation; CFF-only
+    locals can safely use separate table slots because only one handler branch
+    executes at a time.  ``first``/``last`` remain part of this internal API so
+    callers keep their per-handler temporary allocation boundary.
+    """
+    del first, last
+    declaration = re.compile(r"\blocal\s+(?!function\b)([A-Za-z_]\w*)\b")
+    names: list[str] = []
+    for match in declaration.finditer(source):
+        name = match.group(1)
+        if name not in names:
+            names.append(name)
+
+    for index, name in enumerate(names, 1):
+        slot = f"_MJ[{index}]"
+        # ``_hoist_locals`` emits declaration-only lines, while the CFF state
+        # itself is introduced with an initializer.  Drop the former and turn
+        # the latter directly into a scratch-table assignment.  CFF handler
+        # snippets use bare locals; avoid rewriting an unrelated table field.
+        source = re.sub(
+            rf"\blocal\s+{re.escape(name)}\b\s*(?:;|\n)", "", source,
+        )
+        source = re.sub(
+            rf"\blocal\s+{re.escape(name)}\b(?=\s*=)", slot, source,
+        )
+        reference = re.compile(rf"(?<!\w){re.escape(name)}\b")
+        def replace_reference(match):
+            prefix = source[:match.start()]
+            suffix = source[match.end():]
+            # A single preceding dot is table-field access, but ``..`` is the
+            # Lua concatenation operator and its right operand is a variable.
+            if prefix.endswith(":") or (
+                prefix.endswith(".") and not prefix.endswith("..")
+            ):
+                return match.group(0)
+            # Preserve named table keys such as ``{r=r,n=n}``; only rewrite
+            # the value-side occurrence of each handler-local identifier.
+            if (prefix.count("{") > prefix.count("}")
+                    and re.match(r"\s*=", suffix)):
+                return match.group(0)
+            return slot
+        source = reference.sub(replace_reference, source)
+    for helper in ("_c_u32", "_c_xor", "_c_and", "_c_or", "_c_not", "_c_shl", "_c_shr"):
+        source = re.sub(rf"(?<![.\w]){helper}\b", f"_MJ.{helper}", source)
+    return source
+
+
+def mutate_handler_body(body: str, c: list[int], *, native_state: bool = False) -> str:
     has_return = bool(_RETURN_RE.search(body))
     real_lines = _extract_real_lines(body)
     if not real_lines:
         return body
+    first = c[0]
 
     # junk_ref: return 없는 핸들러에만 (변수 참조 junk)
     local_vars = [
@@ -454,24 +557,32 @@ def mutate_handler_body(body: str, c: list[int]) -> str:
     if local_vars and not has_return:
         pos = random.randint(0, len(real_lines))
         real_lines = real_lines[:pos] + \
-                     [_junk_ref(random.choice(local_vars), c)] + \
+                     [_junk_ref(random.choice(local_vars), c, native_state)] + \
                      real_lines[pos:]
 
     # 실코드 사이에 junk 삽입 (depth=0 경계에서만)
-    real_lines = _interleave_junk(real_lines, c, rate=0.4)
+    real_lines = _interleave_junk(real_lines, c, rate=0.4, native_state=native_state)
 
     # 모든 핸들러를 CFF로 처리 (single-chunk, has_return 포함)
     chunks = _split_safe_chunks(real_lines)
-    cff    = _build_cff(chunks, c)
+    cff    = _build_cff(chunks, c, native_state)
+    if native_state:
+        cff = _native_scratch_locals(cff, first, c[0])
     return " " + cff + "\n" + _IND
 
 
-def mutate_handlers(blocks: dict[int, str], rate: float = 1.0) -> dict[int, str]:
-    c: list[int] = [0]
+def mutate_handlers(blocks: dict[int, str], rate: float = 1.0,
+                    *, native_state: bool = False) -> dict[int, str]:
     new: dict[int, str] = {}
     for op, body in blocks.items():
         if random.random() < rate:
-            new[op] = mutate_handler_body(body, c)
+            # Handler bodies occupy disjoint dispatcher branches.  Sharing a
+            # monotonically growing temporary-name counter across them only
+            # inflates the enclosing executor's local-variable set and can
+            # exceed Lua 5.1's 200-local limit under fake/mutated handlers.
+            # Restarting here is lexical-safe and keeps each CFF body bounded.
+            c: list[int] = [0]
+            new[op] = mutate_handler_body(body, c, native_state=native_state)
         else:
             new[op] = body
     return new

@@ -457,6 +457,258 @@ def check_backend_layouts():
                     raise AssertionError("invalid microcode accepted")
 
 
+def check_karity_state_model():
+    from copy import deepcopy
+    from obfuscator.vm.backends.karity_state import _boundary_kind, validate_state
+    from obfuscator.vm.backends.handler_ir import HandlerInstruction, OPERATION_IDS
+
+    boundary_cases = {
+        "CALL": "call-or-yield",
+        "TAIL_CALL": "tail-call-or-yield",
+        "RETURN": "host-return",
+        "GET_TABLE": "table-metamethod-read",
+        "SET_TABLE": "table-metamethod-write",
+        "ADD": "arithmetic-metamethod",
+        "CLOSURE": "upvalue-capture",
+        "ITER_CALL": "iterator-call-or-yield",
+        "MOVE": None,
+    }
+    for operation, expected_boundary in boundary_cases.items():
+        instruction = HandlerInstruction(OPERATION_IDS[operation])
+        assert _boundary_kind(instruction) == expected_boundary, operation
+
+    # A forced deferred ADD is consumed by MOVE, so the projection must retain
+    # both the pending producer and the later rget materialization boundary.
+    ir = build_semantic_ir(proto([
+        abc(13, 0, 1, 2), abc(0, 3, 0), abc(38, 3, 2),
+    ]))
+    options = {"cross_instruction_rate": 1.0, "graph_execution_rate": 0.0}
+    random.seed(9531)
+    backend = get_backend("karity")
+    context = BackendContext(options)
+    lowered = backend.optimize(
+        backend.lower(protect(ir, ProtectionPlanner(options).build(ir)), context),
+        context,
+    )
+    state = lowered.backend_data["karity_state"]
+    transitions = state.functions[0].transitions
+    pending = next(item for item in transitions if item.pending_write is not None)
+    assert pending.operation == "ADD"
+    assert pending.pending_guard == ("all-inputs-integer-kind", "runtime-poly-lazy")
+    assert any(
+        pending.pending_write in item.materialized for item in transitions
+    )
+    materializer = next(
+        item for item in transitions if pending.pending_write in item.materialized
+    )
+    pending_input = materializer.native_inputs[materializer.reads.index(pending.pending_write)]
+    assert pending_input.producers == (pending.pc,)
+    assert pending_input.epochs == (pending.pc + 1,)
+    assert all(
+        item.operation != "RETURN" or item.native_boundary
+        for item in transitions
+    )
+    validate_state(lowered)
+    state_dump = lowered.dump()
+    assert f"karity-transition function=f0 pc={materializer.pc} " in state_dump
+    assert "materialized=(0,)" in state_dump
+    assert "boundary=host-return" in state_dump
+
+    repeated_read_ir = build_semantic_ir(proto([
+        abc(13, 0, 1, 2), abc(13, 0, 0, 0), abc(38, 0, 2),
+    ]))
+    random.seed(9531)
+    repeated_read_context = BackendContext(options)
+    repeated_read_lowered = backend.optimize(
+        backend.lower(
+            protect(repeated_read_ir, ProtectionPlanner(options).build(repeated_read_ir)),
+            repeated_read_context,
+        ),
+        repeated_read_context,
+    )
+    repeated_read_transitions = (
+        repeated_read_lowered.backend_data["karity_state"].functions[0].transitions
+    )
+    repeated_read = next(
+        item for item in repeated_read_transitions
+        if item.operation == "ADD" and item.reads == (0, 0)
+    )
+    prior_producer = next(
+        item for item in reversed(repeated_read_transitions[:repeated_read.pc])
+        if item.pending_write == 0
+    )
+    assert len(repeated_read.native_inputs) == 2
+    assert repeated_read.resolved_pending == (0,)
+    if repeated_read.graph_descriptors:
+        assert repeated_read.materialized == (0,)
+        assert repeated_read.maybe_materialized == ()
+    else:
+        assert repeated_read.materialized == ()
+        assert repeated_read.maybe_materialized == (0,)
+    assert all(value.producers == (prior_producer.pc,)
+               for value in repeated_read.native_inputs)
+    validate_state(repeated_read_lowered)
+
+    # Closure creation captures a register box, not its transient native value.
+    # Keep the pending producer/epoch attached to that capture until a later
+    # rget or upvalue close actually materializes it.
+    child = proto([abc(5, 0, 0), abc(38, 0, 2)])
+    closure_ir = build_semantic_ir(proto([
+        abc(13, 0, 1, 2), abx(44, 3, 0), abc(38, 3, 2),
+    ], [child]))
+    random.seed(9531)
+    closure_context = BackendContext(options)
+    closure_lowered = backend.optimize(
+        backend.lower(
+            protect(closure_ir, ProtectionPlanner(options).build(closure_ir)),
+            closure_context,
+        ),
+        closure_context,
+    )
+    closure_transitions = closure_lowered.backend_data["karity_state"].functions[0].transitions
+    closure = next(item for item in closure_transitions if item.operation == "CLOSURE")
+    closure_pending = next(item for item in closure_transitions if item.pending_write is not None)
+    assert closure.captures == (0,)
+    assert closure.boundary_kind == "upvalue-capture"
+    assert closure.capture_states[0].representation.value == "maybe-pending"
+    assert closure.capture_states[0].producers == (closure_pending.pc,)
+    validate_state(closure_lowered)
+
+    close_ir = build_semantic_ir(proto([
+        abc(13, 0, 1, 2), abx(44, 3, 0),
+        abx(30, 1, 131071), abc(38, 3, 2),
+    ], [child]))
+    random.seed(9531)
+    close_context = BackendContext(options)
+    close_lowered = backend.optimize(
+        backend.lower(
+            protect(close_ir, ProtectionPlanner(options).build(close_ir)),
+            close_context,
+        ),
+        close_context,
+    )
+    close_transitions = close_lowered.backend_data["karity_state"].functions[0].transitions
+    close_pending = next(item for item in close_transitions if item.pending_write == 0)
+    close_boundary = next(
+        item for item in close_transitions
+        if item.operation == "JUMP" and item.close_from == 0
+    )
+    assert close_boundary.boundary_kind == "upvalue-close"
+    assert close_boundary.open_boxes == (0, 3)
+    assert close_boundary.closed_registers == (0, 3)
+    assert 0 in close_boundary.close_materialized
+    assert close_boundary.close_states[0].producers == (close_pending.pc,)
+    validate_state(close_lowered)
+
+    # A conditional can join an untouched encoded value with a value that may
+    # still be deferred. Preserve both predecessor epochs and resolve the
+    # path-dependent pending value at the first rget after the join.
+    branch_proto = proto([
+        abc(34, 0, 0, 0), abx(30, 0, 131073),
+        abc(13, 1, 2, 3), abx(30, 0, 131071),
+        abc(0, 4, 1), abc(38, 4, 2),
+    ])
+    branch_proto.max_stack_size = 5
+    branch_ir = build_semantic_ir(branch_proto)
+    random.seed(9531)
+    branch_context = BackendContext(options)
+    branch_lowered = backend.optimize(
+        backend.lower(
+            protect(branch_ir, ProtectionPlanner(options).build(branch_ir)),
+            branch_context,
+        ),
+        branch_context,
+    )
+    branch_transitions = branch_lowered.backend_data["karity_state"].functions[0].transitions
+    branch_pending = next(item for item in branch_transitions if item.pending_write == 1)
+    branch_materializer = next(
+        item for item in branch_transitions if 1 in item.materialized
+    )
+    joined_input = branch_materializer.native_inputs[
+        branch_materializer.reads.index(1)
+    ]
+    assert joined_input.producers == (branch_pending.pc,)
+    assert joined_input.epochs == (0, branch_pending.pc + 1)
+    validate_state(branch_lowered)
+
+    def changed_transition(source, pc, update):
+        bad = deepcopy(source)
+        state = bad.backend_data["karity_state"]
+        functions = list(state.functions)
+        function = functions[0]
+        functions[0] = replace(
+            function,
+            transitions=tuple(
+                update(item) if item.pc == pc else item
+                for item in function.transitions
+            ),
+        )
+        bad.backend_data["karity_state"] = replace(state, functions=tuple(functions))
+        return bad
+
+    bad = changed_transition(
+        lowered, pending.pc, lambda item: replace(item, pending_write=None)
+    )
+    try:
+        validate_state(bad)
+    except ValueError as error:
+        assert "pending producer does not write" in str(error)
+    else:
+        raise AssertionError("Karity accepted a stale pending-state projection")
+    try:
+        backend.emit(bad, context)
+    except ValueError as error:
+        assert "pending producer does not write" in str(error)
+    else:
+        raise AssertionError("Karity emitted a stale pending-state projection")
+
+    missing_materialization = changed_transition(
+        lowered,
+        materializer.pc,
+        lambda item: replace(
+            item,
+            materialized=tuple(
+                register for register in item.materialized
+                if register != pending.pending_write
+            ),
+        ),
+    )
+    try:
+        validate_state(missing_materialization)
+    except ValueError as error:
+        assert "pending input escaped materialization" in str(error)
+    else:
+        raise AssertionError("Karity accepted an unresolved pending read")
+
+    wrong_producer = next(
+        item for item in transitions
+        if item.pc != pending.pc and item.pending_write != pending.pending_write
+    )
+    native_index = materializer.reads.index(pending.pending_write)
+    wrong_producer_state = replace(
+        materializer.native_inputs[native_index],
+        producer=wrong_producer.pc,
+        producers=(wrong_producer.pc,),
+    )
+    wrong_producer_lowered = changed_transition(
+        lowered,
+        materializer.pc,
+        lambda item: replace(
+            item,
+            native_inputs=tuple(
+                wrong_producer_state if index == native_index else value
+                for index, value in enumerate(item.native_inputs)
+            ),
+        ),
+    )
+    try:
+        validate_state(wrong_producer_lowered)
+    except ValueError as error:
+        assert "pending producer does not write" in str(error)
+    else:
+        raise AssertionError("Karity accepted a pending value from the wrong producer")
+
+
 def check_dispatch_sequences():
     from copy import deepcopy
     ir=build_semantic_ir(proto([abc(13,0,1,2),abc(14,0,1,2),abc(38,0,2)]))
@@ -527,6 +779,39 @@ def check_graph_layout_validation():
         lowered = backend.optimize(backend.lower(protect(ir, plan), context), context)
         layout = lowered.backend_data['layout']
         index = next(i for i, item in enumerate(layout.functions.code) if item.graph_sites)
+        if name == 'karity':
+            graph_state = lowered.backend_data['karity_state'].functions[0]
+            graph_transition = next(
+                item for item in graph_state.transitions if item.graph_dependencies
+            )
+            assert graph_transition.graph_sites
+            assert len(graph_transition.graph_dependencies) == len(graph_transition.graph_sites)
+            for dependency in graph_transition.graph_dependencies:
+                assert dependency.registers == graph_transition.reads
+                assert all(epochs for _, epochs in dependency.epochs)
+            bad_state = deepcopy(lowered)
+            state = bad_state.backend_data['karity_state']
+            functions = list(state.functions)
+            function_state = functions[0]
+            transitions = list(function_state.transitions)
+            dependency = graph_transition.graph_dependencies[0]
+            stale_dependency = replace(dependency, epochs=())
+            transitions[graph_transition.pc] = replace(
+                graph_transition,
+                graph_dependencies=(stale_dependency,
+                                    *graph_transition.graph_dependencies[1:]),
+            )
+            functions[0] = replace(function_state, transitions=tuple(transitions))
+            bad_state.backend_data['karity_state'] = replace(
+                state, functions=tuple(functions)
+            )
+            try:
+                from obfuscator.vm.backends.karity_state import validate_state
+                validate_state(bad_state)
+            except ValueError as error:
+                assert 'stale representation epoch' in str(error), str(error)
+            else:
+                raise AssertionError('Karity accepted a stale graph representation epoch')
         def reject(change, message):
             bad = deepcopy(lowered)
             change(bad.backend_data['layout'])
@@ -627,6 +912,7 @@ def main() -> int:
     check_runtime_composition()
     check_alias_planning()
     check_backend_layouts()
+    check_karity_state_model()
     check_dispatch_sequences()
     check_graph_layout_validation()
     check_block_route_validation()
@@ -689,10 +975,22 @@ def main() -> int:
         "runtime_polymorphism_rate": 0.25,
         "semantic_state_threading": True,
     }
+    planning_rng_state = random.getstate()
     planner = ProtectionPlanner(options)
     plan = planner.build(ir)
-    random.random()
     assert planner.build(ir).dump() == plan.dump()
+
+    # The plan owns a snapshot of the build seed. Random choices made by a
+    # later emitter must not perturb protection policy, even if they happen
+    # after planner construction but before it is asked to build.
+    random.setstate(planning_rng_state)
+    emitter_isolated_planner = ProtectionPlanner(options)
+    for _ in range(512):
+        random.getrandbits(64)
+    emitter_rng_state = random.getstate()
+    assert emitter_isolated_planner.build(ir).dump() == plan.dump()
+    assert random.getstate() == emitter_rng_state
+
     assignments = {state["vm_assignment"] for state in plan.functions.values()}
     assert assignments == {0, 1}
     for block in ir.root.blocks:

@@ -17,6 +17,12 @@ local function _pmul64(hi,lo,khi,klo)
     return r2+r3*65536,r0+r1*65536
 end
 local _private_literals={}
+local function _pnew(hi,lo)
+    return {hi=hi,lo=lo,_private_word=_PRIVATE_WORD_MARKER}
+end
+local function _pisword(value)
+    return _is_private_word(value)
+end
 local function _pint(text)
     local value=_private_literals[text]
     if not value then
@@ -27,12 +33,12 @@ local function _pint(text)
             lo=lo+digit
             if lo>=4294967296 then lo=lo-4294967296;hi=(hi+1)%4294967296 end
         end
-        value=I.make(hi,lo);_private_literals[text]=value
+        value=_pnew(hi,lo);_private_literals[text]=value
     end
     return value
 end
 local function _pword(value)
-    if I.isint(value) then return value.hi,value.lo end
+    if _pisword(value) then return value.hi,value.lo end
     if value>=0 then return math.floor(value/4294967296)%4294967296,value%4294967296 end
     local magnitude=-value
     local lo=(-magnitude)%4294967296
@@ -57,17 +63,17 @@ end
 local function _padd(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
     local lo=alo+blo
-    return I.make((ahi+bhi+math.floor(lo/4294967296))%4294967296,lo%4294967296)
+    return _pnew((ahi+bhi+math.floor(lo/4294967296))%4294967296,lo%4294967296)
 end
 local function _pneg(a)
     local hi,lo=_pword(a);lo=(-lo)%4294967296
-    return I.make((4294967295-hi+(lo==0 and 1 or 0))%4294967296,lo)
+    return _pnew((4294967295-hi+(lo==0 and 1 or 0))%4294967296,lo)
 end
 local function _psub(a,b) return _padd(a,_pneg(b)) end
 local function _pmul(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
     local hi,lo=_pmul64(ahi,alo,bhi,blo)
-    return I.make(hi,lo)
+    return _pnew(hi,lo)
 end
 local function _pmul_low(a,b,modulus)
     local _,lo=_pmul64(0,a,0,b)
@@ -77,22 +83,22 @@ local function _pand_limb(a,b) return (a+b-_ixor(a,b))/2 end
 local function _por_limb(a,b) return (a+b+_ixor(a,b))/2 end
 local function _pband(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
-    return I.make(_pand_limb(ahi,bhi),_pand_limb(alo,blo))
+    return _pnew(_pand_limb(ahi,bhi),_pand_limb(alo,blo))
 end
 local function _pxor(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
-    return I.make(_ixor(ahi,bhi),_ixor(alo,blo))
+    return _pnew(_ixor(ahi,bhi),_ixor(alo,blo))
 end
 local function _pbor(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
-    return I.make(_por_limb(ahi,bhi),_por_limb(alo,blo))
+    return _pnew(_por_limb(ahi,bhi),_por_limb(alo,blo))
 end
 local function _pnot(a)
     local hi,lo=_pword(a)
-    return I.make(4294967295-hi,4294967295-lo)
+    return _pnew(4294967295-hi,4294967295-lo)
 end
 local function _pshift_count(value)
-    if not I.isint(value) then return value end
+    if not _pisword(value) then return value end
     if value.hi<2147483648 then return value.hi==0 and value.lo or 64 end
     local lo=(-value.lo)%4294967296
     local hi=(4294967295-value.hi+(lo==0 and 1 or 0))%4294967296
@@ -113,18 +119,18 @@ local _pshl,_pshr
 _pshl=function(a,n)
     local hi,lo=_pword(a);n=_pshift_count(n)
     if n<0 then return _pshr(a,-n) end
-    if n>=64 then return I.make(0,0) end
-    if n==0 then return I.make(hi,lo) end
-    if n>=32 then return I.make((lo%2^(64-n))*2^(n-32),0) end
-    return I.make((hi%2^(32-n))*2^n+math.floor(lo/2^(32-n)),(lo%2^(32-n))*2^n)
+    if n>=64 then return _pnew(0,0) end
+    if n==0 then return _pnew(hi,lo) end
+    if n>=32 then return _pnew((lo%2^(64-n))*2^(n-32),0) end
+    return _pnew((hi%2^(32-n))*2^n+math.floor(lo/2^(32-n)),(lo%2^(32-n))*2^n)
 end
 _pshr=function(a,n)
     local hi,lo=_pword(a);n=_pshift_count(n)
     if n<0 then return _pshl(a,-n) end
-    if n>=64 then return I.make(0,0) end
-    if n==0 then return I.make(hi,lo) end
-    if n>=32 then return I.make(0,math.floor(hi/2^(n-32))) end
-    return I.make(math.floor(hi/2^n),math.floor(lo/2^n)+(hi%2^n)*2^(32-n))
+    if n>=64 then return _pnew(0,0) end
+    if n==0 then return _pnew(hi,lo) end
+    if n>=32 then return _pnew(0,math.floor(hi/2^(n-32))) end
+    return _pnew(math.floor(hi/2^n),math.floor(lo/2^n)+(hi%2^n)*2^(32-n))
 end
 local function _pmix_words(hi,lo)
     local function shift_xor(n)
@@ -139,11 +145,12 @@ local function _pmix_words(hi,lo)
 end
 local function _pmix(x)
     local hi,lo=_pmix_words(_pword(x))
-    return I.make(hi,lo)
+    return _pnew(hi,lo)
 end
 --<<ENDTARGET_PRIVATE_MIX>>
 
 --<<EXEC>>
+--<<TARGET_CLASSIC_EXEC_NATIVE>>
 exec = function(proto, upvals, args, va_in, _source_parents)
     local regs   = {}
     local boxes  = {}
@@ -158,7 +165,29 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local _st    = 0
     local _va    = va_in or {n=0}
     local _split_tmp
-    local _S={[611]=(proto.vm_id~#code)&-1}
+    -- Classic keeps its routing state in exact 32-bit native limbs.  Source
+    -- values never enter these helpers; the generated executor only feeds
+    -- decoded fields, program counters, and its own routing state.
+    local function _c_u32(value) return value%4294967296 end
+    local function _c_xor(a,b) return _ixor(_c_u32(a),_c_u32(b)) end
+    local function _c_and(a,b) return _pand_limb(_c_u32(a),_c_u32(b)) end
+    local function _c_or(a,b) return _por_limb(_c_u32(a),_c_u32(b)) end
+    local function _c_not(a) return 4294967295-_c_u32(a) end
+    local _c_shl,_c_shr
+    _c_shl=function(a,b)
+        if b<0 then return _c_shr(a,-b) end
+        if b>=32 then return 0 end
+        return (_c_u32(a)%2^(32-b))*2^b
+    end
+    _c_shr=function(a,b)
+        if b<0 then return _c_shl(a,-b) end
+        if b>=32 then return 0 end
+        return math.floor(_c_u32(a)/2^b)
+    end
+    local _S={[611]=_c_xor(proto.vm_id,#code)}
+    local _MJ={}
+    _MJ._c_u32=_c_u32;_MJ._c_xor=_c_xor;_MJ._c_and=_c_and;_MJ._c_or=_c_or
+    _MJ._c_not=_c_not;_MJ._c_shl=_c_shl;_MJ._c_shr=_c_shr
     local _XF={0,0}
     local _PR={0,0}
     local _SS={0,0}
@@ -190,6 +219,8 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local function _acount(q) return q and (q.n or #q) or 0 end
     local function _aget(q,i) if q then return q[i] end; return nil end
     local function _collect_values(first,count)
+        if count==nil then count=top-first+1 end
+        if count<0 then count=0 end
         local values={n=count}
         for i=1,count do values[i]=rget(first+i-1) end
         return values
@@ -215,35 +246,18 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     --<<SEM>>
     local function _sem(tag,x,y,z)
         if tag==__VM_DATA_VALUE__ then return x
-        elseif tag==__VM_DATA_GET__ then return (--<<TARGET_USER_EXPRESSION>>
-            x[y]
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
+        elseif tag==__VM_DATA_GET__ then return x[y]
         elseif tag==__VM_DATA_SET__ then
-            --<<TARGET_USER_STATEMENT>>
             x[y]=z
-            --<<ENDTARGET_USER_STATEMENT>>
             return z
-        elseif tag==__VM_CMP_EQ__ then return (--<<TARGET_USER_EXPRESSION>>
-            x==y
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
-        elseif tag==__VM_CMP_LT__ then return (--<<TARGET_USER_EXPRESSION>>
-            x<y
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
-        elseif tag==__VM_CMP_LE__ then return (--<<TARGET_USER_EXPRESSION>>
-            x<=y
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
+        elseif tag==__VM_CMP_EQ__ then return x==y
+        elseif tag==__VM_CMP_LT__ then return x<y
+        elseif tag==__VM_CMP_LE__ then return x<=y
         elseif tag==__VM_CMP_TRUTH__ then return not not x
-        elseif tag==__VM_OP_MOD__ then return (--<<TARGET_USER_EXPRESSION>>
-            x%y
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
+        elseif tag==__VM_OP_MOD__ then return x%y
         elseif tag==__VM_OP_POW__ then return x^y
         elseif tag==__VM_OP_DIV__ then return x/y
-        elseif tag==__VM_OP_IDIV__ then return x//y
+        elseif tag==__VM_OP_IDIV__ then return math.floor(x/y)
         elseif tag==__VM_OP_NOT__ then return not x
         elseif tag==__VM_OP_LEN__ then return #x
         elseif tag==__VM_OP_CONCAT__ then
@@ -260,31 +274,19 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     --<<ENDSEM>>
 
     local function _arith2(a,b,av,slot)
-        if slot==__VM_SLOT_ADD__ then return (--<<TARGET_USER_EXPRESSION>>
-            a+b
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
-        elseif slot==__VM_SLOT_SUB__ then return (--<<TARGET_USER_EXPRESSION>>
-            a-b
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
-        elseif slot==__VM_SLOT_MUL__ then return (--<<TARGET_USER_EXPRESSION>>
-            a*b
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
-        elseif slot==__VM_SLOT_BAND__ then return a&b
-        elseif slot==__VM_SLOT_BOR__ then return a|b
-        elseif slot==__VM_SLOT_BXOR__ then return a~b
-        elseif slot==__VM_SLOT_SHL__ then return a<<b
-        elseif slot==__VM_SLOT_SHR__ then return a>>b end
+        if slot==__VM_SLOT_ADD__ then return a+b
+        elseif slot==__VM_SLOT_SUB__ then return a-b
+        elseif slot==__VM_SLOT_MUL__ then return a*b
+        elseif slot==__VM_SLOT_BAND__ then return _c_and(a,b)
+        elseif slot==__VM_SLOT_BOR__ then return _c_or(a,b)
+        elseif slot==__VM_SLOT_BXOR__ then return _c_xor(a,b)
+        elseif slot==__VM_SLOT_SHL__ then return _c_shl(a,b)
+        elseif slot==__VM_SLOT_SHR__ then return _c_shr(a,b) end
         error("unknown arithmetic slot")
     end
     local function _arith1(a,av,slot)
-        if slot==__VM_SLOT_UNM__ then return (--<<TARGET_USER_EXPRESSION>>
-            -a
-            --<<ENDTARGET_USER_EXPRESSION>>
-        )
-        elseif slot==__VM_SLOT_BNOT__ then return ~a end
+        if slot==__VM_SLOT_UNM__ then return -a
+        elseif slot==__VM_SLOT_BNOT__ then return _c_not(a) end
         error("unknown unary slot")
     end
     local function _arith2r(dst,lhs,rhs,av,slot)
@@ -298,10 +300,12 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local function _poly_route(route) return route[1] end
 
     local function _route_step(ip,op,a,b,c)
-        local x=((_PR[1] or 0)~(ip<<17)~(op<<9)~(a<<5)~b~c~_st)&-1
-        _PR[1]=x; _SS[1]=((_SS[1] or 0)~x~op)&-1
-        _XF[1]=((_XF[1] or 0)~x~pc)&-1; _MG[1]=((_MG[1] or 0)+1)&0x3FF
-        _S[611]=((_S[611] or 0)~x)&-1
+        local x=_PR[1] or 0
+        x=_c_xor(x,_c_shl(ip,17));x=_c_xor(x,_c_shl(op,9))
+        x=_c_xor(x,_c_shl(a,5));x=_c_xor(x,b);x=_c_xor(x,c);x=_c_xor(x,_st)
+        _PR[1]=x; _SS[1]=_c_xor(_c_xor(_SS[1] or 0,x),op)
+        _XF[1]=_c_xor(_c_xor(_XF[1] or 0,x),pc); _MG[1]=((_MG[1] or 0)+1)%1024
+        _S[611]=_c_xor(_S[611] or 0,x)
     end
 
     -- 상수 풀을 register 파일 상위(256+)에 미리 풀어 넣는다.
@@ -380,7 +384,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         elseif op==1  then rset(A,kval(consts[Bx+1],proto))
         elseif op==2  then
             local ei=_ixor(code[pc],_ksm(pc)); pc=pc+1
-            local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+            local ax=_c_or(_c_or(_c_shl(_ifield48(ei,_SH_A,256),18),_c_shl(_ifield48(ei,_SH_B,512),9)),_ifield48(ei,_SH_C,512))
             rset(A,kval(consts[ax+1],proto))
         elseif op==3  then rset(A,(B~=0)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end
@@ -398,7 +402,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         elseif op==16 then rset(A,rget(B)%rget(C))
         elseif op==17 then rset(A,rget(B)^rget(C))
         elseif op==18 then rset(A,rget(B)/rget(C))
-        elseif op==19 then rset(A,rget(B)//rget(C))
+        elseif op==19 then rset(A,math.floor(rget(B)/rget(C)))
         elseif op==20 then _arith2r(A,B,C,_av,__VM_SLOT_BAND__)
         elseif op==21 then _arith2r(A,B,C,_av,__VM_SLOT_BOR__)
         elseif op==22 then _arith2r(A,B,C,_av,__VM_SLOT_BXOR__)
@@ -420,12 +424,10 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if (not not rget(B))==(C~=0) then rset(A,rget(B)) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A); local ca
+            if B==0 then ca=_collect_values(A+1)
+            else ca=_collect_values(A+1,B-1) end
+            local ca_n=ca.n
             local vm=_VF[fn];local res
             if vm and _source_parents then
                 local parents={upvals.environment}
@@ -441,12 +443,10 @@ exec = function(proto, upvals, args, va_in, _source_parents)
 
         elseif op==37 then
             close_upvalues(0)
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A); local ca
+            if B==0 then ca=_collect_values(A+1)
+            else ca=_collect_values(A+1,B-1) end
+            local ca_n=ca.n
             --<<VM_TAIL_DISPATCH>>
             local vm=_VF[fn];local res
             if vm and _source_parents then
@@ -487,7 +487,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         elseif op==43 then
             if C==0 then
                 local ei=_ixor(code[pc],_ksm(pc)); pc=pc+1
-                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+                C=_c_or(_c_or(_c_shl(_ifield48(ei,_SH_A,256),18),_c_shl(_ifield48(ei,_SH_B,512),9)),_ifield48(ei,_SH_C,512))
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
@@ -508,15 +508,15 @@ exec = function(proto, upvals, args, va_in, _source_parents)
 
         elseif op==46 then error("unexpected EXTRAARG")
         elseif op==47 then rset(A,kval(consts[Bx+1],proto))
-        elseif op==48 then rset(A,_IT.script&0xFFFFFFFF)
-        elseif op==49 then rset(A,_IT.vmc&0xFFFFFFFF)
-        elseif op==50 then rset(A,_IT.layout&0xFFFFFFFF)
-        elseif op==51 then rset(A,_IT.seed&0xFFFFFFFF)
-        elseif op==52 then rset(A,proto.vm_id&0xFFFFFFFF)
-        elseif op==53 then rset(A,#proto.code&0xFFFFFFFF)
+        elseif op==48 then rset(A,_c_u32(_IT.script))
+        elseif op==49 then rset(A,_c_u32(_IT.vmc))
+        elseif op==50 then rset(A,_c_u32(_IT.layout))
+        elseif op==51 then rset(A,_c_u32(_IT.seed))
+        elseif op==52 then rset(A,_c_u32(proto.vm_id))
+        elseif op==53 then rset(A,_c_u32(#proto.code))
         elseif op==54 then rset(A,_integrity_xor((rget(B) or 0),(rget(C) or 0)))
-        elseif op==55 then rset(A,((rget(B) or 0)+(rget(C) or 0))&0xFFFFFFFF)
-        elseif op==56 then rset(A,((rget(B) or 0)*((rget(C) or 0)|1))&0xFFFFFFFF)
+        elseif op==55 then rset(A,_c_u32((rget(B) or 0)+(rget(C) or 0)))
+        elseif op==56 then rset(A,_c_u32((rget(B) or 0)*_c_or(rget(C) or 0,1)))
         elseif op==57 then rset(A,consts[Bx+1][2])
         elseif op==58 then pc=_poly_route(_brd[A+1])
         elseif op==59 then pc=Bx+1
@@ -529,5 +529,6 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     end
     return {r={},n=0}
 end
+--<<ENDTARGET_CLASSIC_EXEC_NATIVE>>
 --<<ENDEXEC>>
 _EX={exec}

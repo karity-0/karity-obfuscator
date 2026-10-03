@@ -3,8 +3,26 @@
 
 ----------------------------------------
 --<<TARGET_RUNTIME_API>>
+-- Private words are an exact-state representation only. They share neither a
+-- metatable nor an arithmetic dispatcher with user-visible Lua values.
+local _PRIVATE_WORD_MARKER=_legacy_private_marker or {}
+local function _is_private_word(value)
+    return _native_type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER
+end
+local function _is_private_state(value)
+    return _is_private_word(value)
+        or (_legacy_is_private and _legacy_is_private(value))
+end
+local function _private_number(value)
+    if value.hi>=2147483648 then
+        local lo=(-value.lo)%4294967296
+        local hi=(4294967295-value.hi+(lo==0 and 1 or 0))%4294967296
+        return -(hi*4294967296.0+lo)
+    end
+    return value.hi*4294967296.0+value.lo
+end
 local function _number_kind(value)
-    if I.isint(value) then return "integer" end
+    if _is_private_state(value) then return "integer" end
     return _native_type(value)=="number" and "float" or nil
 end
 local function _pack_values(...) return {n=_native_select("#",...),...} end
@@ -12,7 +30,7 @@ local function _unpack_values(values,first,last)
     return _native_unpack(values,first or 1,last or #values)
 end
 local function _target_hex64(value)
-    if I.isint(value) then
+    if _is_private_state(value) then
         return _native_string_format("%08x",value.hi).._native_string_format("%08x",value.lo)
     end
     return _native_string_format("%016x",value)
@@ -47,8 +65,10 @@ local function _ifield48(value,shift,width)
 end
 local function _integrity_xor(a,b)
     local word,mask
-    if not I.isint(a) and _native_type(a)=='table' then word,mask=a,b
-    elseif not I.isint(b) and _native_type(b)=='table' then word,mask=b,a
+    if not _is_private_state(a) and _native_type(a)=='table' then word,mask=a,b
+    elseif not _is_private_state(b) and _native_type(b)=='table' then word,mask=b,a
+    elseif _is_private_state(a) then return _ixor(a.lo,b)
+    elseif _is_private_state(b) then return _ixor(a,b.lo)
     else return _ixor(a,b) end
     local lo,hi=_ixor(word[1],mask),word[2]
     if hi>=2147483648 then
@@ -262,7 +282,7 @@ local _IT={seed=0,layout=0,vmc=1,script=0,line=0}
 local _ksd=0
 --<<TARGET_INSTRUCTION_STATE_KEY>>
 local function _ikey48(value)
-    if I.isint(value) then
+    if _is_private_state(value) then
         return value.lo+(value.hi%65536)*4294967296.0
     end
     return value%281474976710656.0
@@ -390,7 +410,10 @@ end
 --<<TARGET_INTEGRITY_MIX>>
 local _IU32=4294967296
 local function _iu32(value)
-    if I.isint(value) then return value.lo end
+    if (_legacy_is_private and _legacy_is_private(value))
+        or (type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER) then
+        return value.lo
+    end
     return value%_IU32
 end
 local function _imul32(a,b)
@@ -465,7 +488,10 @@ local function bind_environment(fn,values,parent)
     return fn
 end
 --<<TARGET_SOURCE_VALUE>>
-local function _source_value(v) return I.isint(v) and I.number(v) or v end
+local function _source_value(v)
+    if _is_private_word(v) then return _private_number(v) end
+    return _legacy_private_number and _legacy_private_number(v) or v
+end
 --<<ENDTARGET_SOURCE_VALUE>>
 
 local exec, _EX, _NX
@@ -488,6 +514,13 @@ local function _pmul64(hi,lo,khi,klo)
     return r2+r3*65536,r0+r1*65536
 end
 local _private_literals={}
+local function _pnew(hi,lo)
+    return {hi=hi,lo=lo,_private_word=_PRIVATE_WORD_MARKER}
+end
+local function _pisword(value)
+    return (_native_type(value)=='table' and value._private_word==_PRIVATE_WORD_MARKER)
+        or (_legacy_is_private and _legacy_is_private(value))
+end
 local function _pint(text)
     local value=_private_literals[text]
     if not value then
@@ -498,12 +531,12 @@ local function _pint(text)
             lo=lo+digit
             if lo>=4294967296 then lo=lo-4294967296;hi=(hi+1)%4294967296 end
         end
-        value=I.make(hi,lo);_private_literals[text]=value
+        value=_pnew(hi,lo);_private_literals[text]=value
     end
     return value
 end
 local function _pword(value)
-    if I.isint(value) then return value.hi,value.lo end
+    if _pisword(value) then return value.hi,value.lo end
     if value>=0 then return math.floor(value/4294967296)%4294967296,value%4294967296 end
     local magnitude=-value
     local lo=(-magnitude)%4294967296
@@ -528,17 +561,17 @@ end
 local function _padd(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
     local lo=alo+blo
-    return I.make((ahi+bhi+math.floor(lo/4294967296))%4294967296,lo%4294967296)
+    return _pnew((ahi+bhi+math.floor(lo/4294967296))%4294967296,lo%4294967296)
 end
 local function _pneg(a)
     local hi,lo=_pword(a);lo=(-lo)%4294967296
-    return I.make((4294967295-hi+(lo==0 and 1 or 0))%4294967296,lo)
+    return _pnew((4294967295-hi+(lo==0 and 1 or 0))%4294967296,lo)
 end
 local function _psub(a,b) return _padd(a,_pneg(b)) end
 local function _pmul(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
     local hi,lo=_pmul64(ahi,alo,bhi,blo)
-    return I.make(hi,lo)
+    return _pnew(hi,lo)
 end
 local function _pmul_low(a,b,modulus)
     local _,lo=_pmul64(0,a,0,b)
@@ -548,22 +581,22 @@ local function _pand_limb(a,b) return (a+b-_ixor(a,b))/2 end
 local function _por_limb(a,b) return (a+b+_ixor(a,b))/2 end
 local function _pband(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
-    return I.make(_pand_limb(ahi,bhi),_pand_limb(alo,blo))
+    return _pnew(_pand_limb(ahi,bhi),_pand_limb(alo,blo))
 end
 local function _pxor(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
-    return I.make(_ixor(ahi,bhi),_ixor(alo,blo))
+    return _pnew(_ixor(ahi,bhi),_ixor(alo,blo))
 end
 local function _pbor(a,b)
     local ahi,alo=_pword(a);local bhi,blo=_pword(b)
-    return I.make(_por_limb(ahi,bhi),_por_limb(alo,blo))
+    return _pnew(_por_limb(ahi,bhi),_por_limb(alo,blo))
 end
 local function _pnot(a)
     local hi,lo=_pword(a)
-    return I.make(4294967295-hi,4294967295-lo)
+    return _pnew(4294967295-hi,4294967295-lo)
 end
 local function _pshift_count(value)
-    if not I.isint(value) then return value end
+    if not _pisword(value) then return value end
     if value.hi<2147483648 then return value.hi==0 and value.lo or 64 end
     local lo=(-value.lo)%4294967296
     local hi=(4294967295-value.hi+(lo==0 and 1 or 0))%4294967296
@@ -584,18 +617,18 @@ local _pshl,_pshr
 _pshl=function(a,n)
     local hi,lo=_pword(a);n=_pshift_count(n)
     if n<0 then return _pshr(a,-n) end
-    if n>=64 then return I.make(0,0) end
-    if n==0 then return I.make(hi,lo) end
-    if n>=32 then return I.make((lo%2^(64-n))*2^(n-32),0) end
-    return I.make((hi%2^(32-n))*2^n+math.floor(lo/2^(32-n)),(lo%2^(32-n))*2^n)
+    if n>=64 then return _pnew(0,0) end
+    if n==0 then return _pnew(hi,lo) end
+    if n>=32 then return _pnew((lo%2^(64-n))*2^(n-32),0) end
+    return _pnew((hi%2^(32-n))*2^n+math.floor(lo/2^(32-n)),(lo%2^(32-n))*2^n)
 end
 _pshr=function(a,n)
     local hi,lo=_pword(a);n=_pshift_count(n)
     if n<0 then return _pshl(a,-n) end
-    if n>=64 then return I.make(0,0) end
-    if n==0 then return I.make(hi,lo) end
-    if n>=32 then return I.make(0,math.floor(hi/2^(n-32))) end
-    return I.make(math.floor(hi/2^n),math.floor(lo/2^n)+(hi%2^n)*2^(32-n))
+    if n>=64 then return _pnew(0,0) end
+    if n==0 then return _pnew(hi,lo) end
+    if n>=32 then return _pnew(0,math.floor(hi/2^(n-32))) end
+    return _pnew(math.floor(hi/2^n),math.floor(lo/2^n)+(hi%2^n)*2^(32-n))
 end
 local function _pmix_words(hi,lo)
     local function shift_xor(n)
@@ -610,9 +643,18 @@ local function _pmix_words(hi,lo)
 end
 local function _pmix(x)
     local hi,lo=_pmix_words(_pword(x))
-    return I.make(hi,lo)
+    return _pnew(hi,lo)
 end
 --<<ENDTARGET_PRIVATE_MIX>>
+
+-- Karity continuation frames carry exact private state, but PC/top/handler
+-- fields remain proved small native values once unmasked.  Keep the crossing
+-- explicit instead of relying on the generic Lua 5.3 expression translator.
+local function _frame_encode(value,mask) return _pxor(value,mask) end
+local function _frame_decode(value,mask) return _private_number(_pxor(value,mask)) end
+local function _frame_state(value,mask)
+    return _ixor(value%256,_plow(mask,256))
+end
 
 local _AR=__VM_ARITH_BUNDLE__
 local _GV=__VM_VALUE_GRAPHS__
@@ -643,7 +685,11 @@ local _AC=0
 local _AN={}
 local _AU32=4294967296
 local function _aword(value)
-    if I.isint(value) then return {value.hi,value.lo} end
+    -- This packet helper is also extracted for standalone target tests, so
+    -- keep its pair check local instead of capturing the loader sentinel.
+    if _native_type(value)=='table' and value._private_word~=nil then
+        return {value.hi,value.lo}
+    end
     if _native_type(value)=='table' then return value end
     if value<0 then
         local magnitude=-value
@@ -754,15 +800,44 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _gsd   = proto["graph_sites"]
     local _brd   = proto["block_routes"]
     local _cd    = code   -- rename되지 않는 code 별칭 (fused 핸들러가 다음 슬롯을 읽을 때 사용)
-    local pc     = _fr and (_fr[__VM_FR_PC__]~_fm) or 1
-    local top    = _fr and (_fr[__VM_FR_TOP__]~_fm) or -1
-    local _st    = _fr and (_fr[__VM_FR_STATE__]~(_fm&0xFF)) or 0
+    local pc     = _fr and _frame_decode(_fr[__VM_FR_PC__],_fm) or 1
+    local top    = _fr and _frame_decode(_fr[__VM_FR_TOP__],_fm) or -1
+    local _st    = _fr and _frame_state(_fr[__VM_FR_STATE__],_fm) or 0
     local _va    = _fr and _fr[__VM_FR_VARARG__] or va_in or {}
     local _split_tmp = _fr and _fr[__VM_FR_SPLIT__]
     local _split_share = _fr and _fr[__VM_FR_SPLIT_SHARE__]
     local _split_epoch = _fr and _fr[__VM_FR_SPLIT_EPOCH__]
     local _split_kind = _fr and _fr[__VM_FR_SPLIT_TYPE__]
     local _S     = _fr and _fr[__VM_FR_SCRATCH__] or {[611]=_zz or 0}
+    local _MJ    = {}
+    --<<TARGET_KARITY_EXEC_STATE>>
+    -- Store helpers as table fields so protected executor branches do not
+    -- consume scarce Lua 5.1 local slots.
+    _MJ._c_u32=function(value) return _iu32(value) end
+    _MJ._c_xor=function(a,b) return _ixor(_MJ._c_u32(a),_MJ._c_u32(b)) end
+    _MJ._c_and=function(a,b)
+        a,b=_MJ._c_u32(a),_MJ._c_u32(b)
+        return (a+b-_ixor(a,b))/2
+    end
+    _MJ._c_or=function(a,b)
+        a,b=_MJ._c_u32(a),_MJ._c_u32(b)
+        return (a+b+_ixor(a,b))/2
+    end
+    _MJ._c_not=function(value) return 4294967295-_MJ._c_u32(value) end
+    _MJ._c_shl=function(value,count)
+        count=_MJ._c_u32(count)
+        if count>=32 then return 0 end
+        return (_MJ._c_u32(value)%2^(32-count))*2^count
+    end
+    _MJ._c_shr=function(value,count)
+        count=_MJ._c_u32(count)
+        if count>=32 then return 0 end
+        return math.floor(_MJ._c_u32(value)/2^count)
+    end
+    --<<ENDTARGET_KARITY_EXEC_STATE>>
+    -- Mutation CFF and decoy handlers share this executor-local scratch
+    -- table.  Keeping their temporary values out of branch-local declarations
+    -- is necessary on Lua 5.1, whose compiler caps a function at 200 locals.
     local _AA    = _fr and _fr[__VM_FR_ACTIVE__] or {}
     local _FC    = _fr and _fr[__VM_FR_FLOW_CACHE__] or {}
     local _SC    = _fr and _fr[__VM_FR_SEM_CACHE__] or {}
@@ -776,8 +851,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
-                   (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
+                   (--<<TARGET_PRIVATE_EXPRESSION>>
+                    (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
                     ((_PY~=0 and _PN) or 0))|1)
+                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                   )
     local _MG    = _fr and _fr[__VM_FR_MAP_STATE__] or
                    {(--<<TARGET_PRIVATE_LOW_EXPRESSION:1024>>
                      ((_IT.seed~proto.vm_id~#code~
@@ -1040,6 +1118,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     _rmap_offsets()
     --<<ENDTARGET_REGISTER_MAP>>
 
+    -- The register bank uses native, bounded positions and vault IDs.  Only
+    -- its affine payloads and epochs are private words; those operations are
+    -- lowered explicitly before this region is protected from Lua 5.1's
+    -- general syntax translator.
+    --<<TARGET_51_KARITY_REGISTER_BANK>>
     local function _rstore(slot,encoded,epoch,kind)
         _PD[_rpos(5,slot)]=nil
         local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
@@ -1054,30 +1137,38 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         _RS[p2]=share
         _RE[p3]=epoch
         if kind~=nil then _RT[p4]=kind end
-        _RL[slot]=true
+        _RL[_rslot(slot)]=true
         _ss_value(slot,encoded,epoch,kind)
     end
 
     local function _rdecode(encoded,kind)
         if kind==1 then return encoded end
-        if kind==2 then return encoded~=0 end
+        if kind==2 then return not _peq(encoded,0) end
         if kind==3 then return nil end
-        return _RO[encoded]
+        local index_hi,index_lo=_pword(encoded)
+        if index_hi~=0 or index_lo==0 then error('register vault index mismatch') end
+        return _RO[index_lo]
     end
 
     local function _rvalue(v,epoch)
         if math.type(v)=="integer" then return v,1 end
         if type(v)=="boolean" then return v and 1 or 0,2 end
-        if v==nil then return _rmix(epoch~_RZ~0x4E494C),3 end
+        if v==nil then
+            return _rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                          epoch~_RZ~0x4E494C
+                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                         )),3
+        end
         local id
         if not (type(v)=="number" and v~=v) then id=_RI[_value_key(v)] end
         if id==nil then
-            _RX[2]=(_RX[2] or 0)+1; id=_RX[2]; _RO[id]=v
+            _RX[2]=(_RX[2] or 0)+1; id=_RX[2]
+            if id>4294967295 then error('register vault exhausted') end
+            _RO[id]=v
             if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=id end
         end
         return id,4
     end
-
     --<<RGET>>
     local function rget(i)
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
@@ -1181,11 +1272,18 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rmap_tick(salt)
         _MG[2]=(_MG[2] or 0)+1
-        if _MG[2]<=2 or (_MG[2]&1023)==0 then
-            _rmap_rotate(salt~(_SY and (_SS[1] or 0) or 0))
+        if _MG[2]<=2 or _MG[2]%1024==0 then
+            _rmap_rotate((--<<TARGET_PRIVATE_EXPRESSION>>
+                          salt~(_SY and (_SS[1] or 0) or 0)
+                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                         ))
         end
     end
+    --<<ENDTARGET_51_KARITY_REGISTER_BANK>>
 
+    -- The split-temp cell uses the same register bank representation but is
+    -- separated from the generic tick helper so its native boundary stays exact.
+    --<<TARGET_51_KARITY_REGISTERS>>
     local function _split_set(v)
         local epoch=_rnext(-7,0x53504C49)
         local payload,kind=_rvalue(v,epoch)
@@ -1214,6 +1312,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
                         ),_split_kind)
     end
+    --<<ENDTARGET_51_KARITY_REGISTERS>>
 
     if not _fr then
         args = args or {}
@@ -1231,8 +1330,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _av_read()
         for slot in pairs(_AA) do
             local v=rget(slot)
-            _S[611]=((_S[611] or 0)~v~slot)
-            _XF[1]=((_XF[1] or 0)~v~slot)
+            _S[611]=_pxor(_pxor(_S[611] or 0,v),slot)
+            _XF[1]=_pxor(_pxor(_XF[1] or 0,v),slot)
             _AA[slot]=nil
         end
     end
@@ -1251,6 +1350,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
     end
 
+    -- Closed upvalues and virtual tables store native Lua 5.1 user keys.
+    -- Private physical keys are retained as stable objects by the reverse map.
+    --<<TARGET_51_NATIVE_51_KARITY_VALUE_STORAGE>>
     local function get_box(slot)
         if not boxes[slot] then
             boxes[slot]={
@@ -1335,9 +1437,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                       )
         local kind=q[__VM_UV_KIND__]
         if kind==1 then return payload end
-        if kind==2 then return payload~=0 end
+        if kind==2 then return not _peq(payload,0) end
         if kind==3 then return nil end
-        return _UO[payload]
+        -- The payload is an exact private word, while the vault is a dense
+        -- native array. Check the whole word before crossing that boundary.
+        local index_hi,index_lo=_pword(payload)
+        if index_hi~=0 or index_lo<1 or index_lo>#_UO then
+            error("invalid virtualized upvalue index")
+        end
+        return _UO[index_lo]
     end
 
     local function set_upvalue(box,v)
@@ -1457,6 +1565,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
         end
     end
+    --<<ENDTARGET_51_NATIVE_51_KARITY_VALUE_STORAGE>>
 
     local function make_closure(sub)
         local new_uv={}
@@ -1490,18 +1599,21 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _frame(a,c,parent)
         if proto.max_stack_size>0 then
-            local slot=((pc~a~c~(_S[611] or 0))&0x7FFFFFFF)%proto.max_stack_size
-            _rrotate(slot,pc~a~c)
+            local slot=_pmod(_pband(
+                _pxor(_pxor(_pxor(pc,a),c),_S[611] or 0),2147483647),
+                proto.max_stack_size)
+            _rrotate(slot,_pxor(_pxor(pc,a),c))
         end
-        _rmap_tick(pc~a~c~(_S[611] or 0))
-        local m=(_S[611] or 0)~(_XF[1] or 0)~((_st<<8)|(_st&0xFF))
+        _rmap_tick(_pxor(_pxor(_pxor(pc,a),c),_S[611] or 0))
+        local m=_pxor(_S[611] or 0,_XF[1] or 0)
+        m=_pxor(m,_pbor(_pshl(_st,8),_pband(_st,255)))
         for slot in pairs(_AA) do
-            local p1=_rpos(1,slot); m=m~regs[p1]~slot
+            local p1=_rpos(1,slot);m=_pxor(_pxor(m,regs[p1]),slot)
         end
         return {[__VM_FR_REGS__]=regs,[__VM_FR_BOXES__]=boxes,
-                [__VM_FR_MASK__]=m,[__VM_FR_PC__]=pc~m,
-                [__VM_FR_TOP__]=top~m,
-                [__VM_FR_STATE__]=_st~(m&0xFF),[__VM_FR_VARARG__]=_va,
+                [__VM_FR_MASK__]=m,[__VM_FR_PC__]=_frame_encode(pc,m),
+                [__VM_FR_TOP__]=_frame_encode(top,m),
+                [__VM_FR_STATE__]=_frame_state(_st,m),[__VM_FR_VARARG__]=_va,
                 [__VM_FR_SPLIT__]=_split_tmp,
                 [__VM_FR_SPLIT_SHARE__]=_split_share,
                 [__VM_FR_SPLIT_EPOCH__]=_split_epoch,
@@ -1525,8 +1637,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 [__VM_FR_SEM_STATE__]=_SS,
                 [__VM_FR_LEDGER__]=_XF,
                 [__VM_FR_PROTO__]=proto,
-                [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=a~m,
-                [__VM_FR_C__]=c~m,[__VM_FR_PARENT__]=parent}
+                [__VM_FR_UPVALS__]=upvals,[__VM_FR_A__]=_frame_encode(a,m),
+                [__VM_FR_C__]=_frame_encode(c,m),[__VM_FR_PARENT__]=parent}
     end
 
     local function _leave(r,n,av,tag)
@@ -1537,50 +1649,40 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return _CG[__VM_ROUTE_LEAVE__](_NX,_carry(q,av,tag))
     end
 
+    -- Graph sites may contain a full-width PC/tag word. Cache keys use the
+    -- exact hi:lo packet key; operation-bank indices remain native and small.
+    --<<TARGET_51_KARITY_GRAPH_STATE>>
     local function _int2(a, b)
-        local _t0=type(a)
-        local _t1=type(b)
-        local _mt=math.type
-        local _m0=(_t0=="number" and 1) or 0
-        local _m1=(_t1=="number" and 1) or 0
-        local _m2=(_mt and 1) or 0
-        local _m3=(_mt and _mt(a)=="integer" and 1) or 0
-        local _m4=(_mt and _mt(b)=="integer" and 1) or 0
-        local _r0=(_m0&_m2)*(_m1&_m4)
-        local _r1=(_m3~1)~1
-        return 1+((_r0&_r1)&1)
+        return math.type(a)=="integer" and math.type(b)=="integer" and 2 or 1
     end
 
     local function _int1(a)
-        local _mt=math.type
-        local _m0=(type(a)=="number" and 1) or 0
-        local _m1=(_mt and 1) or 0
-        local _m2=(_mt and _mt(a)=="integer" and 1) or 0
-        local _r=(_m0&_m1)*((_m2~1)~1)
-        return 1+(_r&1)
+        return math.type(a)=="integer" and 2 or 1
     end
 
     local function _cross(delta)
-        _XF[1]=((_XF[1] or 0)~delta)&-1
+        _XF[1]=_pxor(_XF[1] or 0,delta)
         local k=_kk
         if not k then return end
         local old=k[__VM_FR_MASK__]
-        local new=(old~delta)&-1
-        k[__VM_FR_PC__]=(k[__VM_FR_PC__]~old)~new
-        k[__VM_FR_TOP__]=(k[__VM_FR_TOP__]~old)~new
-        k[__VM_FR_STATE__]=(k[__VM_FR_STATE__]~(old&0xFF))~(new&0xFF)
-        k[__VM_FR_A__]=(k[__VM_FR_A__]~old)~new
-        k[__VM_FR_C__]=(k[__VM_FR_C__]~old)~new
+        local new=_pxor(old,delta)
+        k[__VM_FR_PC__]=_pxor(_pxor(k[__VM_FR_PC__],old),new)
+        k[__VM_FR_TOP__]=_pxor(_pxor(k[__VM_FR_TOP__],old),new)
+        k[__VM_FR_STATE__]=_ixor(
+            _ixor(k[__VM_FR_STATE__],_plow(old,256)),_plow(new,256))
+        k[__VM_FR_A__]=_pxor(_pxor(k[__VM_FR_A__],old),new)
+        k[__VM_FR_C__]=_pxor(_pxor(k[__VM_FR_C__],old),new)
         k[__VM_FR_MASK__]=new
     end
 
     _carry=function(v,av,tag)
         if not av then
-            _S[1731]=((_S[1731] or 0)~tag~(pc&0xFF))
+            _S[1731]=_pxor(_pxor(_S[1731] or 0,tag),pc%256)
             return v
         end
-        _cross((tag~pc~(_S[611] or 0))&-1)
-        local pick=_poly_pick(2,tag~pc~0x56414C55,(((tag*5+3)&1)+1))
+        _cross(_pxor(_pxor(tag,pc),_S[611] or 0))
+        local pick=_poly_pick(2,_pxor(_pxor(tag,pc),0x56414C55),
+                              _plow(tag*5+3,2)+1)
         return _GV[pick](v,_S,av,rset,_AA,boxes,tag)
     end
 
@@ -1588,11 +1690,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _flow(q,av,tag)
         q=_carry(q,av,tag)
         if av then
-            local site=((pc-1)<<8)~tag
-            if not _FC[site] then
-                _FC[site]=true
-                local base=((tag~pc~proto.vm_id~(_S[611] or 0))&1)+1
-                local pick=_poly_pick(2,site~tag~0x464C4F57,base)
+            local site=_pxor(_pshl(pc-1,8),tag)
+            local site_key=_aword_key(site)
+            if not _FC[site_key] then
+                _FC[site_key]=true
+                local base=_plow(_pxor(_pxor(_pxor(tag,pc),proto.vm_id),
+                                        _S[611] or 0),2)+1
+                local pick=_poly_pick(2,_pxor(_pxor(site,tag),0x464C4F57),base)
                 q=_FG[pick](q,_S)
             end
         end
@@ -1600,40 +1704,47 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if not desc or desc[1]==0 then return q end
         local site=desc[2]
-        local hit=_GC[site] or 0
-        _GC[site]=hit+1
-        local live=((_S[desc[4]] or 0)~(_S[611] or 0)~(_XF[1] or 0)~
-                    desc[2]~desc[3]~_st~hit~tag)&-1
+        local site_key=_aword_key(site)
+        local hit=_GC[site_key] or 0
+        _GC[site_key]=hit+1
+        local live=_pxor(_pxor(_pxor(_pxor(_pxor(_pxor(_pxor(
+                   _S[desc[4]] or 0,_S[611] or 0),_XF[1] or 0),
+                   desc[2]),desc[3]),_st),hit),tag)
         _S[desc[4]]=live
         local old=q[__VM_CF_KEY__]
-        local key=(live~desc[2]~desc[3]~tag)&-1
-        for _,f in ipairs(q[__VM_CF_FIELDS__]) do q[f]=(q[f]~old)~key end
+        local key=_pxor(_pxor(_pxor(live,desc[2]),desc[3]),tag)
+        for _,f in ipairs(q[__VM_CF_FIELDS__]) do
+            q[f]=_pxor(_pxor(q[f],old),key)
+        end
         q[__VM_CF_KEY__]=nil
         q[__VM_CF_SEAL__]=desc
-        local mixed=(live~hit~tag)&-1
-        if (desc[5]&1)~=0 then _S[611]=((_S[611] or 0)~mixed)&-1 end
-        if (desc[5]&2)~=0 then _XF[1]=((_XF[1] or 0)~mixed)&-1 end
-        if proto.max_stack_size>0 then
-            _rrotate((site~tag~hit)%proto.max_stack_size,mixed)
+        local mixed=_pxor(_pxor(live,hit),tag)
+        if desc[5]%2~=0 then _S[611]=_pxor(_S[611] or 0,mixed) end
+        if math.floor(desc[5]/2)%2~=0 then
+            _XF[1]=_pxor(_XF[1] or 0,mixed)
         end
-        _rmap_tick(mixed~site~tag)
+        if proto.max_stack_size>0 then
+            _rrotate(_pmod(_pxor(_pxor(site,tag),hit),proto.max_stack_size),mixed)
+        end
+        _rmap_tick(_pxor(_pxor(mixed,site),tag))
         return q
     end
     --<<ENDFLOW>>
 
     local function _cf(q,field,tag)
         local desc=q[__VM_CF_SEAL__]
-        if not desc then return _source_value(q[field]~q[__VM_CF_KEY__]) end
-        local key=((_S[desc[4]] or 0)~desc[2]~desc[3]~tag)&-1
-        return _source_value(q[field]~key)
+        if not desc then return _source_value(_pxor(q[field],q[__VM_CF_KEY__])) end
+        local key=_pxor(_pxor(_pxor(_S[desc[4]] or 0,desc[2]),desc[3]),tag)
+        return _source_value(_pxor(q[field],key))
     end
 
     local function _branch(v,expected,av,tag)
         if not _BY then return v==expected end
-        local k=(_S[611] or 0)~(_SS[1] or 0)~(_XF[2] or 0)~
-                (pc<<17)~tag~__VM_BRANCH_SEED__
+        local k=_pxor(_pxor(_pxor(_pxor(_pxor(
+                _S[611] or 0,_SS[1] or 0),_XF[2] or 0),
+                _pshl(pc,17)),tag),__VM_BRANCH_SEED__)
         local bit=(v==expected) and 1 or 0
-        local q={[__VM_CF_KEY__]=k,[__VM_CF_TAKE__]=bit~k,
+        local q={[__VM_CF_KEY__]=k,[__VM_CF_TAKE__]=_pxor(bit,k),
                  [__VM_CF_FIELDS__]={__VM_CF_TAKE__}}
         q=_flow(q,av,tag)
         return _cf(q,__VM_CF_TAKE__,tag)~=0
@@ -1653,14 +1764,16 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 return nil
             end
         end
-        local site=((pc-1)<<32)~tag
-        local route=((_DG[2][tag]~_DG[3][tag]~pc~(_S[611] or 0))&1)+1
+        local site=_pxor(_pshl(pc-1,32),tag)
+        local route=_plow(_pxor(_pxor(_pxor(_DG[2][tag],_DG[3][tag]),pc),
+                                 _S[611] or 0),2)+1
         local semantic=_DG[1][route]
-        local bank=semantic[1][semantic[2][tag]~semantic[3][tag]]
-        local hit=_SC[site] or 0
-        _SC[site]=hit+1
+        local bank=semantic[1][_ixor(semantic[2][tag],semantic[3][tag])]
+        local site_key=_aword_key(site)
+        local hit=_SC[site_key] or 0
+        _SC[site_key]=hit+1
         local base=hit==0 and 1 or 2
-        local pick=_poly_pick(2,site~tag~hit~0x53454D41,base)
+        local pick=_poly_pick(2,_pxor(_pxor(_pxor(site,tag),hit),0x53454D41),base)
         return bank[pick](x,y,z,_S)
     end
     --<<ENDSEM>>
@@ -1672,9 +1785,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _graph_for(desc)
         if not desc or desc[1]==0 then return nil,nil end
         local site=desc[2]
-        local hit=_GC[site] or 0
-        _GC[site]=hit+1
-        if hit==0 or (((hit~desc[3]~(_S[611] or 0)~_st)&15)==0) then
+        local site_key=_aword_key(site)
+        local hit=_GC[site_key] or 0
+        _GC[site_key]=hit+1
+        if hit==0 or _plow(_pxor(_pxor(_pxor(hit,desc[3]),
+                                _S[611] or 0),_st),16)==0 then
             return _OG[desc[1]],hit
         end
         return false,hit
@@ -1683,15 +1798,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _couple_direct(v,desc,hit)
         local rv=0
         if math.type(v)=="integer" then rv=v end
-        local mixed=(desc[2]~desc[3]~rv~_st~(hit or 0))&-1
+        local mixed=_pxor(_pxor(_pxor(_pxor(desc[2],desc[3]),rv),_st),hit or 0)
         local key=desc[4]
-        _S[key]=((_S[key] or 0)~mixed)&-1
+        _S[key]=_pxor(_S[key] or 0,mixed)
         local policy=desc[5]
-        if (policy&1)~=0 then
-            _S[611]=((_S[611] or 0)~mixed~desc[2])&-1
+        if policy%2~=0 then
+            _S[611]=_pxor(_pxor(_S[611] or 0,mixed),desc[2])
         end
-        if (policy&2)~=0 then
-            _XF[1]=((_XF[1] or 0)~mixed~desc[3])&-1
+        if math.floor(policy/2)%2~=0 then
+            _XF[1]=_pxor(_pxor(_XF[1] or 0,mixed),desc[3])
         end
         return v
     end
@@ -1704,19 +1819,21 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith2(a,b,av,slot,desc)
-        local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
-        local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
+        local base=_plow(_pxor(_pxor(_pxor(pc,slot),proto.vm_id),
+                                _S[611] or 0),2)+1
+        local route=_plow(_pxor(_pxor(_pxor(_AR[2][slot],_AR[3][slot]),pc),
+                                 _S[611] or 0),2)+1
         local arithmetic=_AR[1][route]
-        local semantic_index=arithmetic[3][slot]~arithmetic[4][slot]
+        local semantic_index=_ixor(arithmetic[3][slot],arithmetic[4][slot])
         local graph,hit=_graph_for(desc)
         if graph then
-            local pick=_poly_pick(4,slot~pc~0x41524932,base)
+            local pick=_poly_pick(4,_pxor(_pxor(slot,pc),0x41524932),base)
             local bank=arithmetic[_int2(a,b)][semantic_index]
             local out=graph(bank,pick,a,b,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
-        local pick=_poly_pick(2,slot~pc~0x41524932,base)
+        local pick=_poly_pick(2,_pxor(_pxor(slot,pc),0x41524932),base)
         local out=arithmetic[1][semantic_index][pick](a,b)
         if graph==false then
             out=_couple_direct(out,desc,hit)
@@ -1726,19 +1843,21 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith1(a,av,slot,desc)
-        local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
-        local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
+        local base=_plow(_pxor(_pxor(_pxor(pc,slot),proto.vm_id),
+                                _S[611] or 0),2)+1
+        local route=_plow(_pxor(_pxor(_pxor(_AR[2][slot],_AR[3][slot]),pc),
+                                 _S[611] or 0),2)+1
         local arithmetic=_AR[1][route]
-        local semantic_index=arithmetic[3][slot]~arithmetic[4][slot]
+        local semantic_index=_ixor(arithmetic[3][slot],arithmetic[4][slot])
         local graph,hit=_graph_for(desc)
         if graph then
-            local pick=_poly_pick(4,slot~pc~0x41524931,base)
+            local pick=_poly_pick(4,_pxor(_pxor(slot,pc),0x41524931),base)
             local bank=arithmetic[_int1(a)][semantic_index]
             local out=graph(bank,pick,a,a,_S,av,rset,_AA,boxes,_XF,_st,
                             desc[2],desc[3],desc[4],desc[5])
             return _seal_result(out,desc,hit)
         end
-        local pick=_poly_pick(2,slot~pc~0x41524931,base)
+        local pick=_poly_pick(2,_pxor(_pxor(slot,pc),0x41524931),base)
         local out=arithmetic[1][semantic_index][pick](a)
         if graph==false then
             out=_couple_direct(out,desc,hit)
@@ -1746,7 +1865,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
         return out
     end
+    --<<ENDTARGET_51_KARITY_GRAPH_STATE>>
 
+    -- Pending arithmetic keeps its fragments as exact private words while
+    -- snapshots and register positions remain native Lua 5.1 table entries.
+    --<<TARGET_51_KARITY_PENDING>>
     local function _elinear2(dst,lhs,rhs,sign)
         if _PD[_rpos(5,lhs)]~=nil then _pending_finish(lhs) end
         if _PD[_rpos(5,rhs)]~=nil then _pending_finish(rhs) end
@@ -1756,7 +1879,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if le==nil or re==nil or _RT[l4]~=1 or _RT[r4]~=1 then return false end
         local _,lb,li=_rparams(lhs,le)
         local _,rb,ri=_rparams(rhs,re)
-        local epoch=_rnext(dst,sign~lhs~(rhs<<8))
+        local epoch=_rnext(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                sign~lhs~(rhs<<8)
+                                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                               ))
         local oa,ob=_rparams(dst,epoch)
         local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
                        oa*li*(regs[l1]+_RS[l2]-lb)+
@@ -1773,7 +1899,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local se=_RE[p3]
         if se==nil or _RT[p4]~=1 then return false end
         local _,sb,si=_rparams(src,se)
-        local epoch=_rnext(dst,sign~src)
+        local epoch=_rnext(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                sign~src
+                                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                               ))
         local oa,ob=_rparams(dst,epoch)
         _rstore(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
                      sign*oa*si*(regs[p1]+_RS[p2]-sb)+ob
@@ -1837,18 +1966,34 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if not desc or desc[1]==0 then
             local left=_pending_snapshot(lhs)
-            local right=_pending_snapshot(rhs)
-            if left and right and _poly_lazy(token~dst~lhs~(rhs<<8)) then
-                local epoch=_rnext(dst,token~lhs~(rhs<<8))
+            local right
+            if lhs==rhs then right=left else right=_pending_snapshot(rhs) end
+            if left and right and _poly_lazy((--<<TARGET_PRIVATE_EXPRESSION>>
+                                              token~dst~lhs~(rhs<<8)
+                                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                             )) then
+                local epoch=_rnext(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                        token~lhs~(rhs<<8)
+                                        --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                       ))
                 local scale,bias=_rparams(dst,epoch)
-                local l1,l2=_pending_fragment(left,scale,epoch~token)
-                local r1,r2=_pending_fragment(right,scale,epoch~token~1)
+                local l1,l2=_pending_fragment(left,scale,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                                         epoch~token
+                                                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                                        ))
+                local r1,r2=_pending_fragment(right,scale,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                                          epoch~token~1
+                                                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                                         ))
                 _PD[_rpos(5,dst)]={token,l1,l2,r1,r2,epoch,bias}
-                _RL[dst]=true
+                _RL[_rslot(dst)]=true
                 return
             end
         end
-        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+        local left=rget(lhs)
+        local right
+        if lhs==rhs then right=left else right=rget(rhs) end
+        rset(dst,_arith2(left,right,av,slot,desc))
     end
 
     local function _defer1r(dst,src,av,slot,token)
@@ -1856,24 +2001,40 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if not desc or desc[1]==0 then
             local value=_pending_snapshot(src)
-            if value and _poly_lazy(token~dst~src) then
-                local epoch=_rnext(dst,token~src)
+            if value and _poly_lazy((--<<TARGET_PRIVATE_EXPRESSION>>
+                                     token~dst~src
+                                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                    )) then
+                local epoch=_rnext(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                        token~src
+                                        --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                       ))
                 local scale,bias=_rparams(dst,epoch)
-                local p1,p2=_pending_fragment(value,scale,epoch~token)
+                local p1,p2=_pending_fragment(value,scale,(--<<TARGET_PRIVATE_EXPRESSION>>
+                                                          epoch~token
+                                                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                                         ))
                 _PD[_rpos(5,dst)]={token,p1,p2,nil,nil,epoch,bias}
-                _RL[dst]=true
+                _RL[_rslot(dst)]=true
                 return
             end
         end
         rset(dst,_arith1(rget(src),av,slot,desc))
     end
+    --<<ENDTARGET_51_KARITY_PENDING>>
 
+    -- Call/return vectors and decoded PC/slot fields are native values.  A
+    -- control packet's seal and loop site are exact private words instead.
+    --<<TARGET_51_KARITY_CONTROL_HELPERS>>
     local function _arith2r(dst,lhs,rhs,av,slot,linear)
         _gq=(_gq or 0)+1
         local desc=_gsl and _gsl[_gq]
         if linear and (not desc or desc[1]==0) and
            _elinear2(dst,lhs,rhs,linear) then return end
-        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+        local left=rget(lhs)
+        local right
+        if lhs==rhs then right=left else right=rget(rhs) end
+        rset(dst,_arith2(left,right,av,slot,desc))
     end
 
     local function _arith1r(dst,src,av,slot,linear)
@@ -1895,8 +2056,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     if _rr then
-        local _ra=_fr[__VM_FR_A__]~_fm
-        local _rc=_fr[__VM_FR_C__]~_fm
+        local _ra=_frame_decode(_fr[__VM_FR_A__],_fm)
+        local _rc=_frame_decode(_fr[__VM_FR_C__],_fm)
         if _rc==0 then
             for i=1,_rr[__VM_RES_COUNT__] do
                 rset(_ra+i-1,_rr[__VM_RES_VALUES__][i])
@@ -1937,9 +2098,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _jump(sbx,av,tag,...)
-        local key=(_S[611] or 0)~pc~sbx
+        local key=_pxor(_pxor(_S[611] or 0,pc),sbx)
         local packet={[__VM_CF_KEY__]=key,
-                      [__VM_CF_TARGET__]=(pc+sbx)~key,
+                      [__VM_CF_TARGET__]=_pxor(pc+sbx,key),
                       [__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
         packet=_flow(packet,av,tag)
         return _cf(packet,__VM_CF_TARGET__,tag)
@@ -1956,17 +2117,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _forloop(a,sbx,av,tag,...)
         local step=rget(a+2)
         local limit=rget(a+1)
-        local key=(_S[611] or 0)~pc~a
+        local key=_pxor(_pxor(_S[611] or 0,pc),a)
         local packet={[__VM_CF_KEY__]=key,
-                      [__VM_CF_TARGET__]=(pc+sbx)~key,
+                      [__VM_CF_TARGET__]=_pxor(pc+sbx,key),
                       [__VM_CF_FIELDS__]={__VM_CF_TARGET__}}
         packet[__VM_CF_VALUE__]=rget(a)
         packet[__VM_CF_STEP__]=step
         packet[__VM_CF_LIMIT__]=limit
         packet=_flow(packet,av,tag)
-        local site=((pc-1)<<8)~__VM_LOOP_FORLOOP__
-        if not _LC[site] then
-            _LC[site]=true
+        local site_key=_aword_key(_pxor(_pshl(pc-1,8),__VM_LOOP_FORLOOP__))
+        if not _LC[site_key] then
+            _LC[site_key]=true
             packet=_LG[__VM_LOOP_FORLOOP__](packet,_S)
         else
             packet[__VM_CF_VALUE__]=packet[__VM_CF_VALUE__]+packet[__VM_CF_STEP__]
@@ -1978,7 +2139,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
         _loop_commit(packet,a,tag)
     end
+    --<<ENDTARGET_51_KARITY_CONTROL_HELPERS>>
 
+    --<<TARGET_51_KARITY_HANDLER_CHAIN>>
     --[[VM_DISPATCH_ENTRY]] while true do
         --<<FETCH>>
         _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); local ins=_ixor(_ixor(code[pc],_ksm(pc)),_dk); local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
@@ -1988,7 +2151,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,1))
         elseif op==2  then
             local ei=_ixor(_ixor(_ixor(code[pc],_ksm(pc)),_dk),_dk); pc=pc+1
-            local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+            local ax=_ifield48(ei,_SH_A,256)*262144+_ifield48(ei,_SH_B,512)*512+_ifield48(ei,_SH_C,512)
             rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[ax+1],proto),nil,nil),_av,2))
         elseif op==3  then rset(A,_carry(_sem(__VM_DATA_VALUE__,(B~=0),nil,nil),_av,3)); if C~=0 then pc=pc+1 end
         elseif op==4  then for i=A,A+B do rset(i,nil) end; _touch(_av,4)
@@ -2072,16 +2235,16 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==39 then _forloop(A,sBx,_av,39)
 
         elseif op==40 then
-            local k=(_S[611] or 0)~pc~A
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_A__]=A~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
+            local k=_pxor(_pxor(_S[611] or 0,pc),A)
+            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=_pxor(pc+sBx,k),[__VM_CF_A__]=_pxor(A,k),[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
             q=_flow(q,_av,40); local qa=_cf(q,__VM_CF_A__,40)
             q[__VM_CF_VALUE__]=rget(qa); q[__VM_CF_STEP__]=rget(qa+2)
             q=_LG[__VM_LOOP_FORPREP__](q,_S)
             rset(qa,q[__VM_CF_VALUE__]); pc=_cf(q,__VM_CF_TARGET__,40)
 
         elseif op==41 then
-            local k=(_S[611] or 0)~pc~A~C
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=A~k,[__VM_CF_C__]=C~k,[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_C__}}
+            local k=_pxor(_pxor(_pxor(_S[611] or 0,pc),A),C)
+            local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=_pxor(A,k),[__VM_CF_C__]=_pxor(C,k),[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_C__}}
             q=_flow(q,_av,41); local qa=_cf(q,__VM_CF_A__,41)
             local qc=_cf(q,__VM_CF_C__,41)
             local _it=rget(qa); local _is=_texpose(rget(qa+1)); local _ic=_texpose(rget(qa+2))
@@ -2089,11 +2252,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             for i=1,qc do rset(qa+2+i,res[i]) end
 
         elseif op==42 then
-            local k=(_S[611] or 0)~pc~A
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_A__]=A~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
+            local k=_pxor(_pxor(_S[611] or 0,pc),A)
+            local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=_pxor(pc+sBx,k),[__VM_CF_A__]=_pxor(A,k),[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
             q=_flow(q,_av,42); local qa=_cf(q,__VM_CF_A__,42)
             q[__VM_CF_VALUE__]=rget(qa+1)
-            local _ls=((pc-1)<<8)~__VM_LOOP_TFORLOOP__
+            local _ls=_aword_key(_pxor(_pshl(pc-1,8),__VM_LOOP_TFORLOOP__))
             if not _LC[_ls] then
                 _LC[_ls]=true; q=_LG[__VM_LOOP_TFORLOOP__](q,_S)
             else
@@ -2105,7 +2268,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==43 then
             if C==0 then
                 local ei=_ixor(code[pc],_ksm(pc)); pc=pc+1
-                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+                C=_ifield48(ei,_SH_A,256)*262144+_ifield48(ei,_SH_B,512)*512+_ifield48(ei,_SH_C,512)
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
@@ -2120,8 +2283,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
         elseif op==45 then
             local _vn=B==0 and _acount(_va) or B-1
-            local k=(_S[611] or 0)~pc~A~B~_vn
-            local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=A~k,[__VM_CF_B__]=B~k,[__VM_CF_COUNT__]=_vn~k,[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_B__,__VM_CF_COUNT__}}
+            local k=_pxor(_pxor(_pxor(_pxor(_S[611] or 0,pc),A),B),_vn)
+            local q={[__VM_CF_KEY__]=k,[__VM_CF_A__]=_pxor(A,k),[__VM_CF_B__]=_pxor(B,k),[__VM_CF_COUNT__]=_pxor(_vn,k),[__VM_CF_FIELDS__]={__VM_CF_A__,__VM_CF_B__,__VM_CF_COUNT__}}
             q=_flow(q,_av,45); local qa=_cf(q,__VM_CF_A__,45)
             local qb=_cf(q,__VM_CF_B__,45)
             local qn=_cf(q,__VM_CF_COUNT__,45)
@@ -2136,17 +2299,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
         elseif op==46 then error("unexpected EXTRAARG")
         elseif op==47 then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,147))
-        elseif op==48 then rset(A,_IT.script&0xFFFFFFFF)
-        elseif op==49 then rset(A,_IT.vmc&0xFFFFFFFF)
-        elseif op==50 then rset(A,_IT.layout&0xFFFFFFFF)
-        elseif op==51 then rset(A,_IT.seed&0xFFFFFFFF)
-        elseif op==52 then rset(A,proto.vm_id&0xFFFFFFFF)
-        elseif op==53 then rset(A,#proto.code&0xFFFFFFFF)
+        elseif op==48 then rset(A,_iu32(_IT.script))
+        elseif op==49 then rset(A,_iu32(_IT.vmc))
+        elseif op==50 then rset(A,_iu32(_IT.layout))
+        elseif op==51 then rset(A,_iu32(_IT.seed))
+        elseif op==52 then rset(A,_iu32(proto.vm_id))
+        elseif op==53 then rset(A,#proto.code%4294967296)
         elseif op==54 then rset(A,_integrity_xor((rget(B) or 0),(rget(C) or 0)))
-        elseif op==55 then rset(A,((rget(B) or 0)+(rget(C) or 0))&0xFFFFFFFF)
-        elseif op==56 then rset(A,((rget(B) or 0)*((rget(C) or 0)|1))&0xFFFFFFFF)
+        elseif op==55 then rset(A,(_iu32(rget(B) or 0)+_iu32(rget(C) or 0))%4294967296)
+        elseif op==56 then rset(A,_imul32(_iu32(rget(B) or 0),_MJ._c_or(rget(C) or 0,1)))
         elseif op==57 then rset(A,consts[Bx+1][2])
-        elseif op==58 then pc=_poly_route(_brd[A+1],A~pc~proto.vm_id)
+        elseif op==58 then pc=_poly_route(_brd[A+1],_pxor(_pxor(A,pc),proto.vm_id))
         elseif op==59 then pc=Bx+1
         elseif op==60 then rset(A,_sem(__VM_DATA_GET__,get_environment(upvals),kval(consts[Bx+1],proto),nil))
         elseif op==61 then _sem(__VM_DATA_SET__,get_environment(upvals),kval(consts[Bx+1],proto),rget(A))
@@ -2156,6 +2319,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         else error("unknown op "..op) end
     end
     return _leave({},0,nil,138)
+    --<<ENDTARGET_51_KARITY_HANDLER_CHAIN>>
 end
 --<<ENDEXEC>>
 _EX={exec}
@@ -2251,17 +2415,32 @@ local function _function_dump(fn)
 end
 --<<ENDTARGET_FUNCTION_DUMP>>
 
-local function run(blob,rand_tail,self_func)
-    local dump=_function_dump(self_func)
-    local dump_crc=_crc32(dump)
-    local crc=(dump_crc~(_LS or 0))&0xFFFFFFFF
+-- Keep the entry closure's helper references behind the existing executor
+-- registry. Multi-VM integrity builds otherwise exceed Lua 5.1's 60-upvalue
+-- limit as the runtime feature set grows.
+_EX._runctx={
+    function_dump=_function_dump,crc32=_crc32,ixor=_ixor,line_state=_LS,
+    debug=debug,pcall=pcall,string=string,unpack_values=_unpack_values,
+    io=io,os=os,math=math,assert=assert,arg=arg,
+    IT=_IT,pmix=_pmix,read_proto=read_proto,
+    kae_decrypt=kae_decrypt,from_base36=from_base36,make_reader=make_reader,
+    CG=_CG,NX=_NX,apack=_apack,env=_ENV,
+}
+-- Keep the entry closure on the existing executor registry instead of adding
+-- another long-lived local to the Lua 5.1 runtime function (which is already
+-- close to the target's 200-local compiler limit under full protections).
+_EX.run=function(blob,rand_tail,self_func)
+    local ctx=_EX._runctx
+    local dump=ctx.function_dump(self_func)
+    local dump_crc=ctx.crc32(dump)
+    local crc=ctx.ixor(dump_crc,(ctx.line_state or 0))
     -- anti-tamper: 변조 신호를 키에 섞는다. clean이면 _t==0 -> crc 불변
     -- -> 팩 타임 키와 일치. 변조 시 _t~=0 -> 키 교란 -> garbage(분기 없음, 패치 불가).
     -- 아래 블록(마커 사이)은 파이프라인이 per-run 랜덤화한다(검사 항목/순서/가중치/
     -- 혼합식). clean일 때 _t==0 -> crc 항등을 항상 보존한다. def는 standalone 기본값.
     --<<TAMPER>>
     -- (1) debug hook(single-step/덤프 후킹) 감지
-    local _hk,_hm,_hc=debug.gethook()
+    local _hk,_hm,_hc=ctx.debug.gethook()
     local _t=0
     if _hk~=nil          then _t=_t+1 end
     if _hm and #_hm>0    then _t=_t+2 end
@@ -2269,43 +2448,43 @@ local function run(blob,rand_tail,self_func)
     -- (2) 보안 핵심 내장함수가 진짜 C 함수인지 검사(Lua 함수로 바꿔치기 감지).
     -- getinfo 자신도 포함(체커 자기보호). 하나라도 비-C면 해당 비트 set.
     local function _isC(f)
-        local ok,info=pcall(debug.getinfo,f,"S")
+        local ok,info=ctx.pcall(ctx.debug.getinfo,f,"S")
         return ok and info~=nil and info.what=="C"
     end
-    if not _isC(debug.getinfo) then _t=_t+8 end
-    if not _isC(string.dump)   then _t=_t+16 end
-    if not _isC(debug.gethook) then _t=_t+32 end
-    if not _isC(string.byte)   then _t=_t+64 end
-    if not _isC(string.char)   then _t=_t+128 end
-    if not _isC(string.format) then _t=_t+256 end
-    if not _isC(table.unpack)  then _t=_t+512 end
+    if not _isC(ctx.debug.getinfo) then _t=_t+8 end
+    if not _isC(ctx.string.dump)   then _t=_t+16 end
+    if not _isC(ctx.debug.gethook) then _t=_t+32 end
+    if not _isC(ctx.string.byte)   then _t=_t+64 end
+    if not _isC(ctx.string.char)   then _t=_t+128 end
+    if not _isC(ctx.string.format) then _t=_t+256 end
+    if not _isC(ctx.unpack_values) then _t=_t+512 end
     crc=(crc~((_t*0x9E3779B1)&0xFFFFFFFF))&0xFFFFFFFF
     --<<ENDTAMPER>>
-    _IT.script=crc
-    _IT.line=_LS or 0
+    ctx.IT.script=crc
+    ctx.IT.line=ctx.line_state or 0
     _ksd=dump_crc
-    local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
-    blob=kae_decrypt(from_base36(blob),key)
-    local r=make_reader(blob)
+    local key="karityObfuscator/"..ctx.string.format("%08x",crc).."/"..rand_tail
+    blob=ctx.kae_decrypt(ctx.from_base36(blob),key)
+    local r=ctx.make_reader(blob)
     local seed=r.u16()
-    _IT.seed=seed; _IT.layout=r.u32(); _IT.vmc=r.u16()
+    ctx.IT.seed=seed; ctx.IT.layout=r.u32(); ctx.IT.vmc=r.u16()
     _PE=_PE+1
     local _pa=tostring({})
     local _pf=tostring(self_func)
     local _aa=tonumber(_pa:match("(%x+)$") or "0",16) or 0
     local _af=tonumber(_pf:match("(%x+)$") or "0",16) or 0
-    local _clock=math.floor(((os.clock and os.clock()) or 0)*1000000000)
-    local _wall=(os.time and os.time()) or 0
-    _PN=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+    local _clock=ctx.math.floor(((ctx.os.clock and ctx.os.clock()) or 0)*1000000000)
+    local _wall=(ctx.os.time and ctx.os.time()) or 0
+    _PN=ctx.pmix((--<<TARGET_PRIVATE_EXPRESSION>>
                _aa~_af~_clock~(_wall<<21)~crc~seed~_PE
                --<<ENDTARGET_PRIVATE_EXPRESSION>>
               ))
     --<<RUNTIME_TRACE>>
-    _PX=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+    _PX=ctx.pmix((--<<TARGET_PRIVATE_EXPRESSION>>
                _PN~seed~crc
                --<<ENDTARGET_PRIVATE_EXPRESSION>>
               ))
-    _PBC=0; _PBH=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+    _PBC=0; _PBH=ctx.pmix((--<<TARGET_PRIVATE_EXPRESSION>>
                         _PN~0x424C4F434B
                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
                        ))
@@ -2327,24 +2506,22 @@ local _fn=r.u32()
         end
     end
 --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
-    local proto=read_proto(r,acc_state)
-    local env_box={v=_ENV}
+    local proto=ctx.read_proto(r,acc_state)
+    local env_box={v=ctx.env}
     --<<RUN_ENTRY>>
-    _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
+    ctx.CG[__VM_ROUTE_ENTER__](ctx.NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=_apack({},0,crc)})
+         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=ctx.apack({},0,crc)})
     --<<ENDRUN_ENTRY>>
     --<<RUNTIME_TRACE>>
-    io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
+    ctx.io.stderr:write("karity-vm-trace:",ctx.string.format("%016x",_PX),
                     " blocks:",_PBC," blocktrace:",
-                    string.format("%016x",_PBH),"\n")
+                    ctx.string.format("%016x",_PBH),"\n")
     --<<ENDRUNTIME_TRACE>>
 end
 
-if arg and arg[0] and arg[0]:match("vm") then
-    local f=assert(io.open(arg[1],"rb"))
+if _EX._runctx.arg and _EX._runctx.arg[0] and _EX._runctx.arg[0]:match("vm") then
+    local f=_EX._runctx.assert(_EX._runctx.io.open(_EX._runctx.arg[1],"rb"))
     local blob=f:read("*a"); f:close()
-    run(blob)
-else
-    return {run=run}
+    _EX.run(blob)
 end

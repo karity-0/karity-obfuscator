@@ -1,6 +1,6 @@
 from typing import Any
 
-from .base import SHARED_OPTIONS, LoweredIR, VMBackend
+from .base import SHARED_OPTIONS, LoweredIR, RuntimeBody, VMBackend
 from ..protection import BackendCapabilities, option_feature
 
 
@@ -8,7 +8,6 @@ class MovBackend(VMBackend):
     name = "mov"
     description = 'supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback'
     lowered_kind = "mov-micro-ir"
-    direct_runtime = True
     mov_microcode = True
     capabilities = BackendCapabilities(
         name,
@@ -20,12 +19,21 @@ class MovBackend(VMBackend):
     def compose_runtime(self, source, lowered, *, target=None):
         from .runtime_templates import classic_executor, direct_executor
         from ..mov.builder import build_runtime
-        executor = build_runtime(target.runtime_template('classic_exec.lua') if target else classic_executor(),
-                                 lowered.backend_data['kits'],
-                                 template=target.runtime_template('mov_exec.lua') if target else None)
+        executor_template = target.runtime_template('classic_exec.lua') if target else classic_executor()
+        # MOV reuses Classic's host-handler template, then injects its own
+        # microcode expressions.  Those expressions still use the target
+        # lowering markers, so only Classic itself may retain this native
+        # executor boundary.
+        executor_template = executor_template.replace('--<<TARGET_CLASSIC_EXEC_NATIVE>>', '')
+        executor_template = executor_template.replace('--<<ENDTARGET_CLASSIC_EXEC_NATIVE>>', '')
+        executor = build_runtime(executor_template, lowered.backend_data['kits'],
+                                 template=target.runtime_template('mov_exec.lua') if target else None,
+                                 target=target)
         source = direct_executor(source, executor)
-        return source.replace('local proto=read_proto(r,acc_state)',
-                              'local proto=read_proto(r,acc_state); _mov_read(r,proto)')
+        source = source.replace('local proto=read_proto(r,acc_state)',
+                                'local proto=read_proto(r,acc_state); _mov_read(r,proto)')
+        return source.replace('local proto=ctx.read_proto(r,acc_state)',
+                              'local proto=ctx.read_proto(r,acc_state); _mov_read(r,proto)')
 
     def build_vm_map(self, program, assignments, vm_id, used_vops, alias_requirements):
         from .handler_ir import OPERATIONS
@@ -34,6 +42,18 @@ class MovBackend(VMBackend):
     def emit_handlers(self, source, lowered, variants):
         # Microcode dispatch and HOST handlers are composed by the MOV builder.
         return source
+
+    def emit_runtime_body(self, source, lowered, *, target):
+        # MOV owns its microcode/host runtime above.  The remaining VM tokens
+        # are direct-runtime tokens, but their resolution is still a MOV
+        # backend decision rather than a shared-emitter backend branch.
+        from .runtime_emitter import _apply_classic_runtime_tokens
+        return RuntimeBody(
+            source=_apply_classic_runtime_tokens(source),
+            phase="vm_output:mov_runtime",
+            implementation="_apply_classic_runtime_tokens",
+            backend="mov_runtime",
+        )
 
     def serialize_program(self, lowered, context):
         from ..mov.serializer import serialize

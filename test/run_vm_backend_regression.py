@@ -15,6 +15,56 @@ from obfuscator.registry import ConfigError, validate_config, validate_release_c
 from obfuscator.vm import VMPass
 
 
+def check_classic_optimizer() -> None:
+    """Exercise the optimizer independently of a random handler layout."""
+    from obfuscator.vm.backends.classic_optimizer import optimize_layout
+    from obfuscator.vm.backends.handler_ir import (
+        HandlerFunction, HandlerInstruction, OPERATION_IDS,
+    )
+    from obfuscator.vm.backends.handler_layout import (
+        PhysicalFunction, PhysicalInstruction,
+    )
+
+    def jump(index: int, target: int, *, close: int = 0) -> HandlerInstruction:
+        return HandlerInstruction(
+            OPERATION_IDS["JUMP"], close,
+        ).with_bx(target - index - 1 + 131071)
+
+    def function(*, protected: bool = False, close: bool = False) -> PhysicalFunction:
+        raw = [jump(0, 1, close=int(close)), jump(1, 3),
+               HandlerInstruction(OPERATION_IDS["MOVE"]),
+               HandlerInstruction(OPERATION_IDS["RETURN"])]
+        source = HandlerFunction("optimizer", 0, 0, 1, raw, [], [], [])
+        items = [
+            PhysicalInstruction(instruction, index, (),
+                                ((1, 1, 1, 1, 0),) if protected and index == 1 else ())
+            for index, instruction in enumerate(raw)
+        ]
+        return PhysicalFunction(source, 0, items, [], set(), False, [])
+
+    layout = type("Layout", (), {"functions": function()})()
+    statistics, events = optimize_layout(layout)
+    assert statistics == {
+        "before": 4, "after": 4,
+        "jump_chain_redirects": 1, "jump_chain_rejections": 0,
+    }
+    assert layout.functions.code[0].instruction.sbx == 2
+    assert events == ({
+        "function": "optimizer", "pc": 0, "kind": "jump-chain",
+        "outcome": "applied", "target": 3,
+    },)
+
+    protected_layout = type("Layout", (), {"functions": function(protected=True)})()
+    _, protected_events = optimize_layout(protected_layout)
+    assert protected_layout.functions.code[0].instruction.sbx == 0
+    assert protected_events[0]["reason"] == "graph-boundary"
+
+    close_layout = type("Layout", (), {"functions": function(close=True)})()
+    _, close_events = optimize_layout(close_layout)
+    assert close_layout.functions.code[0].instruction.sbx == 0
+    assert close_events[0]["reason"] == "upvalue-close"
+
+
 
 def options(backend: str, dispatcher: str = "ifelseif") -> dict:
     return {
@@ -48,19 +98,23 @@ def options(backend: str, dispatcher: str = "ifelseif") -> dict:
 
 
 def run_output(source: str, backend: str, dispatcher: str = "ifelseif",
-               output_passes: list[str] | None = None) -> bytes:
+               output_passes: list[str] | None = None,
+               vm_options: dict | None = None) -> bytes:
     dispatch_seeds = {
         "ifelseif": 3400, "tailcall": 3401, "table": 3402,
         "bsearch": 3403, "split4": 3404, "bsplit4": 3405, "mixed": 3406,
     }
     random.seed(1200 if backend == "karity" else dispatch_seeds[dispatcher])
     output_prefix = "-- backend regression\n" if backend == "classic" else ""
+    selected_options = options(backend, dispatcher)
+    if vm_options:
+        selected_options.update(vm_options)
     vm = VMPass(
         # Exercise the shared current output pipeline through the classic
         # runtime as well. Karity's emitter has its own focused suite.
         vm_output_passes=(output_passes if output_passes is not None
                           else ["minify"] if backend == "classic" else []),
-        vm_options=options(backend, dispatcher),
+        vm_options=selected_options,
         output_prefix=output_prefix,
     )
     # VMPass accounts for the outer pipeline's signature when deriving its
@@ -95,6 +149,7 @@ def run_output(source: str, backend: str, dispatcher: str = "ifelseif",
 
 
 def main() -> int:
+    check_classic_optimizer()
     base_config = {
         "passes": ["vm"],
         "vm_output_passes": [],
@@ -158,6 +213,40 @@ def main() -> int:
             raise AssertionError(
                 f"{backend}/{dispatcher} semantic mismatch: {stdout!r}"
             )
+
+    # CALL, metamethod dispatch, and protected calls all cross the Karity
+    # native-value boundary. Verify coroutine suspension/resumption and error
+    # propagation on the same script for each backend.
+    boundary_source = (ROOT_DIR / "test/fixtures/backend_escape_boundaries.lua").read_text(
+        encoding="utf-8"
+    )
+    for backend in ("classic", "karity", "mov"):
+        stdout = run_output(boundary_source, backend)
+        if stdout != b"pause\t11\t40\tfalse\tfalse\n":
+            raise AssertionError(
+                f"{backend} coroutine/native-boundary mismatch: {stdout!r}"
+            )
+    metamethod_yield_source = (
+        ROOT_DIR / "test/fixtures/backend_metamethod_yield.lua"
+    ).read_text(encoding="utf-8")
+    for backend in ("classic", "karity", "mov"):
+        stdout = run_output(metamethod_yield_source, backend)
+        if stdout != b"add\t42\n":
+            raise AssertionError(
+                f"{backend} Lua 5.3 metamethod-yield mismatch: {stdout!r}"
+            )
+
+    repeated_pending = (ROOT_DIR / "test/fixtures/backend_repeated_pending.lua").read_text(
+        encoding="utf-8"
+    )
+    stdout = run_output(
+        repeated_pending, "karity",
+        vm_options={"cross_instruction_rate": 1.0,
+                    "runtime_polymorphism_rate": 1.0,
+                    "graph_execution_rate": 0.0},
+    )
+    if stdout != b"44\n":
+        raise AssertionError(f"Karity repeated pending operand mismatch: {stdout!r}")
 
     print("vm-backend-regression-ok backends=classic,karity,mov "
           "annotation_cases=26 classic_dispatchers=7 alias=default")

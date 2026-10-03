@@ -15,6 +15,7 @@ REGRESSIONS = (
 )
 COMMANDS = [("tools/generate_config_docs.py", "--check")]
 COMMANDS += [(f"test/run_{name}_regression.py",) for name in REGRESSIONS]
+COMMANDS += [("tools/audit_lua51_dependencies.py",)]
 COMMANDS += [("test/run_test.py", "--config", "config.example.json", "--profile", "dev", "--jobs", "2")]
 
 

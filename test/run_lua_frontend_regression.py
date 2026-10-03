@@ -110,7 +110,7 @@ local function _pnot(a)return I.bnot(a)end
         random.seed(700+len(native_results))
         generated=('local f='+_compile_integer_graph_func(kind,preserve_native_numbers=True)+
                    ';return function(a,b)local r=f(a,b,{},nil,nil,{},{});return r,1/r end')
-        lowered=_translate_preserving_native_hooks(generated)
+        lowered=_translate_preserving_native_hooks(generated,translate_general=True)
         user_regions=re.findall(
             r'--<<TARGET_USER_EXPRESSION>>(.*?)--<<ENDTARGET_USER_EXPRESSION>>',
             lowered,re.S)
@@ -132,7 +132,7 @@ local function _pnot(a)return I.bnot(a)end
     for kind in ('BAND','BOR','BXOR','SHL','SHR','BNOT'):
         random.seed(9000+private_cases)
         generated=_compile_integer_graph_func(kind,preserve_native_numbers=True)
-        lowered=_translate_preserving_native_hooks(generated)
+        lowered=_translate_preserving_native_hooks(generated,translate_general=True)
         private_region=lowered.split('--<<TARGET_PRIVATE_GRAPH>>',1)[1].split(
             '--<<ENDTARGET_PRIVATE_GRAPH>>',1)[0]
         assert '_target51' not in private_region and '_pint' in private_region
@@ -152,8 +152,24 @@ local function _pnot(a)return I.bnot(a)end
             else: expected=~a
             assert actual==wrap(expected),(kind,a,b,actual,wrap(expected))
             private_cases+=1
+    # Karity's Lua 5.1 graph path selects the exact-word domain while it
+    # builds the bank. It must be valid without whole-source translation:
+    # no generic helper calls or Lua 5.3 operators may survive in the route.
+    for index,kind in enumerate(('BAND','BOR','BXOR','SHL','SHR','BNOT')):
+        random.seed(9800+index)
+        generated=_compile_integer_graph_func(
+            kind,preserve_native_numbers=True,private_state_native=True)
+        lowered=_translate_preserving_native_hooks(generated,translate_general=False)
+        assert '--<<TARGET_PRIVATE_GRAPH>>' not in lowered
+        assert '_source_value(' in lowered
+        code='\n'.join(line for line in lowered.splitlines()
+                       if not line.lstrip().startswith('--'))
+        code=re.sub(r'--<<[^>]+>>','',code)
+        assert not any(operator in code for operator in ('<<','>>','&','|','~'))
+        assert '_target51' not in code and '_p' in code
     random.seed(9191)
-    value_graph=_translate_preserving_native_hooks(_compile_value_graph_func())
+    value_graph=_translate_preserving_native_hooks(
+        _compile_value_graph_func(),translate_general=True)
     value_private_regions=re.findall(
         r'--<<TARGET_PRIVATE_EXPRESSION>>(.*?)'
         r'--<<ENDTARGET_PRIVATE_EXPRESSION>>',value_graph,re.S)
@@ -178,7 +194,8 @@ local function _pnot(a)return I.bnot(a)end
         (9691,lambda: _compile_semantic_ir_func('GET')),
     ):
         random.seed(seed)
-        private_graph=_translate_preserving_native_hooks(graph_builder())
+        private_graph=_translate_preserving_native_hooks(
+            graph_builder(),translate_general=True)
         graph_private_regions=re.findall(
             r'--<<TARGET_PRIVATE_EXPRESSION>>(.*?)'
             r'--<<ENDTARGET_PRIVATE_EXPRESSION>>',private_graph,re.S)

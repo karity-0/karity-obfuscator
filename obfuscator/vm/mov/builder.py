@@ -9,8 +9,8 @@ from .mixed_compare import tables as mixed_tables
 from .shift import tables as shift_tables
 
 
-def _native_arithmetic(runtime: str) -> str:
-    """Native fallback uses function lookup, never a slot comparison chain."""
+def _native_arithmetic(runtime: str, *, binary64_target: bool = False) -> str:
+    """Emit the MOV host arithmetic bank for the selected numeric model."""
     binary = dict(ADD="+", SUB="-", MUL="*", BAND="&", BOR="|",
                   BXOR="~", SHL="<<", SHR=">>")
     unary = dict(UNM="-", BNOT="~")
@@ -19,22 +19,39 @@ def _native_arithmetic(runtime: str) -> str:
         entries = []
         for slot in random.sample(list(operators), len(operators)):
             operator = operators[slot]
-            expr = f"a{operator}b" if name == "binary" else f"{operator}a"
+            if binary64_target and slot in {"BAND", "BOR", "BXOR", "SHL", "SHR", "BNOT"}:
+                # Lua 5.1 has no bitwise numeric subtype or operators. This
+                # bank is unreachable from Lua 5.1 source IR; fail explicitly
+                # if an incompatible semantic opcode reaches the MOV host.
+                expr = f'error("unsupported Lua 5.1 MOV operation: {slot}")'
+            else:
+                expr = f"a{operator}b" if name == "binary" else f"{operator}a"
             entries.append(f"[__VM_SLOT_{slot}__]=function({args}) return {expr} end")
         declarations.append(f"local _mov_{name}={{" + ",".join(entries) + "}")
     start = runtime.index("    local function _arith2(a,b,av,slot)")
     end = runtime.index("    local function _arith2r(", start)
-    return runtime[:start] + "\n".join(declarations) + """
+    arithmetic_body = "\n".join(declarations) + """
     local function _arith2(a,b,av,slot)
         return _mov_binary[slot](a,b)
     end
     local function _arith1(a,av,slot)
         return _mov_unary[slot](a)
     end
-""" + runtime[end:]
+"""
+    if binary64_target:
+        # This is a generated user-value operation bank, not a private-word
+        # expression. Keep the complete target-native implementation outside
+        # the later Lua 5.1 compatibility lowering pass.
+        arithmetic_body = (
+            "--<<TARGET_51_NATIVE_51_MOV_NATIVE>>\n"
+            + arithmetic_body
+            + "--<<ENDTARGET_51_NATIVE_51_MOV_NATIVE>>\n"
+        )
+    return runtime[:start] + arithmetic_body + runtime[end:]
 
 
-def build_runtime(classic: str, kits: list[VMKit], *, template=None) -> str:
+def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None) -> str:
+    binary64_target = bool(target and target.user_number_model == "binary64")
     if template is None:
         template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
     template = template.replace("__MOV_DIV_STEPS__", "{" + ",".join(
@@ -68,8 +85,14 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None) -> str:
     from ..backends.handler_ir import OPERATIONS
     if set(blocks) != set(range(len(OPERATIONS))):
         raise ValueError("unexpected MOV host handler set")
-    host_dispatch = """local result=_mov_host[op~__MOV_HOST_KEY__](A,B,C,Bx,sBx,_av)
-            if result then return result end"""
+    host_slot = (
+        "_ixor(op,__MOV_HOST_KEY__)" if binary64_target
+        else "op~__MOV_HOST_KEY__"
+    )
+    host_dispatch = (
+        f"local result=_mov_host[{host_slot}](A,B,C,Bx,sBx,_av)\n"
+        "            if result then return result end"
+    )
     loop = section("LOOP", "END").replace("--<<HOST_HANDLERS>>", host_dispatch)
     loop_start = classic.index("    --[[VM_DISPATCH_ENTRY]] while true do")
     loop_end = classic.index("    return {r={},n=0}", b)
@@ -109,7 +132,10 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None) -> str:
         ) + "\n}"
         definition = definition.replace("--<<HOST_BANK>>", bank)
         definition = definition.replace("__MOV_HOST_KEY__", str(key))
-        definition = _native_arithmetic(definition)
+        definition = _native_arithmetic(
+            definition,
+            binary64_target=binary64_target,
+        )
         for op in Op:
             definition = definition.replace(f"__MOV_{op.name}__", str(kit.opcodes[op]))
         definitions.append(definition)
@@ -125,4 +151,8 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None) -> str:
     _EX={}
     for i=1,""" + str(len(kits)) + " do _EX[i]=_mov_invoke end")
     runtime = section("SHARED", "REGISTERS") + runtime
+    if binary64_target:
+        # Select the target-native MOV executor before output passes may erase
+        # marker comments. The target consumes this marker during preparation.
+        runtime = "--<<TARGET_MOV_EXEC_NATIVE>>\n" + runtime
     return runtime

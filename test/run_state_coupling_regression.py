@@ -88,6 +88,24 @@ def assert_target_transform() -> None:
             raise AssertionError(f"plain dispatcher target survived: {transformed}")
         if "local _DM=" not in transformed or "local function _ds" not in transformed:
             raise AssertionError("state-coupled target helpers were not emitted")
+    state_site = (
+        "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
+        "--[[VM_DISPATCH_ENTRY]] _ss_step(_ip,op,A,B,C); "
+        "if op==7 then return 1 end end end"
+    )
+    local_state = apply_dispatch_target_hiding(state_site)
+    assert ";_ds(op)" in local_state and "_MJ._ds(op)" not in local_state
+    native_state = apply_dispatch_target_hiding(state_site, native_state=True)
+    assert ";_MJ._ds(op)" in native_state
+    exact_site = state_site.replace(
+        "--[[VM_DISPATCH_ENTRY]]",
+        "--<<TARGET_KARITY_EXEC_STATE>>\n--[[VM_DISPATCH_ENTRY]]",
+    )
+    exact_state = apply_dispatch_target_hiding(exact_site, native_state=True)
+    assert ";_MJ._ds(op)" in exact_state
+    assert "_peq(_MJ._DV,_pxor(" in exact_state
+    assert "_pxor(_S[611] or 0,_XF[1] or 0)" in exact_state
+    assert "_MJ._c_xor(_S[611]" not in exact_state
 
 
 def main() -> int:

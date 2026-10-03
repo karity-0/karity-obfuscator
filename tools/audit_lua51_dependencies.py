@@ -1,7 +1,7 @@
 """Measure textual target-runtime dependencies for fixed Lua 5.1 builds.
 
-Counts are static call sites before final output passes, not execution frequency
-or a completion percentage. The injected module definitions are excluded.
+Counts are static call sites after VM output passes but before line-state and
+wrapper emission, not execution frequency or a completion percentage.
 """
 from collections import Counter
 import json
@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from obfuscator.vm.targets.lua51 import Lua51Target, _translate_preserving_native_hooks
+from obfuscator.vm.targets.lua51 import Lua51Target
 from obfuscator.vm.targets.profile import TargetProfile
 from obfuscator.vm.vm_pass import VMPass
 
@@ -37,14 +37,24 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
         for backend in ('classic', 'karity', 'mov'):
             captured = []
             def capture(self, runtime):
-                translated = _translate_preserving_native_hooks(runtime)
+                # Count the actual target path for every native backend. Keep
+                # this audit sensitive to accidental compatibility calls even
+                # though no backend should inject the old module prelude.
+                translated = original(self, runtime)
+                _, marker, body = translated.partition('--[[TARGET51_PRELUDE_END]]')
+                if not marker:
+                    body = translated
                 captured.append({
+                    'compatibility_modules': (
+                        'local I=(function' in translated
+                        or 'local _target51=(function' in translated
+                    ),
                     'shim_calls': dict(sorted(Counter(re.findall(
-                        r'\b_target51\.([A-Za-z_]\w*)\s*\(', translated)).items())),
+                        r'\b_target51\.([A-Za-z_]\w*)\s*\(', body)).items())),
                     'storage_calls': dict(sorted(Counter(re.findall(
-                        r'\bI\.([A-Za-z_]\w*)\s*\(', translated)).items())),
+                        r'\bI\.([A-Za-z_]\w*)\s*\(', body)).items())),
                 })
-                return original(self, runtime)
+                return translated
             random.seed(5812)
             outcome = {}
             vm = VMPass(target=TargetProfile('5.1', backend), vm_options=options)
@@ -64,8 +74,13 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
             assert len(captured) == 1
             results.append({'profile': profile, 'backend': backend, 'seed': 5812,
                             **outcome, **captured[0]})
-    print(json.dumps({'scope': 'before final output passes; excludes injected module definitions',
+    print(json.dumps({'scope': 'after VM output passes; before line-state and wrapper',
                       'source': source, 'builds': results}, indent=2))
+    failures = [result for result in results
+                if result.get('execution') != 'passed' or result['compatibility_modules']
+                or result['shim_calls'] or result['storage_calls']]
+    if failures:
+        raise SystemExit(f'{len(failures)} Lua 5.1 build(s) retain compatibility dependencies')
 
 
 if __name__ == '__main__':

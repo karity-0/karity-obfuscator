@@ -25,11 +25,40 @@ _NATIVE_HOOK_NAMES = {
     'REGISTER_MAP',
     'PRIVATE_GRAPH', 'PRIVATE_EXPRESSION', 'PRIVATE_LOW_EXPRESSION',
     'PRIVATE_MOD_EXPRESSION',
+    '51_PRIVATE_MIX',
+    '51_KARITY_REGISTERS',
+    '51_KARITY_REGISTER_BANK',
+    '51_KARITY_PENDING',
+    '51_KARITY_GRAPH_STATE',
+    '51_KARITY_FETCH',
+    '51_KARITY_HANDLER_CHAIN',
+    '51_KARITY_CONTROL_HELPERS',
+    '51_KARITY_VALUE_STORAGE',
+    'MOV_UINT',
+    '51_MOV_NATIVE',
     'EXEC_PRIVATE_BINDINGS',
+    'CLASSIC_EXEC_NATIVE',
+    'KARITY_EXEC_STATE',
 }
+_TARGET_MARKER_RE = re.compile(
+    r'--<<(?P<end>END)?TARGET_(?P<name>[A-Z0-9_]+)>>'
+)
 
 
-def _translate_preserving_native_hooks(source):
+def _promote_native_hook_markers(source):
+    """Keep target-native regions recognizable across output comment passes."""
+    def promote(match):
+        name = match.group('name')
+        if name not in _NATIVE_HOOK_NAMES or name == 'CLASSIC_EXEC_NATIVE':
+            return match.group(0)
+        if name.startswith('51_NATIVE_'):
+            return match.group(0)
+        end = match.group('end') or ''
+        return f'--<<{end}TARGET_51_NATIVE_{name}>>'
+    return _TARGET_MARKER_RE.sub(promote, source)
+
+
+def _translate_preserving_native_hooks(source, *, translate_general=False):
     from .lua51_syntax import translate_private_graph, translate_private_modulo, translate_private_low
     private_graph_pattern = re.compile(
         r'(--<<TARGET_PRIVATE_GRAPH>>)(.*?)(--<<ENDTARGET_PRIVATE_GRAPH>>)',re.S)
@@ -66,17 +95,21 @@ def _translate_preserving_native_hooks(source):
     source=private_expression_pattern.sub(lower_private_expression,source)
     saved = []
     pattern = re.compile(
-        r'--<<TARGET_(?P<name>[A-Z_]+)>>.*?--<<ENDTARGET_(?P=name)>>',
+        r'--<<TARGET_(?P<name>[A-Z0-9_]+)>>.*?--<<ENDTARGET_(?P=name)>>',
         re.S,
     )
     def stash(match):
-        if match.group('name') not in _NATIVE_HOOK_NAMES:
+        name = match.group('name')
+        hook_name = name.removeprefix('51_NATIVE_')
+        if hook_name not in _NATIVE_HOOK_NAMES:
             return match.group(0)
         token = f'_KARITY_NATIVE_TARGET_{len(saved)}()'
         saved.append((token, match.group(0)))
         return token
     staged = pattern.sub(stash, source)
-    translated = translate(staged, _HELPER)
+    # General translation is retained only for legacy regression probes; the
+    # production target always supplies False and emits Lua 5.1 source itself.
+    translated = translate(staged, _HELPER) if translate_general else staged
     for token, body in saved:
         if translated.count(token) != 1:
             raise ValueError(f'native target hook placeholder was not preserved: {token}')
@@ -87,6 +120,7 @@ def _translate_preserving_native_hooks(source):
 class Lua51Target:
     lua_version = "5.1"
     user_number_model = "binary64"
+    native_graph_control = True
     library_dump_normalization = False
     requirements = TargetRequirements({C.GETFENV})
     capabilities = {"native_bitops": False, "env_model": "function", "integer_semantics": "binary64",
@@ -114,6 +148,8 @@ class Lua51Target:
         source=source.replace('table.unpack','_unpack_values')
         source=source.replace('_isC(_pack_values)', '_isC(_native_select)')
         source=source.replace('_isC(_unpack_values)', '_isC(_native_unpack)')
+        source=source.replace('ctx.string.format("%016x",_PX)', '_target_hex64(_PX)')
+        source=source.replace('ctx.string.format("%016x",_PBH)', '_target_hex64(_PBH)')
         source=source.replace('string.format("%016x",_PX)', '_target_hex64(_PX)')
         source=source.replace('string.format("%016x",_PBH)', '_target_hex64(_PBH)')
         return source
@@ -136,20 +172,39 @@ end)(blob)
 
     def prepare_runtime(self, source, lowered):
         from .runtime_hooks import replace_hook
+        # Output passes run before lower_source(). Give the exact-word helper
+        # region a version-specific boundary so minification can preserve it
+        # only for Lua 5.1 without changing the Lua 5.3 output contract.
+        source = source.replace('--<<TARGET_PRIVATE_MIX>>', '--<<TARGET_51_PRIVATE_MIX>>')
+        source = source.replace('--<<ENDTARGET_PRIVATE_MIX>>', '--<<ENDTARGET_51_PRIVATE_MIX>>')
+        # Output passes may erase target-marker comments before lower_source().
+        # Preserve the selected executor contracts on the target instance.
+        self._native_classic = '--<<TARGET_CLASSIC_EXEC_NATIVE>>' in source
+        source = source.replace('--<<TARGET_MOV_EXEC_NATIVE>>', '')
+        self._native_mov_uint = '--<<TARGET_MOV_UINT>>' in source
+        if self._native_mov_uint:
+            source, count = re.subn(
+                r'--<<TARGET_MOV_UINT>>.*?--<<ENDTARGET_MOV_UINT>>',
+                'local function _mov_uint(r) return _target_mov_uint(r.u8) end',
+                source, flags=re.S,
+            )
+            if count < 1:
+                raise ValueError('MOV uint target hook was not lowered')
+        self._private_op_names = ()
         if '--<<TARGET_EXEC_PRIVATE_BINDINGS>>' in source:
-            # One shared capture for exact-state primitives, with local aliases
-            # per executor. Nested handlers retain the same functions, while the
-            # outer Lua 5.1 executor stays below its 60-upvalue limit.
+            # One shared table keeps exact-state primitives from consuming a
+            # separate Lua 5.1 local slot for every helper in each executor.
             names = ('_pint', '_pword', '_peq', '_plow', '_pmod', '_padd',
                      '_pneg', '_psub', '_pmul', '_pband', '_pxor', '_pbor',
                      '_pnot', '_pshl', '_pshr', '_pmix', '_pmul64', '_pand_limb', '_por_limb',
                      '_pmul_low', '_plow_shift')
             bank = 'local _private_ops={' + ','.join(names) + '}\n'
-            source = source.replace('--<<ENDTARGET_PRIVATE_MIX>>',
-                                    bank + '--<<ENDTARGET_PRIVATE_MIX>>', 1)
-            aliases = '\n'.join(f'local {name}=_private_ops[{i}]'
-                                for i, name in enumerate(names, 1))
-            source = replace_hook(source, 'EXEC_PRIVATE_BINDINGS', aliases)
+            source = source.replace('--<<ENDTARGET_51_PRIVATE_MIX>>',
+                                    bank + '--<<ENDTARGET_51_PRIVATE_MIX>>', 1)
+            source = replace_hook(
+                source, 'EXEC_PRIVATE_BINDINGS', 'local _private_ops=_private_ops',
+            )
+            self._private_op_names = names
         source=source.replace("local env_box={v=_ENV}", "local env_box={v=getfenv(1)}")
         source=source.replace("{env_box,environment=env_box.v}", "{env_box,environment=self_func}")
         source=source.replace("local function get_environment(upvals) return upvals.environment end",
@@ -212,6 +267,12 @@ end)(blob)
             f"_source_call(fn,upvals,{caller},table.unpack(args,1,count))",
         )
         source=self._lower_runtime_api(source)
+        if self._native_classic:
+            # Private-state expressions must be lowered before optional output
+            # passes erase the comment markers that delimit their exact-word
+            # contract. The helper still leaves all target-native blocks as
+            # authored; it never runs the generic source translator here.
+            source = _translate_preserving_native_hooks(source, translate_general=False)
         return source
 
     def apply_keystream(self, source):
@@ -318,35 +379,91 @@ end
         source=shifted.sub(field,source)
         source=re.sub(r'(?<![A-Za-z0-9_])(?P<value>_dw|_ei|ei)&0x7F',
                       lambda match: f"_ifield48({match.group('value')},0,128)",source)
-        return source
+        # Handler graphs are emitted after ``prepare_runtime``.  Lower their
+        # explicitly typed private-word regions now, before output passes can
+        # erase the boundaries.  The remaining general source still follows
+        # the legacy path for Karity/MOV until their full executors have their
+        # own target assets; this step deliberately does not translate it.
+        source = _translate_preserving_native_hooks(source, translate_general=False)
+        names = getattr(self, '_private_op_names', ())
+        if names:
+            from ...passes.ts_utils import parse
+            ctx = parse(source)
+            replacements = []
+            signature = re.compile(
+                r'^function\s*\(\s*proto\s*,\s*upvals\s*,\s*args\s*,\s*va_in\b'
+            )
+            for node in ctx.walk():
+                if node.type != 'function_definition':
+                    continue
+                body = ctx.text(node)
+                if not signature.match(body.lstrip()):
+                    continue
+                for index, name in enumerate(names, 1):
+                    body = re.sub(
+                        rf'(?<![\w.]){re.escape(name)}\b',
+                        f'_private_ops[{index}]', body,
+                    )
+                replacements.append((ctx.cs(node), ctx.ce(node) + 1, body))
+            for start, end, body in sorted(replacements, reverse=True):
+                source = source[:start] + body + source[end:]
+        return _promote_native_hook_markers(source)
 
     def lower_source(self, source):
-        integer = (_ROOT / "int64.lua").read_text(encoding="utf-8")
-        shim = (_ROOT / "lua51_shim.lua").read_text(encoding="utf-8")
-        prelude = ("local _native_math,_native_string,_native_table,_native_debug="
-                   "math,string,table,debug\n"
-                   "local _native_type,_native_tostring,_native_tonumber=type,tostring,tonumber\n"
-                   "local _native_select,_native_error,_native_rawget,_native_rawset="
-                   "select,error,rawget,rawset\n"
-                   "local _native_getfenv,_native_setfenv=getfenv,setfenv\n"
-                   "local _native_unpack=unpack\n"
-                   "local _native_string_dump,_native_string_byte,_native_string_char="
-                   "string.dump,string.byte,string.char\n"
-                   "local _native_string_format=string.format\n"
-                   "local _native_table_concat=table.concat\n"
-                   "local _native_math_floor,_native_math_ceil=math.floor,math.ceil\n"
-                   "local I=(function()\n" + integer + "\nend)()\n"
-                   "local _target51=(function()\n" + shim + "\nend)()\n"
-                   "local math,string,table,type,tostring,tonumber,select,error,rawget,rawset="
-                   "_native_math,_native_string,_native_table,_native_type,_native_tostring,"
-                   "_native_tonumber,_native_select,_native_error,_native_rawget,_native_rawset\n"
-                   "local debug,getfenv,setfenv=_native_debug,_native_getfenv,_native_setfenv\n")
-        # Output passes may localize runtime APIs through lexical _ENV.
-        # Source function environments still use the native getfenv API.
-        prelude += ("local _ENV=setmetatable({_target51=_target51,math=math,string=string,table=table,"
+        native_aliases = {
+            '_native_string_dump': 'string.dump',
+            '_native_string_byte': 'string.byte',
+            '_native_string_char': 'string.char',
+            '_native_string_format': 'string.format',
+            '_native_table_concat': 'table.concat',
+            '_native_math_floor': 'math.floor',
+            '_native_math_ceil': 'math.ceil',
+            '_native_math': 'math', '_native_string': 'string',
+            '_native_table': 'table', '_native_debug': 'debug',
+            '_native_type': 'type', '_native_tostring': 'tostring',
+            '_native_tonumber': 'tonumber', '_native_select': 'select',
+            '_native_error': 'error', '_native_rawget': 'rawget',
+            '_native_rawset': 'rawset', '_native_getfenv': 'getfenv',
+            '_native_setfenv': 'setfenv', '_native_unpack': 'unpack',
+        }
+        for name in sorted(native_aliases, key=len, reverse=True):
+            source = re.sub(rf'\b{re.escape(name)}\b', native_aliases[name], source)
+        prelude = (
+            "local math,string,table,debug,type,tostring,tonumber,select,error,"
+            "rawget,rawset,getfenv,setfenv,unpack="
+            "math,string,table,debug,type,tostring,tonumber,select,error,"
+            "rawget,rawset,getfenv,setfenv,unpack\n"
+        )
+        if getattr(self, '_native_mov_uint', False):
+            prelude += '''local function _target_mov_uint(read_u8)
+    local value,shift=0,0
+    for i=1,5 do
+        local b=read_u8()
+        if i==5 and b>15 then error("MOV field overflow") end
+        value=value+(b%128)*2^shift
+        if b<128 then return value end
+        shift=shift+7
+    end
+    error("invalid MOV field")
+end
+'''
+        # All three backend assets own their exact-state operations. No
+        # generated runtime embeds the generic int64/shim modules or passes
+        # through whole-source arithmetic translation.
+        prelude += ("local _ENV=setmetatable({math=math,string=string,table=table,"
                     "type=type,tostring=tostring,tonumber=tonumber,select=select,error=error,"
                     "rawget=rawget,rawset=rawset,debug=debug,getfenv=getfenv},{__index=_G})\n")
-        translated = _translate_preserving_native_hooks(source)
+        prelude += "local _legacy_is_private,_legacy_private_number,_legacy_private_marker=nil,nil,nil\n"
+        translated = _translate_preserving_native_hooks(source, translate_general=False)
+        translated = re.sub(
+            r'--<<(?:END)?TARGET_51_NATIVE_[A-Z0-9_]+>>[ \t]*(?:\r?\n)?',
+            ' ', translated,
+        )
+        for marker in ('TARGET_51_PRIVATE_MIX', 'ENDTARGET_51_PRIVATE_MIX',
+                       'TARGET_51_MOV_NATIVE', 'ENDTARGET_51_MOV_NATIVE'):
+            translated = re.sub(
+                r'--<<' + marker + r'>>[ \t]*(?:\r?\n)?', ' ', translated,
+            )
         anchor = re.match(r"return\s+function\s*\([^)]*\)", translated)
         if anchor:
             # Include the integer/API/dump helpers in the self-hashed function.
@@ -356,8 +473,13 @@ end
 
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state
-        result, state, lines = apply_line_state(source, "", finalizer=lambda code: translate(code, _HELPER),
-                                               output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]")
+        # The late line-state fragment is private 32-bit state, not user-value
+        # arithmetic. Emit it in the target-native binary64 domain for every
+        # backend so bind_lines never needs the whole-source compatibility
+        # translator after backend emission.
+        result, state, lines = apply_line_state(source, "",
+                                               output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]",
+                                               native_u32=True)
         return result.replace("--[[TARGET51_PRELUDE_END]]", ""), state, lines
 
     def dump_function(self, source, header, decoy_name, decoy_value, toolchain):

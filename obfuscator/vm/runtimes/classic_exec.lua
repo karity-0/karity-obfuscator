@@ -25,6 +25,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local _va    = va_in or {n=0}
     local _split_tmp
     local _S={[611]=(proto.vm_id~#code)&-1}
+    local _MJ={}
+    _MJ._c_u32=_c_u32;_MJ._c_xor=_c_xor;_MJ._c_and=_c_and;_MJ._c_or=_c_or
+    _MJ._c_not=_c_not;_MJ._c_shl=_c_shl;_MJ._c_shr=_c_shr
     local _XF={0,0}
     local _PR={0,0}
     local _SS={0,0}
@@ -56,6 +59,8 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local function _acount(q) return q and (q.n or #q) or 0 end
     local function _aget(q,i) if q then return q[i] end; return nil end
     local function _collect_values(first,count)
+        if count==nil then count=top-first+1 end
+        if count<0 then count=0 end
         local values={n=count}
         for i=1,count do values[i]=rget(first+i-1) end
         return values
@@ -286,12 +291,10 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if (not not rget(B))==(C~=0) then rset(A,rget(B)) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A); local ca
+            if B==0 then ca=_collect_values(A+1)
+            else ca=_collect_values(A+1,B-1) end
+            local ca_n=ca.n
             local vm=_VF[fn];local res
             if vm and _source_parents then
                 local parents={upvals.environment}
@@ -307,12 +310,10 @@ exec = function(proto, upvals, args, va_in, _source_parents)
 
         elseif op==37 then
             close_upvalues(0)
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
+            local fn=rget(A); local ca
+            if B==0 then ca=_collect_values(A+1)
+            else ca=_collect_values(A+1,B-1) end
+            local ca_n=ca.n
             --<<VM_TAIL_DISPATCH>>
             local vm=_VF[fn];local res
             if vm and _source_parents then

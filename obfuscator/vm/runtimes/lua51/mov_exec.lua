@@ -43,18 +43,23 @@ local function _mov_f64_from_digits(digits,decode,offset)
     return _mov_f64_value(lo,hi)
 end
 --<<ENDTARGET_MOV_FLOAT_STORAGE>>
+--<<TARGET_MOV_UINT>>
 local function _mov_uint(r)
     local __VM_HOT_LOOP__=true
     local value,shift=0,0
     for i=1,5 do
         local b=r.u8()
         if i==5 and b>15 then error("MOV field overflow") end
-        value=value|((b&127)<<shift)
+        -- Each field is at most 32 bits. These bounded limb-sized digits are
+        -- exact in Lua 5.1 binary64, so the decoder does not need int64 shims.
+        value=value+(b%128)*2^shift
         if b<128 then return value end
         shift=shift+7
     end
     error("invalid MOV field")
 end
+--<<ENDTARGET_MOV_UINT>>
+--<<TARGET_51_MOV_NATIVE>>
 local function _mov_read(r, root)
     assert(r.u8()==77 and r.u8()==79 and r.u8()==86 and r.u8()==11,"bad MOV version")
     _mov_kits={}
@@ -97,6 +102,7 @@ local function _mov_read(r, root)
     attach(root)
     assert(remaining==0,"bad MOV prototype count")
 end
+--<<ENDTARGET_51_MOV_NATIVE>>
 --<<REGISTERS>>
     -- Native values and encoded integer digits live in separate slot banks.
     local _mkit=_mov_kits[proto.vm_id+1]
@@ -104,13 +110,23 @@ end
     local _mencode,_mdecode=_mkit.encode,_mkit.decode
     local _mdigits={}
     local _mstrings={}
+    -- MOV string storage is a byte-to-two-nibble mapping. Each operand is
+    -- bounded to 0..255, so Lua 5.1 binary64 arithmetic is exact here.
+    --<<TARGET_51_MOV_NATIVE>>
+    local function _mov_decode_byte(low,high)
+        return _mdecode[low]+16*_mdecode[high]
+    end
+    local function _mov_encode_byte(byte)
+        return _mencode[byte%16],_mencode[math.floor(byte/16)]
+    end
+    --<<ENDTARGET_51_MOV_NATIVE>>
     local function rget(i)
         local node=_mstrings[i]
         if node then
             if regs[i]~=nil then return regs[i] end
             local bytes={}; local n=0
             while node[1] do
-                n=n+1; bytes[n]=string.char(_mdecode[node[2]]|(_mdecode[node[3]]<<4))
+                n=n+1; bytes[n]=string.char(_mov_decode_byte(node[2],node[3]))
                 node=node[4]
             end
             regs[i]=table.concat(bytes)
@@ -136,16 +152,13 @@ else v=hi*4294967296.0+lo end
     local function rset(i,v)
         _mdigits[i]=nil; _mstrings[i]=nil; regs[i]=v
     end
+    -- Lua 5.1 numbers are binary64 values, never Lua 5.3 integers. Only
+    -- explicitly serialized digit values may enter MOV's integer fast path.
+    --<<TARGET_51_NATIVE_51_MOV_NATIVE>>
     local function _mov_digits(i)
-        local d=_mdigits[i]
-        if d then return d end
-        local v=regs[i]
-        if math.type(v)~="integer" then return nil end
-        d={}
-        for j=0,15 do d[j]=_mencode[(v>>(j*4))&15] end
-        _mdigits[i]=d
-        return d
+        return _mdigits[i]
     end
+    --<<ENDTARGET_51_NATIVE_51_MOV_NATIVE>>
     local function _mov_copy(a,b)
         regs[a]=regs[b]; _mdigits[a]=_mdigits[b]; _mstrings[a]=_mstrings[b]
     end
@@ -158,7 +171,8 @@ else v=hi*4294967296.0+lo end
         local node={false}
         for i=#s,1,-1 do
             local byte=string.byte(s,i)
-            node={true,_mencode[byte&15],_mencode[byte>>4],node}
+            local low,high=_mov_encode_byte(byte)
+            node={true,low,high,node}
         end
         return node
     end

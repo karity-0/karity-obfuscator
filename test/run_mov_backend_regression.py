@@ -30,6 +30,7 @@ from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
 from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
 from obfuscator.vm.mov.tables import banks
+from obfuscator.vm.targets.lua51 import Lua51Target
 from run_vm_backend_regression import options
 from mov_shift_checks import check_shift_microcode
 
@@ -130,9 +131,24 @@ def check(source: Path, opts: dict, passes: list[str], seed: int) -> None:
     print(f"mov-ok {source.name} seed={seed} vms={detail['effective_vms']} sites={detail['lowered_sites']}", flush=True)
 
 
+def check_lua51_uint_decoder() -> None:
+    source = Lua51Target().runtime_template("mov_exec.lua")
+    start = source.index("local function _mov_uint(r)")
+    end = source.index("local function _mov_read(r, root)", start)
+    decoder = source[start:end]
+    code = "\n".join(
+        line for line in decoder.splitlines()
+        if not line.lstrip().startswith("--")
+    )
+    if re.search(r"(?:<<|>>|[&|~])", code):
+        raise AssertionError("Lua 5.1 MOV field decoder must use exact bounded arithmetic")
+    assert "value=value+(b%128)*2^shift" in code
+
+
 def main() -> int:
     check_shift_microcode()
     check_division_work()
+    check_lua51_uint_decoder()
     classic = (ROOT / "obfuscator/vm/runtimes/classic_exec.lua").read_text(encoding="utf-8")
     runtime = build_runtime(classic, make_kits(3))
     dispatches = runtime.split("and q[2]==0 then")[1:]
@@ -220,7 +236,7 @@ def main() -> int:
         check(cross_vm, opts, ["rename_obf", "minify"], 8200 + i)
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
-    def forbid_native_fallbacks(classic, opcodes, *, template=None):
+    def forbid_native_fallbacks(classic, opcodes, *, template=None, target=None):
         classic = classic.replace('elseif op==28 then', '''elseif op==28 then
             if type(rget(B))=="string" then error("native string length fallback") end;''')
         classic = classic.replace('elseif op==29 then', '''elseif op==29 then
