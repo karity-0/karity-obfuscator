@@ -57,14 +57,31 @@ def optimize_program(program: Program) -> Program:
             targets.update((instruction.b, instruction.c))
     kept = []
     addresses = {}
+    lookup_candidate: Instruction | None = None
     for index, instruction in enumerate(program.code, 1):
         addresses[index] = len(kept) + 1
-        # Restrict folding to an untargeted interior instruction. Shared table
-        # mutation and HOST boundaries cannot be crossed by this local rule.
+        # A branch entry starts a new straight-line region even if the prior
+        # instruction happens to fall through to it.
+        if index in targets:
+            lookup_candidate = None
+        # Restrict folding to an untargeted interior instruction. MOV mode 0
+        # copies a scratch value without mutating the internal lookup table;
+        # mode 1, HOST and SELECT are observable or control-flow boundaries.
         redundant = (instruction.op == Op.MOVE and instruction.mode == 0
                      and instruction.a == instruction.b)
-        if kept and instruction.op == Op.LOOKUP and instruction.a not in (instruction.b, instruction.c):
-            redundant |= instruction == kept[-1]
+        if instruction.op == Op.LOOKUP:
+            if instruction.a not in (instruction.b, instruction.c):
+                redundant |= instruction == lookup_candidate
+                lookup_candidate = instruction
+            else:
+                lookup_candidate = None
+        elif instruction.op == Op.MOVE and instruction.mode == 0:
+            if lookup_candidate is not None and instruction.a in (
+                lookup_candidate.a, lookup_candidate.b, lookup_candidate.c
+            ):
+                lookup_candidate = None
+        else:
+            lookup_candidate = None
         if index in targets or index == len(program.code) or not redundant:
             kept.append(instruction)
     result = Program([addresses[entry] for entry in program.entries],

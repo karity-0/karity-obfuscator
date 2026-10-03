@@ -1,6 +1,7 @@
 """Orchestrate frontend, protection, lowering and backend emission stages."""
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 import subprocess  # Public toolchain test hook shares the standard module.
 import time
@@ -14,7 +15,9 @@ from .ir.protect import apply_protection
 from .ir.optimize import optimize_semantic_ir
 from .protection import ProtectionPlanner, protect, resolve_capabilities
 from .targets.profile import TargetProfile
-from .targets.pass_requirements import validate_pass_target
+from .targets.pass_requirements import (
+    validate_pass_target, validate_vm_output_pass_target,
+)
 
 
 _DEFAULT_VM_OPTIONS = {
@@ -67,6 +70,8 @@ class VMBuildPipeline(PostPass):
         self.toolchain = toolchain or LuaToolchain(lua_version=target.lua_version if target else "5.3")
         self.target_profile = target or TargetProfile(backend=self.backend)
         validate_pass_target("vm", self.target_profile)
+        for name in self.vm_output_passes:
+            validate_vm_output_pass_target(name, self.target_profile)
         if self.target_profile.backend != self.backend:
             raise ValueError("target profile backend mismatch")
         self.target = self.target_profile.adapter()
@@ -94,9 +99,12 @@ class VMBuildPipeline(PostPass):
             self.last_profile.append({"phase": "resolve_host_images",
                                       "elapsed": round(time.perf_counter() - started, 6),
                                       "images": len(constant_provider.images)})
+        output_transform = _obfuscate_vm_output
+        if getattr(self.target, "compact_output_globals", False):
+            output_transform = partial(_obfuscate_vm_output, compact_globals=True)
         context = BackendContext(
             self.vm_options, self.toolchain, tuple(self.vm_output_passes),
-            self.output_prefix, self.last_profile, _obfuscate_vm_output, self.target,
+            self.output_prefix, self.last_profile, output_transform, self.target,
             constant_provider=constant_provider,
         )
         started = time.perf_counter()

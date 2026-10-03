@@ -12,7 +12,9 @@ from obfuscator.vm.targets.capabilities import (
     HOST_CAPABILITIES, LUA_VERSION_CAPABILITIES,
 )
 from obfuscator.vm.targets.profile import TargetProfile
-from obfuscator.vm.targets.pass_requirements import validate_pass_target
+from obfuscator.vm.targets.pass_requirements import (
+    validate_pass_target, validate_vm_output_pass_target,
+)
 
 
 def main():
@@ -50,6 +52,8 @@ def main():
 
     validate_pass_target('string_encode', configured)
     for name, profile in (('boolean_obf', configured),
+                          ('meme_strings', configured),
+                          ('anti_debug', configured),
                           ('localize_globals', configured),
                           ('vm', TargetProfile(compatibility='portable')),
                           ('pack', limited)):
@@ -67,7 +71,35 @@ def main():
     pipeline = build_pipeline_from_config(config, Pipeline, show_header=False)
     assert pipeline.target_profile.lua_version == '5.1'
     assert pipeline._post_passes[0].target_profile == pipeline.target_profile
-    validate_config({**config, 'vm_output_passes': ['boolean_obf', 'localize_globals']})
+    validate_config({**config, 'vm_output_passes': ['localize_globals', 'minify']})
+    for unsupported in ('string_obf', 'boolean_obf', 'number_obf',
+                        'function_obf', 'anti_decompile', 'meme_strings'):
+        try:
+            validate_vm_output_pass_target(unsupported, configured)
+        except ValueError as error:
+            assert 'VM output pass ' + unsupported in str(error)
+        else:
+            raise AssertionError('Lua 5.1 output pass accepted unsupported syntax: ' + unsupported)
+        try:
+            validate_config({**config, 'vm_output_passes': [unsupported]})
+        except ConfigError as error:
+            assert 'VM output pass ' + unsupported in str(error)
+        else:
+            raise AssertionError('config accepted incompatible Lua 5.1 output pass: ' + unsupported)
+        try:
+            from obfuscator.vm import VMPass
+            VMPass(target=configured, vm_output_passes=[unsupported])
+        except ValueError as error:
+            assert 'VM output pass ' + unsupported in str(error)
+        else:
+            raise AssertionError('direct VM API accepted incompatible output pass: ' + unsupported)
+    for non_output in ('anti_debug', 'vm', 'pack', 'missing_pass'):
+        try:
+            validate_vm_output_pass_target(non_output, TargetProfile('5.3'))
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('invalid VM output pass accepted: ' + non_output)
     for invalid in ({**config, 'passes': ['boolean_obf', 'vm']},
                     {**config, 'target': {'host_images': ['host.dll']}},
                     {**config, 'target': {'host_images': 'host.dll'}},
@@ -89,6 +121,7 @@ def main():
         raise AssertionError('direct VM API bypassed target policy')
     result = subprocess.run([sys.executable, str(ROOT / 'main.py'), '--print-config',
                              '--lua-version', '5.1', '--passes', 'vm',
+                             '--vm-output-passes', 'minify',
                              '--target-environment', 'cheatengine',
                              '--compatibility', 'binary_specific'],
                             cwd=ROOT, capture_output=True, check=True)

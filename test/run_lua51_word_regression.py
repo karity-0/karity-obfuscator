@@ -43,7 +43,9 @@ def main():
     prelude += ('local _legacy_is_private,_legacy_private_number,_legacy_private_marker='
                 'I.isint,I.number,I.private_marker;'
                 'local _native_type=type;'
-                'local _PRIVATE_WORD_MARKER=_legacy_private_marker;')
+                'local _PRIVATE_WORD_MARKER=_legacy_private_marker;'
+                'local function _is_private_word(value) '
+                'return type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER end;')
     shim = lua.execute((prelude + 'return (function() ' +
                         (folder/'lua51_shim.lua').read_text(encoding='utf-8')+' end)()').encode())
     native_rekey=lua.eval(b'''function(value,op,variant,shift)
@@ -281,7 +283,7 @@ count=_acount,get=_aget,seed=_aseed,key=_akey,wordkey=_aword_key}
         assert '_pint' in private_mix and '_pxor' in private_mix
         source_value=native_region(runtime_source,'SOURCE_VALUE')
         assert '_target51' not in source_value and 'I.' not in source_value
-        assert '_private_number(v)' in source_value and '_legacy_private_number' in source_value
+        assert '_private_number(v)' in source_value and '_legacy_private_number' not in source_value
         user_regions=(native_regions(runtime_source,'USER_EXPRESSION')+
                       native_regions(runtime_source,'USER_STATEMENT'))
         assert user_regions
@@ -328,9 +330,8 @@ count=_acount,get=_aget,seed=_aseed,key=_akey,wordkey=_aword_key}
             assert not any(token in classic_code for token in ('<<','>>','//','&','|'))
     assert register_map_count
     # The following isolated full-width storage probes feed legacy ``I``
-    # words deliberately.  Karity's shared storage bridge accepts that test
-    # representation; native Classic is separately executed above with its
-    # tagged-pair-only contract.
+    # words deliberately. The private runtime probes below construct the
+    # target-native tagged pairs; int64 remains only an independent oracle.
     translated_source=translated_sources[1]
     inspection_source=runtime_sources[1]
     instruction_xor=inspection_source.split('--<<TARGET_INSTRUCTION_XOR>>',1)[1].split(
@@ -352,6 +353,9 @@ count=_acount,get=_aget,seed=_aseed,key=_akey,wordkey=_aword_key}
     dispatch_state = lua.execute((instruction_xor+'''
 local _native_type=type
 local _PRIVATE_WORD_MARKER={}
+local function _is_private_word(value)
+    return type(value)=='table' and value._private_word==_PRIVATE_WORD_MARKER
+end
 '''+private_mix+'''
 local _MJ={}
 local _S,_XF,_PR,_SS,_MG={[611]=0},{[1]=0},{[1]=0},{[1]=0},{[1]=0}
@@ -424,7 +428,7 @@ end''').encode())
     table_expose=private_expressions_of('_texpose')
     assert (len(table_store),len(table_get),len(table_expose))==(2,1,1)
     table_roundtrip=lua.execute((prelude+instruction_xor+private_mix+'''return function(vhi,vlo,shi,slo)
-        local v,share=I.make(vhi,vlo),I.make(shi,slo)
+        local v,share=_pnew(vhi,vlo),_pnew(shi,slo)
         local left='''+expression(table_store[1])+'''
         local right=share
         local read='''+expression(table_get[0])+'''
@@ -441,7 +445,7 @@ end''').encode())
     assert len(upvalue)==8
     decode_upvalue=upvalue[7].replace('__VM_UV_LEFT__','1').replace('__VM_UV_RIGHT__','2')
     upvalue_roundtrip=lua.execute((prelude+instruction_xor+private_mix+'''return function(words)
-        local function word(i)return I.make(words[i*2-1],words[i*2])end
+        local function word(i)return _pnew(words[i*2-1],words[i*2])end
         local payload,bias,share=word(1),word(3),word(4)
         local pair={word(2),word(5)}
         local encoded='''+expression(upvalue[3])+'''
@@ -463,7 +467,7 @@ end''').encode())
     pending=[expression(body.replace('__VM_PENDING_ADD__','12')) for body in pending]
     finish=lua.execute((prelude+instruction_xor+private_mix+'''return function(words,kind)
         local q={kind}
-        for i=2,7 do q[i]=I.make(words[(i-2)*2+1],words[(i-2)*2+2]) end
+        for i=2,7 do q[i]=_pnew(words[(i-2)*2+1],words[(i-2)*2+2]) end
         local encoded='''+pending[0]+'''
         if kind==11 then encoded='''+pending[1]+'''
         else local right='''+pending[2]+'''
@@ -486,7 +490,7 @@ end''').encode())
     assert (len(store),len(restore),len(rotate),len(split_store),len(split_restore))==(2,1,5,3,1)
     affine=lua.execute((prelude+instruction_xor+private_mix+'''
 return function(words)
-    local function word(i)return I.make(words[i*2-1],words[i*2])end
+    local function word(i)return _pnew(words[i*2-1],words[i*2])end
     local payload,a,b,share,new_a,new_b,old_inv,inv,delta=
         word(1),word(2),word(3),word(4),word(5),word(6),word(7),word(8),word(9)
     local encoded='''+expression(split_store[0])+'''
@@ -514,7 +518,7 @@ end''').encode())
         assert (int(hi)<<32)|int(lo)==payload
         assert (int(shi)<<32)|int(slo)==payload
     mix=lua.execute((prelude+instruction_xor+private_mix+'''return function(hi,lo)
-    local result=_pmix(I.make(hi,lo))
+    local result=_pmix(_pnew(hi,lo))
     return result.hi,result.lo
 end''').encode())
     mix_values=[0,1,mask64,1<<63,(1<<32)-1]
@@ -550,7 +554,7 @@ end''').encode())
         for expression, reference in low_cases:
             translated = translate_private_low(expression, modulus)
             projected = lua.execute((prelude+instruction_xor+private_mix+'''return function(ahi,alo,bhi,blo)
-                local a,b=I.make(ahi,alo),I.make(bhi,blo)
+                local a,b=_pnew(ahi,alo),_pnew(bhi,blo)
                 return '''+translated+' end').encode())
             samples = [(mask64, count & mask64) for count in (-64,-32,-1,0,1,32,64)]
             samples += [(rng.getrandbits(64),rng.getrandbits(64)) for _ in range(100)]
@@ -560,8 +564,8 @@ end''').encode())
     projected = translate_private_low('((-(a+b)~(~b))&0x3FF)|1', 1024)
     assert not any(name in projected for name in ('_pxor', '_pband', '_pbor', '_pneg', '_pnot', '_padd'))
     no_alloc = lua.execute((prelude+instruction_xor+private_mix+'''return function()
-        local a,b=I.make(4294967295,1023),I.make(2147483648,7)
-        I.make=function() error('unexpected private word allocation') end
+        local a,b=_pnew(4294967295,1023),_pnew(2147483648,7)
+        _pnew=function() error('unexpected private word allocation') end
         return '''+projected+' end').encode())
     assert no_alloc() == ((-(1023+7)^(~7))&1023)|1
     for expression, expected in (('a*b', 7161), ('a>>16', 0xFFFF0000),
@@ -569,8 +573,8 @@ end''').encode())
                                  ('a<<(-16)', 0xFFFF0000)):
         projected = translate_private_low(expression, 1 << 32)
         no_alloc = lua.execute((prelude+instruction_xor+private_mix+'''return function()
-            local a,b=I.make(4294967295,1023),I.make(0,7)
-            I.make=function() error('unexpected private word allocation') end
+            local a,b=_pnew(4294967295,1023),_pnew(0,7)
+            _pnew=function() error('unexpected private word allocation') end
             return '''+projected+' end').encode())
         assert no_alloc() == expected, expression
     # Projection must not duplicate calls while expanding OR or arithmetic.
@@ -625,17 +629,17 @@ add=_padd,sub=_psub,mul=_pmul,band=_pband,bor=_pbor,bxor=_pxor,
 neg=_pneg,bnot=_pnot,shl=_pshl,shr=_pshr}
 return {
 call=function(name,ahi,alo,bhi,blo)
-    local a=I.make(ahi,alo);local result
+    local a=_pnew(ahi,alo);local result
     if name=='neg' or name=='bnot' then result=ops[name](a)
     elseif name=='shl' or name=='shr' then result=ops[name](a,blo)
-    else result=ops[name](a,I.make(bhi,blo)) end
+    else result=ops[name](a,_pnew(bhi,blo)) end
     return result.hi,result.lo
 end,
 int=function(text)local result=_pint(text);return result.hi,result.lo end,
 tag=function(text)local result=_pint(text);return result._private_word==I.private_marker,I.isint(result) end,
-eq=function(ahi,alo,bhi,blo)return _peq(I.make(ahi,alo),I.make(bhi,blo)) end,
-low=function(hi,lo,modulus)return _plow(I.make(hi,lo),modulus) end,
-mod=function(hi,lo,modulus)return _pmod(I.make(hi,lo),modulus) end}
+eq=function(ahi,alo,bhi,blo)return _peq(_pnew(ahi,alo),_pnew(bhi,blo)) end,
+low=function(hi,lo,modulus)return _plow(_pnew(hi,lo),modulus) end,
+mod=function(hi,lo,modulus)return _pmod(_pnew(hi,lo),modulus) end}
 ''').encode())
     def private_result(name,a,b=None):
         hi,lo=private_api[b'call'](name,a>>32,a&0xffffffff,0,b)
@@ -705,7 +709,8 @@ mod=function(hi,lo,modulus)return _pmod(I.make(hi,lo),modulus) end}
     code_field=re.search(r'#proto\.([A-Za-z_][A-Za-z0-9_]*)',integrity_expression).group(1)
     assert len(state_fields)==5 and len(set(state_fields))==5
     state_assignments=';'.join(
-        f'_IT.{field}=I.make(state[{index*2+1}],state[{index*2+2}])'
+        f'_IT.{field}={{hi=state[{index*2+1}],lo=state[{index*2+2}],'
+        '_private_word=_PRIVATE_WORD_MARKER}'
         for index,field in enumerate(state_fields))
     eval_integrity=lua.execute((prelude+instruction_xor+'local _IT={}\n'+
         integrity_mix+integrity_expression+f'''return function(prog,state,vm_id,code_count)

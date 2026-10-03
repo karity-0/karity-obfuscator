@@ -304,6 +304,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                 output = VMPass(target=TargetProfile('5.1', backend), vm_options=options).run(reproducer)
             assert len(captured) == 1
             assert '_target51' not in output and 'local I=(function' not in output
+            assert '_legacy_' not in output
             runtime = LuaRuntime(encoding=None)
             runtime.execute(output.encode())
             print('lua51-runtime-ok', name, backend, flush=True)
@@ -348,6 +349,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
             },
         ).run(reproducer)
     assert '_target51' not in hardened_karity and 'local I=(function' not in hardened_karity
+    assert '_legacy_' not in hardened_karity
     LuaRuntime(encoding=None).execute(hardened_karity.encode())
     print('lua51-runtime-ok hardened-karity-native', flush=True)
     # Keep the target-native boundary enabled when all Classic protection

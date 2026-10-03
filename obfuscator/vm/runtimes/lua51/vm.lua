@@ -5,13 +5,12 @@
 --<<TARGET_RUNTIME_API>>
 -- Private words are an exact-state representation only. They share neither a
 -- metatable nor an arithmetic dispatcher with user-visible Lua values.
-local _PRIVATE_WORD_MARKER=_legacy_private_marker or {}
+local _PRIVATE_WORD_MARKER={}
 local function _is_private_word(value)
     return _native_type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER
 end
 local function _is_private_state(value)
     return _is_private_word(value)
-        or (_legacy_is_private and _legacy_is_private(value))
 end
 local function _private_number(value)
     if value.hi>=2147483648 then
@@ -410,8 +409,7 @@ end
 --<<TARGET_INTEGRITY_MIX>>
 local _IU32=4294967296
 local function _iu32(value)
-    if (_legacy_is_private and _legacy_is_private(value))
-        or (type(value)=="table" and value._private_word==_PRIVATE_WORD_MARKER) then
+    if _is_private_word(value) then
         return value.lo
     end
     return value%_IU32
@@ -490,7 +488,7 @@ end
 --<<TARGET_SOURCE_VALUE>>
 local function _source_value(v)
     if _is_private_word(v) then return _private_number(v) end
-    return _legacy_private_number and _legacy_private_number(v) or v
+    return v
 end
 --<<ENDTARGET_SOURCE_VALUE>>
 
@@ -518,8 +516,7 @@ local function _pnew(hi,lo)
     return {hi=hi,lo=lo,_private_word=_PRIVATE_WORD_MARKER}
 end
 local function _pisword(value)
-    return (_native_type(value)=='table' and value._private_word==_PRIVATE_WORD_MARKER)
-        or (_legacy_is_private and _legacy_is_private(value))
+    return _is_private_word(value)
 end
 local function _pint(text)
     local value=_private_literals[text]

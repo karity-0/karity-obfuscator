@@ -208,6 +208,8 @@ See [`number_obf` design and implementation notes](passes/numberObfuscation.md) 
 
 Replaces some numeric literals with meme string lengths and arithmetic corrections.
 
+**Target requirements:** integer_arithmetic; minimum compatibility `portable`.
+
 See [`meme_strings` design and implementation notes](passes/memeStrings.md) for architecture, trade-offs, and future work.
 
 ## table_obf
@@ -509,6 +511,8 @@ See [`vm` design and implementation notes](backends.md) for architecture, trade-
 **type:** passes | vm_output_passes | packer_output_passes
 
 Inserts anti-debugging checks.
+
+**Target requirements:** native_bitops; minimum compatibility `portable`.
 
 See [`anti_debug` design and implementation notes](passes/antiDebug.md) for architecture, trade-offs, and future work.
 

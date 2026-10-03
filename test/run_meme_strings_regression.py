@@ -69,6 +69,17 @@ for i=1,3 do print(i) end
             assert execute(converted) == execute(original), (seed, token, converted)
     for phrase in MEME_STRINGS:
         assert int(execute('print(' + full._length(phrase) + ')')) == len(phrase.encode('utf-8'))
+    # The integer-wrapping construction is intentionally unavailable on
+    # binary64-only Lua 5.1: its rounded residual can change the value.
+    try:
+        from lupa.lua51 import LuaRuntime
+    except ImportError:
+        pass
+    else:
+        lua51 = LuaRuntime(encoding=None)
+        random.seed(2)
+        transformed_integer = full.obfuscate_token('9007199254740991')
+        assert lua51.eval(transformed_integer.encode()) != lua51.eval(b'9007199254740991')
     escaped = 'quote" slash\\ newline\n한글'
     assert int(execute('print(' + full._length(escaped) + ')')) == len(escaped.encode('utf-8'))
     assert PASS_REGISTRY['meme_strings']['cls'] is MemeStringsPass

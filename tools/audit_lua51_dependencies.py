@@ -49,6 +49,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                         'local I=(function' in translated
                         or 'local _target51=(function' in translated
                     ),
+                    'legacy_aliases': '_legacy_' in translated,
                     'shim_calls': dict(sorted(Counter(re.findall(
                         r'\b_target51\.([A-Za-z_]\w*)\s*\(', body)).items())),
                     'storage_calls': dict(sorted(Counter(re.findall(
@@ -78,6 +79,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                       'source': source, 'builds': results}, indent=2))
     failures = [result for result in results
                 if result.get('execution') != 'passed' or result['compatibility_modules']
+                or result['legacy_aliases']
                 or result['shim_calls'] or result['storage_calls']]
     if failures:
         raise SystemExit(f'{len(failures)} Lua 5.1 build(s) retain compatibility dependencies')

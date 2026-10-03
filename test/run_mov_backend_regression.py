@@ -21,15 +21,16 @@ from obfuscator.vm import VMPass
 from obfuscator.vm.mov.builder import build_runtime
 from obfuscator.vm.mov.layout import make_kits
 from obfuscator.vm.mov.division import divide
-from obfuscator.vm.mov.ir import Host, Op
+from obfuscator.vm.mov.ir import Host, Instruction, Op, Program
 from obfuscator.vm.mov.lower import lower
+from obfuscator.vm.mov.optimizer import optimize_program
 from obfuscator.vm.mov.float_compare import compare as compare_floats
 from obfuscator.vm.mov.float_ops import negate as negate_float
 from obfuscator.vm.mov.shift import shift
 from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
 from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
-from obfuscator.vm.mov.tables import banks
+from obfuscator.vm.mov.tables import STATE_COUNTS, banks
 from obfuscator.vm.targets.lua51 import Lua51Target
 from run_vm_backend_regression import options
 from mov_shift_checks import check_shift_microcode
@@ -145,10 +146,49 @@ def check_lua51_uint_decoder() -> None:
     assert "value=value+(b%128)*2^shift" in code
 
 
+def check_lookup_and_table_dedup() -> None:
+    lookup = Instruction(Op.LOOKUP, 6, 25, 7)
+    copy = Instruction(Op.MOVE, 8, 9)
+    finish = Instruction(Op.HOST, Host.COMMIT)
+
+    def optimized(code, entries=(1,)):
+        return optimize_program(Program(list(entries), code, 0)).code
+
+    assert optimized([lookup, copy, lookup, finish]) == [lookup, copy, finish]
+    # A changed destination, table, or key invalidates the previously read
+    # value; internal table stores and host effects also end the pure region.
+    for barrier in (
+        Instruction(Op.MOVE, 6, 9),
+        Instruction(Op.MOVE, 25, 9),
+        Instruction(Op.MOVE, 7, 9),
+        Instruction(Op.MOVE, 8, 9, 10, mode=1),
+        Instruction(Op.HOST, Host.COMMIT),
+    ):
+        code = [lookup, barrier, lookup, finish]
+        assert optimized(code) == code, barrier
+    assert optimized([lookup, copy, lookup, finish], (1, 3)) == [
+        lookup, copy, lookup, finish
+    ]
+
+    assert STATE_COUNTS[2:5] == (1, 1, 1)
+    encode = tuple(reversed(range(16)))
+    decode = {value: index for index, value in enumerate(encode)}
+    bitwise = (lambda x, y: x & y, lambda x, y: x | y,
+               lambda x, y: x ^ y)
+    for bank, operation in zip(banks(encode)[2:5], bitwise):
+        for x in range(16):
+            for y in range(16):
+                states = bank[encode[x]][encode[y]]
+                assert len(states) == 1
+                result, carry = states[0]
+                assert decode[result] == operation(x, y) and carry == 0
+
+
 def main() -> int:
     check_shift_microcode()
     check_division_work()
     check_lua51_uint_decoder()
+    check_lookup_and_table_dedup()
     classic = (ROOT / "obfuscator/vm/runtimes/classic_exec.lua").read_text(encoding="utf-8")
     runtime = build_runtime(classic, make_kits(3))
     dispatches = runtime.split("and q[2]==0 then")[1:]

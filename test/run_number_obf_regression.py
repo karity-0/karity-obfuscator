@@ -5,6 +5,7 @@ import random
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 from lua_runtime import lua_executable
 
 
@@ -44,6 +45,12 @@ def main() -> int:
                 f"failed: rc={result.returncode} stderr={stderr[:1000]!r}\n"
             )
         return result.returncode
+
+    with patch('obfuscator.passes.number_obfuscation.random.randrange', return_value=99):
+        exponent_base = generator._wrap_floor_to_int('2')
+    assert run_number_batch([
+        f"assert({exponent_base} ^ 10 == 1024, 'exponent base precedence')"
+    ], 0) == 0
 
     for seed in range(128):
         random.seed(seed)

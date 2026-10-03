@@ -121,6 +121,7 @@ class Lua51Target:
     lua_version = "5.1"
     user_number_model = "binary64"
     native_graph_control = True
+    compact_output_globals = True
     library_dump_normalization = False
     requirements = TargetRequirements({C.GETFENV})
     capabilities = {"native_bitops": False, "env_model": "function", "integer_semantics": "binary64",
@@ -381,9 +382,8 @@ end
                       lambda match: f"_ifield48({match.group('value')},0,128)",source)
         # Handler graphs are emitted after ``prepare_runtime``.  Lower their
         # explicitly typed private-word regions now, before output passes can
-        # erase the boundaries.  The remaining general source still follows
-        # the legacy path for Karity/MOV until their full executors have their
-        # own target assets; this step deliberately does not translate it.
+        # erase the boundaries. All three backend assets are target-native;
+        # this step deliberately leaves general user expressions untouched.
         source = _translate_preserving_native_hooks(source, translate_general=False)
         names = getattr(self, '_private_op_names', ())
         if names:
@@ -453,7 +453,6 @@ end
         prelude += ("local _ENV=setmetatable({math=math,string=string,table=table,"
                     "type=type,tostring=tostring,tonumber=tonumber,select=select,error=error,"
                     "rawget=rawget,rawset=rawset,debug=debug,getfenv=getfenv},{__index=_G})\n")
-        prelude += "local _legacy_is_private,_legacy_private_number,_legacy_private_marker=nil,nil,nil\n"
         translated = _translate_preserving_native_hooks(source, translate_general=False)
         translated = re.sub(
             r'--<<(?:END)?TARGET_51_NATIVE_[A-Z0-9_]+>>[ \t]*(?:\r?\n)?',

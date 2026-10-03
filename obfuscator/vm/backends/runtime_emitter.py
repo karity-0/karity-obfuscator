@@ -1386,6 +1386,8 @@ def _rename_vm_keys(src: str) -> str:
 def _obfuscate_vm_output(
     script: str,
     pass_names: list[str],
+    *,
+    compact_globals: bool = False,
 ) -> tuple[str, list[dict]]:
     """Run structural VM passes, shared literal emitters, then text post-passes."""
     from obfuscator.pipeline import Pipeline
@@ -1575,7 +1577,9 @@ def _obfuscate_vm_output(
 
         if "localize_globals" in identifier_names:
             stage_start = time.perf_counter()
-            localize_replacements = LocalizeGlobalsPass().replacements_with_ctx(
+            localize_replacements = LocalizeGlobalsPass(
+                compact_aliases=compact_globals,
+            ).replacements_with_ctx(
                 output,
                 shared_ctx,
                 renamed_spans,
