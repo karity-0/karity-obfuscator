@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from lua_runtime import lua_executable
 import random
 import subprocess
 import sys
@@ -10,7 +11,6 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from lupa.lua51 import LuaRuntime
-from obfuscator.toolchain import LuaToolchain
 from obfuscator.vm import VMPass
 from obfuscator.vm.targets.profile import TargetProfile
 
@@ -71,7 +71,7 @@ def execute(version: str, source: str) -> bytes:
         end''')
         runtime.execute(source.encode())
         return runtime.eval(b"table.concat(_observed,'\\n')")
-    result = subprocess.run([LuaToolchain().lua(), '-'], input=source.encode(),
+    result = subprocess.run([lua_executable(), '-'], input=source.encode(),
                             capture_output=True, timeout=120)
     if result.returncode:
         raise AssertionError(result.stderr.decode('utf-8', errors='replace'))

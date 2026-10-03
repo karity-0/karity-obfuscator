@@ -286,5 +286,3 @@ def _build_function(proto: Proto, path: tuple[int, ...]) -> IRFunction:
 def build_semantic_ir(proto: Proto) -> SemanticIR:
     ir = SemanticIR("semantic-v2", _build_function(proto, (0,)))
     return normalize_semantic_ir(ir)
-
-

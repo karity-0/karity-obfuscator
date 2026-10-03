@@ -139,4 +139,3 @@ class MovBackend(VMBackend):
     def emit(self, lowered, context):
         self.validate_lowered(lowered)
         return super().emit(lowered, context)
-

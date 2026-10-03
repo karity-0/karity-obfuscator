@@ -1,5 +1,6 @@
 """VM closure registries must preserve live metadata without retaining cycles."""
 from pathlib import Path
+from lua_runtime import lua_executable
 import random
 import sys
 import subprocess
@@ -50,14 +51,13 @@ def main():
                 check(runtime.globals()[b'gc_factory'])
                 return
             # The 5.3 integrity dump ABI must match its build toolchain.
-            from obfuscator.toolchain import LuaToolchain
             with tempfile.TemporaryDirectory() as folder:
                 path = Path(folder) / 'output.lua'
                 harness = Path(folder) / 'check.lua'
                 path.write_text(source, encoding='utf-8')
                 harness.write_text('assert(loadfile(arg[1]))(); (' + CHECK +
                                    ')(gc_factory)', encoding='utf-8')
-                result = subprocess.run([LuaToolchain().lua(), str(harness), str(path)],
+                result = subprocess.run([lua_executable(), str(harness), str(path)],
                                         capture_output=True, timeout=120)
                 assert result.returncode == 0, result.stderr
 

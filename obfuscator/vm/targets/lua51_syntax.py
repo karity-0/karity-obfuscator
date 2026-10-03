@@ -166,7 +166,7 @@ def translate(script: str, helper: str = "_target51") -> str:
                 return token
             if not token.lower().startswith("0x") and integer > 0x7FFFFFFFFFFFFFFF:
                 return token + ".0"
-            return f'{helper}.integer("{integer}")' 
+            return f'{helper}.integer("{integer}")'
         if node.type == "binary_expression" and len(node.children) >= 3:
             op = ctx.text(node.children[1])
             if op in _BINARY:

@@ -599,5 +599,3 @@ def _patch_proto_integrity(
             old_hash, new_hash, old_line_state, new_line_state,
             constant_tags,
         )
-
-

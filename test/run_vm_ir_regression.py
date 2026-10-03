@@ -285,7 +285,7 @@ def check_runtime_composition():
 
 
 def check_target_runtime_bindings():
-    from obfuscator.toolchain import LuaToolchain
+    from lua_runtime import lua_executable
     from obfuscator.vm.targets.profile import TargetProfile
     from obfuscator.vm.vm_pass import VMPass
     from lupa.lua51 import LuaRuntime
@@ -324,7 +324,7 @@ def check_target_runtime_bindings():
                 with tempfile.TemporaryDirectory() as folder:
                     path = Path(folder) / 'output.lua'
                     path.write_text(output, encoding='utf-8')
-                    result = subprocess.run([LuaToolchain().lua(), str(path)],
+                    result = subprocess.run([lua_executable(), str(path)],
                                             capture_output=True, timeout=120)
                     assert result.returncode == 0, result.stderr
                     assert result.stdout.strip() == b'bindings-ok', result.stdout

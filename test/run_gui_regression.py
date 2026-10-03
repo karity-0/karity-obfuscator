@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import json
-import os
 import re
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -91,10 +89,8 @@ def main() -> int:
     assert len(mov_result["warnings"]) == 1
     assert "fake_handlers" in mov_result["warnings"][0]
 
-    lua_path = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    lua = str(lua_path) if lua_path.exists() else (
-        shutil.which("lua5.3") or shutil.which("lua53") or shutil.which("lua") or "lua"
-    )
+    from lua_runtime import lua_executable
+    lua = lua_executable()
     with tempfile.TemporaryDirectory(prefix="karity-gui-") as temp:
         original_preferences_path = obfuscator_gui.PREFERENCES_PATH
         obfuscator_gui.PREFERENCES_PATH = Path(temp) / "preferences.json"

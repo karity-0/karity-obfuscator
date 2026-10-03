@@ -5,6 +5,7 @@ import random
 import subprocess
 import sys
 import tempfile
+from lua_runtime import luac_executable
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -20,7 +21,9 @@ def main():
         print('lua51-external-toolchain skipped: set KARITY_LUA51_TEST_TOOLS')
         return 0
     folder = Path(folder)
-    exe, compiler, library = (folder / name for name in ('lua51.exe', 'luac51.exe', 'lua51.dll'))
+    names = (('lua51.exe', 'luac51.exe', 'lua51.dll') if os.name == 'nt'
+             else ('lua51', 'luac51', 'liblua51.so'))
+    exe, compiler, library = (folder / name for name in names)
     assert all(path.is_file() for path in (exe, compiler, library))
     configurations = (
         LuaToolchain(lua_executable=str(exe)),
@@ -46,7 +49,7 @@ def main():
             LuaRuntime(encoding=None).execute(output.encode())
         print('lua51-external-toolchain-ok',index,flush=True)
     try:
-        Lua51Target().compile('return 1',LuaToolchain(luac_executable=str(ROOT/'bin/luac53.exe')))
+        Lua51Target().compile('return 1',LuaToolchain(luac_executable=luac_executable()))
     except ValueError as error:
         assert 'Lua 5.1' in str(error)
     else:

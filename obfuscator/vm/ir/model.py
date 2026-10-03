@@ -100,5 +100,3 @@ class SemanticIR:
                         f"targets={targets} operands={instruction.operands!r}"
                     )
         return "\n".join(lines) + "\n"
-
-
