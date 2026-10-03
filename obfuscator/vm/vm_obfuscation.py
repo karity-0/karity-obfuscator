@@ -8,7 +8,7 @@ from __future__ import annotations
 import random
 import re
 
-from ..parser import Proto
+from .backends.handler_ir import HandlerFunction
 from .vm_mutation import mutate_handlers, _lua_depth_delta
 
 _LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
@@ -192,7 +192,7 @@ _CHAIN_END_MARKER = 'else error("unknown op "..op) end'
 # ---------------------------------------------------------------------------
 # 1. 사용 중인 opcode 수집
 # ---------------------------------------------------------------------------
-def collect_used_ops(proto: Proto, vop_map: dict[int, list[int]]) -> set[int]:
+def collect_used_ops(proto: HandlerFunction, vop_map: dict[int, list[int]]) -> set[int]:
     """
     proto 트리를 재귀 순회하며 디스패처가 실제로 dispatch하는 vop 집합을 반환.
 
@@ -205,13 +205,13 @@ def collect_used_ops(proto: Proto, vop_map: dict[int, list[int]]) -> set[int]:
     return used
 
 
-def _collect(proto: Proto, vop_map: dict[int, list[int]], used: set[int]):
+def _collect(proto: HandlerFunction, vop_map: dict[int, list[int]], used: set[int]):
     code = proto.code
     i = 0
     n = len(code)
     while i < n:
         instr   = code[i]
-        orig_op = instr & 0x3F
+        orig_op = instr.op
         for vop in vop_map[orig_op]:
             used.add(vop)
 
@@ -225,7 +225,7 @@ def _collect(proto: Proto, vop_map: dict[int, list[int]], used: set[int]):
         _collect(sub, vop_map, used)
 
 
-def collect_used_orig_ops(proto: Proto) -> set[int]:
+def collect_used_orig_ops(proto: HandlerFunction) -> set[int]:
     """proto 트리에서 실제로 등장하는 원본 opcode(0~46) 집합을 반환.
 
     split_map을 실제 사용되는 splittable op으로만 한정하기 위해 쓰인다.
@@ -236,31 +236,31 @@ def collect_used_orig_ops(proto: Proto) -> set[int]:
     return ops
 
 
-def _collect_orig(proto: Proto, ops: set[int]):
+def _collect_orig(proto: HandlerFunction, ops: set[int]):
     for instr in proto.code:
-        ops.add(instr & 0x3F)
+        ops.add(instr.op)
     for sub in proto.protos:
         _collect_orig(sub, ops)
 
 
 # --- 멀티VM: vm_id로 배정된 proto들만 스코프하는 수집기 -------------------
-def _iter_protos(proto: Proto):
+def _iter_protos(proto: HandlerFunction):
     yield proto
     for sub in proto.protos:
         yield from _iter_protos(sub)
 
 
-def collect_used_orig_ops_for_vm(proto: Proto, vm_assign: dict[int, int],
+def collect_used_orig_ops_for_vm(proto: HandlerFunction, vm_assign: dict[int, int],
                                  vm_id: int) -> set[int]:
     ops: set[int] = set()
     for p in _iter_protos(proto):
         if vm_assign.get(id(p), 0) == vm_id:
             for instr in p.code:
-                ops.add(instr & 0x3F)
+                ops.add(instr.op)
     return ops
 
 
-def collect_used_ops_for_vm(proto: Proto, vm_assign: dict[int, int], vm_id: int,
+def collect_used_ops_for_vm(proto: HandlerFunction, vm_assign: dict[int, int], vm_id: int,
                             vop_map: dict[int, list[int]]) -> set[int]:
     """vm_id 배정 proto들이 디스패치하는 vop 집합(해당 VM의 vop_map 기준)."""
     used: set[int] = set()
@@ -270,7 +270,7 @@ def collect_used_ops_for_vm(proto: Proto, vm_assign: dict[int, int], vm_id: int,
         code = p.code
         i, n = 0, len(code)
         while i < n:
-            orig = code[i] & 0x3F
+            orig = code[i].op
             for vop in vop_map[orig]:
                 used.add(vop)
             if orig == 2:   # LOADKX → 다음 EXTRAARG는 디스패치 안 됨
@@ -967,10 +967,10 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                 "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n"
                 "        elseif v==nil then payload,kind=_rmix(epoch~_RZ~0x4E494C),3\n"
                 "        else\n"
-                "            if not (type(v)==\"number\" and v~=v) then payload=_RI[v] end\n"
+                "            if not (type(v)==\"number\" and v~=v) then payload=_RI[_value_key(v)] end\n"
                 "            if payload==nil then _RX[2]=(_RX[2] or 0)+1; payload=_RX[2]; "
                 "_RO[payload]=v; if not (type(v)==\"number\" and v~=v) then "
-                "_RI[v]=payload end end; kind=4\n"
+                "_RI[_value_key(v)]=payload end end; kind=4\n"
                 "        end\n"
                 "        local a,b=_rparams(i,epoch); local encoded=a*payload+b\n"
                 "        _PD[_rpos(5,i)]=nil; local share=_rmix(epoch~_RZ~"

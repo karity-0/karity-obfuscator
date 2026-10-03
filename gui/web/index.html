@@ -16,7 +16,7 @@
           KARITY
           <span id="app-version" class="app-version"></span>
         </div>
-        <div class="app-caption">Lua 5.3 protection studio</div>
+        <div class="app-caption">Lua protection studio</div>
       </div>
     </div>
     <div class="title-meta"><span class="live-dot"></span><span id="backend-label">connecting</span></div>
@@ -72,7 +72,24 @@
         <details class="config-section" data-section-key="toolchain">
           <summary><span>Lua toolchain</span></summary>
           <div class="section-body">
-            <p>Lua 5.3 tools. Library takes priority for compilation and integrity dumps. Leave empty to use executables.</p>
+            <label class="field-label" for="target-lua_version">Lua version</label>
+            <select id="target-lua_version" class="select-control">
+              <option value="5.3">Lua 5.3</option><option value="5.1">Lua 5.1 (experimental)</option>
+            </select>
+            <label class="field-label" for="target-environment">Environment</label>
+            <select id="target-environment" class="select-control">
+              <option value="standalone">Standalone</option><option value="cheatengine">Cheat Engine</option>
+            </select>
+            <label class="field-label" for="target-compatibility">Compatibility</label>
+            <select id="target-compatibility" class="select-control">
+              <option value="portable">Portable</option>
+              <option value="runtime_specific">Runtime specific</option>
+              <option value="binary_specific">Binary specific</option>
+            </select>
+            <p>VM and packer need Runtime specific or higher. Lua 5.1 supports explicit tools or a library, with Lupa as the default. Some source passes remain unavailable. CE selection declares host capabilities; it does not enable native protection by itself.</p>
+            <label class="field-label" for="target-host_images">Host images (one executable or DLL path per line)</label>
+            <textarea id="target-host_images" class="text-control" rows="2" placeholder="Requires Cheat Engine, Binary specific, and VM"></textarea>
+            <p>For either Lua version, a matching library takes priority for compilation and integrity dumps. Leave empty to use executables.</p>
             <label class="field-label" for="lua_executable">Lua executable</label>
             <input id="lua_executable" class="text-control" placeholder="Auto (lua.exe / lua5.3)">
             <label class="field-label" for="luac_executable">Luac executable</label>

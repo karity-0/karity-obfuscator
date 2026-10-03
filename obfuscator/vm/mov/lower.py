@@ -1,4 +1,5 @@
-"""Lower relocated Lua instructions; share expanded recipes within a prototype."""
+"""Lower typed handler operations into MOV microcode."""
+from ..backends.handler_ir import HandlerInstruction
 from .ir import Host, Instruction as I, Op, Program
 from .division import divide
 from .float_compare import compare as compare_floats
@@ -9,19 +10,19 @@ from .string_ops import length as string_length, concatenate as string_concat
 from .shift import shift
 
 # Integer arithmetic, including MOD/IDIV, bitwise operations and comparisons.
-LOWERED = frozenset((13, 14, 15, 16, 19, 20, 21, 22, 23, 24, 25, 26, 28, 29, 31, 32, 33))
+LOWERED = frozenset(("ADD", "SUB", "MUL", "MOD", "FLOOR_DIV", "BIT_AND", "BIT_OR", "BIT_XOR", "SHIFT_LEFT", "SHIFT_RIGHT", "NEGATE", "BIT_NOT", "LENGTH", "CONCAT", "EQUAL", "LESS_THAN", "LESS_EQUAL"))
 
 
-def _recipe(op: int) -> str:
-    if op in (23, 24):
+def _recipe(op: str) -> str:
+    if op in ("SHIFT_LEFT", "SHIFT_RIGHT"):
         return "shift"
-    if op == 28:
+    if op == "LENGTH":
         return "string_length"
-    if op == 29:
+    if op == "CONCAT":
         return "string_concat"
-    if op in (16, 19):
+    if op in ("MOD", "FLOOR_DIV"):
         return "divide"
-    return "multiply" if op == 15 else "compare" if op >= 31 else "integer"
+    return "multiply" if op == "MUL" else "compare" if op in ("EQUAL", "LESS_THAN", "LESS_EQUAL") else "integer"
 
 
 def _multiply(out: list[I]) -> None:
@@ -59,38 +60,38 @@ def _multiply(out: list[I]) -> None:
     out.append(I(Op.HOST, Host.COMMIT))
 
 
-def lower(code: list[int], vm_id: int = 0) -> Program:
+def lower(code: list[HandlerInstruction], vm_id: int = 0) -> Program:
     out: list[I] = []
     entries: list[int] = []
-    pending: list[tuple[int, int]] = []
+    pending: list[tuple[int, str]] = []
     jumps: list[tuple[int, int]] = []
     boolean_sites = 0
     for ip, raw in enumerate(code, 1):
         entries.append(len(out) + 1)
-        op = raw & 63
+        op = raw.operation
         if op in LOWERED:
             out.append(I(Op.HOST, Host.PREPARE, ip))
             pending.append((len(out), op))
             out.append(I(Op.SELECT, 11, 0, len(out) + 2))
             out.append(I(Op.HOST, Host.EXEC, ip))
-        elif op == 0:
+        elif op == "MOVE":
             out.append(I(Op.HOST, Host.COPY, ip))
-        elif op in (27, 34, 35):
+        elif op in ("LOGICAL_NOT", "TEST", "TEST_SET"):
             boolean_sites += 1
             out.append(I(Op.HOST, Host.READ_TRUTH, ip))
-            out.append(I(Op.LOOKUP, 11, 175 if op == 27 else 174, 11))
-            if op == 27:
+            out.append(I(Op.LOOKUP, 11, 175 if op == "LOGICAL_NOT" else 174, 11))
+            if op == "LOGICAL_NOT":
                 out.append(I(Op.HOST, Host.COMMIT_TRUTH))
-            elif op == 34:
+            elif op == "TEST":
                 out.append(I(Op.SELECT, 11, 19, 20, mode=1))
             else:
                 out.append(I(Op.SELECT, 11, len(out) + 2, len(out) + 3))
                 out.append(I(Op.HOST, Host.COPY, ip))
                 out.append(I(Op.SELECT, 30, 20, 20, mode=1))
-        elif op == 30:
-            if (raw >> 6) & 255:
+        elif op == "JUMP":
+            if raw.a:
                 out.append(I(Op.HOST, Host.CLOSE, ip))
-            jumps.append((len(out), ip + 1 + ((raw >> 14) & 0x3FFFF) - 131071))
+            jumps.append((len(out), ip + 1 + raw.sbx))
             out.append(I(Op.SELECT, 30))
         else:
             out.append(I(Op.HOST, Host.EXEC, ip))

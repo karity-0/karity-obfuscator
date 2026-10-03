@@ -22,6 +22,21 @@ from obfuscator.vm.vm_pass import _compile
 
 
 class ToolchainTests(unittest.TestCase):
+    def test_lua51_lookup_never_selects_lua53(self):
+        toolchain = LuaToolchain.from_config({'target': {'lua_version': '5.1'}})
+        self.assertEqual(toolchain.lua_version, '5.1')
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('lua.exe', 'lua', 'luac53.exe', 'luac53'):
+                (Path(folder) / name).write_bytes(b'wrong version')
+            with patch('obfuscator.toolchain._BIN', Path(folder)), patch(
+                'obfuscator.toolchain.shutil.which', return_value=None
+            ) as lookup:
+                for resolve in (toolchain.lua, toolchain.luac):
+                    with self.assertRaisesRegex(FileNotFoundError, 'Lua 5.1'):
+                        resolve()
+                self.assertEqual([call.args[0] for call in lookup.call_args_list],
+                                 ['lua5.1', 'lua51', 'luac5.1', 'luac51'])
+
     def test_late_minifier_preserves_config_and_protected_stages(self):
         config = {"passes": ["vm", "minify", "pack", "minify"],
                   "vm_output_passes": ["minify"], "packer_output_passes": []}

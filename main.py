@@ -48,6 +48,11 @@ def parse_args():
     parser.add_argument("--passes", help="override top-level passes with a comma-separated list")
     parser.add_argument("--vm-output-passes", help="override vm_output_passes with a comma-separated list")
     parser.add_argument("--packer-output-passes", help="override packer_output_passes with a comma-separated list")
+    parser.add_argument("--lua-version", choices=("5.1", "5.3"), help="target Lua version (5.1 is experimental)")
+    parser.add_argument("--target-environment", choices=("standalone", "cheatengine"), help="target host environment")
+    parser.add_argument("--compatibility", choices=("portable", "runtime_specific", "binary_specific"),
+                        help="maximum allowed runtime or binary dependency")
+    parser.add_argument("--host-image", action="append", help="CE executable or DLL for constant references; repeat for multiple modules")
     parser.add_argument(
         "--vm-option",
         action="append",
@@ -60,6 +65,7 @@ def parse_args():
     parser.add_argument("--print-config", action="store_true", help="print resolved config and exit")
     parser.add_argument("--release-check", action="store_true", help="fail unless the resolved config is suitable for release")
     parser.add_argument("--profile-report", help="write pass timing and size profile JSON to this path, or '-' for stdout")
+    parser.add_argument("--dump-protected-ir", metavar="PATH", help="write normalized IR after protection transforms to PATH")
     parser.add_argument("--dump-ir", metavar="PATH", help="write deterministic Semantic IR to PATH")
     parser.add_argument(
         "--dump-protection-plan", metavar="PATH",
@@ -90,6 +96,13 @@ def parse_option_value(value: str):
 
 def apply_cli_overrides(config: dict, args) -> dict:
     config = copy.deepcopy(config)
+    for argument, key in (("lua_version", "lua_version"), ("target_environment", "environment"),
+                          ("compatibility", "compatibility")):
+        value = getattr(args, argument, None)
+        if value is not None:
+            config.setdefault("target", {})[key] = value
+    if getattr(args, "host_image", None) is not None:
+        config.setdefault("target", {})["host_images"] = args.host_image
     for key in TOOLCHAIN_KEYS:
         value = getattr(args, key, None)
         if value is not None:
@@ -118,7 +131,7 @@ def apply_cli_overrides(config: dict, args) -> dict:
 
     debug_dumps = {
         name: getattr(args, f"dump_{name}", None)
-        for name in ("ir", "protection_plan", "backend_ir")
+        for name in ("ir", "protected_ir", "protection_plan", "backend_ir")
     }
     debug_dumps = {name: path for name, path in debug_dumps.items() if path}
     if debug_dumps:

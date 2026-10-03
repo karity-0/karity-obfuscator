@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from enum import Enum
+import random
 from typing import Any
 
 from .semantic_ir import SemanticIR
@@ -28,9 +29,10 @@ class ProtectionPlan:
     blocks: dict[str, dict[str, Any]]
     functions: dict[str, dict[str, Any]]
     requests: tuple[ProtectionRequest, ...]
+    generation: str = ""
 
     def dump(self) -> str:
-        lines = ["protection-plan v1"]
+        lines = ["protection-plan v1", f"generation={self.generation or 'unspecified'}"]
         for request in self.requests:
             params = ",".join(
                 f"{key}={request.parameters[key]!r}" for key in sorted(request.parameters)
@@ -61,6 +63,8 @@ class ProtectedIR:
 
 def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
     """Bind a validated plan to immutable semantic IR."""
+    if plan.generation and plan.generation != ir.generation:
+        raise ValueError("protection plan belongs to a different IR generation")
     function_ids: set[str] = set()
     block_ids: set[str] = set()
     instruction_ids: set[str] = set()
@@ -82,6 +86,41 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
             raise ValueError(
                 f"protection plan references unknown {label}: {', '.join(unknown)}"
             )
+    from .ir.operations import OPERATIONS as semantic_operations
+    for function_id, state in plan.functions.items():
+        requirements = state.get('alias_requirements')
+        if requirements is None:
+            continue
+        if function_id != ir.root.id or len(requirements) != state.get('vm_count'):
+            raise ValueError('invalid alias requirement VM placement')
+        for requirement in requirements:
+            entries = requirement['operations']
+            if (len(entries) != len(semantic_operations)
+                    or {name for name, _ in entries} != set(semantic_operations)
+                    or any(type(count) is not int or count not in (2, 3) for _, count in entries)
+                    or type(requirement['auxiliary_count']) is not int
+                    or requirement['auxiliary_count'] not in (2, 3)):
+                raise ValueError('invalid semantic alias multiplicity')
+    occurrence_ids = set()
+    for instruction_id, state in plan.instructions.items():
+        for kind, argument in state.get("instruction_forms", ()):
+            if kind not in {"normal", "split", "fuse", "defer", "operand"}:
+                raise ValueError(f"invalid planned instruction form: {instruction_id}")
+            if kind == "split" and argument not in (2, 3):
+                raise ValueError(f"invalid split arity: {instruction_id}")
+            if kind in {"fuse", "operand"} and argument not in instruction_ids:
+                raise ValueError(f"invalid instruction relation: {instruction_id}")
+        for descriptor in state.get("occurrence_descriptors", ()):
+            if len(descriptor) != 4:
+                raise ValueError("invalid planned occurrence descriptor")
+            site, seed, state_key, policy = descriptor
+            if (site in occurrence_ids or not 0x10000 <= site <= 0x7FFFFFFF
+                    or not 0x10000 <= seed <= 0xFFFFFFFF or not 4000 <= state_key <= 0xFFFF
+                    or not 0 <= policy <= 3):
+                raise ValueError("invalid or duplicate planned occurrence descriptor")
+            occurrence_ids.add(site)
+        if not 0 <= state.get("avalanche_arity", 0) <= 3:
+            raise ValueError(f"invalid avalanche arity: {instruction_id}")
     return ProtectedIR(ir, plan)
 
 
@@ -90,6 +129,7 @@ class BackendCapabilities:
     name: str
     features: frozenset[str]
     supported_options: frozenset[str]
+    fallbacks: tuple[tuple[str, str], ...] = ()
 
     def supports(self, feature: str) -> bool:
         return feature in self.features
@@ -100,13 +140,16 @@ class CapabilityResolution:
     backend: str
     active: tuple[ProtectionRequest, ...]
     disabled: tuple[ProtectionRequest, ...]
+    fallbacks: tuple[tuple[ProtectionRequest, str], ...] = ()
 
     def is_active(self, feature: str) -> bool:
         return any(request.feature == feature for request in self.active)
 
     def dump(self) -> str:
         lines = [f"capability-resolution backend={self.backend}"]
-        lines.extend(f"supported {request.feature}" for request in self.active)
+        lines.extend(f"native {request.feature}" for request in self.active
+                     if not any(target == request.feature for _, target in self.fallbacks))
+        lines.extend(f"fallback {request.feature} -> {target}" for request, target in self.fallbacks)
         lines.extend(f"disabled {request.feature}" for request in self.disabled)
         return "\n".join(lines) + "\n"
 
@@ -163,35 +206,54 @@ def _enabled(name: str, value: Any) -> bool:
     return bool(value)
 
 
+def protection_requests(options: dict[str, Any]) -> tuple[ProtectionRequest, ...]:
+    """Resolve user intent without requiring a compiled program."""
+    levels = options.get("requirements", {})
+    if not isinstance(levels, dict):
+        raise ValueError("vm_options.requirements must be an object")
+    for feature, level in levels.items():
+        if feature not in protection_features():
+            raise ValueError(f"unknown protection requirement: {feature}")
+        if level not in ("optional", "required"):
+            raise ValueError(f"requirement {feature} must be optional or required")
+    grouped: dict[str, dict[str, Any]] = {"handler_aliases": {}}
+    sources: dict[str, list[str]] = {"handler_aliases": []}
+    for option, feature in _OPTION_FEATURES.items():
+        if option in _PARAMETER_OPTIONS:
+            continue
+        if option not in options or not _enabled(option, options[option]):
+            continue
+        grouped.setdefault(feature, {})[option] = options[option]
+        sources.setdefault(feature, []).append(option)
+    for option in _PARAMETER_OPTIONS:
+        feature = _OPTION_FEATURES[option]
+        if feature in grouped and option in options:
+            grouped[feature][option] = options[option]
+            sources[feature].append(option)
+    for feature, level in levels.items():
+        if level == "required" and feature not in grouped:
+            raise ValueError(f"required protection '{feature}' must be enabled in vm_options")
+    return tuple(
+        ProtectionRequest(feature, RequirementLevel(levels.get(feature, "optional")),
+                          grouped[feature], tuple(sorted(sources[feature])))
+        for feature in sorted(grouped)
+    )
+
+
+def protection_features() -> tuple[str, ...]:
+    return tuple(sorted(set(_OPTION_FEATURES.values()) | {"handler_aliases"}))
+
+
 class ProtectionPlanner:
     """Translate user controls into desired semantic protection state."""
 
     def __init__(self, options: dict[str, Any]):
         self.options = dict(options)
+        self._random_state = random.getstate()
 
     def build(self, ir: SemanticIR) -> ProtectionPlan:
-        grouped: dict[str, dict[str, Any]] = {}
-        sources: dict[str, list[str]] = {}
-        for option, feature in _OPTION_FEATURES.items():
-            if option in _PARAMETER_OPTIONS:
-                continue
-            if option not in self.options or not _enabled(option, self.options[option]):
-                continue
-            grouped.setdefault(feature, {})[option] = self.options[option]
-            sources.setdefault(feature, []).append(option)
-        for option in _PARAMETER_OPTIONS:
-            feature = _OPTION_FEATURES[option]
-            if feature in grouped and option in self.options:
-                grouped[feature][option] = self.options[option]
-                sources[feature].append(option)
-        requests = tuple(
-            ProtectionRequest(
-                feature,
-                parameters=grouped[feature],
-                source_options=tuple(sorted(sources[feature])),
-            )
-            for feature in sorted(grouped)
-        )
+        requests = protection_requests(self.options)
+        grouped = {request.feature: request.parameters for request in requests}
 
         values: dict[str, dict[str, Any]] = {}
         instructions: dict[str, dict[str, Any]] = {}
@@ -234,18 +296,144 @@ class ProtectionPlanner:
                         state["semantic_variant_candidate"] = grouped["semantic_variants"]
                     if state:
                         instructions[instruction.id] = state
-        return ProtectionPlan(values, instructions, blocks, functions, requests)
+        self._select_targets(ir, values, instructions, functions)
+        junk_rng = random.Random()
+        junk_rng.setstate(self._random_state)
+        junk_enabled = bool(self.options.get("junk_instructions", False))
+        junk_rate = float(self.options.get("junk_rate", 0.15))
+        for function in ir.functions():
+            for block in function.blocks:
+                for instruction in block.instructions:
+                    if "junk_before_applied" in instruction.metadata:
+                        registers = instruction.metadata["junk_before_applied"]
+                    elif instruction.metadata.get("protection_origin") == "junk":
+                        registers = ()
+                    elif junk_enabled and function.max_stack_size and junk_rng.random() < junk_rate:
+                        registers = (junk_rng.randrange(function.max_stack_size),)
+                    else:
+                        registers = ()
+                    instructions[instruction.id]["junk_before"] = tuple(registers)
+
+        return ProtectionPlan(values, instructions, blocks, functions, requests, ir.generation)
+
+    def _select_targets(self, ir, values, instructions, functions):
+        """Resolve semantic targets once, independently of emission randomness."""
+        rng = random.Random()
+        rng.setstate(self._random_state)
+        ordered = tuple(ir.functions())
+        count = max(1, min(int(self.options.get("vm_count", 1)), len(ordered)))
+        placements = list(range(count)) + [rng.randrange(count) for _ in range(len(ordered) - count)]
+        rng.shuffle(placements)
+        integrity_rate = float(self.options.get("integrity_constant_rate", 0.25))
+        graph_rate = float(self.options.get("graph_execution_rate", 0.0))
+        graph_operations = {
+            "ADD", "SUB", "MUL", "BIT_AND", "BIT_OR", "BIT_XOR",
+            "SHIFT_LEFT", "SHIFT_RIGHT", "NEGATE", "BIT_NOT", "JUMP",
+            "FOR_LOOP", "FOR_PREP", "ITER_CALL", "ITER_LOOP", "VARARG",
+        }
+        split_operations = {
+            "MOVE", "LOAD_CONST", "ADD", "SUB", "MUL", "MOD", "POW", "DIV",
+            "FLOOR_DIV", "BIT_AND", "BIT_OR", "BIT_XOR", "SHIFT_LEFT", "SHIFT_RIGHT",
+            "NEGATE", "BIT_NOT", "LOGICAL_NOT", "LENGTH",
+        }
+        fuse_operations = split_operations | {"GET_UPVALUE"}
+        for function, placement in zip(ordered, placements):
+            open_register_extent = any(
+                operand.kind == "register_range" and operand.count is None
+                for block in function.blocks for instruction in block.instructions
+                for operand in instruction.operands
+            )
+            functions.setdefault(function.id, {}).update(
+                vm_assignment=placement, vm_count=count,
+                open_register_extent=open_register_extent,
+            )
+            for value in function.values:
+                literal = value.literal
+                if (value.kind == "constant" and self.options.get("integrity_constants", False)
+                        and isinstance(literal, int) and not isinstance(literal, bool)
+                        and -(2**52) <= literal < 2**52):
+                    values.setdefault(value.id, {})["integrity_encoded"] = rng.random() < integrity_rate
+            for block in function.blocks:
+                for offset, instruction in enumerate(block.instructions):
+                    state = instructions.setdefault(instruction.id, {})
+                    forms = []
+                    for variant in range(int(self.options.get("block_variant_count", 3))):
+                        if offset:
+                            previous = instructions[block.instructions[offset - 1].id]["instruction_forms"][variant]
+                            if previous == ("fuse", instruction.id):
+                                forms.append(("operand", block.instructions[offset - 1].id))
+                                continue
+                        choices = [("normal", 1)]
+                        if instruction.operation in split_operations:
+                            choices.extend((("split", 2), ("split", 3)))
+                        if (instruction.operation in fuse_operations and offset + 1 < len(block.instructions)
+                                and block.instructions[offset + 1].operation in fuse_operations):
+                            choices.append(("fuse", block.instructions[offset + 1].id))
+                        if (instruction.operation in {"ADD", "SUB", "NEGATE"}
+                                and rng.random() < float(self.options.get("cross_instruction_rate", 0.0))):
+                            forms.append(("defer", 1))
+                        else:
+                            forms.append(rng.choice(choices))
+                    state["instruction_forms"] = tuple(forms)
+                    state["alias_variant"] = rng.getrandbits(32)
+                    state["block_variant_selected"] = rng.random() < float(self.options.get("block_variant_rate", 0.0))
+                    arithmetic = instruction.operation in split_operations - {"MOVE", "LOAD_CONST", "LOGICAL_NOT", "LENGTH"}
+                    avalanche_rate = 1.0 if arithmetic else 0.25
+                    state["avalanche_arity"] = (
+                        rng.randint(1, 3) if instruction.operation not in {"RETURN", "TAIL_CALL"}
+                        and not open_register_extent
+                        and rng.random() < graph_rate * avalanche_rate else 0
+                    )
+                    if instruction.operation in graph_operations:
+                        selected = rng.random() < graph_rate
+                        instructions.setdefault(instruction.id, {})["graph_family"] = rng.randint(1, 8) if selected else 0
+
+        # Alias multiplicity is a protection decision. Backends only allocate
+        # their own opcode identifiers for these semantic requirements.
+        from .ir.operations import OPERATIONS as semantic_operations
+        functions[ir.root.id]['alias_requirements'] = tuple(
+            {'operations': tuple((name, rng.randint(2, 3))
+                                 for name in sorted(semantic_operations)),
+             'auxiliary_count': rng.randint(2, 3)}
+            for _ in range(count)
+        )
+
+        # Reserve concrete occurrence identities after target selection so each
+        # physical variant/split consumes its own planned descriptor.
+        sites = set()
+        for function in ordered:
+            for block in function.blocks:
+                for instruction in block.instructions:
+                    if instruction.operation not in graph_operations:
+                        continue
+                    descriptors = []
+                    for _ in range(max(1, int(self.options.get("block_variant_count", 3))) * 3):
+                        site = rng.randint(0x10000, 0x7FFFFFFF)
+                        while site in sites:
+                            site = rng.randint(0x10000, 0x7FFFFFFF)
+                        sites.add(site)
+                        descriptors.append((site, rng.randint(0x10000, 0xFFFFFFFF),
+                                            rng.randint(4000, 0xFFFF), rng.randrange(4)))
+                    instructions[instruction.id]["occurrence_descriptors"] = tuple(descriptors)
+
 
 
 def resolve_capabilities(
-    plan: ProtectionPlan,
+    plan: ProtectionPlan | tuple[ProtectionRequest, ...],
     capabilities: BackendCapabilities,
 ) -> CapabilityResolution:
     active: list[ProtectionRequest] = []
     disabled: list[ProtectionRequest] = []
-    for request in plan.requests:
+    fallbacks = []
+    declarations = dict(capabilities.fallbacks)
+    requests = plan.requests if isinstance(plan, ProtectionPlan) else plan
+    for request in requests:
         if capabilities.supports(request.feature):
             active.append(request)
+        elif request.feature in declarations and capabilities.supports(declarations[request.feature]):
+            target = declarations[request.feature]
+            fallbacks.append((request, target))
+            active.append(ProtectionRequest(target, request.level, dict(request.parameters), request.source_options))
         elif request.level is RequirementLevel.REQUIRED:
             raise UnsupportedProtectionError(
                 f"backend={capabilities.name} does not support required "
@@ -253,7 +441,7 @@ def resolve_capabilities(
             )
         else:
             disabled.append(request)
-    return CapabilityResolution(capabilities.name, tuple(active), tuple(disabled))
+    return CapabilityResolution(capabilities.name, tuple(active), tuple(disabled), tuple(fallbacks))
 
 
 def option_feature(option: str) -> str | None:

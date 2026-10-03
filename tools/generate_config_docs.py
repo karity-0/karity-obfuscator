@@ -15,6 +15,7 @@ from obfuscator.registry import (  # noqa: E402
     get_pass_contexts,
 )
 from obfuscator.vm.backend import VM_BACKENDS, unsupported_vm_options
+from obfuscator.vm.targets.pass_requirements import PASS_REQUIREMENTS
 
 
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
@@ -234,6 +235,11 @@ def render_pass(name: str, info: dict) -> list[str]:
         PASS_DESCRIPTIONS.get(name, "No description available."),
         "",
     ]
+    if name in PASS_REQUIREMENTS:
+        requirement = PASS_REQUIREMENTS[name]
+        capabilities = ", ".join(sorted(c.value for c in requirement.capabilities))
+        lines.extend([f"**Target requirements:** {capabilities}; minimum compatibility "
+                      f"`{requirement.minimum_compatibility.value}`.", ""])
     if name == "vm":
         lines.extend([VM_DETAILS, ""])
     if name == "rename_obf":
@@ -301,6 +307,7 @@ def render() -> str:
         "",
         "## table of contents",
         "- [profiles](#profiles)",
+        "- [target](#target)",
         "- [signature](#signature)",
         "- feature passes",
     ]
@@ -337,6 +344,36 @@ def render() -> str:
         "",
         "`--seed` is for reproducible test builds. `--release-check` rejects seeded",
         "builds and weak VM settings before writing release output.",
+        "",
+        "## target",
+        "",
+        "`target.lua_version` selects `5.3` (default) or experimental `5.1`;",
+        "`target.environment` selects `standalone` (default) or `cheatengine`.",
+        "The VM backend remains in `vm_options.backend` and is independent of both.",
+        "",
+        "`target.compatibility` accepts `portable`, `runtime_specific` (default),",
+        "or `binary_specific`, in increasing order of permitted dependencies.",
+        "VM and packer function-dump integrity requires a compatible runtime dump ABI,",
+        "so Portable rejects those stages. It does not silently weaken their integrity.",
+        "Current integrity does not fingerprint executable files; binary-specific host",
+        "references are a separate materialization feature.",
+        "`target.disabled_capabilities` can remove APIs unavailable in an embedded host.",
+        "`target.runtime_abi` is optional descriptive metadata, not an ABI verifier.",
+        "",
+        "CLI overrides are `--lua-version`, `--target-environment`, and `--compatibility`.",
+        "The GUI exposes the same choices in Lua toolchain. Selecting Cheat Engine",
+        "declares host capabilities; it does not automatically enable native protection.",
+        "`target.host_images` is an optional list of executable/DLL paths (`--host-image`",
+        "can be repeated). It requires VM, Cheat Engine capabilities and Binary specific.",
+        "Matching immutable byte strings are read from the selected loaded modules;",
+        "other constants retain existing serialization. The resolver uses module RVAs",
+        "and excludes writable, executable, relocated and import-table storage.",
+        "See [host image materialization](host-image-materialization.md) for validation limits.",
+        "",
+        "Lua 5.1 supports explicit matching executables or a library; otherwise it uses Lupa.",
+        "Packing and source passes requiring native bit operators or `_ENV` are",
+        "rejected before compilation. VM output passes run before target adaptation",
+        "and can use the intermediate runtime dialect. See [migration status](lua-target-migration.md).",
         "",
         "## signature",
         "",

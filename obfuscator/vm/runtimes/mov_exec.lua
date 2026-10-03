@@ -2,7 +2,7 @@
 --<<SHARED>>
 local _mov_kits
 local _mov_div_steps=__MOV_DIV_STEPS__
-local _mov_closures=setmetatable({},{__mode="k"})
+local _mov_closures=setmetatable({},{__mode="kv"})
 local function _mov_uint(r)
     local __VM_HOT_LOOP__=true
     local value,shift=0,0

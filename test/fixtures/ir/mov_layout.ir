@@ -1,0 +1,27 @@
+backend-ir v1 backend=mov kind=mov-micro-ir
+generation=5d60c6afca64e752d1f33446
+fallback-disable handler_aliases
+policy block_variant_rate=0.0
+policy cross_instruction_rate=0.0
+policy graph_execution_rate=0.0
+policy runtime_polymorphism_rate=0.0
+policy semantic_diversity_rate=0.0
+lowered-function f0 blocks=1 instructions=2
+lifetimes f0
+  live-block f0:b0 in=- out=-
+  live-instruction f0:i0 before=- after=f0:r0 captures-before=- captures-after=- open=0
+  live-instruction f0:i1 before=f0:r0 after=- captures-before=- captures-after=- open=0
+handler-function f0
+  h0 LOAD_CONST source=f0:i0 a=0 b=0 c=0
+  h1 RETURN source=f0:i1 a=0 b=2 c=0
+physical-function f0 vm=0 instructions=2
+  p0 LOAD_CONST vop=1 source=f0:i0 a=0 b=0 c=0 scratch=() graphs=()
+  p1 RETURN vop=38 source=f0:i1 a=0 b=2 c=0 scratch=() graphs=()
+optimization after=3
+optimization before=3
+optimization shared_recipes=0
+optimization stored=3
+micro-program 0 vm=0 entries=3 instructions=3 lowered-sites=0 recipes=-
+  m1 HOST a=0 b=1 c=0 d=0 mode=0
+  m2 HOST a=0 b=2 c=0 d=0 mode=0
+  m3 HOST a=0 b=3 c=0 d=0 mode=0

@@ -222,6 +222,7 @@ def apply_line_state(
     output_prefix: str = "",
     finalizer=None,
     output_passes: list[str] | None = None,
+    insertion_anchor: str = "return function(...)",
 ) -> tuple[str, int, list[int]]:
     """Inject line probes and compute the clean state from the final layout.
 
@@ -231,7 +232,7 @@ def apply_line_state(
     after the large VM output pipeline, so it uses the small structured literal
     emitter directly instead of reparsing the complete VM source.
     """
-    anchor = "return function(...)"
+    anchor = insertion_anchor
     anchor_pos = vm_func_src.find(anchor)
     if anchor_pos < 0:
         raise ValueError("VM function source is missing its return-function anchor")

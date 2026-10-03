@@ -16,7 +16,10 @@ from .toolchain import LuaToolchain, TOOLCHAIN_KEYS
 import re
 
 from .vm import VMPass
-from .vm.backend import normalize_vm_backend, unsupported_vm_options
+from .vm.backends import backend_choices, backend_capabilities
+from .vm.backend import normalize_vm_backend, unsupported_vm_options, vm_option_resolution
+from .vm.targets.profile import TargetProfile
+from .vm.targets.pass_requirements import validate_pass_target
 from .passes.output_signature import (
     DEFAULT_GENERATOR_PATTERNS,
     sanitize_generator_pattern,
@@ -163,15 +166,14 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS = {
+    "requirements": {
+        "description": "Protection feature requirements: map feature names to optional or required. Required features must be enabled and supported by the selected backend or an explicitly declared fallback; otherwise the build fails.",
+        "default": {},
+    },
     "backend": {
         "description": "VM runtime execution model. Missing values select the current karity runtime.",
         "default": "karity",
-        "values": [
-            ("karity", "hardened graph and encoded-register runtime"),
-            ("classic", "direct-register and direct-handler runtime on the current VM pipeline"),
-            ("mov", "supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback"),
-            ("default", "alias for karity (the default runtime)"),
-        ],
+        "values": backend_choices(),
     },
     "dispatcher_type": {
         "description": "VM dispatcher shape.",
@@ -377,9 +379,14 @@ def config_warnings(config: dict) -> list[str]:
     options = config.get("vm_options", {})
     backend = normalize_vm_backend(options.get("backend"))
     ignored = sorted(unsupported_vm_options(backend).intersection(options))
-    if not ignored:
-        return []
-    return [f"backend={backend}: unsupported VM options are ignored: {', '.join(ignored)}"]
+    fallbacks = [f"{name} -> {status['target']}" for name in sorted(options)
+                 if (status := vm_option_resolution(backend, name))["outcome"] == "fallback"]
+    messages = []
+    if ignored:
+        messages.append(f"unsupported VM options are ignored: {', '.join(ignored)}")
+    if fallbacks:
+        messages.append(f"declared fallbacks: {', '.join(fallbacks)}")
+    return [f"backend={backend}: " + "; ".join(messages)] if messages else []
 
 
 def validate_config(config: dict) -> None:
@@ -404,6 +411,21 @@ def validate_config(config: dict) -> None:
     _validate_vm_options(config.get("vm_options", {}))
     _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
+    try:
+        target = TargetProfile.from_config(config)
+        if target.host_images and "vm" not in config.get("passes", []):
+            raise ValueError("target.host_images requires the VM materialization stage")
+        for name in config.get("passes", []):
+            validate_pass_target(name, target)
+        # Output transformations consume the emitter's intermediate dialect;
+        # the target adapter lowers it after these passes finish.
+        from dataclasses import replace
+        intermediate = replace(target, lua_version="5.3")
+        for key in ("vm_output_passes", "packer_output_passes"):
+            for name in config.get(key, []):
+                validate_pass_target(name, intermediate)
+    except (ValueError, TypeError) as error:
+        raise ConfigError(str(error)) from error
 
 
 def validate_release_config(config: dict) -> None:
@@ -422,9 +444,10 @@ def validate_release_config(config: dict) -> None:
     if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2:
         errors.append("vm_options.vm_count should be >= 2 for release builds")
 
-    required_vm_flags = ("junk_instructions",) if backend == "mov" else (
+    capabilities = backend_capabilities(backend)
+    required_vm_flags = tuple(key for key in (
         "fake_handlers", "mutate_handlers", "junk_instructions",
-    )
+    ) if key in capabilities.supported_options)
     for key in required_vm_flags:
         if vm_options.get(key) is not True:
             errors.append(f"vm_options.{key} must be true")
@@ -438,41 +461,22 @@ def validate_release_config(config: dict) -> None:
     if float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
         errors.append("vm_options.integrity_constant_rate should be > 0.0")
 
-    if backend == "karity":
-        if float(vm_options.get("graph_execution_rate", 0.0)) <= 0.0:
-            errors.append("vm_options.graph_execution_rate should be > 0.0")
-
-        if float(vm_options.get("cross_instruction_rate", 0.0)) <= 0.0:
-            errors.append("vm_options.cross_instruction_rate should be > 0.0")
-
-        if float(vm_options.get("runtime_polymorphism_rate", 0.0)) <= 0.0:
-            errors.append("vm_options.runtime_polymorphism_rate should be > 0.0")
-
+    for key in ("graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
+                "block_variant_rate", "helper_diversity_rate", "semantic_diversity_rate"):
+        if key in capabilities.supported_options and float(vm_options.get(key, 0.0)) <= 0.0:
+            errors.append(f"vm_options.{key} should be > 0.0")
+    for key in ("helper_variant_count", "block_variant_count"):
+        if key in capabilities.supported_options and int(vm_options.get(key, 0)) < 2:
+            errors.append(f"vm_options.{key} should be >= 2")
     if vm_options.get("runtime_trace") is True:
         errors.append("vm_options.runtime_trace must be false for release builds")
-
-    if backend == "karity":
-        if float(vm_options.get("block_variant_rate", 0.0)) <= 0.0:
-            errors.append("vm_options.block_variant_rate should be > 0.0")
-
-        if int(vm_options.get("helper_variant_count", 0)) < 2:
-            errors.append("vm_options.helper_variant_count should be >= 2")
-
-        if float(vm_options.get("helper_diversity_rate", 0.0)) <= 0.0:
-            errors.append("vm_options.helper_diversity_rate should be > 0.0")
-
-        if float(vm_options.get("semantic_diversity_rate", 0.0)) <= 0.0:
-            errors.append("vm_options.semantic_diversity_rate should be > 0.0")
-
-        if int(vm_options.get("block_variant_count", 0)) < 2:
-            errors.append("vm_options.block_variant_count should be >= 2")
 
     if vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
     # MOV always emits independent instruction IDs and digit alphabets per VM;
     # its dispatcher does not implement the legacy dispatcher/handler options.
-    if backend != "mov" and vm_options.get("dispatcher_type") != "mixed":
+    if capabilities.supports("dispatcher_cff") and vm_options.get("dispatcher_type") != "mixed":
         errors.append("vm_options.dispatcher_type should be 'mixed'")
 
     if errors:
@@ -631,11 +635,21 @@ def _validate_vm_options(options: dict) -> None:
                     f"vm_options.{key} must be between {minimum} and {maximum}"
                 )
 
+    from .vm.backends import backend_capabilities
+    from .vm.protection import protection_requests, resolve_capabilities
+    try:
+        effective = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
+        effective.update(options)
+        resolve_capabilities(protection_requests(effective),
+                             backend_capabilities(normalize_vm_backend(options.get("backend"))))
+    except ValueError as exc:
+        raise ConfigError(str(exc)) from exc
+
 
 def _validate_debug_dumps(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'debug_dumps' must be an object")
-    allowed = {"ir", "protection_plan", "backend_ir"}
+    allowed = {"ir", "protected_ir", "protection_plan", "backend_ir"}
     unknown = sorted(set(options) - allowed)
     if unknown:
         raise ConfigError("unknown debug dumps: " + ", ".join(unknown))
@@ -699,6 +713,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     signature_options       = config.get("signature", {}) if show_header else {"mode": "none"}
     signature_pass          = OutputSignaturePass(signature_options)
     pipeline                = pipeline_cls(show_header=False)
+    pipeline.target_profile = TargetProfile.from_config(config)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 
     pipeline.toolchain      = LuaToolchain.from_config(config)
@@ -726,6 +741,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
         cls = info["cls"]
         if cls is VMPass:
             pipeline.add(cls(
+                target=pipeline.target_profile,
                 toolchain=pipeline.toolchain,
                 vm_output_passes=vm_output_passes + [
                     finalizer for finalizer in finalizers

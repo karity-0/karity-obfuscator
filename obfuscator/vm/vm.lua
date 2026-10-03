@@ -325,8 +325,17 @@ local function decode(ins,key)
     return vop,A,B,C,Bx,sBx
 end
 
+local function get_environment(upvals) return upvals.environment end
+local function bind_environment(fn,values,parent)
+    values.environment=get_environment(parent)
+    return fn
+end
+local function _source_value(v) return v end
+
 local exec, _EX, _NX
-local _VF=setmetatable({},{__mode="k"})
+-- Closures own their descriptors; this registry must not root environment or
+-- recursive-upvalue cycles on runtimes without ephemeron weak-key tables.
+local _VF=setmetatable({},{__mode="kv"})
 local _AR=__VM_ARITH_BUNDLE__
 local _GV=__VM_VALUE_GRAPHS__
 local _CG=__VM_CALL_GRAPHS__
@@ -403,6 +412,12 @@ local function _aget(q,i)
 end
 
 local _UV=setmetatable({},{__mode="k"})
+-- Lua table keys equate both zero signs; value identity must preserve them.
+local _negative_zero_key={}
+local function _value_key(v)
+    if type(v)=="number" and v==0 and 1/v<0 then return _negative_zero_key end
+    return v
+end
 local _UO={}
 local _UI=setmetatable({},{__mode="k"})
 local _UC=0
@@ -611,10 +626,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if type(v)=="boolean" then return v and 1 or 0,2 end
         if v==nil then return _rmix(epoch~_RZ~0x4E494C),3 end
         local id
-        if not (type(v)=="number" and v~=v) then id=_RI[v] end
+        if not (type(v)=="number" and v~=v) then id=_RI[_value_key(v)] end
         if id==nil then
             _RX[2]=(_RX[2] or 0)+1; id=_RX[2]; _RO[id]=v
-            if not (type(v)=="number" and v~=v) then _RI[v]=id end
+            if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=id end
         end
         return id,4
     end
@@ -773,10 +788,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             elseif type(v)=="boolean" then payload,kind=(v and 1 or 0),2
             elseif v==nil then payload,kind=_rmix(epoch~__VM_UV_NIL__),3
             else
-                if not (type(v)=="number" and v~=v) then payload=_UI[v] end
+                if not (type(v)=="number" and v~=v) then payload=_UI[_value_key(v)] end
                 if payload==nil then
                     payload=#_UO+1; _UO[payload]=v
-                    if not (type(v)=="number" and v~=v) then _UI[v]=payload end
+                    if not (type(v)=="number" and v~=v) then _UI[_value_key(v)]=payload end
                 end
                 kind=4
             end
@@ -894,6 +909,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return v
     end
 
+    local function close_upvalues(first)
+        for slot,box in pairs(boxes) do
+            if slot>=first then
+                local value=get_upvalue(box)
+                box.get=nil; box.set=nil
+                set_upvalue(box,value)
+                boxes[slot]=nil
+            end
+        end
+    end
+
     local function make_closure(sub)
         local new_uv={}
         for i,uv in ipairs(sub.upvalues) do
@@ -905,7 +931,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
         -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
+        local metadata={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
         local fn=function(...)
+            local sub,new_uv=metadata[__VM_META_PROTO__],metadata[__VM_META_UPVALS__]
             local _av=table.pack(...)
             local w=_CG[__VM_ROUTE_ENTER__](_NX,{
                 [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=sub,
@@ -916,8 +944,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
             return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
         end
-        _VF[fn]={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
-        return fn
+        _VF[fn]=metadata
+        return bind_environment(fn,new_uv,upvals)
     end
 
     local _carry
@@ -1426,7 +1454,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==29 then
             local t={}; for i=B,C do t[#t+1]=rget(i) end
             rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
-        elseif op==30 then pc=_jump(sBx,_av,30)
+        elseif op==30 then if A>0 then close_upvalues(A-1) end; pc=_jump(sBx,_av,30)
         elseif op==31 then if not _branch(_carry(_sem(__VM_CMP_EQ__,rget(B),rget(C),nil),_av,31),A~=0,_av,31) then pc=pc+1 end
         elseif op==32 then if not _branch(_carry(_sem(__VM_CMP_LT__,rget(B),rget(C),nil),_av,32),A~=0,_av,32) then pc=pc+1 end
         elseif op==33 then if not _branch(_carry(_sem(__VM_CMP_LE__,rget(B),rget(C),nil),_av,33),A~=0,_av,33) then pc=pc+1 end
@@ -1454,6 +1482,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
 
         elseif op==37 then
+            close_upvalues(0)
             local fn=rget(A)
             local ca=_call_args(A,B)
             local ca_n=ca.n
@@ -1471,6 +1500,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             return _native_call(fn,ca,A,C,_av,true,37)
 
         elseif op==38 then
+            close_upvalues(0)
             local r,n=_return_values(A,B)
             return _leave(r,n,_av,38)
 
@@ -1508,6 +1538,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 pc=_cf(q,__VM_CF_TARGET__,42) end
 
         elseif op==43 then
+            if C==0 then
+                local ei=code[pc]~_ksm(pc); pc=pc+1
+                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+            end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
             local vals={}; for i=1,cnt do vals[i]=rget(A+i) end
@@ -1549,6 +1583,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==57 then rset(A,consts[Bx+1][2])
         elseif op==58 then pc=_poly_route(_brd[A+1],A~pc~proto.vm_id)
         elseif op==59 then pc=Bx+1
+        elseif op==60 then rset(A,_sem(__VM_DATA_GET__,get_environment(upvals),kval(consts[Bx+1],proto),nil))
+        elseif op==61 then _sem(__VM_DATA_SET__,get_environment(upvals),kval(consts[Bx+1],proto),rget(A))
+        elseif op==62 then
+            local n=_acount(_va);local t=_tnew();_tset(t,"n",_source_value(n))
+            for i=1,n do _tset(t,i,_aget(_va,i)) end;rset(A,t)
         else error("unknown op "..op) end
     end
     return _leave({},0,nil,138)
@@ -1643,7 +1682,7 @@ local function run(blob,rand_tail,self_func)
     --<<RUN_ENTRY>>
     _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]=_apack({},0,crc)})
+         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=_apack({},0,crc)})
     --<<ENDRUN_ENTRY>>
     --<<RUNTIME_TRACE>>
     io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),

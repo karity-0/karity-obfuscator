@@ -166,6 +166,8 @@ def _range_bounds(info: dict, default) -> tuple[float | int, float | int, float 
 
 
 def _vm_option_meta() -> list[dict]:
+    from obfuscator.vm.backends import backend_choices
+    from obfuscator.vm.backend import vm_option_resolution
     result = []
     for name, info in VM_OPTION_DOCS.items():
         default = info["default"]
@@ -175,16 +177,21 @@ def _vm_option_meta() -> list[dict]:
             "description": info.get("description", ""),
             "default": default,
             "group": _OPTION_GROUPS.get(name, "Advanced"),
+            "resolution": {backend: vm_option_resolution(backend, name) for backend in VM_BACKENDS},
             "supported_backends": [backend for backend in VM_BACKENDS
                                    if name not in unsupported_vm_options(backend)],
         }
-        if isinstance(default, bool):
+        if name == "requirements":
+            from obfuscator.vm.protection import protection_features
+            item["kind"] = "requirements"
+            item["features"] = list(protection_features())
+        elif isinstance(default, bool):
             item["kind"] = "boolean"
         elif "values" in info:
             item["kind"] = "select"
             item["values"] = [
                 {"value": value, "label": value, "description": description}
-                for value, description in info["values"] if not value.endswith("N")
+                for value, description in (backend_choices() if name == "backend" else info["values"]) if not value.endswith("N")
             ]
             if name == "dispatcher_type":
                 item["values"].extend(

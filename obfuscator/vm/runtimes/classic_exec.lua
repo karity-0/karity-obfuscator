@@ -156,6 +156,17 @@ exec = function(proto, upvals, args, va_in)
         if box.set then box.set(v) else box.v=v end
     end
 
+    local function close_upvalues(first)
+        for slot,box in pairs(boxes) do
+            if slot>=first then
+                local value=get_upvalue(box)
+                box.get=nil; box.set=nil
+                set_upvalue(box,value)
+                boxes[slot]=nil
+            end
+        end
+    end
+
     local function make_closure(sub)
         local new_uv={}
         for i,uv in ipairs(sub.upvalues) do
@@ -167,10 +178,11 @@ exec = function(proto, upvals, args, va_in)
         end
         -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
-        return function(...)
+        local fn=function(...)
             local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...))
             return table.unpack(w.r, 1, w.n)
         end
+        return bind_environment(fn,new_uv,upvals)
     end
 
     --[[VM_DISPATCH_ENTRY]] while true do
@@ -214,7 +226,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==29 then
             local out=rget(C); for i=C-1,B,-1 do out=rget(i)..out end
             rset(A,out)
-        elseif op==30 then pc=pc+sBx
+        elseif op==30 then if A>0 then close_upvalues(A-1) end; pc=pc+sBx
         elseif op==31 then if (rget(B)==rget(C))~=(A~=0) then pc=pc+1 end
         elseif op==32 then if (rget(B)<rget(C))~=(A~=0) then pc=pc+1 end
         elseif op==33 then if (rget(B)<=rget(C))~=(A~=0) then pc=pc+1 end
@@ -237,6 +249,7 @@ exec = function(proto, upvals, args, va_in)
             end
 
         elseif op==37 then
+            close_upvalues(0)
             local fn=rget(A); local ca={}; local ca_n=0
             if B>1 then
                 for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
@@ -247,6 +260,7 @@ exec = function(proto, upvals, args, va_in)
             return {r=res, n=res.n}
 
         elseif op==38 then
+            close_upvalues(0)
             if B==1 then return {r={},n=0}
             elseif B==0 then
                 local r={}; local n=0
@@ -276,6 +290,10 @@ exec = function(proto, upvals, args, va_in)
             if rget(A+1)~=nil then rset(A,rget(A+1)); pc=pc+sBx end
 
         elseif op==43 then
+            if C==0 then
+                local ei=code[pc]~_ksm(pc); pc=pc+1
+                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+            end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
             for i=1,cnt do tbl[base+i]=rget(A+i) end
@@ -307,6 +325,11 @@ exec = function(proto, upvals, args, va_in)
         elseif op==57 then rset(A,consts[Bx+1][2])
         elseif op==58 then pc=_poly_route(_brd[A+1])
         elseif op==59 then pc=Bx+1
+        elseif op==60 then rset(A,get_environment(upvals)[kval(consts[Bx+1],proto)])
+        elseif op==61 then get_environment(upvals)[kval(consts[Bx+1],proto)]=rget(A)
+        elseif op==62 then
+            local n=_acount(_va);local t={n=_source_value(n)}
+            for i=1,n do t[i]=_aget(_va,i) end;rset(A,t)
         else error("unknown op "..op) end
     end
     return {r={},n=0}

@@ -6,12 +6,18 @@ from ..protection import BackendCapabilities, option_feature
 
 class KarityBackend(VMBackend):
     name = "karity"
+    description = 'hardened graph and encoded-register runtime'
     lowered_kind = "karity-handler-graph"
     capabilities = BackendCapabilities(
         name,
-        frozenset(filter(None, (option_feature(option) for option in KARITY_OPTIONS))),
+        frozenset(filter(None, (option_feature(option) for option in KARITY_OPTIONS)))
+        | frozenset({"handler_aliases"}),
         KARITY_OPTIONS,
     )
+
+    def compose_runtime(self, source, lowered):
+        # The shared loader template already contains the continuation executor.
+        return source
 
     def _policy(self, options: dict[str, Any]) -> dict[str, Any]:
         policy = super()._policy(options)

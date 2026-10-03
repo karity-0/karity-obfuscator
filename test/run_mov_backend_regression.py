@@ -169,7 +169,8 @@ def main() -> int:
         build_recipe(code)
         assert {i.a for i in code if i.op == Op.HOST} == {commit}
     for opcode in (27, 34, 35):
-        program = lower([opcode])
+        from obfuscator.vm.backends.handler_ir import HandlerInstruction
+        program = lower([HandlerInstruction(opcode)])
         site = program.code[:program.entries[1] - 1]
         assert any(i.op == Op.LOOKUP for i in site)
         assert not any(i.op == Op.HOST and i.a == Host.EXEC for i in site)

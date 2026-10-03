@@ -59,20 +59,12 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     )
     handlers = handlers.replace("elseif op==30 then pc=pc+sBx",
                                 'elseif op==30 then error("unexpected MOV host jump")')
-    # SETLIST's extra word is data, not an independently executed instruction.
-    handlers = handlers.replace(
-        "local base=(C-1)*50; local cnt=B==0 and (top-A) or B",
-        """if C==0 then
-                local ei=code[pc]~_ksm(pc); pc=pc+1
-                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
-            end
-            local base=(C-1)*50; local cnt=B==0 and (top-A) or B""",
-    )
     # Every host opcode crosses the same indirect call boundary. Keep frame
     # state in closure upvalues; a returned packet exits the interpreter only
     # for RETURN/TAILCALL, while ordinary handlers return nil.
     blocks = _parse_handler_blocks(handlers)
-    if set(blocks) != set(range(60)):
+    from ..backends.handler_ir import OPERATIONS
+    if set(blocks) != set(range(len(OPERATIONS))):
         raise ValueError("unexpected MOV host handler set")
     host_dispatch = """local result=_mov_host[op~__MOV_HOST_KEY__](A,B,C,Bx,sBx,_av)
             if result then return result end"""
@@ -86,16 +78,16 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     runtime = runtime.replace("get=function() return regs[slot] end", "get=function() return rget(slot) end")
     runtime = runtime.replace("set=function(v) regs[slot]=v end", "set=function(v) rset(slot,v) end")
     runtime = runtime.replace(
-        """return function(...)
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...))
-            return table.unpack(w.r, 1, w.n)
-        end""",
-        """local fn=function(...)
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...))
-            return table.unpack(w.r, 1, w.n)
-        end
-        _mov_closures[fn]={sub,new_uv}
-        return fn""",
+        "return bind_environment(fn,new_uv,upvals)",
+        "_mov_closures[fn]=metadata;return bind_environment(fn,new_uv,upvals)",
+    )
+    # The closure owns its descriptor; the registry owns neither side. This
+    # allows environment/upvalue cycles to collect even in Lua 5.1, whose weak
+    # keys do not provide Lua 5.3 ephemeron semantics.
+    runtime = runtime.replace(
+        "local fn=function(...)\n            local w=",
+        "local metadata={sub,new_uv}\n        local fn=function(...)\n"
+        "            local sub,new_uv=metadata[1],metadata[2]\n            local w=",
     )
     start = runtime.index("--<<EXEC>>") + len("--<<EXEC>>")
     end = runtime.index("--<<ENDEXEC>>")

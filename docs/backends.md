@@ -133,6 +133,7 @@ unsupported controls, including values inherited from a profile.
 
 | Option | Karity | Classic | MOV |
 |---|---|---|---|
+| `requirements` | Yes | Yes | Yes |
 | `backend` | Yes | Yes | Yes |
 | `dispatcher_type` | Yes | Yes | No |
 | `dispatcher_target_hiding` | Yes | Yes | No |

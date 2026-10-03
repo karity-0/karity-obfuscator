@@ -72,6 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     state.config.vm_output_passes ||= [];
     state.config.packer_output_passes ||= [];
     state.config.vm_options ||= {};
+    state.config.target ||= {};
     state.config.signature ||= {
       mode: 'default',
       fake: { sources: ['well_known', 'generated'], generator_patterns: [
@@ -104,6 +105,7 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       const toolchain = {};
+      toolchain.target = clone(state.config.target || {});
       ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
         if (state.config[key]) toolchain[key] = state.config[key];
       });
@@ -123,8 +125,10 @@ document.addEventListener('DOMContentLoaded', () => {
         return;
       }
       const backend = state.config.vm_options.backend ?? 'karity';
+      const requirements = clone(state.config.vm_options.requirements ?? {});
       state.config.vm_options = clone(bootstrap.protection_levels[name]);
       state.config.vm_options.backend = backend;
+      state.config.vm_options.requirements = requirements;
       state.protection_level = name;
       state.preset = 'custom';
       renderAll();
@@ -178,6 +182,16 @@ document.addEventListener('DOMContentLoaded', () => {
       if (preferences.theme === 'system') applyPreferences();
     });
 
+    ['lua_version', 'environment', 'compatibility'].forEach(key => {
+      $(`target-${key}`).addEventListener('change', event => {
+        state.config.target[key] = event.target.value;
+        markPresetCustom(false);
+      });
+    });
+    $('target-host_images').addEventListener('input', event => {
+      state.config.target.host_images = event.target.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
+      markPresetCustom(false);
+    });
     ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
       $(key).addEventListener('input', event => {
         state.config[key] = event.target.value.trim() || null;
@@ -215,6 +229,10 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAll() {
     ensureConfigShape();
+    $('target-host_images').value = (state.config.target.host_images || []).join('\n');
+    Object.entries({lua_version: '5.3', environment: 'standalone', compatibility: 'runtime_specific'}).forEach(([key, fallback]) => {
+      $(`target-${key}`).value = state.config.target[key] || fallback;
+    });
     ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
       $(key).value = state.config[key] || '';
     });
@@ -403,7 +421,27 @@ document.addEventListener('DOMContentLoaded', () => {
     const host = row.querySelector('.option-control');
     const current = state.config.vm_options[option.name] ?? option.default;
 
-    if (option.kind === 'boolean') {
+    if (option.kind === 'requirements') {
+      const fields = document.createElement('div');
+      option.features.forEach(feature => {
+        const label = document.createElement('label');
+        label.textContent = feature.replaceAll('_', ' ') + ' ';
+        const select = document.createElement('select');
+        select.className = 'select-control';
+        select.add(new Option('Optional', 'optional'));
+        select.add(new Option('Required', 'required'));
+        select.value = current[feature] ?? 'optional';
+        select.addEventListener('change', () => {
+          const requirements = {...current};
+          if (select.value === 'optional') delete requirements[feature];
+          else requirements[feature] = select.value;
+          setVmOption(option.name, requirements);
+        });
+        label.appendChild(select);
+        fields.appendChild(label);
+      });
+      host.appendChild(fields);
+    } else if (option.kind === 'boolean') {
       const label = document.createElement('label');
       label.className = 'switch';
       label.innerHTML = `<input type="checkbox" ${current ? 'checked' : ''}><span class="switch-track"></span>`;
@@ -442,7 +480,10 @@ document.addEventListener('DOMContentLoaded', () => {
     }
     const selected = state.config.vm_options.backend ?? 'karity';
     const backend = bootstrap.backend_aliases[selected] ?? selected;
-    if (!option.supported_backends.includes(backend)) {
+    if (option.resolution[backend]?.outcome === 'fallback') {
+      row.querySelector('.option-description').textContent = `Fallback: ${option.resolution[backend].target}`;
+    }
+    if (option.resolution[backend]?.outcome === 'disable') {
       row.classList.add('unsupported-option');
       row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
       row.querySelector('.option-description').textContent = `Not used by ${backend}; saved value retained`;
@@ -482,7 +523,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.activeLevel.textContent = titleCase(state.protection_level);
     ui.metricPasses.textContent = allPasses.length;
     ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
-    ui.metricRuntime.textContent = ['classic', 'mov'].includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
+    ui.metricRuntime.textContent = !bootstrap.vm_options.find(option => option.name === 'runtime_polymorphism_rate').supported_backends.includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
       ? 'N/A' : formatPercent(state.config.vm_options.runtime_polymorphism_rate);
     renderPipeline();
   }

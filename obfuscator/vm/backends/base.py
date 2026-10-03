@@ -3,17 +3,26 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from ...parser import Proto
+from .handler_ir import (HandlerFunction, lower_handler_ir, serialization_targets,
+                         validate_handler_ir)
 from ..protection import (
     BackendCapabilities, CapabilityResolution, ProtectionPlan,
     ProtectedIR, protect, resolve_capabilities,
 )
 from ..semantic_ir import SemanticIR, validate_semantic_ir
+from .domains import ExecutionDomain
 
 
 @dataclass(frozen=True)
 class BackendContext:
     options: dict[str, Any]
+    toolchain: Any = None
+    output_passes: tuple[str, ...] = ()
+    output_prefix: str = ""
+    profile: list[dict] = field(default_factory=list, compare=False)
+    output_transform: Any = None
+    target: Any = None
+    constant_provider: Any = None
 
 
 @dataclass
@@ -23,13 +32,17 @@ class LoweredIR:
     semantic_ir: SemanticIR
     protection_plan: ProtectionPlan
     resolution: CapabilityResolution
-    source_proto: Proto
+    program: HandlerFunction
     policy: dict[str, Any]
     protected_ir: ProtectedIR
     backend_data: dict[str, Any] = field(default_factory=dict)
 
     def dump(self) -> str:
         lines = [f"backend-ir v1 backend={self.backend} kind={self.kind}"]
+        lines.append(f"generation={self.semantic_ir.generation}")
+        materialization = self.backend_data.get("materialization")
+        if materialization is not None:
+            lines.extend(materialization.dump().splitlines())
         for request in self.resolution.active:
             lines.append(f"active {request.feature}")
         for request in self.resolution.disabled:
@@ -42,6 +55,35 @@ class LoweredIR:
                 f"lowered-function {function.id} blocks={len(function.blocks)} "
                 f"instructions={instruction_count}"
             )
+        for function_id, lifetimes in sorted(self.backend_data.get("liveness", {}).items()):
+            lines.extend(lifetimes.dump(function_id).splitlines())
+        def dump_function(function):
+            lines.append(f"handler-function {function.id}")
+            for index, instruction in enumerate(function.code):
+                target = ""
+                if instruction.operation in {"JUMP", "FOR_LOOP", "FOR_PREP", "ITER_LOOP"}:
+                    target = f" target={index + 1 + instruction.sbx}"
+                lines.append(
+                    f"  h{index} {instruction.operation} source={instruction.source_id} "
+                    f"a={instruction.a} b={instruction.b} c={instruction.c}{target}"
+                )
+            for child in function.protos:
+                dump_function(child)
+        dump_function(self.program)
+        layout = self.backend_data.get("layout")
+        if layout is not None:
+            from .runtime_layout import iter_functions
+            for function in iter_functions(layout.functions):
+                lines.append(f"physical-function {function.source.id} vm={function.vm_id} instructions={len(function.code)}")
+                for index, item in enumerate(function.code):
+                    instruction = item.instruction
+                    lines.append(f"  p{index} {instruction.operation} vop={item.vop} source={instruction.source_id} "
+                                 f"a={instruction.a} b={instruction.b} c={instruction.c} "
+                                 f"scratch={item.avalanche!r} graphs={item.graph_sites!r}")
+                for index, targets in enumerate(function.routes):
+                    lines.append(f"  route {index} targets={','.join(map(str, targets))}")
+        for key, value in sorted(self.backend_data.get("optimization", {}).items()):
+            lines.append(f"optimization {key}={value}")
         programs = self.backend_data.get("programs", ())
         for program_index, program in enumerate(programs):
             recipes = ",".join(sorted(program.recipe_offsets)) or "-"
@@ -60,7 +102,9 @@ class LoweredIR:
 
 
 class VMBackend:
+    domain = ExecutionDomain.VM
     name = ""
+    description = ""
     lowered_kind = ""
     direct_runtime = False
     mov_microcode = False
@@ -68,41 +112,60 @@ class VMBackend:
 
     def lower(
         self,
-        ir: SemanticIR,
-        protection_plan: ProtectionPlan,
+        protected_ir: ProtectedIR,
         context: BackendContext,
     ) -> LoweredIR:
+        if not isinstance(protected_ir, ProtectedIR):
+            raise TypeError("backend lowering requires ProtectedIR")
+        ir, protection_plan = protected_ir.semantic_ir, protected_ir.plan
         validate_semantic_ir(ir)
-        protected_ir = protect(ir, protection_plan)
+        protect(ir, protection_plan)
         resolution = resolve_capabilities(protection_plan, self.capabilities)
         policy = self._policy(context.options)
-        return LoweredIR(
+        lowered = LoweredIR(
             backend=self.name,
             kind=self.lowered_kind,
             semantic_ir=ir,
             protection_plan=protection_plan,
             resolution=resolution,
-            source_proto=ir.source_proto,
+            program=lower_handler_ir(ir),
             policy=policy,
             protected_ir=protected_ir,
         )
-
-    def optimize(self, lowered: LoweredIR, context: BackendContext) -> LoweredIR:
-        """Optimization boundary; compatibility adapters currently preserve IR."""
+        from ..ir.liveness import analyze_liveness
+        lowered.backend_data["liveness"]={function.id:analyze_liveness(function) for function in ir.functions()}
+        from .runtime_layout import prepare_layout
+        lowered.backend_data["layout"] = prepare_layout(self, lowered, context)
+        if context.constant_provider is not None:
+            from ..targets.materialization import plan_materialization
+            lowered.backend_data["materialization"] = plan_materialization(
+                lowered.backend_data["layout"].functions, context.constant_provider)
         return lowered
 
-    def emit(
-        self,
-        lowered: LoweredIR,
-        emitted_source: str,
-        context: BackendContext,
-    ) -> str:
-        """Emission boundary around the retained runtime/code generator."""
+    def build_vm_map(self, program, assignments, vm_id, used_vops, alias_requirements):
+        from .runtime_layout import build_handler_map
+        return build_handler_map(program, assignments, vm_id, used_vops, alias_requirements,
+                                 delayed=self.capabilities.supports("delayed_materialization"))
+
+    def serialization_targets(self, lowered: LoweredIR) -> dict[int, dict[str, Any]]:
+        return serialization_targets(lowered.program, lowered.protection_plan)
+
+    def optimize(self, lowered: LoweredIR, context: BackendContext) -> LoweredIR:
+        """Validate the typed runtime representation before emission."""
+        validate_handler_ir(lowered.program)
+        from .handler_layout import validate_layout
+        layout = lowered.backend_data["layout"]
+        validate_layout(layout.functions, layout.vm_maps)
+        return lowered
+
+    def compose_runtime(self, source: str, lowered: LoweredIR) -> str:
+        raise NotImplementedError('a VM backend must select its runtime executor')
+
+    def emit(self, lowered: LoweredIR, context: BackendContext) -> str:
         if lowered.backend != self.name:
-            raise ValueError(
-                f"backend={self.name} cannot emit lowered IR for {lowered.backend}"
-            )
-        return emitted_source
+            raise ValueError(f"backend={self.name} cannot emit {lowered.backend}")
+        from .runtime_emitter import emit_runtime
+        return emit_runtime(self, lowered, context)
 
     def _policy(self, options: dict[str, Any]) -> dict[str, Any]:
         policy = {
@@ -119,13 +182,10 @@ class VMBackend:
         })
         return policy
 
-    def attach_programs(self, lowered: LoweredIR, programs: list[Any]) -> None:
-        if programs:
-            raise ValueError(f"backend={self.name} does not accept micro programs")
 
 
 SHARED_OPTIONS = frozenset((
-    "backend", "blob_form", "vm_count", "junk_instructions", "junk_rate",
+    "backend", "requirements", "blob_form", "vm_count", "junk_instructions", "junk_rate",
     "integrity_constants", "integrity_constant_rate",
 ))
 

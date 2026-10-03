@@ -1,4 +1,5 @@
 {
+    "target": {"lua_version": "5.3", "environment": "standalone", "compatibility": "runtime_specific"},
     "lua_executable": null,
     "luac_executable": null,
     "lua_library": null,
