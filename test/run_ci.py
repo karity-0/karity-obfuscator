@@ -6,6 +6,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REGRESSIONS = (
+    "selection",
     "strip_info",
     "meme_strings",
     "rename", "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",

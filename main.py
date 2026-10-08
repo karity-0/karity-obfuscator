@@ -8,6 +8,7 @@ from pathlib import Path
 
 from obfuscator import Pipeline, build_pipeline_from_config, __version__
 from obfuscator.profiling import Profiler
+from obfuscator.selection import SelectionError
 from obfuscator.toolchain import TOOLCHAIN_KEYS
 from obfuscator.registry import (
     ConfigError,
@@ -65,6 +66,7 @@ def parse_args():
     parser.add_argument("--print-config", action="store_true", help="print resolved config and exit")
     parser.add_argument("--release-check", action="store_true", help="fail unless the resolved config is suitable for release")
     parser.add_argument("--profile-report", help="write pass timing and size profile JSON to this path, or '-' for stdout")
+    parser.add_argument("--selection-report", help="write selective protection results as JSON to this path, or '-' for stdout")
     parser.add_argument("--dump-protected-ir", metavar="PATH", help="write normalized IR after protection transforms to PATH")
     parser.add_argument("--dump-ir", metavar="PATH", help="write deterministic Semantic IR to PATH")
     parser.add_argument(
@@ -242,12 +244,22 @@ def main():
 
     profiler = Profiler() if args.profile_report else None
     pipeline = build_pipeline(config)
-    output_script = pipeline.run(script, args.verbose, profiler=profiler)
+    try:
+        output_script = pipeline.run(script, args.verbose, profiler=profiler)
+    except (SelectionError, ConfigError) as error:
+        print(f"error: {error}", file=sys.stderr)
+        sys.exit(1)
 
     elapsed = time.perf_counter() - start_time
 
     print(f"saving {output_path}")
     write_script(output_path, output_script)
+    if args.selection_report:
+        selection_text = json.dumps({"selections": pipeline.last_selection_report}, indent=4, ensure_ascii=False)
+        if args.selection_report == "-":
+            print(selection_text)
+        else:
+            Path(args.selection_report).write_text(selection_text + "\n", encoding="utf-8")
     if profiler:
         report = {
             "profile": profile,

@@ -76,6 +76,7 @@ class VMBuildPipeline(PostPass):
             raise ValueError("target profile backend mismatch")
         self.target = self.target_profile.adapter()
         self.debug_dumps = dict(debug_dumps or {})
+        self.isolate_runtime_globals = False
         self.last_profile: list[dict] = []
         self.last_source_ir = None
         self.last_optimized_ir = None
@@ -102,6 +103,18 @@ class VMBuildPipeline(PostPass):
         output_transform = _obfuscate_vm_output
         if getattr(self.target, "compact_output_globals", False):
             output_transform = partial(_obfuscate_vm_output, compact_globals=True)
+        if self.isolate_runtime_globals:
+            original_transform = output_transform
+            def isolated_transform(source, passes):
+                from ..passes.rename_ts import qualify_runtime_globals
+                transformed, details = original_transform(source, passes)
+                started = time.perf_counter()
+                isolated = qualify_runtime_globals(transformed)
+                self.last_profile.append({"phase": "isolate_runtime_globals",
+                                          "elapsed": round(time.perf_counter() - started, 6)})
+                return isolated, details
+            output_transform = isolated_transform
+        self.target.isolate_runtime_globals = self.isolate_runtime_globals
         context = BackendContext(
             self.vm_options, self.toolchain, tuple(self.vm_output_passes),
             self.output_prefix, self.last_profile, output_transform, self.target,

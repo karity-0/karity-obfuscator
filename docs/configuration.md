@@ -3,6 +3,7 @@
 # configuration
 
 ## table of contents
+- [selective protection](#selective-protection)
 - [profiles](#profiles)
 - [target](#target)
 - [signature](#signature)
@@ -51,6 +52,19 @@
   - [helper_variant_count](#helper_variant_count)
   - [helper_diversity_rate](#helper_diversity_rate)
   - [semantic_diversity_rate](#semantic_diversity_rate)
+
+## selective protection
+Use `selection_modes` to choose `all` (the default for enabled passes) or
+`marked` for `string_obf`, `number_obf`, `boolean_obf`, `table_obf`,
+`function_obf`, and `vm`. Source macros/directives can enable an absent
+pass in marked mode. `selection_profiles` supplies named VM option presets
+in flat configs; named input profiles are also available to VM directives.
+Regions support complete sibling statements, partial function protection,
+and nested native exclusions. Selective VM boundaries require Lua 5.3.
+Selected VM regions with equal effective options share one runtime initialization.
+See the [selective protection guide](selective-obfuscation.md) and
+`config.selective.example.json` for syntax, precedence and limitations.
+`--selection-report PATH` writes original-line application results as JSON.
 
 ## profiles
 The default config uses named profiles so test and release builds can switch
@@ -243,6 +257,11 @@ part of that provenance set and are never recursively reprocessed.
 nested-function transformation (default: `true`), and
 `function_obf_options.nested_max_depth` limits nesting expansion
 (default: `4`, valid range: `0..16`).
+
+`cff`, `junk`, `inline`, and `wrapper` are independently selectable
+boolean switches (all default to `true`). Inlining and compound-loop
+transforms run as components of the CFF rewrite. Source directives can
+override these options per function; see [selective protection](selective-obfuscation.md).
 
 Loop/compound transformation is controlled by `loop_split` (default:
 `true`) and `loop_unroll` (default: `true`). Static integer numeric-for

@@ -72,7 +72,8 @@ class Lua53Target:
             from ...passes.minify import MinifyPass
             finalizer = MinifyPass().run
         return apply_line_state(source, context.output_prefix, finalizer=finalizer,
-                                output_passes=context.output_passes)
+                                output_passes=context.output_passes,
+                                qualify_globals=getattr(self, "isolate_runtime_globals", False))
 
     def dump_function(self, source, header, decoy_name, decoy_value, toolchain):
         from ..backends.runtime_emitter import _dump_function_stripped

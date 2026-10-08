@@ -13,9 +13,13 @@
 from __future__ import annotations
 from bisect import bisect_left
 from dataclasses import dataclass
+from contextvars import ContextVar
+import copy
 import random
 import re
 import time
+
+_FUNCTION_FEATURES = ContextVar("function_features", default={})
 
 from .base import BasePass, Replacement
 from ..names import NameAllocator
@@ -1426,6 +1430,8 @@ def _junk_flow(c: list[int], rich: bool = True, live_vars=None,
     live_vars가 주어지면 내부 opaque predicate가 파라미터/상태값을 섞는다.
     n_segs로 세그먼트 수를 지정할 수 있다(live junk는 비용 제어 위해 1~2로 제한).
     """
+    if not _FUNCTION_FEATURES.get().get("junk", True):
+        return []
     if not rich:
         return _junk_simple(c, live_vars)
     out: list[str] = []
@@ -1444,6 +1450,8 @@ def _emit_absorbing_junk(emit, level: int, c: list[int], rich: bool, live_vars,
     (실제 실행 경로에서 도는 junk는 아래 `_emit_live_junk`가 담당한다.)
     """
     jflow = _junk_flow(c, rich, live_vars)
+    if not jflow:
+        return
     sink = _last_zv(jflow)
     emit(level, f"if {_nested_always_false(2, live_vars)} then")
     for jl in jflow:
@@ -1468,6 +1476,8 @@ def _emit_live_junk(emit, level: int, c: list[int], rich: bool, live_vars,
     return 블록 앞에 놓여도 안전하도록 호출부에서 real code *앞*에 emit한다.
     """
     jflow = _junk_flow(c, rich, live_vars, n_segs=n_segs)
+    if not jflow:
+        return
     sink = _last_zv(jflow)
     for jl in jflow:
         emit(level, jl)
@@ -3090,9 +3100,10 @@ def _transform_body(
             return None, boundary_stats
 
     lexical_plan = _build_lexical_plan(ctx, function_node)
-    inline_map, skipped_statement_ids = _plan_simple_function_inlines(
-        ctx, block, lexical_plan
-    )
+    if _FUNCTION_FEATURES.get().get("inline", True):
+        inline_map, skipped_statement_ids = _plan_simple_function_inlines(ctx, block, lexical_plan)
+    else:
+        inline_map, skipped_statement_ids = {}, set()
     boundary_stats["inlined_functions"] = len(skipped_statement_ids)
 
     # CFF가 실제로 분해하는 root/if scope local만 hoist 대상.
@@ -3120,8 +3131,11 @@ def _transform_body(
 
     prefix_lines: list[str] = []
     if params:
+        original_params = [ctx.text(n) for n in function_node.child_by_field_name("parameters").named_children
+                           if n.type == "identifier"]
         prefix_lines.append(
-            f"local {','.join(params)}=..."
+            f"local {','.join(params)}=" + ("..." if _FUNCTION_FEATURES.get().get("wrapper", True)
+                                           else ",".join(original_params))
         )
 
     # 단일 simple/return statement는 CFF 없이 alpha-renaming + vararg unpack만.
@@ -3206,12 +3220,16 @@ class FunctionObfuscationPass(BasePass):
                  loop_unroll_max_iterations: int = 4,
                  loop_max_generated_blocks: int = 64,
                  loop_max_expansion_ratio: float = 128.0,
-                 loop_max_depth: int = 3):
+                 loop_max_depth: int = 3,
+                 cff: bool = True, junk: bool = True,
+                 inline: bool = True, wrapper: bool = True):
         if boundary_mode not in {"mixed", "split", "cff"}:
             raise ValueError(
                 "boundary_mode must be 'mixed', 'split', or 'cff'"
             )
         self.skip_vm_dispatcher = skip_vm_dispatcher
+        self.features = {"cff": cff, "junk": junk, "inline": inline, "wrapper": wrapper}
+        self.selection_resolver = None
         self.boundary_mode = boundary_mode
         self.nested = bool(nested)
         if (not isinstance(nested_max_depth, int)
@@ -3297,7 +3315,7 @@ class FunctionObfuscationPass(BasePass):
         fragment = source_ctx.text(source_node)
         child_replacements: list[Replacement] = []
 
-        can_descend = self.nested and record.depth < self.nested_max_depth
+        can_descend = self.selection_resolver is not None or (self.nested and record.depth < self.nested_max_depth)
         for child in children_by_id.get(source_id, []):
             child_record = provenance[child.id]
             if not can_descend:
@@ -3317,6 +3335,22 @@ class FunctionObfuscationPass(BasePass):
             ))
 
         fragment = self._apply_replacements(fragment, child_replacements)
+
+        worker = self
+        if self.selection_resolver is not None:
+            options = self.selection_resolver(source_ctx, source_node)
+            if options is None:
+                return fragment, False
+            self.last_selection_results[source_id] = False
+            worker = copy.copy(self)
+            for key in ("boundary_mode", "nested", "nested_max_depth"):
+                if key in options:
+                    setattr(worker, key, options[key])
+            worker.features = {**self.features, **{k: v for k, v in options.items() if k in self.features}}
+            worker.compound_options = dict(self.compound_options)
+            for key, value in options.items():
+                if key.startswith("loop_"):
+                    worker.compound_options[key[5:]] = value
 
         from .ts_utils import parse as parse_ts
 
@@ -3354,14 +3388,25 @@ class FunctionObfuscationPass(BasePass):
             for child in params_node.children
             if child.type == "identifier"
         ]
-        new_body, boundary_stats = _transform_body(
-            fragment_ctx,
-            root,
-            block,
-            rich_junk=True,
-            boundary_mode=self.boundary_mode,
-            compound_options=self.compound_options,
-        )
+        if not worker.features["cff"]:
+            new_body = fragment_ctx.text(block)
+            if params and worker.features["wrapper"]:
+                new_body = f"local {','.join(params)}=...\n" + new_body
+            if worker.features["junk"]:
+                allocator = NameAllocator.for_source(fragment)
+                name = allocator.allocate("junk")
+                new_body = f"local {name}=17; {name}=({name}*3+1)%97\n" + new_body
+            boundary_stats = dict.fromkeys(("split_helpers", "inline_blocks", "inlined_functions", "split_bodies",
+                                           "lowered_loops", "unrolled_loops", "unrolled_iterations", "skipped_unsafe", "budget_fallbacks"), 0)
+        else:
+            token = _FUNCTION_FEATURES.set(worker.features)
+            try:
+                new_body, boundary_stats = _transform_body(
+                    fragment_ctx, root, block, rich_junk=True,
+                    boundary_mode=worker.boundary_mode, compound_options=worker.compound_options,
+                )
+            finally:
+                _FUNCTION_FEATURES.reset(token)
         if new_body is None:
             return fragment, False
 
@@ -3370,12 +3415,13 @@ class FunctionObfuscationPass(BasePass):
             end=fragment_ctx.ce(block),
             new_text=new_body,
         )]
-        if params:
+        if params and worker.features["wrapper"]:
             local_replacements.append(Replacement(
                 start=fragment_ctx.cs(params_node) + 1,
                 end=fragment_ctx.ce(params_node) - 1,
                 new_text="...",
             ))
+        before_own_transform = fragment
         fragment = self._apply_replacements(fragment, local_replacements)
 
         self.last_split_helper_count += boundary_stats["split_helpers"]
@@ -3388,11 +3434,14 @@ class FunctionObfuscationPass(BasePass):
         self.last_loop_unsafe_skip_count += boundary_stats["skipped_unsafe"]
         self.last_loop_budget_fallback_count += boundary_stats["budget_fallbacks"]
         self.last_transformed_count += 1
+        if self.selection_resolver is not None:
+            self.last_selection_results[source_id] = fragment != before_own_transform
         if record.depth > 0:
             self.last_nested_transformed_count += 1
         return fragment, True
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        self.last_selection_results = {}
         self.last_transformed_count = 0
         self.last_split_helper_count = 0
         self.last_inline_block_count = 0
@@ -3409,7 +3458,8 @@ class FunctionObfuscationPass(BasePass):
         self.last_loop_budget_fallback_count = 0
         original_script = script
         chunk_rewritten = False
-        if not self.skip_vm_dispatcher:
+        if (not self.skip_vm_dispatcher and self.selection_resolver is None
+                and self.features["inline"] and self.features["cff"]):
             script, chunk_inline_count = _inline_chunk_helpers(script)
             if chunk_inline_count:
                 from .ts_utils import parse as parse_ts
@@ -3539,8 +3589,9 @@ class FunctionObfuscationPass(BasePass):
             self.last_processed_source_count = len(processed_ids)
             expected_processed = {
                 node_id for node_id, record in provenance.items()
-                if record.depth <= self.nested_max_depth
+                if self.selection_resolver is not None or (record.depth <= self.nested_max_depth
                 and (self.nested or record.depth == 0)
+                )
             }
             if processed_ids != expected_processed:
                 raise RuntimeError(

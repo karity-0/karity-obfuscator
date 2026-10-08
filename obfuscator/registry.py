@@ -365,6 +365,7 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
         if key not in ("profile", "profiles")
     }
     resolved = {**common, **profiles[selected]}
+    resolved["_selection_profiles"] = profiles
     resolved["_profile"] = selected
     validate_config(resolved)
     return resolved
@@ -392,6 +393,15 @@ def config_warnings(config: dict) -> list[str]:
 
 
 def validate_config(config: dict) -> None:
+    from .selection import validate_modes
+    try:
+        validate_modes(config.get("selection_modes", {}))
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+    selection_profiles = config.get("selection_profiles", {})
+    if not isinstance(selection_profiles, dict) or any(not isinstance(name, str) or not isinstance(profile, dict)
+                                                      for name, profile in selection_profiles.items()):
+        raise ConfigError("selection_profiles must map names to configuration objects")
     for key in TOOLCHAIN_KEYS:
         value = config.get(key)
         if value is not None and (not isinstance(value, str) or not value.strip() or "\0" in value):
@@ -506,6 +516,7 @@ def _validate_function_obf_options(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'function_obf_options' must be an object")
     allowed = {
+        "cff", "junk", "inline", "wrapper",
         "boundary_mode", "nested", "nested_max_depth",
         "loop_split", "loop_unroll", "loop_unroll_max_iterations",
         "loop_unroll_rate",
@@ -535,7 +546,7 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError(
             "function_obf_options.nested_max_depth must be an integer between 0 and 16"
         )
-    for key in ("loop_split", "loop_unroll"):
+    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"function_obf_options.{key} must be a boolean")
@@ -715,6 +726,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
     signature_options       = config.get("signature", {}) if show_header else {"mode": "none"}
     signature_pass          = OutputSignaturePass(signature_options)
     pipeline                = pipeline_cls(show_header=False)
+    pipeline.selection_config = config
     pipeline.target_profile = TargetProfile.from_config(config)
     vm_output_passes        = config.get("vm_output_passes", [])
     packer_output_passes    = config.get("packer_output_passes", []) 

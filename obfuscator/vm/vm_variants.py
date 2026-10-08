@@ -226,6 +226,7 @@ def apply_line_state(
     output_passes: list[str] | None = None,
     insertion_anchor: str = "return function(...)",
     native_u32: bool = False,
+    qualify_globals: bool = False,
 ) -> tuple[str, int, list[int]]:
     """Inject line probes and compute the clean state from the final layout.
 
@@ -368,6 +369,10 @@ end""")
             rng.setstate(random.getstate())
         finally:
             random.setstate(global_random_state)
+
+    if qualify_globals:
+        from ..passes.rename_ts import qualify_runtime_globals
+        block_source = qualify_runtime_globals(block_source)
 
     vm_func_src = re.sub(r"\b_LS\b", state_name, vm_func_src)
     anchor_pos = vm_func_src.find(anchor)

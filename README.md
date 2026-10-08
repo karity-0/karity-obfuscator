@@ -172,6 +172,23 @@ runtime work sparse.
 For every pass and VM option, see
 [the generated configuration reference](docs/configuration.md).
 
+### Selective protection
+
+Use `STRING_OBF("secret")`, `NUMBER_OBF(123)`, `BOOLEAN_OBF(true)` and
+`TABLE_OBF({1,2,3})` to select individual literals. Function directives select
+source features or function VM boundaries; `-- @VM` selects a whole chunk,
+and `-- @NO_VM` keeps the following function native.
+
+```bash
+python main.py examples/selective.lua -c config.selective.example.json --selection-report selections.json
+```
+
+The [selective protection guide](docs/selective-obfuscation.md) covers
+`all`/`marked` modes, function options, exclusions, named VM profiles, reports
+and current boundary restrictions. Regions support complete sibling statements,
+live captured locals, partial function protection, and nested native exclusions.
+Selected VM regions with identical effective options share one runtime.
+
 ## CLI usage
 
 ```bash
