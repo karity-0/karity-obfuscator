@@ -21,3 +21,6 @@ obf_gui_preferences.json
 README.md.old
 # Local-only notes, work records and generated reports
 /local/
+/.claude/
+/.pytest_cache/
+/debug.log
