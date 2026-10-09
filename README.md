@@ -194,8 +194,11 @@ source features or function VM boundaries; `-- @VM` selects a whole chunk,
 and `-- @NO_VM` keeps the following function native.
 
 ```bash
-python main.py examples/selective.lua -c config.selective.example.json --selection-report selections.json
+python main.py examples/selective.lua -o examples/selective.protected.lua -c config.selective.example.json --seed 1234 --selection-report selections.json
 ```
+
+Compare the [selective source](examples/selective.lua) with its
+[protected output](examples/selective.protected.lua), generated with the command above.
 
 The [selective protection guide](docs/selective-obfuscation.md) covers
 `all`/`marked` modes, function options, exclusions, named VM profiles, reports

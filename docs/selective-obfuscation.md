@@ -259,8 +259,12 @@ function rewrite is skipped when it would cross an exclusion or explicit nested
 selection; eligible sibling/nested functions can still be transformed.
 
 ```bash
-python main.py examples/selective.lua -c config.selective.example.json --selection-report selections.json
+python main.py examples/selective.lua -o examples/selective.protected.lua -c config.selective.example.json --seed 1234 --selection-report selections.json
 ```
+
+The checked-in [source](../examples/selective.lua) and
+[protected output](../examples/selective.protected.lua) show the selected regions
+and the preserved `NO_OBF` block side by side.
 
 `--selection-report -` prints JSON; `pipeline.last_selection_report` provides the
 same entries to API/GUI callers. Entries include the original source line,
