@@ -4,6 +4,8 @@ from hashlib import sha256
 from dataclasses import dataclass, field
 from typing import Any, Iterable
 
+from ...data_types import LuaConstant, LuaString
+
 @dataclass(frozen=True)
 class IROperand:
     """An ordered semantic operand; open ranges preserve runtime top and nils."""
@@ -18,8 +20,8 @@ class IRValue:
     id: str
     kind: str
     index: int
-    name: str = ""
-    literal: Any = None
+    name: LuaString = ""
+    literal: LuaConstant = None
 
 
 @dataclass(frozen=True)

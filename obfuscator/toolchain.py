@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from .config_types import ObfuscatorConfig
+
 
 TOOLCHAIN_KEYS = ("lua_executable", "luac_executable", "lua_library")
 _BIN = Path(__file__).resolve().parents[1] / "bin"
@@ -52,8 +54,10 @@ class LuaToolchain:
             raise ValueError("unsupported Lua toolchain version")
 
     @classmethod
-    def from_config(cls, config: dict) -> LuaToolchain:
-        return cls(**{key: config.get(key) for key in TOOLCHAIN_KEYS},
+    def from_config(cls, config: ObfuscatorConfig) -> LuaToolchain:
+        return cls(lua_executable=config.get("lua_executable"),
+                   luac_executable=config.get("luac_executable"),
+                   lua_library=config.get("lua_library"),
                    lua_version=config.get("target", {}).get("lua_version", "5.3"))
 
     def lua(self) -> str:

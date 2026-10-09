@@ -6,28 +6,34 @@ __lazy_modules__ = {
     "obfuscator.vm.backends.runtime_emitter",
     "obfuscator.vm.ir.optimize",
     "obfuscator.vm.ir.protect",
+    "obfuscator.vm.semantic_ir",
 }
 
 from functools import partial
+from typing import Callable, cast
+
 from pathlib import Path
 import subprocess  # Public toolchain test hook shares the standard module.
 import time
 
+from ..config_types import DebugDumps, VMOptions
 from ..passes.base import PostPass
 from ..toolchain import LuaToolchain
 from .backend import normalize_vm_backend
 from .backends import BackendContext, get_backend
+from .backends.base import LoweredIR
+from .semantic_ir import SemanticIR
 from .backends.runtime_emitter import _compile, _obfuscate_vm_output
 from .ir.protect import apply_protection
 from .ir.optimize import optimize_semantic_ir
-from .protection import ProtectionPlanner, protect, resolve_capabilities
+from .protection import ProtectedIR, ProtectionPlan, ProtectionPlanner, protect, resolve_capabilities
 from .targets.profile import TargetProfile
 from .targets.pass_requirements import (
     validate_pass_target, validate_vm_output_pass_target,
 )
 
 
-_DEFAULT_VM_OPTIONS = {
+_DEFAULT_VM_OPTIONS: VMOptions = {
     "requirements": {},
     # 디스패치 모양: "ifelseif" | "tailcall"(테이블+꼬리호출) | "bsearch"(op 이진탐색)
     #             | "mixed"(VM마다 랜덤)
@@ -64,14 +70,14 @@ class VMBuildPipeline(PostPass):
     def __init__(
         self,
         vm_output_passes: list[str] | None = None,
-        vm_options: dict | None = None,
+        vm_options: VMOptions | None = None,
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
-        debug_dumps: dict[str, str] | None = None,
+        debug_dumps: DebugDumps | None = None,
         target: TargetProfile | None = None,
     ):
         self.vm_output_passes = vm_output_passes or []
-        self.vm_options = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
+        self.vm_options: VMOptions = {**_DEFAULT_VM_OPTIONS, **(vm_options or {})}
         self.backend = normalize_vm_backend(self.vm_options.pop("backend", target.backend if target else None))
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain(lua_version=target.lua_version if target else "5.3")
@@ -82,15 +88,15 @@ class VMBuildPipeline(PostPass):
         if self.target_profile.backend != self.backend:
             raise ValueError("target profile backend mismatch")
         self.target = self.target_profile.adapter()
-        self.debug_dumps = dict(debug_dumps or {})
+        self.debug_dumps = cast(DebugDumps, dict(debug_dumps or {}))
         self.isolate_runtime_globals = False
         self.last_profile: list[dict] = []
-        self.last_source_ir = None
-        self.last_optimized_ir = None
-        self.last_protected_ir = None
-        self.last_semantic_ir = None
-        self.last_protection_plan = None
-        self.last_lowered_ir = None
+        self.last_source_ir: SemanticIR | None = None
+        self.last_optimized_ir: SemanticIR | None = None
+        self.last_protected_ir: ProtectedIR | None = None
+        self.last_semantic_ir: SemanticIR | None = None
+        self.last_protection_plan: ProtectionPlan | None = None
+        self.last_lowered_ir: LoweredIR | None = None
 
     def run(self, script: str) -> str:
         self.last_profile = []
@@ -107,7 +113,7 @@ class VMBuildPipeline(PostPass):
             self.last_profile.append({"phase": "resolve_host_images",
                                       "elapsed": round(time.perf_counter() - started, 6),
                                       "images": len(constant_provider.images)})
-        output_transform = _obfuscate_vm_output
+        output_transform: Callable[[str, list[str]], tuple[str, list[dict]]] = _obfuscate_vm_output
         if getattr(self.target, "compact_output_globals", False):
             output_transform = partial(_obfuscate_vm_output, compact_globals=True)
         if self.isolate_runtime_globals:
@@ -182,7 +188,7 @@ class VMBuildPipeline(PostPass):
             "protection_plan": plan.dump() + lowered.resolution.dump(),
             "backend_ir": lowered.dump(),
         }
-        for name, path in self.debug_dumps.items():
+        for name, path in cast(dict[str, str], self.debug_dumps).items():
             if name in dumps and path:
                 Path(path).write_text(dumps[name], encoding="utf-8")
         return output
@@ -194,15 +200,15 @@ class VMPass(PostPass):
     def __init__(
         self,
         vm_output_passes: list[str] | None = None,
-        vm_options: dict | None = None,
+        vm_options: VMOptions | None = None,
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
-        debug_dumps: dict[str, str] | None = None,
+        debug_dumps: DebugDumps | None = None,
         target: TargetProfile | None = None,
     ):
-        options = dict(vm_options or {})
+        options = cast(VMOptions, dict(vm_options or {}))
         self.backend = normalize_vm_backend(options.pop("backend", target.backend if target else None))
-        self.vm_options = {"backend": self.backend, **options}
+        self.vm_options: VMOptions = {"backend": self.backend, **options}
         self.vm_output_passes = vm_output_passes or []
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain(lua_version=target.lua_version if target else "5.3")
@@ -211,12 +217,12 @@ class VMPass(PostPass):
             raise ValueError("target profile backend mismatch")
         self.target = self.target_profile.adapter()
         self.last_profile: list[dict] = []
-        self.last_source_ir = None
-        self.last_optimized_ir = None
-        self.last_protected_ir = None
-        self.last_semantic_ir = None
-        self.last_protection_plan = None
-        self.last_lowered_ir = None
+        self.last_source_ir: SemanticIR | None = None
+        self.last_optimized_ir: SemanticIR | None = None
+        self.last_protected_ir: ProtectedIR | None = None
+        self.last_semantic_ir: SemanticIR | None = None
+        self.last_protection_plan: ProtectionPlan | None = None
+        self.last_lowered_ir: LoweredIR | None = None
 
         self._backend = VMBuildPipeline(
             vm_output_passes=self.vm_output_passes,

@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 # Load processing dependencies only when the corresponding feature is used.
 __lazy_modules__ = {
     "obfuscator",
@@ -14,6 +16,7 @@ import time
 from pathlib import Path
 
 from obfuscator import Pipeline, build_pipeline_from_config, __version__
+from obfuscator.config_types import ObfuscatorConfig
 from obfuscator.profiling import Profiler
 from obfuscator.selection import SelectionError
 from obfuscator.toolchain import TOOLCHAIN_KEYS
@@ -40,7 +43,7 @@ def load_config(path: str = "config.json") -> dict:
         sys.exit(1)
 
 
-def build_pipeline(config: dict) -> Pipeline:
+def build_pipeline(config: ObfuscatorConfig) -> Pipeline:
     return build_pipeline_from_config(config, Pipeline)
 
 

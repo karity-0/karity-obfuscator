@@ -14,6 +14,8 @@ runtime-polymorphic execution, and build-time diversification of hot VM paths.
 
 ## Quick start
 
+Requires Python 3.12 or newer; Python 3.15 also enables lazy processing imports.
+
 ```bash
 pip install -r requirements.txt
 cp config.example.json config.json
@@ -33,7 +35,8 @@ install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 Python 3.15 uses `__lazy_modules__` to defer processing imports: CLI help,
 configuration metadata, and GUI startup do not load the Lua parsers or VM emitter.
 Pass implementations load when selected, and parser/emitter modules load when used.
-Python 3.10–3.14 keep ordinary eager import behavior with the same source syntax.
+Python 3.12–3.14 keep ordinary eager import behavior. Older Python versions are
+no longer supported because the source uses modern type aliases and generics.
 To diagnose imports, use `python -X importtime main.py --help`.
 This reduces startup and unused-feature loading, rather than the computation cost
 of a pass after its dependencies have loaded.
@@ -481,13 +484,22 @@ CI and local verification use the same suite manifest in `test/run_ci.py`, inclu
 MOV, function boundary/loop/nested, GUI, and all focused regressions:
 
 ```bash
+pip install -r requirements-dev.txt
 python test/run_ci.py
 ```
 
 Use `python test/run_ci.py --list` to inspect the exact commands. CI runs on
-Linux with Python 3.10, 3.11 and 3.12, plus Windows with Python 3.12. All jobs
+Linux with Python 3.12 and 3.15, plus Windows with Python 3.12. All jobs
 use Lua 5.3 (system packages on Linux, bundled binaries on Windows). Pushes and
 pull requests targeting `main`, `dev`, and `future` run this matrix.
+
+The suite includes `mypy` checks for configuration schemas, Lua constants,
+profiling values, pipeline factories, and VM backend interfaces. Run
+`python -m mypy` for those checks alone. `test/typing/contracts.py` verifies
+subclass return-type inference; the typing regression also checks that invalid
+option keys, values, constants, and pipeline classes produce diagnostics.
+The remaining implementation modules are outside the current static-check scope.
+Type hints do not replace runtime validation of configuration loaded from JSON.
 
 For a deterministic build during diagnosis, pass `--seed`. Compare the source
 and protected program's exit code, stdout, and stderr; the main test runner does

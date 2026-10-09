@@ -6,7 +6,9 @@ import re
 import string
 from contextvars import ContextVar
 
-RENAME_OPTIONS = ContextVar('rename_options', default={})
+from .config_types import RenameOptions
+
+RENAME_OPTIONS: ContextVar[RenameOptions] = ContextVar('rename_options', default={})
 
 KEYWORDS = frozenset('and break do else elseif end false for function goto if in local nil not or repeat return then true until while'.split())
 

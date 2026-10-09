@@ -12,10 +12,18 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 """
 from __future__ import annotations
 
-__lazy_modules__ = {"obfuscator", "obfuscator.passes", "obfuscator.vm"}
+__lazy_modules__ = {
+    "obfuscator",
+    "obfuscator.passes",
+    "obfuscator.pipeline",
+    "obfuscator.vm",
+}
 
 from collections.abc import Mapping
+from typing import Any, cast
 
+from .config_types import ObfuscatorConfig, VMOptions
+from .pipeline import Pipeline
 from .toolchain import LuaToolchain, TOOLCHAIN_KEYS
 
 import re
@@ -181,7 +189,7 @@ PASS_DESCRIPTIONS = {
     "pack": "Compresses and wraps the final output in a self-extracting loader.",
 }
 
-VM_OPTION_DOCS = {
+VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
     "requirements": {
         "description": "Protection feature requirements: map feature names to optional or required. Required features must be enabled and supported by the selected backend or an explicitly declared fallback; otherwise the build fails.",
         "default": {},
@@ -341,14 +349,14 @@ def get_pass_contexts(name: str) -> list[str]:
     return list(CONFIG_PASS_LISTS)
 
 
-def get_profile_names(config: dict) -> list[str]:
+def get_profile_names(config: Mapping[str, Any]) -> list[str]:
     profiles = config.get("profiles")
     if not isinstance(profiles, dict):
         return []
     return list(profiles.keys())
 
 
-def resolve_config_profile(config: dict, profile_name: str | None = None) -> dict:
+def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None = None) -> ObfuscatorConfig:
     """Return the selected profile config. Legacy flat configs still work."""
     if not isinstance(config, dict):
         raise ConfigError("config root must be an object")
@@ -359,7 +367,7 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
             raise ConfigError("--profile was given, but this config has no profiles")
         resolved = dict(config)
         validate_config(resolved)
-        return resolved
+        return cast(ObfuscatorConfig, resolved)
 
     if not isinstance(profiles, dict) or not profiles:
         raise ConfigError("'profiles' must be a non-empty object")
@@ -382,10 +390,10 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
     resolved["_selection_profiles"] = profiles
     resolved["_profile"] = selected
     validate_config(resolved)
-    return resolved
+    return cast(ObfuscatorConfig, resolved)
 
 
-def config_warnings(config: dict) -> list[str]:
+def config_warnings(config: Mapping[str, Any]) -> list[str]:
     """Valid but unsupported controls are retained and ignored, never coerced.
 
     Report once at the UI/CLI boundary, rather than during repeated validation.
@@ -406,7 +414,9 @@ def config_warnings(config: dict) -> list[str]:
     return [f"backend={backend}: " + "; ".join(messages)] if messages else []
 
 
-def validate_config(config: dict) -> None:
+def validate_config(config: object) -> None:
+    if not isinstance(config, dict):
+        raise ConfigError("config root must be an object")
     from .selection import validate_modes
     try:
         validate_modes(config.get("selection_modes", {}))
@@ -438,7 +448,7 @@ def validate_config(config: dict) -> None:
     _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
     try:
-        target = TargetProfile.from_config(config)
+        target = TargetProfile.from_config(cast(ObfuscatorConfig, config))
         if target.host_images and "vm" not in config.get("passes", []):
             raise ValueError("target.host_images requires the VM materialization stage")
         for name in config.get("passes", []):
@@ -454,7 +464,7 @@ def validate_config(config: dict) -> None:
         raise ConfigError(str(error)) from error
 
 
-def validate_release_config(config: dict) -> None:
+def validate_release_config(config: Mapping[str, Any]) -> None:
     validate_config(config)
     errors: list[str] = []
     passes = config.get("passes", [])
@@ -509,7 +519,7 @@ def validate_release_config(config: dict) -> None:
         raise ReleaseCheckError("release-check failed:\n- " + "\n- ".join(errors))
 
 
-def _reject_nested_output_passes(config: dict, key: str) -> None:
+def _reject_nested_output_passes(config: Mapping[str, Any], key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
         raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
@@ -667,7 +677,7 @@ def _validate_vm_options(options: dict) -> None:
     try:
         effective = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
         effective.update(options)
-        resolve_capabilities(protection_requests(effective),
+        resolve_capabilities(protection_requests(cast(VMOptions, effective)),
                              backend_capabilities(normalize_vm_backend(options.get("backend"))))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
@@ -723,7 +733,9 @@ def _validate_signature(signature: dict) -> None:
         raise ConfigError("generated signatures require a generator pattern or custom pattern")
 
 
-def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = True):
+def build_pipeline_from_config[P: Pipeline](
+    config: ObfuscatorConfig, pipeline_cls: type[P], show_header: bool = True,
+) -> P:
     """
     config 예시:
         {
@@ -764,7 +776,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
             protected_output = len(stages) - 1
 
     for name, finalizers in stages:
-        info = PASS_REGISTRY.get(name)
+        info = PASS_REGISTRY[name]
 
         cls = info["cls"]
         if name == "vm":
