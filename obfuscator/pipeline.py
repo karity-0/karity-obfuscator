@@ -44,6 +44,8 @@ class Pipeline:
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
         self.show_header = show_header
+        self.selection_config = {}
+        self.last_selection_report = []
         self._output_signature: OutputSignaturePass | None = (
             OutputSignaturePass() if show_header else None
         )
@@ -84,10 +86,15 @@ class Pipeline:
         verbose: int = 0,
         profiler: Profiler | None = None,
     ) -> str:
+        from .selection_runtime import SelectionRuntime
+
+        selection = SelectionRuntime(self, script)
+        script = selection.plan.source if selection.enabled else script
+        self.last_selection_report = selection.plan.report
         for pre in self._pre_passes:
             before = _size(script)
             start = time.perf_counter()
-            script = pre.run(script)
+            script = selection.run_pre(pre, script) if selection.enabled else pre.run(script)
             elapsed = time.perf_counter() - start
 
             record = ProfileRecord(
@@ -123,9 +130,14 @@ class Pipeline:
         if renamers:
             base_passes.append(renamers[-1])
 
+        if selection.enabled:
+            base_passes = selection.base_passes(base_passes)
+
         for pass_ in base_passes:
             before = _size(script)
             start = time.perf_counter()
+            if selection.enabled:
+                script = selection.prepare_base(pass_, script)
 
             parser = getattr(pass_, "parser", "luaparser")
 
@@ -136,8 +148,10 @@ class Pipeline:
             else:
                 tree = ast.parse(script)
 
-            replacements = pass_.run(script, tree)
-            script = self._apply(script, replacements)
+            replacements = (selection.run_base(pass_, script, tree) if selection.enabled
+                            else pass_.run(script, tree))
+            script = (selection.plan.apply(script, replacements) if selection.enabled
+                      else self._apply(script, replacements))
 
             elapsed = time.perf_counter() - start
 
@@ -161,11 +175,12 @@ class Pipeline:
                 new_tree = ast.parse(script)
                 print(ast.to_pretty_str(new_tree))
 
-        for post in self._post_passes:
+        post_passes = selection.post_passes(self._post_passes) if selection.enabled else self._post_passes
+        for post in post_passes:
             before = _size(script)
             start = time.perf_counter()
 
-            script = post.run(script)
+            script = selection.run_post(post, script) if selection.enabled else post.run(script)
 
             elapsed = time.perf_counter() - start
             details = getattr(post, "last_profile", [])

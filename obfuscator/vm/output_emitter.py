@@ -19,6 +19,7 @@ import tree_sitter as ts
 from ..passes.boolean_obfuscation import generate_rand_xor
 from ..passes.base import Replacement
 from ..passes.number_obfuscation import NumberObfuscationPass
+from ..passes.meme_strings import MemeStringsPass
 from ..passes.string_obfuscation import _CHUNK_SIZE, parse_lua_string
 from ..passes.ts_utils import _LANG, parse
 
@@ -62,6 +63,7 @@ _GENERATED_NUMBER_RE = re.compile(
 )
 
 _EXACT_HEX64_RE = re.compile(r"0[xX][0-9A-Fa-f]{16}")
+_MEME_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"|' + _GENERATED_NUMBER_RE.pattern)
 _EXACT_GRAPH_REGION_RE = re.compile(
     r"--\[\[KARITY_EXACT_BEGIN\]\].*?--\[\[KARITY_EXACT_END\]\]",
     re.DOTALL,
@@ -96,6 +98,22 @@ def _split_generated_numbers(expr: str) -> list[Fragment]:
     for match in _GENERATED_NUMBER_RE.finditer(expr):
         _append_raw(parts, expr[pos:match.start()])
         parts.append(NumberLiteral(match.group(0)))
+        pos = match.end()
+    _append_raw(parts, expr[pos:])
+    return parts
+
+
+def _split_meme_literals(expr: str, eligible: bool) -> list[Fragment]:
+    """Keep meme phrases intact while exposing residuals to a later number pass."""
+    parts: list[Fragment] = []
+    pos = 0
+    for match in _MEME_LITERAL_RE.finditer(expr):
+        _append_raw(parts, expr[pos:match.start()])
+        token = match.group(0)
+        parts.append(
+            StringLiteral(token) if token.startswith('"')
+            else NumberLiteral(token, eligible and _EXACT_HEX64_RE.fullmatch(token) is None)
+        )
         pos = match.end()
     _append_raw(parts, expr[pos:])
     return parts
@@ -310,7 +328,7 @@ def emit_vm_literals(
     literal_nodes: list | None = None,
 ) -> tuple[str, list[dict]]:
     """Apply identifier plans and literal stages over one syntax context."""
-    stages = [name for name in pass_names if name in EMITTER_PASS_NAMES]
+    stages = [name for name in pass_names if name in EMITTER_PASS_NAMES or name == "meme_strings"]
     replacements = replacements or []
     if not stages and not replacements:
         return source, []
@@ -339,13 +357,14 @@ def emit_vm_literals(
     }]
 
     number_emitter = NumberObfuscationPass()
+    meme_emitter = MemeStringsPass()
     for stage_index, name in enumerate(stages):
         stage_start = time.perf_counter()
         output: list[Fragment] = []
         replacements = 0
         retokenize_generated_numbers = (
             name == "number_obf"
-            and "number_obf" in stages[stage_index + 1:]
+            and any(stage in {"number_obf", "meme_strings"} for stage in stages[stage_index + 1:])
         )
 
         for part in parts:
@@ -355,6 +374,12 @@ def emit_vm_literals(
             elif name == "boolean_obf" and isinstance(part, BooleanLiteral):
                 output.extend(_emit_boolean(part.value))
                 replacements += 1
+            elif name == "meme_strings" and isinstance(part, NumberLiteral):
+                if random.random() < meme_emitter.replacement_rate:
+                    output.extend(_split_meme_literals(meme_emitter.obfuscate_token(part.token), part.eligible))
+                    replacements += 1
+                else:
+                    output.append(part)
             elif (
                 name == "number_obf"
                 and isinstance(part, NumberLiteral)

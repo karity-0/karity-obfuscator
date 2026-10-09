@@ -87,6 +87,11 @@ class LocalizeGlobalsPass(BasePass):
 
     parser = "treesitter"
 
+    def __init__(self, *, compact_aliases: bool = False):
+        # Lua 5.1 VM functions can already be close to the 200-local limit.
+        # Compact mode keeps the same entry-time snapshots in one local table.
+        self.compact_aliases = compact_aliases
+
     def run(self, script: str, ctx) -> list[Replacement]:
         return self.replacements_with_ctx(script, ctx)
 
@@ -144,23 +149,42 @@ class LocalizeGlobalsPass(BasePass):
         leaves    = sorted(lib_spans.keys())
         funcs     = sorted(func_spans.keys())
 
-        # 1(_E) + libs + leaves + funcs 개수만큼 이름이 필요.
-        names = _alloc_names(script, 1 + len(libs_used) + len(leaves) + len(funcs), reserved_names)
-        it = iter(names)
-        env_name  = next(it)
-        lib_name  = {lib: next(it) for lib in libs_used}
-        leaf_name = {key: next(it) for key in leaves}
-        func_name = {fn: next(it) for fn in funcs}
+        if self.compact_aliases:
+            env_name, bank_name = _alloc_names(script, 2, reserved_names)
+            leaf_name = {
+                key: f"{bank_name}[{index}]"
+                for index, key in enumerate(leaves, 1)
+            }
+            func_name = {
+                fn: f"{bank_name}[{len(leaves) + index}]"
+                for index, fn in enumerate(funcs, 1)
+            }
+            expressions = [
+                f'{env_name}["{lib}"]["{method}"]'
+                for lib, method in leaves
+            ] + [f'{env_name}["{fn}"]' for fn in funcs]
+            decl_text = (
+                f"local {env_name}=_ENV "
+                f"local {bank_name}={{{','.join(expressions)}}} "
+            )
+        else:
+            # 1(_E) + libs + leaves + funcs 개수만큼 이름이 필요.
+            names = _alloc_names(script, 1 + len(libs_used) + len(leaves) + len(funcs), reserved_names)
+            it = iter(names)
+            env_name  = next(it)
+            lib_name  = {lib: next(it) for lib in libs_used}
+            leaf_name = {key: next(it) for key in leaves}
+            func_name = {fn: next(it) for fn in funcs}
 
-        # --- 선언 블록 (의존 순서: _E -> lib 테이블 -> leaf/func) --------
-        decls = [f"local {env_name}=_ENV "]
-        for lib in libs_used:
-            decls.append(f'local {lib_name[lib]}={env_name}["{lib}"] ')
-        for (lib, method) in leaves:
-            decls.append(f'local {leaf_name[(lib, method)]}={lib_name[lib]}["{method}"] ')
-        for fn in funcs:
-            decls.append(f'local {func_name[fn]}={env_name}["{fn}"] ')
-        decl_text = "".join(decls)
+            # --- 선언 블록 (의존 순서: _E -> lib 테이블 -> leaf/func) --------
+            decls = [f"local {env_name}=_ENV "]
+            for lib in libs_used:
+                decls.append(f'local {lib_name[lib]}={env_name}["{lib}"] ')
+            for (lib, method) in leaves:
+                decls.append(f'local {leaf_name[(lib, method)]}={lib_name[lib]}["{method}"] ')
+            for fn in funcs:
+                decls.append(f'local {func_name[fn]}={env_name}["{fn}"] ')
+            decl_text = "".join(decls)
 
         # --- 치환 + 삽입 -------------------------------------------------
         replacements: list[Replacement] = []

@@ -9,6 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -22,6 +23,52 @@ from obfuscator.vm.vm_pass import _compile
 
 
 class ToolchainTests(unittest.TestCase):
+    def test_shared_test_resolvers_on_windows_and_linux(self):
+        from lua_runtime import lua_executable, luac_executable
+        for platform in ('nt', 'posix'):
+            suffix = '.exe' if platform == 'nt' else ''
+            names = {
+                '5.3': ('lua' + suffix, 'luac53' + suffix),
+                '5.1': ('lua51' + suffix, 'luac51' + suffix),
+            }
+            with self.subTest(platform=platform), tempfile.TemporaryDirectory() as folder:
+                for pair in names.values():
+                    for name in pair:
+                        (Path(folder) / name).write_bytes(b'test')
+                with patch('obfuscator.toolchain.os', SimpleNamespace(name=platform)), patch(
+                    'obfuscator.toolchain._BIN', Path(folder)
+                ), patch('obfuscator.toolchain.shutil.which', side_effect=AssertionError('unexpected PATH lookup')):
+                    for version, (lua, luac) in names.items():
+                        self.assertEqual(lua_executable(version), str(Path(folder) / lua))
+                        self.assertEqual(luac_executable(version), str(Path(folder) / luac))
+
+    def test_shared_test_resolvers_use_versioned_path_fallback(self):
+        from lua_runtime import lua_executable, luac_executable
+        with tempfile.TemporaryDirectory() as folder, patch('obfuscator.toolchain._BIN', Path(folder)), patch(
+            'obfuscator.toolchain.shutil.which', side_effect=lambda name: 'resolved/' + name
+        ) as lookup:
+            self.assertEqual(lua_executable(), 'resolved/lua5.3')
+            self.assertEqual(luac_executable(), 'resolved/luac5.3')
+            self.assertEqual(lua_executable('5.1'), 'resolved/lua5.1')
+            self.assertEqual(luac_executable('5.1'), 'resolved/luac5.1')
+            self.assertEqual([call.args[0] for call in lookup.call_args_list],
+                             ['lua5.3', 'luac5.3', 'lua5.1', 'luac5.1'])
+
+    def test_lua51_lookup_never_selects_lua53(self):
+        toolchain = LuaToolchain.from_config({'target': {'lua_version': '5.1'}})
+        self.assertEqual(toolchain.lua_version, '5.1')
+        with tempfile.TemporaryDirectory() as folder:
+            for name in ('lua.exe', 'lua', 'luac53.exe', 'luac53'):
+                (Path(folder) / name).write_bytes(b'wrong version')
+            with patch('obfuscator.toolchain._BIN', Path(folder)), patch(
+                'obfuscator.toolchain.shutil.which', return_value=None
+            ) as lookup:
+                for resolve in (toolchain.lua, toolchain.luac):
+                    with self.assertRaisesRegex(FileNotFoundError, 'Lua 5.1'):
+                        resolve()
+                self.assertEqual([call.args[0] for call in lookup.call_args_list],
+                                 ['lua5.1', 'lua51', 'luac5.1', 'luac51'])
+
     def test_late_minifier_preserves_config_and_protected_stages(self):
         config = {"passes": ["vm", "minify", "pack", "minify"],
                   "vm_output_passes": ["minify"], "packer_output_passes": []}

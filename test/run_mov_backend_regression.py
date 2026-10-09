@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import random
 import re
 import json
@@ -19,17 +20,23 @@ from obfuscator.registry import (
 )
 from obfuscator.vm import VMPass
 from obfuscator.vm.mov.builder import build_runtime
+from obfuscator.vm.mov.adapter import MovHostSlot
 from obfuscator.vm.mov.layout import make_kits
 from obfuscator.vm.mov.division import divide
-from obfuscator.vm.mov.ir import Host, Op
+from obfuscator.vm.mov.ir import Host, Instruction, Op, Program
 from obfuscator.vm.mov.lower import lower
-from obfuscator.vm.mov.float_compare import compare as compare_floats
+from obfuscator.vm.mov.optimizer import link_programs, optimize_program
+from obfuscator.vm.mov.serializer import serialize
+from obfuscator.vm.mov.validate import validate_host_bindings, validate_linked, validate_program
+from obfuscator.vm.backends.handler_ir import HandlerInstruction
+from obfuscator.vm.mov.float_compare import compare as compare_floats, tables as float_tables
 from obfuscator.vm.mov.float_ops import negate as negate_float
 from obfuscator.vm.mov.shift import shift
 from obfuscator.vm.mov.mixed_compare import compare as compare_mixed
 from obfuscator.vm.mov.string_compare import compare as compare_strings
 from obfuscator.vm.mov.string_ops import length as string_length, concatenate as string_concat
-from obfuscator.vm.mov.tables import banks
+from obfuscator.vm.mov.tables import STATE_COUNTS, banks
+from obfuscator.vm.targets.lua51 import Lua51Target
 from run_vm_backend_regression import options
 from mov_shift_checks import check_shift_microcode
 
@@ -88,6 +95,21 @@ def check_division_work() -> None:
 def check_cli(profile: str, extra: list[str], source_name: str = "14_vm_call_machine.lua") -> None:
     with tempfile.TemporaryDirectory(prefix="mov-cli-") as temp:
         source = ROOT / "test" / "scripts" / source_name
+        if source_name == "14_vm_call_machine.lua":
+            # The balanced preset now protects source functions before MOV
+            # lowering. Keep the full call-boundary assertions for CLI smoke
+            # coverage, with bounded recursion: the original 250/500-call
+            # workload is already exercised by the backend checks above.
+            script = source.read_text(encoding="utf-8")
+            for original, compact in (
+                ("sum(250) == 31375", "sum(3) == 6"),
+                ("tail_sum(500, 0)", "tail_sum(5, 0)"),
+                ("total == 125250", "total == 15"),
+            ):
+                assert script.count(original) == 1, original
+                script = script.replace(original, compact)
+            source = Path(temp) / "call_machine.lua"
+            source.write_text(script, encoding="utf-8")
         target = Path(temp) / "packed.lua"
         started = time.perf_counter()
         built = subprocess.run(
@@ -130,9 +152,182 @@ def check(source: Path, opts: dict, passes: list[str], seed: int) -> None:
     print(f"mov-ok {source.name} seed={seed} vms={detail['effective_vms']} sites={detail['lowered_sites']}", flush=True)
 
 
+def check_lua51_uint_decoder() -> None:
+    source = Lua51Target().runtime_template("mov_exec.lua")
+    start = source.index("local function _mov_uint(r)")
+    end = source.index("local function _mov_read(r, root)", start)
+    decoder = source[start:end]
+    code = "\n".join(
+        line for line in decoder.splitlines()
+        if not line.lstrip().startswith("--")
+    )
+    if re.search(r"(?:<<|>>|[&|~])", code):
+        raise AssertionError("Lua 5.1 MOV field decoder must use exact bounded arithmetic")
+    assert "value=value+(b%128)*2^shift" in code
+
+
+def check_lookup_and_table_dedup() -> None:
+    lookup = Instruction(Op.LOOKUP, 6, 25, 7)
+    copy = Instruction(Op.MOVE, 8, 9)
+    finish = Instruction(Op.HOST, Host.COMMIT)
+
+    def optimized(code, entries=(1,)):
+        return optimize_program(Program(list(entries), code, 0)).code
+
+    assert optimized([lookup, copy, lookup, finish]) == [lookup, copy, finish]
+    unrelated = Instruction(Op.LOOKUP, 12, 27, 13)
+    assert optimized([lookup, unrelated, lookup, finish]) == [
+        lookup, unrelated, finish,
+    ]
+    # A second lookup may change the candidate's result, table or key slot.
+    for destination in (6, 25, 7):
+        interfering = replace(unrelated, a=destination)
+        code = [lookup, interfering, lookup, finish]
+        assert optimized(code) == code, interfering
+    # A changed destination, table, or key invalidates the previously read
+    # value; internal table stores and host effects also end the pure region.
+    for barrier in (
+        Instruction(Op.MOVE, 6, 9),
+        Instruction(Op.MOVE, 25, 9),
+        Instruction(Op.MOVE, 7, 9),
+        Instruction(Op.MOVE, 8, 9, 10, mode=1),
+        Instruction(Op.HOST, Host.COMMIT),
+    ):
+        code = [lookup, barrier, lookup, finish]
+        assert optimized(code) == code, barrier
+    assert optimized([lookup, copy, lookup, finish], (1, 3)) == [
+        lookup, copy, lookup, finish
+    ]
+
+    assert STATE_COUNTS[2:5] == (1, 1, 1)
+    encode = tuple(reversed(range(16)))
+    decode = {value: index for index, value in enumerate(encode)}
+    bitwise = (lambda x, y: x & y, lambda x, y: x | y,
+               lambda x, y: x ^ y)
+    for bank, operation in zip(banks(encode)[2:5], bitwise):
+        for x in range(16):
+            for y in range(16):
+                states = bank[encode[x]][encode[y]]
+                assert len(states) == 1
+                result, carry = states[0]
+                assert decode[result] == operation(x, y) and carry == 0
+
+    # The float comparison bank reads these lookup tables but never stores
+    # through them. One identity and one NaN classification table suffice
+    # for both users in each VM's private encoded alphabet.
+    float_bank = float_tables(encode)
+    assert '_ms[178]={[false]=_ms[177][false]' in float_bank
+    assert '_ms[181]=_ms[180]' in float_bank
+    try:
+        validate_program(Program([1], [Instruction(Op.MOVE, 180, 2, 3, mode=1)], 0))
+    except ValueError as error:
+        assert 'shared read-only lookup table' in str(error), str(error)
+    else:
+        raise AssertionError('MOV accepted a write through a shared lookup table')
+
+
+def check_host_bindings() -> None:
+    physical = [HandlerInstruction(13), HandlerInstruction(30).with_bx(131071),
+                HandlerInstruction(38)]
+    bound = [MovHostSlot(item.operation, None, item.sbx, '', 'semantic',
+                         index + 2 + item.sbx if item.operation == 'JUMP' else None)
+             for index, item in enumerate(physical)]
+    program = lower(bound)
+    assert program.code[program.entries[1] - 1] == Instruction(
+        Op.SELECT, 30, program.entries[2], program.entries[2],
+    )
+    assert lower([*bound[:1], replace(bound[1], sbx=999), *bound[2:]]).code == program.code
+    validate_host_bindings(program, bound)
+    # Microcode and the cross-layer validator use the semantic target; the
+    # adapter separately rejects a physical offset that disagrees with it.
+    offset_only = [*bound[:1], replace(bound[1], sbx=999), *bound[2:]]
+    validate_host_bindings(program, offset_only)
+    validate_host_bindings(optimize_program(program), bound)
+
+    try:
+        changed_target = [*bound[:1], replace(bound[1], target_pc=1), *bound[2:]]
+        validate_host_bindings(program, changed_target)
+    except ValueError as error:
+        assert 'jump continuation differs from semantic target' in str(error), str(error)
+    else:
+        raise AssertionError('MOV accepted a changed semantic jump target')
+
+    def reject(address: int, instruction: Instruction, reason: str) -> None:
+        code = list(program.code)
+        code[address - 1] = instruction
+        bad = replace(program, code=code)
+        validate_program(bad)  # The cross-layer invariant is the only failure.
+        try:
+            validate_host_bindings(bad, bound)
+        except ValueError as error:
+            assert reason in str(error), str(error)
+        else:
+            raise AssertionError('MOV accepted a misbound host/control entry')
+
+    guard_address = program.entries[0] + 1
+    guard = program.code[guard_address - 1]
+    reject(guard_address, replace(guard, b=program.entries[0]),
+           'recipe continuation differs')
+    jump_address = program.entries[1]
+    jump = program.code[jump_address - 1]
+    reject(jump_address, replace(jump, b=program.entries[-1], c=program.entries[-1]),
+           'jump continuation differs')
+
+
+def check_linked_codebooks() -> None:
+    slots = [MovHostSlot('ADD', None, 0, '', 'semantic'),
+             MovHostSlot('RETURN', None, 0, '', 'semantic')]
+    programs = [optimize_program(lower(slots)) for _ in range(2)]
+    kits = make_kits(1)
+    linked = link_programs(programs, 1)
+    validate_linked(programs, kits, linked)
+    assert serialize(programs, kits, linked=linked).startswith(b'MOV\x0b')
+
+    def reject(candidate_programs, candidate_kits, candidate_linked, reason):
+        try:
+            validate_linked(candidate_programs, candidate_kits, candidate_linked)
+        except ValueError as error:
+            assert reason in str(error), str(error)
+        else:
+            raise AssertionError('MOV accepted an invalid linked tape or codebook')
+
+    stale_entries = [list(addresses) for addresses in linked[1]]
+    stale_entries[0][0] = stale_entries[0][-1]
+    reject(programs, kits, (linked[0], stale_entries, linked[2]),
+           'linked tape differs')
+    stale_tapes = [list(tape) for tape in linked[0]]
+    stale_tapes[0][0] = replace(stale_tapes[0][0], a=353)
+    reject(programs, kits, (stale_tapes, linked[1], linked[2]),
+           'linked tape differs')
+
+    duplicate_opcode = replace(kits[0], opcodes={
+        **kits[0].opcodes, Op.LOOKUP: kits[0].opcodes[Op.MOVE],
+    })
+    reject(programs, [duplicate_opcode], linked, 'reused ID')
+    duplicate_digit = replace(kits[0], encode=(kits[0].encode[1], *kits[0].encode[1:]))
+    reject(programs, [duplicate_digit], linked, 'distinct permutation')
+    try:
+        serialize(programs, [duplicate_opcode], linked=linked)
+    except ValueError as error:
+        assert 'reused ID' in str(error), str(error)
+    else:
+        raise AssertionError('MOV serialized a reused opcode ID')
+
+    corrupt = list(programs[0].code)
+    lookup_index = next(index for index, instruction in enumerate(corrupt)
+                        if instruction.op == Op.LOOKUP)
+    corrupt[lookup_index] = replace(corrupt[lookup_index], a=353)
+    reject([replace(programs[0], code=corrupt), programs[1]], kits, linked,
+           'scratch slot outside ABI')
+
+
 def main() -> int:
     check_shift_microcode()
     check_division_work()
+    check_lua51_uint_decoder()
+    check_lookup_and_table_dedup()
+    check_host_bindings()
+    check_linked_codebooks()
     classic = (ROOT / "obfuscator/vm/runtimes/classic_exec.lua").read_text(encoding="utf-8")
     runtime = build_runtime(classic, make_kits(3))
     dispatches = runtime.split("and q[2]==0 then")[1:]
@@ -169,7 +364,8 @@ def main() -> int:
         build_recipe(code)
         assert {i.a for i in code if i.op == Op.HOST} == {commit}
     for opcode in (27, 34, 35):
-        program = lower([opcode])
+        item = HandlerInstruction(opcode)
+        program = lower([MovHostSlot(item.operation, None, item.sbx, '', 'semantic')])
         site = program.code[:program.entries[1] - 1]
         assert any(i.op == Op.LOOKUP for i in site)
         assert not any(i.op == Op.HOST and i.a == Host.EXEC for i in site)
@@ -219,7 +415,7 @@ def main() -> int:
         check(cross_vm, opts, ["rename_obf", "minify"], 8200 + i)
     # A semantic comparison alone could pass if every operation accidentally
     # fell back to native Lua. Make native integer fallbacks fail explicitly.
-    def forbid_native_fallbacks(classic, opcodes):
+    def forbid_native_fallbacks(classic, opcodes, *, template=None, target=None):
         classic = classic.replace('elseif op==28 then', '''elseif op==28 then
             if type(rget(B))=="string" then error("native string length fallback") end;''')
         classic = classic.replace('elseif op==29 then', '''elseif op==29 then
@@ -255,7 +451,7 @@ def main() -> int:
             classic = classic.replace(marker, marker + """
                 if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
                     error("native integer comparison/division fallback") end;""")
-        runtime = build_runtime(classic, opcodes)
+        runtime = build_runtime(classic, opcodes, template=template)
         runtime = '_G.__mov_order_test=true\n' + runtime
         assert "local function _arith2(a,b,av,slot)" in runtime
         assert "local function _arith1(a,av,slot)" in runtime

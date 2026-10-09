@@ -13,9 +13,13 @@
 from __future__ import annotations
 from bisect import bisect_left
 from dataclasses import dataclass
+from contextvars import ContextVar
+import copy
 import random
 import re
 import time
+
+_FUNCTION_FEATURES = ContextVar("function_features", default={})
 
 from .base import BasePass, Replacement
 from ..names import NameAllocator
@@ -960,9 +964,9 @@ def _generic_always_true() -> str:
     a, b = _generic_const_pair()
     k = random.randint(1, 0x3FFF)
     return random.choice([
-        f"(({a}~{b})~({a}~{b}))==0",
+        f"(({a}-{b})+({b}-{a}))==0",
         f"({a}+{b})==({b}+{a})",
-        f"(({a}~{k})~{k})==({a})",
+        f"(({a}+{k})-{k})==({a})",
         f"({a}*1)==({a})",
         f"(not not (({a})=={a}))",
     ])
@@ -993,53 +997,49 @@ def _generic_always_false() -> str:
 # 정확성 제약:
 #   * 이 정수 항등식들은 *정수* 에서만 성립한다(부동소수 3.5 등에선 깨짐).
 #     - 상태 변수(kind=="int")는 항상 정수라 무가드로 쓴다.
-#     - 파라미터(kind=="num")는 타입 미상이라 `math.type(v)=="integer"` 로
-#       가드한다(비-VM 경로 전용; math 전역 사용). 정수가 아니면 산술을 아예
-#       평가하지 않고 short-circuit → 타입 안전.
-#     - VM 경로 파라미터(kind=="any")는 전역/타입 가정 없이 안전해야 하므로
-#       nil 항등식만(폴딩되지만 안전 우선). VM은 상태 변수 int 항등식이 주력.
-#   * 사용하는 항등식은 2의 거듭제곱 법(parity/저비트)만 쓴다 → 2의 보수
-#     오버플로(mod 2^64)에도 하위 비트/짝홀이 보존돼 maxinteger 근처에서도 성립.
-#     (`(v*3)%3==0` 같은 mod-3 류는 오버플로 시 깨지므로 쓰지 않는다.)
+#     - 원본 파라미터(num/any)는 타입/범위 미상이므로 nil 항등식만 사용한다.
+#       math.type, 사용자 객체의 산술 metamethod, NaN/Inf를 평가하지 않는다.
+#   * 생성한 상태/정수 junk에만 parity 산술을 쓴다. 곱하기 전에 %2로
+#     줄여 binary64 정밀도 손실을 피한다. 생성 값과 v+1은 2^53 미만이다.
+#   * 이 패스의 생성 문법은 5.1/5.3 공통이다. 원본 표현식은 번역하지 않는다.
 # ---------------------------------------------------------------------------
 
 def _int_true_forms(v: str) -> list[str]:
     """정수 v에 대해 항상 참이지만 v에 실제로 의존하는 식들(2의 거듭제곱 법)."""
     return [
-        f"(({v}*({v}+1))%2==0)",          # 연속 정수 곱은 짝수
-        f"(({v}&1)==({v}%2))",            # 하위 비트 == 홀짝
-        f"((({v}~5)&1)==(({v}&1)~1))",    # 홀수와 XOR은 하위 비트를 뒤집음
-        f"(({v}|1)%2==1)",                # OR 1 은 홀수
-        f"((({v}<<1)&1)==0)",             # 좌시프트 하위 비트는 0
+        f"(({v}%2)*(({v}+1)%2)==0)",
+        f"((({v}%2)+(({v}+1)%2))==1)",
+        f"((({v}%2)*2)%2==0)",
+        f"((({v}%2)*2+1)%2==1)",
     ]
 
 
 def _int_false_forms(v: str) -> list[str]:
     """정수 v에 대해 항상 거짓이지만 v에 실제로 의존하는 식들."""
     return [
-        f"(({v}*({v}+1))%2==1)",          # 연속 정수 곱은 홀수가 될 수 없음
-        f"(({v}|1)%2==0)",                # OR 1 은 짝수가 될 수 없음
-        f"(({v}&1)~=({v}%2))",
-        f"((({v}<<1)|1)%2==0)",           # 홀수는 짝수가 아님
+        f"(({v}%2)*(({v}+1)%2)==1)",
+        f"((({v}%2)+(({v}+1)%2))~=1)",
+        f"((({v}%2)*2)%2==1)",
+        f"((({v}%2)*2+1)%2==0)",
     ]
 
 
 def _zero_from(v: str) -> str:
-    """정수 v에 실제로 의존하지만 값은 항상 0인 식 (2의 거듭제곱 법 → 오버플로 안전).
+    """생성된 bounded 정수 v에 의존하지만 값은 항상 0인 식.
     junk 로컬 v를 상태 전이 등에 상쇄 항으로 엮되, `v*0`처럼 단번에 접히지 않게 한다.
     """
     return random.choice([
-        f"(({v}*({v}+1))%2)",     # 연속 정수 곱은 짝수 → %2==0
-        f"(({v}<<1)&1)",          # 좌시프트 하위 비트 0
-        f"(({v}|1)%2-1)",         # 홀수%2 - 1 == 0
+        f"(({v}%2)*(({v}+1)%2))",
+        f"((({v}%2)*2)%2)",
+        f"((({v}%2)*2+1)%2-1)",
     ])
 
 
 def _one_from(v: str) -> str:
     """정수 v에 실제로 의존하지만 값은 항상 1인 식."""
     return random.choice([
-        f"(({v}|1)%2)",           # OR 1 은 홀수 → %2==1
-        f"(({v}*({v}+1))%2+1)",   # 짝수 + 1
+        f"((({v}%2)*2+1)%2)",
+        f"(({v}%2)*(({v}+1)%2)+1)",
     ])
 
 
@@ -1047,8 +1047,9 @@ def _var_true(name: str, kind: str) -> str:
     """`name`을 참조하지만 항상 참인 식 (kind에 따라 값-의존 강도가 다름)."""
     if kind == "int":
         return random.choice(_int_true_forms(name))
-    if kind == "num":   # 파라미터: 정수일 때만 값-의존 항등식, 아니면 short-circuit
-        return f"(math.type({name})~=\"integer\" or {random.choice(_int_true_forms(name))})"
+    # Source parameters are arbitrary values, not bounded generated integers.
+    # Do not inspect them with math.type or perform arithmetic on NaN/Inf,
+    # large doubles, or objects with arithmetic metamethods.
     return random.choice([   # kind == "any": VM 경로 안전 폴백(전역 미사용)
         f"({name}==nil or {name}~=nil)",
         f"(not ({name}==nil and {name}~=nil))",
@@ -1059,8 +1060,6 @@ def _var_false(name: str, kind: str) -> str:
     """`name`을 참조하지만 항상 거짓인 식."""
     if kind == "int":
         return random.choice(_int_false_forms(name))
-    if kind == "num":
-        return f"(math.type({name})==\"integer\" and {random.choice(_int_false_forms(name))})"
     return random.choice([
         f"({name}==nil and {name}~=nil)",
         f"(not ({name}==nil or {name}~=nil))",
@@ -1068,8 +1067,8 @@ def _var_false(name: str, kind: str) -> str:
 
 
 def _int_live(live_vars):
-    """live_vars 중 값-의존 항등식을 쓸 수 있는(int/num) 변수만."""
-    return [(n, k) for (n, k) in (live_vars or []) if k in ("int", "num")]
+    """값-의존 산술 항등식은 생성된 bounded integer에만 사용한다."""
+    return [(n, k) for (n, k) in (live_vars or []) if k == "int"]
 
 
 def _pred_true(live_vars=None) -> str:
@@ -1148,17 +1147,17 @@ def _nested_always_false(depth: int, live_vars=None) -> str:
 def _obf_int(n: int) -> str:
     """항상 n과 같은 정수 표현식. 상수 폴딩을 방해해 state 상수를 감춘다.
 
-    (실행되는 real 전이에도 사용되므로 모든 변형은 정확히 n과 같아야 한다:
-    n~k~k==n, n+k-k==n, n|0==n(n>=0), (n<<0)~0==n.)
+    Generated constants are bounded (|n| <= 100129), and k <= 65535.
+    Every intermediate is an exact binary64 integer, including negative deltas.
     """
     if random.random() < 0.45:
         return str(n)
     k = random.randint(1, 0xFFFF)
     return random.choice([
-        f"({n}~{k}~{k})",
+        f"({n}-{k}+{k})",
         f"({n}+{k}-{k})",
-        f"({n}|0)",
-        f"(({n}<<0)~0)",
+        f"({n}*{k}%{k}+{n})",
+        f"(({n}*2)-({n}))",
     ])
 
 
@@ -1194,13 +1193,13 @@ class _Affine:
         return _obf_int(self.enc(s))
 
     def delta(self, cur: int, nxt: int) -> int:
-        """현재 상태 cur에서 다음 상태 nxt로 가는 *상대* XOR 델타.
-        `E(cur) ~ E(nxt)`. 전이를 `sv = sv ~ delta` 로 emit하면, sv==E(cur)일 때
-        결과가 E(nxt)가 된다. 저장되는 상수는 절대 목적지가 아니라 델타라서,
-        전이 테이블만 덤프해도 목적지 상태를 바로 읽을 수 없다(현재 상태의
-        런타임 값을 알아야 복원 가능).
+        """Signed relative delta E(nxt)-E(cur), not an absolute destination.
+
+        sv + delta == E(nxt) when sv == E(cur). Both operands and the
+        result are small exact integers in Lua 5.1 and 5.3; no bit library,
+        word shim or integer64 assumption is required.
         """
-        return self.enc(cur) ^ self.enc(nxt)
+        return self.enc(nxt) - self.enc(cur)
 
     def delta_expr(self, cur: int, nxt: int) -> str:
         return _obf_int(self.delta(cur, nxt))
@@ -1209,6 +1208,7 @@ class _Affine:
         """sv(인코딩 값을 담은 변수)를 원본 상태값으로 역연산하는 Lua 식.
         `((sv-b)*kinv) % m` — Lua의 `%`는 양의 m에 대해 항상 [0,m) 결과라
         (sv-b)가 음수여도 정확하다. |sv-b|<m, kinv<m 이라 곱도 64비트 안전.
+        The product is below 2^34, hence exact in binary64 as well as int64.
         어떤 식 문맥에 넣어도 안전하도록 전체를 괄호로 감싼다.
         """
         inner = f"(({sv})-{_obf_int(self.b)})*{_obf_int(self.kinv)}"
@@ -1221,7 +1221,7 @@ _ZV_DECL_RE = re.compile(r'\blocal\s+(_z\d+)\s*=')
 def _last_zv(lines: list[str]) -> str | None:
     """lines에서 마지막으로 선언된 `local _zN=` 의 이름을 반환(없으면 None).
 
-    dead 블록의 junk 계산 결과를 상태 전이식에 상쇄 연산(`~(_zN*0)`)으로
+    dead 블록의 junk 계산 결과를 상태 전이식에 상쇄 연산(`+zero_from(_zN)`)으로
     엮어, junk가 순수 로컬 계산이 아니라 상태 변수 계산에 관여하는 것처럼
     보이게 해 dead code elimination이 함부로 못 지우게 하는 데 쓴다.
     """
@@ -1241,14 +1241,14 @@ def _junk_expr(c: list[int]) -> str:
     """
     a, b = _generic_const_pair()
     return random.choice([
-        f"({a}~{b})",
+        f"({a}-{b})",
         f"({a}+{b})",
         f"({a}*{(b % 997) + 1})",
-        f"({a}//{(b % 999) + 1})",
+        f"(({a}-({a}%{(b % 999) + 1}))/{(b % 999) + 1})",
         f"({a}%{(b % 9973) + 1})",
-        f"(({a}|{b})&0xFFFFFF)",
-        f"(({a}<<3)~{b})",
-        f"({a}>>{(b % 13) + 1})",
+        f"(({a}+{b})%16777216)",
+        f"(({a}*8-{b})%16777216)",
+        f"(({a}-({a}%{2 ** ((b % 13) + 1)}))/{2 ** ((b % 13) + 1)})",
     ])
 
 
@@ -1261,9 +1261,9 @@ def _junk_seg_chain(c: list[int], live_vars=None) -> list[str]:
     zvs = [_zv(c) for _ in range(n)]
     lines = [f"local {zvs[0]}={_junk_expr(c)}"]
     for i in range(1, n):
-        op = random.choice(["+", "-", "~", "*", "%", "|", "&"])
+        op = random.choice(["+", "-", "*", "%"])
         k = random.randint(1, 9999)
-        lines.append(f"local {zvs[i]}={zvs[i - 1]}{op}{k}")
+        lines.append(f"local {zvs[i]}=({zvs[i - 1]}{op}{k})%16777216")
     return lines
 
 
@@ -1277,7 +1277,7 @@ def _junk_seg_call(c: list[int], live_vars=None) -> list[str]:
     fn = _zv(c)
     p = NameAllocator.symbolic("_pa", random.randint(0, 2 ** 31))
     a, b = _generic_const_pair()
-    body_op = random.choice([f"{p}*{(b % 97) + 1}", f"{p}+{a % 100000}", f"{p}~{b % 65536}"])
+    body_op = random.choice([f"{p}*{(b % 97) + 1}", f"{p}+{a % 100000}", f"{p}-{b % 65536}"])
     return [
         f"local {fn}=function({p}) return {body_op} end",
         f"local {_zv(c)}={fn}({_junk_expr(c)})",
@@ -1303,7 +1303,7 @@ def _junk_seg_cond(c: list[int], live_vars=None) -> list[str]:
         f"if {_nested_always_false(2, live_vars)} then",
         f"  {z}={b}",
         f"elseif {_pred_false(live_vars)} then",
-        f"  {z}={z}~{random.randint(1, 9999)}",
+        f"  {z}={z}-{random.randint(1, 9999)}",
         f"end",
     ]
 
@@ -1331,8 +1331,8 @@ def _junk_seg_table(c: list[int], live_vars=None) -> list[str]:
     return [
         f"local {t}={{{elems}}}",
         f"local {acc}=0",
-        f"for {fv}=1,#{t} do {acc}={acc}~{t}[{fv}] end",
-        f"local {_zv(c)}={acc}&0xFFFFFF",
+        f"for {fv}=1,#{t} do {acc}={acc}+{t}[{fv}] end",
+        f"local {_zv(c)}={acc}%16777216",
     ]
 
 
@@ -1379,12 +1379,12 @@ def _junk_seg_fakevm(c: list[int], live_vars=None) -> list[str]:
         f"local {acc}={random.randint(0, 9999)}",
         f"while {sv}~=0 and {g}<8 do",
         f"  {g}={g}+1",
-        f"  if {sv}=={s0} then {acc}={acc}~{random.randint(1, 9999)} {sv}={s1}",
+        f"  if {sv}=={s0} then {acc}={acc}-{random.randint(1, 9999)} {sv}={s1}",
         f"  elseif {sv}=={s1} then {acc}={acc}+{random.randint(1, 999)} {sv}={s2}",
-        f"  elseif {sv}=={s2} then {acc}={acc}~{random.randint(1, 9999)} {sv}=0",
+        f"  elseif {sv}=={s2} then {acc}={acc}-{random.randint(1, 9999)} {sv}=0",
         f"  else {sv}=0 end",
         f"end",
-        f"local {_zv(c)}={acc}&0xFFFF",
+        f"local {_zv(c)}={acc}%65536",
     ]
 
 
@@ -1407,18 +1407,18 @@ def _junk_simple(c: list[int], live_vars=None) -> list[str]:
 
     rich junk의 함수 정의/루프/다양한 연산자는 VM 템플릿을 이후 패스
     (localize_globals 등)와 함께 재난독화할 때 깨질 수 있으므로, 여기서는
-    검증된 순수 산술(`~`/`+`/`-`/`|`/`&`)만 쓰는 짧은 흐름을 낸다.
+    공통 Lua 산술(`+`/`-`/`%`)만 쓰는 짧은 흐름을 낸다.
     """
     zv = _zv(c)
     a, b = _generic_const_pair()
     lines = [random.choice([
-        f"local {zv}=({a}~{b})~({a}~{b})",
+        f"local {zv}=({a}-{b})+({b}-{a})",
         f"local {zv}=({a}+{b})-({a}+{b})",
-        f"local {zv}=({a}|{b})&0",
+        f"local {zv}=({a}%2)*(({a}+1)%2)",
     ])]
     if random.random() < 0.5:
         v2 = _zv(c)
-        lines.append(f"if {_pred_false(live_vars)} then local {v2}={zv}~{b} {zv}={v2} end")
+        lines.append(f"if {_pred_false(live_vars)} then local {v2}={zv}-{b} {zv}={v2} end")
     return lines
 
 
@@ -1430,6 +1430,8 @@ def _junk_flow(c: list[int], rich: bool = True, live_vars=None,
     live_vars가 주어지면 내부 opaque predicate가 파라미터/상태값을 섞는다.
     n_segs로 세그먼트 수를 지정할 수 있다(live junk는 비용 제어 위해 1~2로 제한).
     """
+    if not _FUNCTION_FEATURES.get().get("junk", True):
+        return []
     if not rich:
         return _junk_simple(c, live_vars)
     out: list[str] = []
@@ -1441,19 +1443,21 @@ def _junk_flow(c: list[int], rich: bool = True, live_vars=None,
 def _emit_absorbing_junk(emit, level: int, c: list[int], rich: bool, live_vars,
                          absorb_sv: str | None) -> None:
     """항상-거짓 가드 junk 블록(=실행 안 됨)을 emit하고, junk 결과(sink)를 상태
-    변수에 무해하게 흡수한다: `sv = sv ~ zero_from(sink)`.
+    변수에 무해하게 흡수한다: `sv = sv + zero_from(sink)`.
 
     이건 *정적 분석 교란*용이다: 실행되진 않지만 real case와 형태가 같은 죽은
     분기를 흩뿌려 "어떤 게 진짜 실행 경로인가"를 정적으로 판단하기 어렵게 한다.
     (실제 실행 경로에서 도는 junk는 아래 `_emit_live_junk`가 담당한다.)
     """
     jflow = _junk_flow(c, rich, live_vars)
+    if not jflow:
+        return
     sink = _last_zv(jflow)
     emit(level, f"if {_nested_always_false(2, live_vars)} then")
     for jl in jflow:
         emit(level + 1, jl)
     if sink and absorb_sv:
-        emit(level + 1, f"{absorb_sv}={absorb_sv}~{_zero_from(sink)}")
+        emit(level + 1, f"{absorb_sv}={absorb_sv}+{_zero_from(sink)}")
     emit(level, "end")
 
 
@@ -1462,8 +1466,8 @@ def _emit_live_junk(emit, level: int, c: list[int], rich: bool, live_vars,
     """*실제 실행 경로*에 그대로(가드 없이) 들어가는 junk (VMP/Themida 스타일 핵심).
 
     real handler 본문 안에서 조건 없이 실행되며, 결과(sink)를 상태 변수에 *참
-    항등식*(`sv = sv ~ zero_from(sink)`)으로 흡수한다. zero_from은 임의 정수
-    입력에 대해 *항상 0*이므로(`(x*(x+1))%2` 등, parity) sv는 값이 바뀌지 않아
+    항등식*(`sv = sv + zero_from(sink)`)으로 흡수한다. zero_from은 생성된 정수
+    입력에 대해 *항상 0*이므로(parity) sv는 값이 바뀌지 않아
     실행돼도 정확하고, 동시에:
       * 이 junk는 매번 *실제로 실행*되므로 동적 트레이스에도 진짜 작업처럼 보인다,
       * 결과가 dispatcher 상태 변수 계산에 흘러들어가므로, "output에 영향 없음"을
@@ -1472,11 +1476,13 @@ def _emit_live_junk(emit, level: int, c: list[int], rich: bool, live_vars,
     return 블록 앞에 놓여도 안전하도록 호출부에서 real code *앞*에 emit한다.
     """
     jflow = _junk_flow(c, rich, live_vars, n_segs=n_segs)
+    if not jflow:
+        return
     sink = _last_zv(jflow)
     for jl in jflow:
         emit(level, jl)
     if sink and absorb_sv:
-        emit(level, f"{absorb_sv}={absorb_sv}~{_zero_from(sink)}")
+        emit(level, f"{absorb_sv}={absorb_sv}+{_zero_from(sink)}")
 
 
 # ---------------------------------------------------------------------------
@@ -1653,7 +1659,7 @@ def _build_var_tables(names: list[str]) -> tuple[list[str], dict[str, str]]:
 #
 # 셋 다 공통으로:
 #   * 상태값은 _Affine 으로 인코딩해 저장(계산된 값), 비교 시점에만 역연산.
-#   * dead 블록의 junk sink 변수를 상태 전이식(`~(_zN*0)`)과 (선택적으로)
+#   * dead 블록의 junk sink 변수를 상태 전이식(`+zero_from(_zN)`)과 (선택적으로)
 #     실제 hoist 로컬 계산에 값-보존적으로 엮어 DCE 저항성을 높인다.
 #   * opaque predicate는 파라미터/상태값에서 파생된 항목을 섞는다(live).
 # ---------------------------------------------------------------------------
@@ -1721,8 +1727,8 @@ def _branch_updates_flat(cond: str, sv: str, enc: _Affine, cur: int, t: int, e: 
                          c: list[int]) -> list[str]:
     """단일 상태 branch 갱신 (상대 델타). and/or 삼항과 테이블-셀렉트 중 랜덤.
 
-    전이는 절대값이 아니라 `sv = sv ~ delta` 상대 델타로 쓴다. sv==E(cur)이므로
-    `sv ~ (E(cur)~E(t))` == E(t). 저장 상수가 목적지가 아니라 델타라서 전이
+    전이는 절대값이 아니라 `sv = sv + delta` 상대 델타로 쓴다. sv==E(cur)이므로
+    `sv + (E(t)-E(cur))` == E(t). 저장 상수가 목적지가 아니라 델타라서 전이
     테이블만으론 목적지를 못 읽는다. 델타는 정수(truthy)라 and/or 단축평가도 정확.
     테이블-셀렉트는 and/or 패턴 자체를 없애 원본 if 역변환을 방해한다.
     """
@@ -1732,9 +1738,9 @@ def _branch_updates_flat(cond: str, sv: str, enc: _Affine, cur: int, t: int, e: 
     if random.random() < 0.5:
         s1 = _zv(c)
         lines.append(f"local {s1}={{[true]={dt},[false]={de}}}")
-        lines.append(f"{sv}={sv}~{s1}[not not {ism}]")
+        lines.append(f"{sv}={sv}+{s1}[not not {ism}]")
     else:
-        lines.append(f"{sv}={sv}~({ism} and {dt} or {de})")
+        lines.append(f"{sv}={sv}+({ism} and {dt} or {de})")
     return lines
 
 
@@ -1750,11 +1756,11 @@ def _branch_updates_nested(cond: str, sv1: str, sv2: str, enc1: _Affine, enc2: _
         s1 = _zv(c); s2 = _zv(c)
         lines.append(f"local {s1}={{[true]={d1t},[false]={d1e}}}")
         lines.append(f"local {s2}={{[true]={d2t},[false]={d2e}}}")
-        lines.append(f"{sv1}={sv1}~{s1}[not not {ism}]")
-        lines.append(f"{sv2}={sv2}~{s2}[not not {ism}]")
+        lines.append(f"{sv1}={sv1}+{s1}[not not {ism}]")
+        lines.append(f"{sv2}={sv2}+{s2}[not not {ism}]")
     else:
-        lines.append(f"{sv1}={sv1}~({ism} and {d1t} or {d1e})")
-        lines.append(f"{sv2}={sv2}~({ism} and {d2t} or {d2e})")
+        lines.append(f"{sv1}={sv1}+({ism} and {d1t} or {d1e})")
+        lines.append(f"{sv2}={sv2}+({ism} and {d2t} or {d2e})")
     return lines
 
 
@@ -1784,8 +1790,8 @@ def _emit_dispatch_nested(blocks, entry_id, c, param_vars, rich_junk, hoist_name
             updates = []
         elif kind == "goto":
             ng, nb = pair[blk["succ"]]
-            # 상대 델타 전이: sv==E(cur)이므로 sv~(E(cur)~E(next))==E(next).
-            updates = [f"{sv1}={sv1}~{enc1.delta_expr(cg, ng)} {sv2}={sv2}~{enc2.delta_expr(cb, nb)}"]
+            # Relative additive transition: sv + (E(next)-E(cur)) == E(next).
+            updates = [f"{sv1}={sv1}+{enc1.delta_expr(cg, ng)} {sv2}={sv2}+{enc2.delta_expr(cb, nb)}"]
         else:  # branch
             tg, tb = pair[blk["t"]]
             eg, eb = pair[blk["e"]]
@@ -1803,9 +1809,9 @@ def _emit_dispatch_nested(blocks, entry_id, c, param_vars, rich_junk, hoist_name
         sink = _last_zv(jl)
         # dead도 상대 델타로 전이(도달 불가라 무해). junk sink 를 값-의존 0 항
         # (_zero_from: 항상 0이지만 sink에 실제로 의존)으로 델타에 엮어 DCE 방해.
-        weave = f"~{_zero_from(sink)}" if sink else ""
+        weave = f"+{_zero_from(sink)}" if sink else ""
         updates = _dead_realvar_entangle(hoist_names, sink) + [
-            f"{sv1}={sv1}~{enc1.delta_expr(dg, tg)}{weave} {sv2}={sv2}~{enc2.delta_expr(db, tb)}"]
+            f"{sv1}={sv1}+{enc1.delta_expr(dg, tg)}{weave} {sv2}={sv2}+{enc2.delta_expr(db, tb)}"]
         dead_meta.append({"g": dg, "b": db, "lines": jl, "updates": updates, "real": False})
 
     groups: dict[int, list[dict]] = {g: [] for g in group_ids}
@@ -1888,7 +1894,7 @@ def _emit_dispatch_flat(blocks, entry_id, c, param_vars, rich_junk, hoist_names)
         if kind == "return":
             updates = []
         elif kind == "goto":
-            updates = [f"{sv}={sv}~{enc.delta_expr(cur, sid[blk['succ']])}"]
+            updates = [f"{sv}={sv}+{enc.delta_expr(cur, sid[blk['succ']])}"]
         else:
             updates = _branch_updates_flat(blk["cond"], sv, enc, cur,
                                            sid[blk["t"]], sid[blk["e"]], c)
@@ -1901,8 +1907,8 @@ def _emit_dispatch_flat(blocks, entry_id, c, param_vars, rich_junk, hoist_names)
         ds = _new_state(used)                 # dead 블록 자신의 상태 먼저 확정
         jl = _junk_flow(c, rich_junk, live)
         sink = _last_zv(jl)
-        weave = f"~{_zero_from(sink)}" if sink else ""
-        u = f"{sv}={sv}~{enc.delta_expr(ds, _dead_target_single(sid, all_ids))}{weave}"
+        weave = f"+{_zero_from(sink)}" if sink else ""
+        u = f"{sv}={sv}+{enc.delta_expr(ds, _dead_target_single(sid, all_ids))}{weave}"
         updates = _dead_realvar_entangle(hoist_names, sink) + [u]
         dead_meta.append({"s": ds, "lines": jl, "updates": updates, "real": False})
 
@@ -1971,8 +1977,8 @@ def _emit_dispatch_closure(blocks, entry_id, c, param_vars, rich_junk, hoist_nam
     for blk in blocks:
         cur = blk["s"]
         if blk["kind"] == "goto":
-            # 핸들러는 sv==E(cur)일 때만 (H[sv]로) 진입하므로 상대 델타가 정확.
-            updates = [f"{sv}={sv}~{enc.delta_expr(cur, sid[blk['succ']])}"]
+            # H[sv] enters at E(cur); adding the signed delta yields E(next).
+            updates = [f"{sv}={sv}+{enc.delta_expr(cur, sid[blk['succ']])}"]
         else:  # branch (return 블록 없음이 보장됨)
             updates = _branch_updates_flat(blk["cond"], sv, enc, cur,
                                            sid[blk["t"]], sid[blk["e"]], c)
@@ -1984,8 +1990,8 @@ def _emit_dispatch_closure(blocks, entry_id, c, param_vars, rich_junk, hoist_nam
         ds = _new_state(used)
         jl = _junk_flow(c, rich_junk, live)
         sink = _last_zv(jl)
-        weave = f"~{_zero_from(sink)}" if sink else ""
-        u = f"{sv}={sv}~{enc.delta_expr(ds, _dead_target_single(sid, all_ids))}{weave}"
+        weave = f"+{_zero_from(sink)}" if sink else ""
+        u = f"{sv}={sv}+{enc.delta_expr(ds, _dead_target_single(sid, all_ids))}{weave}"
         updates = _dead_realvar_entangle(hoist_names, sink) + [u]
         metas.append({"s": ds, "lines": jl, "updates": updates, "real": False})
 
@@ -2053,7 +2059,7 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
         if blk["kind"] == "return":
             updates = []
         elif blk["kind"] == "goto":
-            updates = [f"{sv}={sv}~{enc.delta_expr(cur, sid[blk['succ']])}"]
+            updates = [f"{sv}={sv}+{enc.delta_expr(cur, sid[blk['succ']])}"]
         else:
             updates = _branch_updates_flat(
                 blk["cond"], sv, enc, cur,
@@ -2073,9 +2079,9 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
         ds = _new_state(used)
         jl = _junk_flow(c, rich_junk, live)
         sink = _last_zv(jl)
-        weave = f"~{_zero_from(sink)}" if sink else ""
+        weave = f"+{_zero_from(sink)}" if sink else ""
         update = (
-            f"{sv}={sv}~"
+            f"{sv}={sv}+"
             f"{enc.delta_expr(ds, _dead_target_single(sid, all_ids))}{weave}"
         )
         dead_meta.append({
@@ -2225,20 +2231,13 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     # 항상 가능하고, 테이블-클로저 점프는 return이 없는 함수 + rich junk(비-VM)
     # 경로에서만 안전하게 쓴다(클로저의 return이 함수를 못 빠져나가므로).
     #
-    # 파라미터 opaque predicate: 비-VM(rich_junk)에서는 `math.type` 가드 + 값-의존
-    # 정수 항등식("num")을 쓴다. VM 경로(제한 _ENV)에서는 math 전역이 위험하므로
-    # 파라미터를 predicate에서 빼고(상태 변수 int 항등식만 사용) 안전을 택한다.
-    #
-    # 단, 파라미터/로컬 중 `math`가 있으면 함수 스코프에서 전역 `math`가 가려져
-    # `math.type(...)`이 그 값을 인덱싱하다 깨질 수 있다 → 이 경우 파라미터는
-    # 전역 미사용 안전 폴백("any", nil 항등식)으로 낮춘다. 상태 변수 int 항등식은
-    # math를 안 쓰므로 항상 안전하다.
+    # State variables are bounded generated integers. Source parameters are
+    # arbitrary values: only global-free nil predicates may reference them.
+    # The VM path retains its conservative state-only predicate policy.
     if not rich_junk:
         param_vars = []
     else:
-        shadowed = ("math" in (param_names or [])) or ("math" in hoist_names)
-        pkind = "any" if shadowed else "num"
-        param_vars = [(p, pkind) for p in (param_names or [])]
+        param_vars = [(p, "any") for p in (param_names or [])]
     emitters = [_emit_dispatch_nested, _emit_dispatch_flat]
     if rich_junk and not _blocks_have_return(blocks):
         emitters.append(_emit_dispatch_closure)
@@ -3028,6 +3027,10 @@ def _compile_stmts_to_blocks(
     def _compile_seq(stmt_list, after_id: int) -> int:
         next_id = after_id
         for stmt in reversed(stmt_list):
+            # A 5.1 statement separator is not a standalone statement. Moving
+            # it into its own CFF case would produce `then ; ...`, invalid in 5.1.
+            if stmt.type == "empty_statement":
+                continue
             if stmt.id in (skipped_statement_ids or set()):
                 continue
             if stmt.type == "if_statement":
@@ -3097,9 +3100,10 @@ def _transform_body(
             return None, boundary_stats
 
     lexical_plan = _build_lexical_plan(ctx, function_node)
-    inline_map, skipped_statement_ids = _plan_simple_function_inlines(
-        ctx, block, lexical_plan
-    )
+    if _FUNCTION_FEATURES.get().get("inline", True):
+        inline_map, skipped_statement_ids = _plan_simple_function_inlines(ctx, block, lexical_plan)
+    else:
+        inline_map, skipped_statement_ids = {}, set()
     boundary_stats["inlined_functions"] = len(skipped_statement_ids)
 
     # CFF가 실제로 분해하는 root/if scope local만 hoist 대상.
@@ -3127,8 +3131,11 @@ def _transform_body(
 
     prefix_lines: list[str] = []
     if params:
+        original_params = [ctx.text(n) for n in function_node.child_by_field_name("parameters").named_children
+                           if n.type == "identifier"]
         prefix_lines.append(
-            f"local {','.join(params)}=..."
+            f"local {','.join(params)}=" + ("..." if _FUNCTION_FEATURES.get().get("wrapper", True)
+                                           else ",".join(original_params))
         )
 
     # 단일 simple/return statement는 CFF 없이 alpha-renaming + vararg unpack만.
@@ -3213,12 +3220,16 @@ class FunctionObfuscationPass(BasePass):
                  loop_unroll_max_iterations: int = 4,
                  loop_max_generated_blocks: int = 64,
                  loop_max_expansion_ratio: float = 128.0,
-                 loop_max_depth: int = 3):
+                 loop_max_depth: int = 3,
+                 cff: bool = True, junk: bool = True,
+                 inline: bool = True, wrapper: bool = True):
         if boundary_mode not in {"mixed", "split", "cff"}:
             raise ValueError(
                 "boundary_mode must be 'mixed', 'split', or 'cff'"
             )
         self.skip_vm_dispatcher = skip_vm_dispatcher
+        self.features = {"cff": cff, "junk": junk, "inline": inline, "wrapper": wrapper}
+        self.selection_resolver = None
         self.boundary_mode = boundary_mode
         self.nested = bool(nested)
         if (not isinstance(nested_max_depth, int)
@@ -3304,7 +3315,7 @@ class FunctionObfuscationPass(BasePass):
         fragment = source_ctx.text(source_node)
         child_replacements: list[Replacement] = []
 
-        can_descend = self.nested and record.depth < self.nested_max_depth
+        can_descend = self.selection_resolver is not None or (self.nested and record.depth < self.nested_max_depth)
         for child in children_by_id.get(source_id, []):
             child_record = provenance[child.id]
             if not can_descend:
@@ -3324,6 +3335,22 @@ class FunctionObfuscationPass(BasePass):
             ))
 
         fragment = self._apply_replacements(fragment, child_replacements)
+
+        worker = self
+        if self.selection_resolver is not None:
+            options = self.selection_resolver(source_ctx, source_node)
+            if options is None:
+                return fragment, False
+            self.last_selection_results[source_id] = False
+            worker = copy.copy(self)
+            for key in ("boundary_mode", "nested", "nested_max_depth"):
+                if key in options:
+                    setattr(worker, key, options[key])
+            worker.features = {**self.features, **{k: v for k, v in options.items() if k in self.features}}
+            worker.compound_options = dict(self.compound_options)
+            for key, value in options.items():
+                if key.startswith("loop_"):
+                    worker.compound_options[key[5:]] = value
 
         from .ts_utils import parse as parse_ts
 
@@ -3361,14 +3388,25 @@ class FunctionObfuscationPass(BasePass):
             for child in params_node.children
             if child.type == "identifier"
         ]
-        new_body, boundary_stats = _transform_body(
-            fragment_ctx,
-            root,
-            block,
-            rich_junk=True,
-            boundary_mode=self.boundary_mode,
-            compound_options=self.compound_options,
-        )
+        if not worker.features["cff"]:
+            new_body = fragment_ctx.text(block)
+            if params and worker.features["wrapper"]:
+                new_body = f"local {','.join(params)}=...\n" + new_body
+            if worker.features["junk"]:
+                allocator = NameAllocator.for_source(fragment)
+                name = allocator.allocate("junk")
+                new_body = f"local {name}=17; {name}=({name}*3+1)%97\n" + new_body
+            boundary_stats = dict.fromkeys(("split_helpers", "inline_blocks", "inlined_functions", "split_bodies",
+                                           "lowered_loops", "unrolled_loops", "unrolled_iterations", "skipped_unsafe", "budget_fallbacks"), 0)
+        else:
+            token = _FUNCTION_FEATURES.set(worker.features)
+            try:
+                new_body, boundary_stats = _transform_body(
+                    fragment_ctx, root, block, rich_junk=True,
+                    boundary_mode=worker.boundary_mode, compound_options=worker.compound_options,
+                )
+            finally:
+                _FUNCTION_FEATURES.reset(token)
         if new_body is None:
             return fragment, False
 
@@ -3377,12 +3415,13 @@ class FunctionObfuscationPass(BasePass):
             end=fragment_ctx.ce(block),
             new_text=new_body,
         )]
-        if params:
+        if params and worker.features["wrapper"]:
             local_replacements.append(Replacement(
                 start=fragment_ctx.cs(params_node) + 1,
                 end=fragment_ctx.ce(params_node) - 1,
                 new_text="...",
             ))
+        before_own_transform = fragment
         fragment = self._apply_replacements(fragment, local_replacements)
 
         self.last_split_helper_count += boundary_stats["split_helpers"]
@@ -3395,11 +3434,14 @@ class FunctionObfuscationPass(BasePass):
         self.last_loop_unsafe_skip_count += boundary_stats["skipped_unsafe"]
         self.last_loop_budget_fallback_count += boundary_stats["budget_fallbacks"]
         self.last_transformed_count += 1
+        if self.selection_resolver is not None:
+            self.last_selection_results[source_id] = fragment != before_own_transform
         if record.depth > 0:
             self.last_nested_transformed_count += 1
         return fragment, True
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        self.last_selection_results = {}
         self.last_transformed_count = 0
         self.last_split_helper_count = 0
         self.last_inline_block_count = 0
@@ -3416,7 +3458,8 @@ class FunctionObfuscationPass(BasePass):
         self.last_loop_budget_fallback_count = 0
         original_script = script
         chunk_rewritten = False
-        if not self.skip_vm_dispatcher:
+        if (not self.skip_vm_dispatcher and self.selection_resolver is None
+                and self.features["inline"] and self.features["cff"]):
             script, chunk_inline_count = _inline_chunk_helpers(script)
             if chunk_inline_count:
                 from .ts_utils import parse as parse_ts
@@ -3546,8 +3589,9 @@ class FunctionObfuscationPass(BasePass):
             self.last_processed_source_count = len(processed_ids)
             expected_processed = {
                 node_id for node_id, record in provenance.items()
-                if record.depth <= self.nested_max_depth
+                if self.selection_resolver is not None or (record.depth <= self.nested_max_depth
                 and (self.nested or record.depth == 0)
+                )
             }
             if processed_ids != expected_processed:
                 raise RuntimeError(

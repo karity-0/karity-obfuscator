@@ -1,26 +1,36 @@
 from __future__ import annotations
 
-VM_BACKENDS = ("karity", "classic", "mov")
-VM_BACKEND_ALIASES = {"default": "karity"}
+from .backends import backend_capabilities, backend_names
+from .backends.base import KARITY_OPTIONS
 
-# Controls bypassed by the direct runtimes. Shared by validation, UI and profiles.
-_KARITY_ONLY = frozenset((
-    "graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
-    "runtime_trace", "block_variant_rate", "block_variant_count",
-    "block_variant_max_instructions", "helper_variant_count", "helper_diversity_rate",
-    "semantic_diversity_rate", "semantic_state_threading", "argument_virtualization",
-    "upvalue_virtualization", "table_virtualization", "branch_virtualization",
-))
-VM_UNSUPPORTED_OPTIONS = {
-    "karity": frozenset(),
-    "classic": _KARITY_ONLY,
-    "mov": _KARITY_ONLY | {"dispatcher_type", "dispatcher_target_hiding",
-                           "fake_handlers", "mutate_handlers"},
-}
+class _BackendNames:
+    def __iter__(self):
+        return iter(backend_names())
+
+    def __contains__(self, name):
+        return name in backend_names()
+
+
+VM_BACKENDS = _BackendNames()
+VM_BACKEND_ALIASES = {"default": "karity"}
 
 
 def unsupported_vm_options(backend: object) -> frozenset[str]:
-    return VM_UNSUPPORTED_OPTIONS[normalize_vm_backend(backend)]
+    canonical = normalize_vm_backend(backend)
+    return frozenset(option for option in KARITY_OPTIONS
+                     if vm_option_resolution(canonical, option)["outcome"] == "disable")
+
+
+def vm_option_resolution(backend: object, option: str) -> dict[str, str]:
+    from .protection import ProtectionRequest, option_feature, resolve_capabilities
+    capabilities = backend_capabilities(normalize_vm_backend(backend))
+    feature = option_feature(option)
+    if feature is None:
+        return {"outcome": "native" if option in capabilities.supported_options or option == "requirements" else "disable"}
+    resolution = resolve_capabilities((ProtectionRequest(feature),), capabilities)
+    if resolution.fallbacks:
+        return {"outcome": "fallback", "target": resolution.fallbacks[0][1]}
+    return {"outcome": "native" if resolution.active else "disable"}
 
 
 def normalize_vm_backend(value: object) -> str:

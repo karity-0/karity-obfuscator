@@ -1,12 +1,26 @@
-"""Isolated Lua 5.3 C API worker. Invoked by LuaToolchain, not the GUI process."""
+"""Isolated version-selected Lua C API worker; never loads a DLL in the GUI."""
 from __future__ import annotations
 
 import ctypes as C
+import os
 from pathlib import Path
 import sys
 
 
-def run(library: str, operation: str, source: bytes) -> bytes:
+def run(library: str, operation: str, source: bytes, lua_version: str = "5.3") -> bytes:
+    if lua_version not in {"5.1", "5.3"}:
+        raise ValueError("unsupported Lua library version")
+    if os.name == "nt":
+        # The isolated, hidden worker must report loader failures on stderr,
+        # rather than waiting for an invisible Windows error dialog.
+        kernel = C.WinDLL('kernel32', use_last_error=True)
+        get_mode = kernel.GetErrorMode
+        get_mode.argtypes = []
+        get_mode.restype = C.c_uint
+        set_mode = kernel.SetErrorMode
+        set_mode.argtypes = [C.c_uint]
+        set_mode.restype = C.c_uint
+        set_mode(get_mode() | 0x0001 | 0x0002 | 0x8000)
     try:
         dll = C.CDLL(library)
     except OSError as exc:
@@ -20,7 +34,7 @@ def run(library: str, operation: str, source: bytes) -> bytes:
         try:
             fn = getattr(dll, name)
         except AttributeError as exc:
-            raise RuntimeError(f"lua_library is missing Lua 5.3 C API symbol {name}") from exc
+            raise RuntimeError(f"lua_library is missing Lua {lua_version} C API symbol {name}") from exc
         fn.restype = result
         fn.argtypes = args
         return fn
@@ -28,17 +42,27 @@ def run(library: str, operation: str, source: bytes) -> bytes:
     state_type = C.c_void_p
     newstate = bind("luaL_newstate", state_type)
     close = bind("lua_close", None, state_type)
-    load = bind("luaL_loadbufferx", C.c_int, state_type, C.c_char_p,
-                C.c_size_t, C.c_char_p, C.c_char_p)
-    pcall = bind("lua_pcallk", C.c_int, state_type, C.c_int, C.c_int,
-                 C.c_int, C.c_ssize_t, C.c_void_p)
+    if lua_version == "5.1":
+        load_raw = bind("luaL_loadbuffer", C.c_int, state_type, C.c_char_p, C.c_size_t, C.c_char_p)
+        load = lambda state, source, size, name, mode: load_raw(state, source, size, name)
+        pcall_raw = bind("lua_pcall", C.c_int, state_type, C.c_int, C.c_int, C.c_int)
+        pcall = lambda state, args, results, handler, context, continuation: pcall_raw(state, args, results, handler)
+    else:
+        load = bind("luaL_loadbufferx", C.c_int, state_type, C.c_char_p,
+                    C.c_size_t, C.c_char_p, C.c_char_p)
+        pcall = bind("lua_pcallk", C.c_int, state_type, C.c_int, C.c_int,
+                     C.c_int, C.c_ssize_t, C.c_void_p)
     tostring = bind("lua_tolstring", C.c_void_p, state_type, C.c_int,
                     C.POINTER(C.c_size_t))
     settop = bind("lua_settop", None, state_type, C.c_int)
     gettype = bind("lua_type", C.c_int, state_type, C.c_int)
     openlibs = bind("luaL_openlibs", None, state_type)
     writer_type = C.CFUNCTYPE(C.c_int, state_type, C.c_void_p, C.c_size_t, C.c_void_p)
-    dump = bind("lua_dump", C.c_int, state_type, writer_type, C.c_void_p, C.c_int)
+    if lua_version == "5.1":
+        dump_raw = bind("lua_dump", C.c_int, state_type, writer_type, C.c_void_p)
+        dump = lambda state, writer, context, strip: dump_raw(state, writer, context)
+    else:
+        dump = bind("lua_dump", C.c_int, state_type, writer_type, C.c_void_p, C.c_int)
 
     state = newstate()
     if not state:
@@ -73,14 +97,18 @@ def run(library: str, operation: str, source: bytes) -> bytes:
         check(load(state, b"return 1", 8, b"=version-check", b"t"))
         header = dump_top(True)
         compat = None
-        if header[:6] == b"\x1bLua\x53\x02" and hasattr(dll, "lua_compat"):
+        if lua_version == "5.3" and header[:6] == b"\x1bLua\x53\x02" and hasattr(dll, "lua_compat"):
             # The optional compatibility export selects standard dumps.
             compat = bind("lua_compat", None, C.c_int)
             compat(1)
             header = dump_top(True)
-        if header[:6] != b"\x1bLua\x53\x00":
-            raise RuntimeError(f"lua_library must produce standard Lua 5.3 bytecode; got header {header[:17].hex()}")
-        if header[12:17] != bytes((4, 8, 4, 8, 8)):
+        version_byte = 0x51 if lua_version == "5.1" else 0x53
+        if header[:6] != b"\x1bLua" + bytes((version_byte, 0)):
+            raise RuntimeError(f"lua_library must produce standard Lua {lua_version} bytecode; got header {header[:17].hex()}")
+        if lua_version == "5.1" and (len(header) < 12 or header[6] not in (0, 1) or header[7] != 4 or
+                                     header[8] not in (4, 8) or header[9:12] != bytes((4, 8, 0))):
+            raise RuntimeError("lua_library Lua 5.1 dump requires standard integer fields and double numbers")
+        if lua_version == "5.3" and header[12:17] != bytes((4, 8, 4, 8, 8)):
             raise RuntimeError("lua_library bytecode layout is unsupported (requires 64-bit size_t/integer and double numbers)")
         settop(state, 0)
 
@@ -105,8 +133,10 @@ def run(library: str, operation: str, source: bytes) -> bytes:
 
 if __name__ == "__main__":
     try:
-        library, operation, source_path, output_path = sys.argv[1:]
-        result = run(library, operation, Path(source_path).read_bytes())
+        library, operation, source_path, output_path, *versions = sys.argv[1:]
+        if len(versions) > 1:
+            raise ValueError("unexpected worker arguments")
+        result = run(library, operation, Path(source_path).read_bytes(), versions[0] if versions else "5.3")
         Path(output_path).write_bytes(result)
     except Exception as exc:
         print(str(exc), file=sys.stderr)

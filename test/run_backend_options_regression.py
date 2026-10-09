@@ -65,6 +65,47 @@ def main():
     ], capture_output=True, text=True, timeout=30, cwd=ROOT)
     assert alias.returncode == 0 and not alias.stderr, alias.stderr
     assert json.loads(alias.stdout)["vm_options"]["backend"] == "default"
+    # Required intent is checked identically before compilation and by lowering.
+    for options in (
+        {"backend": "mov", "requirements": {"graph_execution": "required"}},
+        {"backend": "karity", "graph_execution_rate": 0,
+         "requirements": {"graph_execution": "required"}},
+        {"requirements": {"unknown": "required"}},
+        {"requirements": {"graph_execution": "maybe"}},
+        {"requirements": []},
+    ):
+        try:
+            validate_config({"vm_options": options})
+        except ConfigError:
+            pass
+        else:
+            raise AssertionError(f"invalid requirement accepted: {options}")
+    validate_config({"vm_options": {"requirements": {"graph_execution": "required"}}})
+
+    # A registered backend supplies its own declared fallback implementation;
+    # registration propagates to config, GUI and diagnostics without name branches.
+    from obfuscator.vm.backends import register_backend, VMBackend
+    from obfuscator.vm.backends.base import SHARED_OPTIONS
+    from obfuscator.vm.protection import (BackendCapabilities, ProtectionRequest,
+        RequirementLevel, resolve_capabilities)
+    class TestBackend(VMBackend):
+        name = "test_registered"
+        description = "capability registry regression"
+        capabilities = BackendCapabilities(name, frozenset({"test_graph"}), SHARED_OPTIONS,
+                                           (("graph_execution", "test_graph"),))
+    register_backend(TestBackend())
+    validate_config({"vm_options": {"backend": "test_registered",
+                                  "requirements": {"graph_execution": "required"}}})
+    result = resolve_capabilities((ProtectionRequest("graph_execution", RequirementLevel.REQUIRED),),
+                                  TestBackend.capabilities)
+    assert result.is_active("test_graph") and result.fallbacks
+    assert "fallback graph_execution -> test_graph" in result.dump()
+    metadata = {item["name"]: item for item in _vm_option_meta()}
+    assert "test_registered" in [item["value"] for item in metadata["backend"]["values"]]
+    assert metadata["graph_execution_rate"]["resolution"]["test_registered"] == {
+        "outcome": "fallback", "target": "test_graph"}
+    assert "declared fallbacks" in config_warnings({"passes": ["vm"], "vm_options": {
+        "backend": "test_registered", "graph_execution_rate": 1}})[0]
     print("backend-options-regression-ok metadata=3_backends alias=ok warnings=ok release=ok")
     return 0
 

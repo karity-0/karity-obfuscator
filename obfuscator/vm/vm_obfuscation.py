@@ -8,8 +8,8 @@ from __future__ import annotations
 import random
 import re
 
-from ..parser import Proto
-from .vm_mutation import mutate_handlers, _lua_depth_delta
+from .backends.handler_ir import HandlerFunction
+from .vm_mutation import mutate_handlers, planned_mutation_seeds, _lua_depth_delta
 
 _LUA_OP_COUNT = 60  # Lua 5.3 opcode 0~46 plus karity pseudo ops
 
@@ -163,12 +163,16 @@ _ST_TRANSITIONS = [
     "_st=(_st~A~B~C)&0xFF",
 ]
 
-def _pick_transitions(n: int) -> list[str]:
-    """n개의 서로 다른 전이 패턴을 랜덤 선택."""
-    pool = _ST_TRANSITIONS[:]
-    random.shuffle(pool)
-    return pool[:n]
-
+_ST_TRANSITIONS_NATIVE = [
+    "_st=_MJ._c_xor(_st,A)%256",
+    "_st=_MJ._c_xor(_MJ._c_xor(_st,B),pc%256)%256",
+    "_st=_MJ._c_xor(_MJ._c_xor(_st,C),A)%256",
+    "_st=_MJ._c_xor(_st,(A+B)%256)%256",
+    "_st=_MJ._c_xor(_st,Bx%256)%256",
+    "_st=_MJ._c_xor(_st,_MJ._c_xor(pc,A))%256",
+    "_st=_MJ._c_xor(_MJ._c_xor(_st,C),pc%128)%256",
+    "_st=_MJ._c_xor(_MJ._c_xor(_MJ._c_xor(_st,A),B),C)%256",
+]
 
 def _make_alias_body(body: str, transition: str, pre: bool) -> str:
     """body에 state 전이를 앞(pre=True) 또는 뒤(pre=False)에 삽입.
@@ -192,7 +196,7 @@ _CHAIN_END_MARKER = 'else error("unknown op "..op) end'
 # ---------------------------------------------------------------------------
 # 1. 사용 중인 opcode 수집
 # ---------------------------------------------------------------------------
-def collect_used_ops(proto: Proto, vop_map: dict[int, list[int]]) -> set[int]:
+def collect_used_ops(proto: HandlerFunction, vop_map: dict[int, list[int]]) -> set[int]:
     """
     proto 트리를 재귀 순회하며 디스패처가 실제로 dispatch하는 vop 집합을 반환.
 
@@ -205,13 +209,13 @@ def collect_used_ops(proto: Proto, vop_map: dict[int, list[int]]) -> set[int]:
     return used
 
 
-def _collect(proto: Proto, vop_map: dict[int, list[int]], used: set[int]):
+def _collect(proto: HandlerFunction, vop_map: dict[int, list[int]], used: set[int]):
     code = proto.code
     i = 0
     n = len(code)
     while i < n:
         instr   = code[i]
-        orig_op = instr & 0x3F
+        orig_op = instr.op
         for vop in vop_map[orig_op]:
             used.add(vop)
 
@@ -225,7 +229,7 @@ def _collect(proto: Proto, vop_map: dict[int, list[int]], used: set[int]):
         _collect(sub, vop_map, used)
 
 
-def collect_used_orig_ops(proto: Proto) -> set[int]:
+def collect_used_orig_ops(proto: HandlerFunction) -> set[int]:
     """proto 트리에서 실제로 등장하는 원본 opcode(0~46) 집합을 반환.
 
     split_map을 실제 사용되는 splittable op으로만 한정하기 위해 쓰인다.
@@ -236,31 +240,31 @@ def collect_used_orig_ops(proto: Proto) -> set[int]:
     return ops
 
 
-def _collect_orig(proto: Proto, ops: set[int]):
+def _collect_orig(proto: HandlerFunction, ops: set[int]):
     for instr in proto.code:
-        ops.add(instr & 0x3F)
+        ops.add(instr.op)
     for sub in proto.protos:
         _collect_orig(sub, ops)
 
 
 # --- 멀티VM: vm_id로 배정된 proto들만 스코프하는 수집기 -------------------
-def _iter_protos(proto: Proto):
+def _iter_protos(proto: HandlerFunction):
     yield proto
     for sub in proto.protos:
         yield from _iter_protos(sub)
 
 
-def collect_used_orig_ops_for_vm(proto: Proto, vm_assign: dict[int, int],
+def collect_used_orig_ops_for_vm(proto: HandlerFunction, vm_assign: dict[int, int],
                                  vm_id: int) -> set[int]:
     ops: set[int] = set()
     for p in _iter_protos(proto):
         if vm_assign.get(id(p), 0) == vm_id:
             for instr in p.code:
-                ops.add(instr & 0x3F)
+                ops.add(instr.op)
     return ops
 
 
-def collect_used_ops_for_vm(proto: Proto, vm_assign: dict[int, int], vm_id: int,
+def collect_used_ops_for_vm(proto: HandlerFunction, vm_assign: dict[int, int], vm_id: int,
                             vop_map: dict[int, list[int]]) -> set[int]:
     """vm_id 배정 proto들이 디스패치하는 vop 집합(해당 VM의 vop_map 기준)."""
     used: set[int] = set()
@@ -270,7 +274,7 @@ def collect_used_ops_for_vm(proto: Proto, vm_assign: dict[int, int], vm_id: int,
         code = p.code
         i, n = 0, len(code)
         while i < n:
-            orig = code[i] & 0x3F
+            orig = code[i].op
             for vop in vop_map[orig]:
                 used.add(vop)
             if orig == 2:   # LOADKX → 다음 EXTRAARG는 디스패치 안 됨
@@ -326,7 +330,8 @@ def _rebuild_chain(blocks: dict[int, str]) -> str:
 # ---------------------------------------------------------------------------
 def apply_split_to_vm(vm_code: str,
                       split_map: dict[int, dict[str, tuple[int, ...]]],
-                      mutate: bool = True) -> str:
+                      mutate: bool = True, *, native_state: bool = False,
+                      mutation_seed: int | None = None) -> str:
     """split_map의 각 (orig_op, parts) 조합에 대해 분할 핸들러를 체인에 추가.
 
     split 핸들러는 실제로 실행되는 진짜 로직이므로, real/fake 핸들러와
@@ -341,14 +346,20 @@ def apply_split_to_vm(vm_code: str,
     blocks = _parse_handler_blocks(chain)
 
     split_blocks: dict[int, str] = {}
+    identities: dict[int, str] = {}
     for orig_op, parts_map in split_map.items():
         for parts_str, vops in parts_map.items():
             bodies = split_handler_bodies(orig_op, int(parts_str))
-            for vop, body in zip(vops, bodies):
+            for part, (vop, body) in enumerate(zip(vops, bodies)):
                 split_blocks[vop] = body
+                identities[vop] = f"split:{orig_op}:{parts_str}:{part}"
 
     if mutate:
-        split_blocks = mutate_handlers(split_blocks)
+        split_blocks = mutate_handlers(
+            split_blocks, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
 
     blocks.update(split_blocks)
     new_chain = _rebuild_chain(blocks)
@@ -359,7 +370,7 @@ def apply_split_to_vm(vm_code: str,
 # 4. fusion(superopcode) 핸들러 삽입
 # ---------------------------------------------------------------------------
 def _op_body(op: int, a: str, b: str, c: str, bx: str,
-             av: str = "_av") -> str:
+             av: str = "_av", *, native_state: bool = False) -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,rget({b}),nil,nil),{av},0))"
@@ -376,6 +387,9 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
         linear = "-1" if op == 25 else "nil"
         return f"_arith1r({a},{b},{av},{_GRAPH_UNARY_SLOTS[op]},{linear})"
     if op in _BINARY_OP_LUA:
+        if native_state and op == 19:
+            expr = f"math.floor(rget({b})/rget({c}))"
+            return f"rset({a},_carry({expr},{av},{op}))"
         expr = f"rget({b}){_BINARY_OP_LUA[op]}rget({c})"
         if op in _VALUE_BINARY_TAGS:
             expr = f"_carry({expr},{av},{op})"
@@ -388,7 +402,7 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
     raise ValueError(f"non-fuseable op: {op}")
 
 
-def fused_handler_body(op1: int, op2: int) -> str:
+def fused_handler_body(op1: int, op2: int, *, native_state: bool = False) -> str:
     """(op1, op2) 쌍을 하나로 실행하는 fused 핸들러 본문.
 
     슬롯 N(현재)은 instr1의 A/B/C를 갖고, 다음 슬롯 N+1을 직접 읽어
@@ -397,23 +411,35 @@ def fused_handler_body(op1: int, op2: int) -> str:
     """
     # 시프트는 _SH_* 토큰으로 두고 apply_instr_layout이 per-run 리터럴로 인라인한다
     # (decode/read_proto와 동일 레이아웃 공유). 반드시 레이아웃 인라인 전에 emit됨.
+    if native_state:
+        fields = [
+            "local _fa=_ifield48(_ei,_SH_A,256)",
+            "local _fb=_ifield48(_ei,_SH_B,512)",
+            "local _fc=_ifield48(_ei,_SH_C,512)",
+            "local _fbx=_ifield48(_ei,_SH_C,262144)",
+        ]
+    else:
+        fields = [
+            "local _fa=(_ei>>_SH_A)&0xFF",
+            "local _fb=(_ei>>_SH_B)&0x1FF",
+            "local _fc=(_ei>>_SH_C)&0x1FF",
+            "local _fbx=(_ei>>_SH_C)&0x3FFFF",
+        ]
     lines = [
         "local _fav=_avd[pc]",
-        "local _ei=_cd[pc]~_ksm(pc); pc=pc+1",
-        "local _fa=(_ei>>_SH_A)&0xFF",
-        "local _fb=(_ei>>_SH_B)&0x1FF",
-        "local _fc=(_ei>>_SH_C)&0x1FF",
-        "local _fbx=(_ei>>_SH_C)&0x3FFFF",
-        _op_body(op1, "A", "B", "C", "Bx", "_av"),
+        "local _ei=_ixor(_cd[pc],_ksm(pc)); pc=pc+1",
+        *fields,
+        _op_body(op1, "A", "B", "C", "Bx", "_av", native_state=native_state),
         "_av_read()",
-        _op_body(op2, "_fa", "_fb", "_fc", "_fbx", "_fav"),
+        _op_body(op2, "_fa", "_fb", "_fc", "_fbx", "_fav", native_state=native_state),
     ]
     return " " + _SPLIT_PAD.join(lines) + _SPLIT_PAD
 
 
 def apply_fuse_to_vm(vm_code: str,
                      fuse_map: dict[tuple[int, int], int],
-                     mutate: bool = True) -> str:
+                     mutate: bool = True, *, native_state: bool = False,
+                     mutation_seed: int | None = None) -> str:
     """fuse_map의 각 (op1, op2) 쌍에 대해 합쳐진 핸들러를 체인에 추가.
 
     fused 핸들러도 실제로 실행되는 진짜 로직이므로 real/split/fake와
@@ -426,11 +452,17 @@ def apply_fuse_to_vm(vm_code: str,
     blocks = _parse_handler_blocks(chain)
 
     fuse_blocks: dict[int, str] = {}
+    identities: dict[int, str] = {}
     for (op1, op2), vop in fuse_map.items():
-        fuse_blocks[vop] = fused_handler_body(op1, op2)
+        fuse_blocks[vop] = fused_handler_body(op1, op2, native_state=native_state)
+        identities[vop] = f"fuse:{op1}:{op2}"
 
     if mutate:
-        fuse_blocks = mutate_handlers(fuse_blocks)
+        fuse_blocks = mutate_handlers(
+            fuse_blocks, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
 
     blocks.update(fuse_blocks)
     new_chain = _rebuild_chain(blocks)
@@ -439,7 +471,8 @@ def apply_fuse_to_vm(vm_code: str,
 
 def apply_defer_to_vm(vm_code: str,
                       defer_map: dict[int, int],
-                      mutate: bool = True) -> str:
+                      mutate: bool = True, *, native_state: bool = False,
+                      mutation_seed: int | None = None) -> str:
     """Insert lazy producer handlers whose result is completed by a later rget."""
     if not defer_map:
         return vm_code
@@ -452,6 +485,7 @@ def apply_defer_to_vm(vm_code: str,
         25: "__VM_PENDING_UNM__",
     }
     deferred: dict[int, str] = {}
+    identities: dict[int, str] = {}
     for op, vop in defer_map.items():
         if op in (13, 14):
             body = (
@@ -466,8 +500,13 @@ def apply_defer_to_vm(vm_code: str,
         else:
             raise ValueError(f"non-deferable op: {op}")
         deferred[vop] = body
+        identities[vop] = f"defer:{op}"
     if mutate:
-        deferred = mutate_handlers(deferred)
+        deferred = mutate_handlers(
+            deferred, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
     blocks.update(deferred)
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
@@ -485,9 +524,9 @@ _DIRECT_SEMANTIC_BODIES = {
     11: " rset(A,_carry(_tnew(),_av,11))\n        ",
     12: " local _t=rget(B); rset(A+1,_carry(_t,_av,112)); rset(A,_carry(_tget(_t,rget(C)),_av,12))\n        ",
     28: " rset(A,_carry(_tlen(rget(B)),_av,28))\n        ",
-    31: " if not _branch(_carry(rget(B)==rget(C),_av,31),A~=0,_av,31) then pc=pc+1 end\n        ",
-    32: " if not _branch(_carry(rget(B)<rget(C),_av,32),A~=0,_av,32) then pc=pc+1 end\n        ",
-    33: " if not _branch(_carry(rget(B)<=rget(C),_av,33),A~=0,_av,33) then pc=pc+1 end\n        ",
+    31: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left==right,_av,31),A~=0,_av,31) then pc=pc+1 end\n        ",
+    32: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left<right,_av,32),A~=0,_av,32) then pc=pc+1 end\n        ",
+    33: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left<=right,_av,33),A~=0,_av,33) then pc=pc+1 end\n        ",
     34: " if not _branch(_carry(not not rget(A),_av,34),C~=0,_av,34) then pc=pc+1 end\n        ",
     35: " local _v=rget(B); if _branch(_carry(not not _v,_av,35),C~=0,_av,35) then rset(A,_v) else pc=pc+1 end\n        ",
     43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _tset(_t,_b+_i,_v[_i]) end; _touch(_av,43)\n        ",
@@ -497,12 +536,17 @@ _DIRECT_SEMANTIC_BODIES = {
 
 
 def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
-                    semantic_diversity_rate: float = 0.0) -> str:
+                    semantic_alias_modes: dict[int, tuple[bool, ...]] | None = None,
+                    *, native_state: bool = False,
+                    alias_transition_indices: dict[int, tuple[int, ...]] | None = None,
+                    comparison_specializations=frozenset()) -> str:
     """
     vm.lua의 op==N 체인을 파싱해서:
     1. 각 원본 op의 alias vop들에 대해 state 전이가 다른 핸들러를 생성
     2. 원본 op 번호 대신 alias vop 번호로 체인 재조립
     """
+    if semantic_alias_modes is None or alias_transition_indices is None:
+        raise ValueError("handler aliases require planned modes and transitions")
     chain_start, chain_end = _find_chain(vm_code)
     chain = vm_code[chain_start:chain_end]
     orig_bodies = _parse_handler_blocks(chain)
@@ -512,7 +556,18 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
         if orig_op not in orig_bodies:
             continue
         body = orig_bodies[orig_op]
-        transitions = _pick_transitions(len(aliases))
+        pool = _ST_TRANSITIONS_NATIVE if native_state else _ST_TRANSITIONS
+        indices = alias_transition_indices.get(orig_op)
+        if (indices is None or len(indices) != len(aliases)
+                or len(set(indices)) != len(indices)
+                or any(type(index) is not int or not 0 <= index < len(pool)
+                       for index in indices)):
+            raise ValueError("planned handler alias transitions are incomplete")
+        planned_modes = semantic_alias_modes.get(orig_op)
+        if (planned_modes is None or len(planned_modes) != len(aliases)
+                or any(type(mode) is not bool for mode in planned_modes)):
+            raise ValueError("planned handler alias modes are incomplete")
+        transitions = [pool[index] for index in indices]
         for i, vop in enumerate(aliases):
             transition = transitions[i % len(transitions)]
             pre = (i % 2 == 0)
@@ -520,9 +575,16 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
             # Keep one graph-backed alias as the baseline. Other aliases may
             # lower the same operation directly so table/upvalue/control
             # semantics do not all converge on _sem.
-            if (i > 0 and orig_op in _DIRECT_SEMANTIC_BODIES and
-                    random.random() < semantic_diversity_rate):
+            direct = planned_modes[i]
+            if orig_op in _DIRECT_SEMANTIC_BODIES and direct:
                 alias_body = _DIRECT_SEMANTIC_BODIES[orig_op]
+            if vop in comparison_specializations:
+                if orig_op not in (31, 32, 33):
+                    raise ValueError("comparison specialization targets a non-comparison alias")
+                guard = "if B==C then right=left else right=rget(C) end"
+                if guard not in alias_body:
+                    raise ValueError("comparison handler lacks its materialization guard")
+                alias_body = alias_body.replace(guard, "right=left", 1)
             new_blocks[vop] = _make_alias_body(alias_body, transition, pre)
 
     new_chain = _rebuild_chain(new_blocks)
@@ -545,8 +607,21 @@ _FAKE_BODIES = [
 ]
 
 
-def _make_fake_block() -> str:
-    return random.choice(_FAKE_BODIES)
+_FAKE_BODIES_NATIVE = [
+    " _MJ[1]=(B or 0)%3*7; _MJ[2]=_MJ[1]*7\n        ",
+    " if false then rset(A,rget(B) and rget(C) or 0) end\n        ",
+    " _MJ[1]=_MJ._c_xor(A or 0,C or 0); if _MJ[1]==-1 then rset(0,_MJ[1]) end\n        ",
+    " _MJ[1]=Bx or 0; _MJ[1]=(_MJ[1]+1)*2-(_MJ[1]*2+2)\n        ",
+    " if pc<0 then pc=pc+sBx end\n        ",
+    " _MJ[1]=A; _MJ[2]=B; _MJ[3]=C; if false then return end\n        ",
+    " _MJ[1]=(sBx or 0)*0; if _MJ[1]~=0 then rset(A,_MJ[1]) end\n        ",
+    " if rget(A)==regs and rget(A)~=regs then error(\"unreachable\") end\n        ",
+]
+
+
+def _make_fake_block(variant: int, *, native_state: bool = False) -> str:
+    bodies = _FAKE_BODIES_NATIVE if native_state else _FAKE_BODIES
+    return bodies[variant % len(bodies)]
 
 
 # ---------------------------------------------------------------------------
@@ -557,16 +632,25 @@ def prune_and_inject_handlers(
     used_ops: set[int],
     fake_handlers: bool = True,
     mutate: bool = True,
+    fake_body_variants: tuple[int, ...] | None = None,
+    *,
+    native_state: bool = False,
+    mutation_seed: int | None = None,
+    mutation_identities: dict[int, str] | None = None,
 ) -> str:
     """
-    used_ops에 없는 opcode 핸들러를 제거하고, 비어있는 opcode 번호에
-    동작 없는 가짜 핸들러를 무작위로 채워넣는다.
+    used_ops에 없는 opcode 핸들러를 제거하고, plan이 정한 가짜 핸들러
+    변형을 비어있는 opcode 번호에 배치한다.
 
     체인 형태(if op==N then ... elseif op==M then ... else error(...) end)는 유지된다.
 
     fake_handlers: 빈 vop 슬롯에 더미 핸들러를 채울지 여부
     mutate: CFF/opaque predicate/junk 등 mutate_handlers를 적용할지 여부
     """
+    if fake_handlers and fake_body_variants is None:
+        raise ValueError("fake handlers require planned body variants")
+    if mutate and mutation_seed is None:
+        raise ValueError("handler mutation requires a planned seed")
     chain_start, chain_end = _find_chain(vm_code)
     chain = vm_code[chain_start:chain_end]
 
@@ -574,22 +658,29 @@ def prune_and_inject_handlers(
 
     # 사용되는 핸들러만 남김
     blocks = {op: body for op, body in blocks.items() if op in used_ops}
+    identities = {op: identity for op, identity in (mutation_identities or {}).items()
+                  if op in blocks}
 
-    if fake_handlers:
-        # 가짜 핸들러: used_ops 주변 vop 공간에서 랜덤 샘플
-        # (vop는 최대 32767이므로 range 기반 열거 불가 → 랜덤 샘플로 대체)
-        n_fake = random.randint(len(used_ops) // 2, len(used_ops) * 2 + 1)
-        attempts = 0
-        while len(blocks) - len(used_ops) < n_fake and attempts < n_fake * 10:
-            attempts += 1
-            fake_vop = random.randint(0, 0x7FFF)
-            if fake_vop not in blocks:
-                blocks[fake_vop] = _make_fake_block()
-
+    if fake_handlers and fake_body_variants is not None:
+        for fake_index, variant in enumerate(fake_body_variants):
+            attempts = 0
+            while attempts < 100:
+                attempts += 1
+                fake_vop = random.randint(0, 0x7FFF)
+                if fake_vop not in blocks:
+                    blocks[fake_vop] = _make_fake_block(variant, native_state=native_state)
+                    identities[fake_vop] = f"fake:{fake_index}"
+                    break
+            else:
+                raise RuntimeError("unable to allocate planned fake handler")
     # CFF/junk는 real + fake 모든 핸들러에 균일하게 적용: CFF 유무가
     # real/fake를 구별하는 oracle이 되지 않도록 구조적 대칭을 유지한다.
     if mutate:
-        blocks = mutate_handlers(blocks)
+        blocks = mutate_handlers(
+            blocks, native_state=native_state,
+            planned_seeds=(planned_mutation_seeds(mutation_seed, identities)
+                           if mutation_seed is not None else None),
+        )
 
     new_chain = _rebuild_chain(blocks)
     return vm_code[:chain_start] + new_chain + vm_code[chain_end:]
@@ -616,13 +707,6 @@ _TAILCALL_TAIL_RE     = re.compile(
 DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
 
 
-def _resolve_dispatch(dispatch: str) -> str:
-    """단일 exec에 적용할 구체 디스패치 종류. 'mixed'면 종류 랜덤."""
-    if dispatch == "mixed":
-        return random.choice(DISPATCH_KINDS)
-    return dispatch
-
-
 _SPLIT_KIND_RE = re.compile(r'^(b?)split(\d+)$')
 
 
@@ -645,8 +729,10 @@ def _apply_dispatch(vm_code: str, kind: str) -> str:
 
 
 def apply_dispatch(vm_code: str, dispatch: str) -> str:
-    """단일 exec에 dispatcher_type을 해석·적용(mixed면 랜덤). 단일 VM 경로용."""
-    return _apply_dispatch(vm_code, _resolve_dispatch(dispatch))
+    """Apply only the concrete dispatcher selected by the protection plan."""
+    if dispatch not in {"ifelseif", "bsearch", *DISPATCH_KINDS}:
+        raise ValueError(f"dispatcher requires a planned concrete kind: {dispatch}")
+    return _apply_dispatch(vm_code, dispatch)
 
 
 _DISPATCH_TARGET_EQ_RE = re.compile(r"\bop==(\d+)")
@@ -655,7 +741,7 @@ _DISPATCH_TARGET_LT_RE = re.compile(r"\bop<(\d+)")
 _DISPATCH_TABLE_KEY_RE = re.compile(r"_H\[(\d+)\]")
 
 
-def apply_dispatch_target_hiding(vm_code: str) -> str:
+def apply_dispatch_target_hiding(vm_code: str, *, native_state: bool = False) -> str:
     """Hide fixed dispatcher targets behind a state-coupled runtime domain.
 
     This runs after the dispatcher-shape conversion because the bsearch/split/
@@ -666,6 +752,7 @@ def apply_dispatch_target_hiding(vm_code: str) -> str:
     keys recover the masked target through the same build-local mask, so no
     plain virtual opcode target remains in any dispatcher shape.
     """
+    exact_private_state = native_state and '--<<TARGET_KARITY_EXEC_STATE>>' in vm_code
     prefix = ""
     suffix = ""
     if _EXEC_MARK_START in vm_code and _EXEC_MARK_END in vm_code:
@@ -680,12 +767,25 @@ def apply_dispatch_target_hiding(vm_code: str) -> str:
         return str(int(raw) ^ mask)
 
     def recovered(raw: str) -> str:
+        if native_state:
+            return f"_MJ._c_and(_MJ._c_xor({encoded(raw)},_MJ._DM),32767)"
         return f"(({encoded(raw)}~_DM)&0x7FFF)"
 
-    transformed = _DISPATCH_TARGET_EQ_RE.sub(
-        lambda match: f"_DV==(({recovered(match.group(1))}~_DD)&-1)",
-        vm_code,
-    )
+    if exact_private_state:
+        transformed = _DISPATCH_TARGET_EQ_RE.sub(
+            lambda match: f"_peq(_MJ._DV,_pxor({recovered(match.group(1))},_MJ._DD))",
+            vm_code,
+        )
+    elif native_state:
+        transformed = _DISPATCH_TARGET_EQ_RE.sub(
+            lambda match: f"_MJ._DV==_MJ._c_xor({recovered(match.group(1))},_MJ._DD)",
+            vm_code,
+        )
+    else:
+        transformed = _DISPATCH_TARGET_EQ_RE.sub(
+            lambda match: f"_DV==(({recovered(match.group(1))}~_DD)&-1)",
+            vm_code,
+        )
     transformed = _DISPATCH_TARGET_LE_RE.sub(
         lambda match: f"op<={recovered(match.group(1))}",
         transformed,
@@ -699,22 +799,40 @@ def apply_dispatch_target_hiding(vm_code: str) -> str:
         transformed,
     )
 
-    helpers = (
-        f" local _DM={mask};local _DD,_DV=0,0;"
-        "local function _ds(v)local s=((_S[611] or 0)~(_XF[1] or 0)~"
-        "(_PR[1] or 0)~(_SS[1] or 0)~_st~(_MG[1] or 0)~pc~_ksd)&-1;"
-        "_DD=s;_DV=(v~_DD)&-1 end;"
-    )
+    if exact_private_state:
+        helpers = (
+            f" _MJ._DM={mask};_MJ._DD,_MJ._DV=0,0;"
+            "_MJ._ds=function(v)local s=_pxor(_S[611] or 0,_XF[1] or 0);"
+            "s=_pxor(s,_PR[1] or 0);s=_pxor(s,_SS[1] or 0);"
+            "s=_pxor(s,_st);s=_pxor(s,_MG[1] or 0);s=_pxor(s,pc);"
+            "s=_pxor(s,_ksd);_MJ._DD=s;_MJ._DV=_pxor(v,s) end;"
+        )
+    elif native_state:
+        helpers = (
+            f" _MJ._DM={mask};_MJ._DD,_MJ._DV=0,0;"
+            "_MJ._ds=function(v)local s=_MJ._c_xor(_S[611] or 0,_XF[1] or 0);"
+            "s=_MJ._c_xor(s,_PR[1] or 0);s=_MJ._c_xor(s,_SS[1] or 0);"
+            "s=_MJ._c_xor(s,_st);s=_MJ._c_xor(s,_MG[1] or 0);s=_MJ._c_xor(s,pc);"
+            "s=_MJ._c_xor(s,_ksd);_MJ._DD=s;_MJ._DV=_MJ._c_xor(v,_MJ._DD) end;"
+        )
+    else:
+        helpers = (
+            f" local _DM={mask};local _DD,_DV=0,0;"
+            "local function _ds(v)local s=((_S[611] or 0)~(_XF[1] or 0)~"
+            "(_PR[1] or 0)~(_SS[1] or 0)~_st~(_MG[1] or 0)~pc~_ksd)&-1;"
+            "_DD=s;_DV=(v~_DD)&-1 end;"
+        )
     semantic_step = "_ss_step(_ip,op,A,B,C)"
+    state_step = "_MJ._ds(op)" if native_state else "_ds(op)"
     if semantic_step in transformed:
         transformed = transformed.replace(
-            semantic_step, f"{semantic_step};_ds(op)", 1
+            semantic_step, f"{semantic_step};{state_step}", 1
         )
     else:
         route_step = "_route_step(_ip,op,A,B,C)"
         if route_step in transformed:
             transformed = transformed.replace(
-                route_step, f"{route_step};_ds(op)", 1
+                route_step, f"{route_step};{state_step}", 1
             )
     insert_at = transformed.find("--[[VM_DISPATCH_ENTRY]]")
     if insert_at < 0:
@@ -933,6 +1051,7 @@ _HELPER_MARKERS = {
 
 def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, list[str]]:
     """Emit independent copies of a hot helper inside one exec template."""
+    native_exact_word = '--<<TARGET_51_KARITY_REGISTER_BANK>>' in vm_code
     start_marker, end_marker = _HELPER_MARKERS[helper]
     start = vm_code.index(start_marker) + len(start_marker)
     end = vm_code.index(end_marker, start)
@@ -947,37 +1066,66 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
             raise RuntimeError(f"execution kit: helper {helper} not found")
         if helper == "rget":
             before = clone
-            clone = clone.replace(
-                "return _rdecode(((regs[p1]+_RS[p2])-b)*inv,_RT[p4])",
-                "local _v=((regs[p1]+_RS[p2])-b)*inv; local _k=_RT[p4]; "
-                "if _k==1 then return _v elseif _k==2 then return _v~=0 "
-                "elseif _k==3 then return nil end; return _RO[_v]",
-                1,
+            decode = (
+                "if _k==1 then value=_v elseif _k==2 then value=not _peq(_v,0) "
+                "elseif _k==3 then value=nil else "
+                "local _hi,_lo=_pword(_v); "
+                "if _hi~=0 or _lo==0 then error('register vault index mismatch') end; "
+                "value=_RO[_lo] end"
+                if native_exact_word else
+                "if _k==1 then value=_v elseif _k==2 then value=_v~=0 "
+                "elseif _k==3 then value=nil else value=_RO[_v] end"
+            )
+            clone = re.sub(
+                r"local value=_rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
+                r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),_RT\[p4\]\)",
+                lambda match: "local _v="+match.group(1)+"; local _k=_RT[p4]; local value; "+decode,
+                clone, count=1, flags=re.S,
             )
             if clone == before:
                 raise RuntimeError("execution kit: rget specialization did not match")
         elif helper == "rset":
             before = clone
-            clone = clone.replace(
-                "local payload,kind=_rvalue(v,epoch)\n"
-                "        local a,b=_rparams(i,epoch)\n"
-                "        _rstore(i,a*payload+b,epoch,kind)",
-                "local payload,kind\n"
-                "        if math.type(v)==\"integer\" then payload,kind=v,1\n"
-                "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n"
-                "        elseif v==nil then payload,kind=_rmix(epoch~_RZ~0x4E494C),3\n"
-                "        else\n"
-                "            if not (type(v)==\"number\" and v~=v) then payload=_RI[v] end\n"
-                "            if payload==nil then _RX[2]=(_RX[2] or 0)+1; payload=_RX[2]; "
-                "_RO[payload]=v; if not (type(v)==\"number\" and v~=v) then "
-                "_RI[v]=payload end end; kind=4\n"
-                "        end\n"
-                "        local a,b=_rparams(i,epoch); local encoded=a*payload+b\n"
-                "        _PD[_rpos(5,i)]=nil; local share=_rmix(epoch~_RZ~"
-                "((i+3)*-3372029247567499371)); local p1,p2,p3,p4=_rpositions(i)\n"
-                "        regs[p1]=encoded-share; _RS[p2]=share; _RE[p3]=epoch; "
-                "_RT[p4]=kind; _RL[i]=true; _ss_value(i,encoded,epoch,kind)",
-                1,
+            def private_expression(expression):
+                return ("(--<<TARGET_PRIVATE_EXPRESSION>>\n"+expression+
+                        "\n--<<ENDTARGET_PRIVATE_EXPRESSION>>\n)")
+            nil_payload = (private_expression("epoch~_RZ~0x4E494C")
+                           if native_exact_word else "epoch~_RZ~0x4E494C")
+            vault_limit = ("if payload>4294967295 then error('register vault exhausted') end; "
+                           if native_exact_word else "")
+            logical_slot = "_rslot(i)" if native_exact_word else "i"
+            def specialize_rset(match):
+                return "".join((
+                    "local payload,kind\n",
+                    "        if ", "_number_kind" if native_exact_word else "math.type",
+                    "(v)==\"integer\" then payload,kind=v,1\n",
+                    "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n",
+                    "        elseif v==nil then payload,kind=_rmix(", nil_payload, "),3\n",
+                    "        else\n",
+                    "            if not (type(v)==\"number\" and v~=v) then payload=_RI[_value_key(v)] end\n",
+                    "            if payload==nil then _RX[2]=(_RX[2] or 0)+1; payload=_RX[2]; ",
+                    vault_limit,
+                    "_RO[payload]=v; if not (type(v)==\"number\" and v~=v) then ",
+                    "_RI[_value_key(v)]=payload end end; kind=4\n",
+                    "        end\n",
+                    "        local a,b=_rparams(i,epoch); local encoded=", match.group(1), "\n",
+                    # Cloned rset inlines _rstore, including its cache invalidation.
+                    "        ", "_MJ._RC[i]=nil; " if native_exact_word else "_RC[i]=nil; ",
+                    "_PD[_rpos(5,i)]=nil; local share=_rmix(",
+                    private_expression("epoch~_RZ~((i+3)*-3372029247567499371)"),
+                    "); local p1,p2,p3,p4=_rpositions(i)\n",
+                    "        regs[p1]=", private_expression("encoded-share"),
+                    "; _RS[p2]=share; _RE[p3]=epoch; ",
+                    "_RT[p4]=kind; _RL[", logical_slot,
+                    "]=true; _ss_value(i,encoded,epoch,kind)",
+                ))
+            clone = re.sub(
+                r"local payload,kind=_rvalue\(v,epoch\)\s*"
+                r"local a,b=_rparams\(i,epoch\)\s*"
+                r"_rstore\(i,(\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
+                r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),epoch,kind\)",
+                specialize_rset,
+                clone, count=1, flags=re.S,
             )
             if clone == before:
                 raise RuntimeError("execution kit: rset specialization did not match")
@@ -989,10 +1137,17 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
 
 
 def _rewrite_helper_calls(source: str, helper: str, names: list[str],
-                          rate: float) -> str:
+                          rate: float,
+                          route_cycle: tuple[int, ...] | None = None) -> str:
     pattern = re.compile(rf"(?<![A-Za-z0-9_]){re.escape(helper)}(?=\s*\()")
+    occurrence = 0
 
     def replace(match: re.Match) -> str:
+        nonlocal occurrence
+        if route_cycle is not None:
+            route = route_cycle[occurrence % len(route_cycle)]
+            occurrence += 1
+            return names[route]
         if len(names) == 1 or random.random() >= rate:
             return match.group(0)
         return random.choice(names[1:])
@@ -1000,15 +1155,16 @@ def _rewrite_helper_calls(source: str, helper: str, names: list[str],
     return pattern.sub(replace, source)
 
 
-def _inline_fetch_decode(vm_code: str) -> str:
+def _inline_fetch_decode(vm_code: str, variant: int | None = None) -> str:
     start_marker, end_marker = "--<<FETCH>>", "--<<ENDFETCH>>"
     start = vm_code.index(start_marker)
     end = vm_code.index(end_marker, start) + len(end_marker)
+    native_exact_state = '--<<TARGET_KARITY_EXEC_STATE>>' in vm_code
     layouts = [
         (
             "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
-            "local _dk=(_S[611] or 0)~(_XF[1] or 0); "
-            "local _dw=((_cd[pc]~_ksm(pc))~_dk)~_dk; local _av=_avd[_ip]; "
+            "local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); "
+            "local _dw=_ixor(_ixor(_ixor(_cd[pc],_ksm(pc)),_dk),_dk); local _av=_avd[_ip]; "
             "local _lo=_dw&0x7F; local _hi=(_dw>>_SH_V)&0xFF; "
             "local op=_lo|(_hi<<7); local A=(_dw>>_SH_A)&0xFF; "
             "local B=(_dw>>_SH_B)&0x1FF; local C=(_dw>>_SH_C)&0x1FF; "
@@ -1017,8 +1173,8 @@ def _inline_fetch_decode(vm_code: str) -> str:
         ),
         (
             "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
-            "local _dk=(_S[611] or 0)~(_XF[1] or 0); "
-            "local ins=(_cd[pc]~_ksm(pc))~_dk; local _dw=ins~_dk; "
+            "local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); "
+            "local ins=_ixor(_ixor(_cd[pc],_ksm(pc)),_dk); local _dw=_ixor(ins,_dk); "
             "local C=(_dw>>_SH_C)&0x1FF; local B=(_dw>>_SH_B)&0x1FF; "
             "local A=(_dw>>_SH_A)&0xFF; local Bx=(_dw>>_SH_C)&0x3FFFF; "
             "local op=(_dw&0x7F)|(((_dw>>_SH_V)&0xFF)<<7); "
@@ -1026,8 +1182,8 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "_route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)"
         ),
         (
-            "_av_read(); local _ip=pc; local _dk=(_S[611] or 0)~(_XF[1] or 0); "
-            "local ins=(_cd[pc]~_ksm(pc))~_dk; local _dw=ins~_dk; "
+            "_av_read(); local _ip=pc; local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); "
+            "local ins=_ixor(_ixor(_cd[pc],_ksm(pc)),_dk); local _dw=_ixor(ins,_dk); "
             "local Bx=(_dw>>_SH_C)&0x3FFFF; local sBx=Bx-131071; "
             "local A=(_dw>>_SH_A)&0xFF; local C=Bx&0x1FF; "
             "local B=(_dw>>_SH_B)&0x1FF; local op=(_dw&0x7F)|"
@@ -1036,17 +1192,61 @@ def _inline_fetch_decode(vm_code: str) -> str:
             "_ss_step(_ip,op,A,B,C)"
         ),
     ]
-    return vm_code[:start] + random.choice(layouts) + vm_code[end:]
+    if native_exact_state:
+        # The instruction word is an exact 48-bit native number, while the
+        # state used to derive its decode key is a private 64-bit word. Emit
+        # that boundary here, not as a whole-source operator rewrite.
+        native_key = "local _dk=_ikey48(_pxor(_S[611] or 0,_XF[1] or 0)); "
+        native_fields = (
+            "local op=_ifield48(_dw,0,128)+_ifield48(_dw,_SH_V,256)*128; "
+            "local A=_ifield48(_dw,_SH_A,256); "
+            "local B=_ifield48(_dw,_SH_B,512); "
+            "local C=_ifield48(_dw,_SH_C,512); "
+            "local Bx=_ifield48(_dw,_SH_C,262144); local sBx=Bx-131071; "
+        )
+        native_suffix = (
+            "pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)"
+        )
+        layouts = [
+            (
+                "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
+                + native_key +
+                "local _dw=_ixor(_ixor(_ixor(_cd[pc],_ksm(pc)),_dk),_dk); "
+                "local _av=_avd[_ip]; " + native_fields + native_suffix
+            ),
+            (
+                "_av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; "
+                + native_key +
+                "local ins=_ixor(_ixor(_cd[pc],_ksm(pc)),_dk); "
+                "local _dw=_ixor(ins,_dk); " + native_fields +
+                "local _av=_avd[_ip]; " + native_suffix
+            ),
+            (
+                "_av_read(); local _ip=pc; " + native_key +
+                "local ins=_ixor(_ixor(_cd[pc],_ksm(pc)),_dk); "
+                "local _dw=_ixor(ins,_dk); " + native_fields +
+                "local _av=_avd[_ip]; _gsl=_gsd[_ip]; _gq=0; " + native_suffix
+            ),
+        ]
+    selected = random.choice(layouts) if variant is None else layouts[variant % len(layouts)]
+    if native_exact_state:
+        selected = ('--<<TARGET_51_KARITY_FETCH>>\n' + selected +
+                    '\n--<<ENDTARGET_51_KARITY_FETCH>>')
+    return vm_code[:start] + selected + vm_code[end:]
 
 
 def apply_execution_kit(vm_code: str, helper_variant_count: int = 3,
-                        helper_diversity_rate: float = 0.35) -> str:
+                        helper_diversity_rate: float = 0.35,
+                        variant_plan: dict | None = None) -> str:
     """Compile one VM's fetch and hot helper topology at build time.
 
     Runtime selection is deliberately avoided: each call site is wired to a
     concrete implementation, so there is no replacement selector choke point.
     """
-    count = max(1, min(4, int(helper_variant_count)))
+    count = max(1, min(4, int(
+        variant_plan.get("helper_variant_count", helper_variant_count)
+        if variant_plan is not None else helper_variant_count
+    )))
     rate = max(0.0, min(1.0, float(helper_diversity_rate)))
     helper_names = {}
     for helper in _HELPER_MARKERS:
@@ -1057,10 +1257,15 @@ def apply_execution_kit(vm_code: str, helper_variant_count: int = 3,
     # dispatcher handlers, split/fuse handlers, and call continuations.
     split_at = vm_code.index(_HELPER_MARKERS["_sem"][1]) + len(_HELPER_MARKERS["_sem"][1])
     prefix, suffix = vm_code[:split_at], vm_code[split_at:]
+    planned_routes = dict(variant_plan.get("helper_route_cycles", ())) if variant_plan else {}
     for helper, names in helper_names.items():
-        suffix = _rewrite_helper_calls(suffix, helper, names, rate)
+        suffix = _rewrite_helper_calls(
+            suffix, helper, names, rate, planned_routes.get(helper)
+        )
     vm_code = prefix + suffix
-    vm_code = _inline_fetch_decode(vm_code)
+    vm_code = _inline_fetch_decode(
+        vm_code, variant_plan.get("helper_fetch_variant") if variant_plan else None
+    )
     for start_marker, end_marker in _HELPER_MARKERS.values():
         vm_code = vm_code.replace(start_marker, "").replace(end_marker, "")
     return vm_code
@@ -1118,53 +1323,17 @@ end"""
     return vm_code[:start] + "_NX={" + ",".join(routers) + "}" + vm_code[end:]
 
 
-def build_exec_variants(vm_code: str, n: int, vm_maps: list,
-                        used_ops_list: list[set[int]],
-                        fake_handlers: bool = True, mutate: bool = True,
-                        dispatch: str = "ifelseif",
-                        dispatch_target_hiding: bool = False,
-                        helper_variant_count: int = 3,
-                        helper_diversity_rate: float = 0.35,
-                        semantic_diversity_rate: float = 0.35,
-                        classic_runtime: bool = False) -> str:
-    """vm_code(마커 포함 단일 exec 템플릿)를 N벌 exec + _EX 라우팅으로 재조립.
+def build_exec_variants(vm_code: str, n: int, render) -> str:
+    """Assemble N executors rendered by the owning backend.
 
-    dispatch: "ifelseif"(전부 if-elseif) | "tailcall"(전부 테이블+꼬리호출) |
-              "bsearch"(전부 op 이진탐색) | "mixed"(VM마다 랜덤). 각 _ex{k}는
-              별도 함수 스코프라 tailcall이 쓰는 local _H/_step이 서로 충돌하지
-              않는다.
+    The callback receives the unchanged template and zero-based VM index.
+    It owns handler transforms, dispatch, naming and backend-specific routing.
     """
     s = vm_code.index(_EXEC_MARK_START)
     e = vm_code.index(_EXEC_MARK_END)
     template = vm_code[s + len(_EXEC_MARK_START):e]
-
-    defs = []
-    for k in range(n):
-        vop_map, split_map, fuse_map, defer_map = vm_maps[k]
-        c = apply_vop_to_vm(template, vop_map, semantic_diversity_rate)
-        c = prune_and_inject_handlers(c, used_ops_list[k],
-                                      fake_handlers=fake_handlers, mutate=mutate)
-        c = apply_split_to_vm(c, split_map, mutate=mutate)
-        c = apply_fuse_to_vm(c, fuse_map, mutate=mutate)
-        c = apply_defer_to_vm(c, defer_map, mutate=mutate)
-        # exec 정의 head 이름만 _ex{k}로 변경 (make_closure는 이미 _EX로 라우팅)
-        c = c.replace("exec = function", f"_ex{k} = function", 1)
-        # VM별 디스패치 모양: ifelseif | tailcall | bsearch (mixed면 VM마다 랜덤)
-        c = _apply_dispatch(c, _resolve_dispatch(dispatch))
-        if not classic_runtime:
-            c = apply_execution_kit(c, helper_variant_count, helper_diversity_rate)
-        if dispatch_target_hiding:
-            c = apply_dispatch_target_hiding(c)
-        if not classic_runtime:
-            c = c.replace("_NX", f"_NX[{k + 1}]")
-        defs.append(c)
-
-    # 마커 영역 → N벌 정의로 치환
+    defs = [render(template, k) for k in range(n)]
     vm_code = vm_code[:s] + "\n".join(defs) + vm_code[e + len(_EXEC_MARK_END):]
-    # 포워드 선언 + 라우팅 테이블
     names = ",".join(f"_ex{k}" for k in range(n))
     vm_code = vm_code.replace("local exec, _EX", f"local {names}, _EX", 1)
-    vm_code = vm_code.replace("_EX={exec}", "_EX={" + names + "}", 1)
-    if not classic_runtime:
-        vm_code = build_next_router_kit(vm_code, n)
-    return vm_code
+    return vm_code.replace("_EX={exec}", "_EX={" + names + "}", 1)

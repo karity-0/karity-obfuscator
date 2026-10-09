@@ -1,0 +1,24 @@
+{
+    "target": {"lua_version": "5.3", "environment": "standalone", "compatibility": "runtime_specific"},
+    "passes": ["remove_comment", "string_obf", "number_obf", "boolean_obf", "table_obf", "function_obf", "rename_obf", "vm"],
+    "selection_modes": {
+        "string_obf": "marked",
+        "number_obf": "marked",
+        "boolean_obf": "marked",
+        "table_obf": "marked",
+        "function_obf": "marked",
+        "vm": "marked"
+    },
+    "vm_options": {
+        "backend": "karity",
+        "fake_handlers": true,
+        "mutate_handlers": false,
+        "junk_instructions": true,
+        "junk_rate": 0.05
+    },
+    "selection_profiles": {
+        "fast-vm": {"vm_options": {"backend": "karity", "junk_rate": 0.05}}
+    },
+    "vm_output_passes": ["rename_obf", "minify"],
+    "signature": {"mode": "default"}
+}

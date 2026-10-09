@@ -127,7 +127,14 @@ class ContextPlan:
         return self.slots[key]
 
 
-def _obfuscate_packer_output(script: str, pass_names: list[str]) -> str:
+def _obfuscate_packer_output(script: str, pass_names: list[str], *, cache_literals: bool = False) -> str:
+    if ("meme_strings" in pass_names and "number_obf" in pass_names
+            and pass_names.index("meme_strings") < pass_names.index("number_obf")):
+        # Share literal lowering so negative meme residuals keep their exact
+        # Lua integer representation, while NumberObf retains its normal depth.
+        from ..vm.backends.runtime_emitter import _obfuscate_vm_output
+        output = _obfuscate_vm_output(script, pass_names, protect_vm_dispatcher=False)[0]
+        return _cache_loader_meme_constants(output) if cache_literals else output
     from ..pipeline import Pipeline
     from ..registry import PASS_REGISTRY
 
@@ -141,6 +148,112 @@ def _obfuscate_packer_output(script: str, pass_names: list[str]) -> str:
             continue
         pipeline.add(cls())
     return pipeline.run(script)
+
+
+def _cache_loader_meme_constants(source: str) -> str:
+    """Evaluate generated constant expressions once inside the keyed loader.
+
+    Keep the complete expressions in the loader's dumped bytecode. Its nested
+    decoders share the cache instead of recalculating them for every byte.
+    Only literal arithmetic and the emitter's constant string.char/:rep
+    constructions qualify. Expressions depending on variables stay put.
+    """
+    from .ts_utils import parse
+    from ..names import NameAllocator
+    ctx = parse(source)
+    loader = None
+    for node in ctx.walk():
+        if node.type != "function_definition":
+            continue
+        parent = node.parent
+        returned = False
+        nested = False
+        while parent:
+            returned |= parent.type == "return_statement"
+            if parent.type in {"function_definition", "function_declaration"}:
+                nested = True
+                break
+            parent = parent.parent
+        if returned and not nested:
+            loader = node
+            break
+    if loader is None:
+        return source
+    body = loader.child_by_field_name("body")
+    parameters = loader.child_by_field_name("parameters")
+    if body is None or parameters is None:
+        return source
+    states = {}
+    stack = [(body, False)]
+    while stack:
+        node, visited = stack.pop()
+        if not visited:
+            stack.append((node, True))
+            stack.extend((child, False) for child in node.named_children)
+            continue
+        children = node.named_children
+        state = None
+        if node.type == "number":
+            state = ("number", False)
+        elif node.type == "string":
+            state = ("string", False)
+        elif node.type == "parenthesized_expression" and len(children) == 1:
+            state = states.get(children[0].id)
+        elif node.type == "unary_expression" and len(children) == 1:
+            operand = states.get(children[0].id)
+            operator = ctx.text(node).lstrip()[:1]
+            if operand and operator == "#" and operand[0] == "string":
+                state = ("number", True)
+            elif operand and operator in {"-", "~"} and operand[0] == "number":
+                state = operand
+        elif node.type == "binary_expression" and len(children) == 2:
+            left, right = (states.get(child.id) for child in children)
+            operator = source[ctx.ce(children[0]) + 1:ctx.cs(children[1])].strip()
+            if (left and right and left[0] == right[0] == "number"
+                    and operator in {"+", "-", "*", "/", "//", "%", "^", "&", "|", "~", "<<", ">>"}):
+                state = ("number", left[1] or right[1])
+            elif left and right and left[0] == right[0] == "string" and operator == "..":
+                state = ("string", left[1] or right[1])
+        elif node.type == "function_call":
+            callee = node.child_by_field_name("name")
+            arguments = node.child_by_field_name("arguments")
+            values = [states.get(child.id) for child in arguments.named_children] if arguments else []
+            if callee and values and all(value and value[0] == "number" for value in values):
+                if ctx.text(callee) == "string.char":
+                    state = ("string", True)
+                elif callee.type == "method_index_expression" and len(values) == 1:
+                    receiver = callee.child_by_field_name("table")
+                    method = callee.child_by_field_name("method")
+                    value = states.get(receiver.id) if receiver else None
+                    if value and value[0] == "string" and method and ctx.text(method) == "rep":
+                        state = ("string", True)
+        states[node.id] = state
+    pool = NameAllocator.for_source(source).allocate("literals")
+    expressions = {}
+    edits = []
+    stack = [body]
+    while stack:
+        node = stack.pop()
+        state = states[node.id]
+        if state and state[1]:
+            expression = ctx.text(node)
+            index = expressions.setdefault(expression, len(expressions) + 1)
+            edits.append((ctx.cs(node), ctx.ce(node) + 1, f"{pool}[{index}]"))
+        else:
+            stack.extend(reversed(node.named_children))
+    if not edits:
+        return source
+    setup = f" local {pool}={{}};" + "".join(
+        f"{pool}[{index}]={expression};" for expression, index in expressions.items()
+    )
+    edits.append((ctx.ce(parameters) + 1, ctx.ce(parameters) + 1, setup))
+    parts = []
+    position = 0
+    for start, end, text in sorted(edits):
+        parts.extend((source[position:start], text))
+        position = end
+    parts.append(source[position:])
+    return "".join(parts)
 
 
 def _fnv1a32(data: bytes) -> int:
@@ -1060,6 +1173,7 @@ class PackerPass(PostPass):
         loader_src = _obfuscate_packer_output(
             loader_src,
             self.packer_output_passes,
+            cache_literals=plan.is_vm,
         )
 
         dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix, self.toolchain))

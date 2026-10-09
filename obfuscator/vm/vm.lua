@@ -1,6 +1,15 @@
 -- Lua 5.3 VM (standalone)
 
 ----------------------------------------
+--<<TARGET_RUNTIME_API>>
+--<<ENDTARGET_RUNTIME_API>>
+
+--<<TARGET_INSTRUCTION_XOR>>
+local function _ixor(a,b) return a~b end
+local function _integrity_xor(a,b) return a~b end
+--<<ENDTARGET_INSTRUCTION_XOR>>
+
+--<<TARGET_BLOB_CIPHER>>
 local _KAE_PRIMES={0x07,0x0B,0x0D,0x11,0x13,0x17,0x1D,0x1F}
 
 local function _gf_mul(a,b)
@@ -69,10 +78,12 @@ local function kae_decrypt(blob, key)
     end
     return table.concat(chunks)
 end
+--<<ENDTARGET_BLOB_CIPHER>>
 
 ----------------------------------------
 
 local _CRC_TABLE
+--<<TARGET_CRC>>
 local function _crc32(data)
     local __VM_HOT_LOOP__=true
     if not _CRC_TABLE then
@@ -92,9 +103,11 @@ local function _crc32(data)
     end
     return crc~0xFFFFFFFF
 end
+--<<ENDTARGET_CRC>>
 
 ----------------------------------------
 
+--<<TARGET_BLOB_BASE>>
 local function from_base36(s)
     if string.sub(s,1,7) ~= "KARITY/" then error("invalid blob") end
     s = string.sub(s,8)
@@ -112,10 +125,10 @@ local function from_base36(s)
             local c=string.byte(s,j)
             n=n*36+(c>=48 and c<=57 and c-48 or c-55)
         end
-        bytes[#bytes+1]= n     &0xFF
-        bytes[#bytes+1]=(n>> 8)&0xFF
-        bytes[#bytes+1]=(n>>16)&0xFF
-        bytes[#bytes+1]=(n>>24)&0xFF
+        bytes[#bytes+1]=n%256
+        bytes[#bytes+1]=math.floor(n/256)%256
+        bytes[#bytes+1]=math.floor(n/65536)%256
+        bytes[#bytes+1]=math.floor(n/16777216)%256
         i=i+7
     end
     while #bytes>length do bytes[#bytes]=nil end
@@ -126,23 +139,34 @@ local function from_base36(s)
     end
     return table.concat(chunks)
 end
+--<<ENDTARGET_BLOB_BASE>>
 
+--<<TARGET_READER_PRIMITIVES>>
 local function make_reader(blob)
     local pos=1; local r={}
     function r.u8() local v=string.byte(blob,pos); pos=pos+1; return v end
     function r.u16()
         local a,b=string.byte(blob,pos,pos+1); pos=pos+2
-        return a|(b<<8)
+        return a+b*256
     end
     function r.u32()
         local a,b,c,d=string.byte(blob,pos,pos+3); pos=pos+4
-        return a|(b<<8)|(c<<16)|(d<<24)
+        return a+b*256+c*65536+d*16777216
     end
     function r.u64()
         local lo=r.u32(); local hi=r.u32()
+        --<<TARGET_WORD_READ>>
         return lo|(hi*0x100000000)
+        --<<ENDTARGET_WORD_READ>>
+    end
+    function r.iword()
+        local lo=r.u32(); local hi=r.u32()
+        --<<TARGET_INSTRUCTION_READ>>
+        return lo|(hi*0x100000000)
+        --<<ENDTARGET_INSTRUCTION_READ>>
     end
     function r.i64()
+        --<<TARGET_SIGNED_READ>>
         local lo=r.u32(); local hi=r.u32()
         if hi==0 then return lo end
         if hi==0xFFFFFFFF then return lo-0x100000000 end
@@ -150,14 +174,20 @@ local function make_reader(blob)
             return -((~hi&0xFFFFFFFF)*0x100000000+((~lo&0xFFFFFFFF)+1))
         end
         return hi*0x100000000+lo
+        --<<ENDTARGET_SIGNED_READ>>
     end
-    function r.f64() local v=string.unpack('<d',blob,pos); pos=pos+8; return v end
+    function r.f64()
+        --<<TARGET_FLOAT_READ>>
+        local v=string.unpack('<d',blob,pos); pos=pos+8; return v
+        --<<ENDTARGET_FLOAT_READ>>
+    end
     function r.str()
         local len=r.u32(); if len==0 then return nil end
         local sv=string.sub(blob,pos,pos+len-1); pos=pos+len; return sv
     end
     return r
 end
+--<<ENDTARGET_READER_PRIMITIVES>>
 
 local CTAG_NIL=__VM_CTAG_NIL__;local CTAG_BOOL=__VM_CTAG_BOOL__;local CTAG_INT=__VM_CTAG_INT__;local CTAG_FLOAT=__VM_CTAG_FLOAT__;local CTAG_STR=__VM_CTAG_STR__;local CTAG_IEXPR=__VM_CTAG_IEXPR__
 local CK_NIL=__VM_CK_NIL__;local CK_BOOL=__VM_CK_BOOL__;local CK_INT=__VM_CK_INT__;local CK_FLOAT=__VM_CK_FLOAT__;local CK_STR=__VM_CK_STR__;local CK_IEXPR=__VM_CK_IEXPR__
@@ -169,6 +199,9 @@ local _IT={seed=0,layout=0,vmc=1,script=0,line=0}
 -- _ksd는 run()에서 crc로 세팅 -> 리터럴이 아니고 tamper에 엮임. read_proto와
 -- exec가 같은 _ksd를 쓰므로 한 run 안에서 항상 round-trip(실행 정확성 보장).
 local _ksd=0
+--<<TARGET_INSTRUCTION_STATE_KEY>>
+local function _ikey48(value) return value end
+--<<ENDTARGET_INSTRUCTION_STATE_KEY>>
 --<<KSTREAM>>
 local function _ksm(i)
     local x=(i*0x9E3779B1)&0xFFFFFFFFFFFF
@@ -206,19 +239,26 @@ local function read_proto(r, acc_state)
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
     p.vm_id=r.u8()
     local n=r.u32(); p.code={}
+    --<<TARGET_PROTO_CODE>>
     for i=1,n do
-        local raw64=r.u64()
+        local raw64=r.iword()
+        --<<TARGET_INSTRUCTION_FIELDS>>
         local enc_op      = raw64 & 0x7F
         local enc_variant = (raw64>>_SH_V) & 0xFF
+        --<<ENDTARGET_INSTRUCTION_FIELDS>>
         local acc=acc_state[1]; local idx=acc_state[2]
         local actual_op      = enc_op      ~ (acc & 0x7F)
         local actual_variant = enc_variant ~ ((acc>>7) & 0xFF)
         local actual_vop     = actual_op | (actual_variant<<7)
         acc_state[1] = (acc + actual_vop + idx) & 0xFFFF
         acc_state[2] = idx + 1
+        --<<TARGET_WORD_REKEY>>
         raw64 = (raw64 & ~_MASK_OV) | actual_op | (actual_variant<<_SH_V)
-        p.code[i]=raw64 ~ _ksm(i)
+        --<<ENDTARGET_WORD_REKEY>>
+        p.code[i]=_ixor(raw64,_ksm(i))
     end
+    --<<ENDTARGET_PROTO_CODE>>
+    --<<TARGET_PROTO_METADATA>>
     p.avalanche={}
     for i=1,n do
         local an=r.u8()
@@ -259,7 +299,7 @@ local function read_proto(r, acc_state)
         elseif tag==CTAG_FLOAT then p.constants[i]={CK_FLOAT,r.f64()}
         elseif tag==CTAG_STR   then local _s=r.str() or ""; p.constants[i]={CK_STR,_kss(_s)}
         elseif tag==CTAG_IEXPR then
-            local _e=r.i64(); local _pn=r.u8(); local _p={}
+            local _e=r.u64(); local _pn=r.u8(); local _p={}
             for _j=1,_pn do
                 local _op=r.u8()
                 if _op==1 then _p[_j]={_op,r.u32()} else _p[_j]={_op} end
@@ -267,18 +307,24 @@ local function read_proto(r, acc_state)
             p.constants[i]={CK_IEXPR,_e,_p}
         else error("bad const tag "..tostring(tag)) end
     end
+    --<<ENDTARGET_PROTO_METADATA>>
     n=r.u32(); p.upvalues={}
+    --<<TARGET_PROTO_CHILDREN>>
     for i=1,n do p.upvalues[i]={instack=r.u8(),idx=r.u8()} end
     n=r.u32(); p.protos={}
     for i=1,n do p.protos[i]=read_proto(r,acc_state) end
+    --<<ENDTARGET_PROTO_CHILDREN>>
     return p
 end
 
+--<<TARGET_INTEGRITY_MIX>>
 local function _imix(proto)
     return (_IT.seed~((_IT.vmc&0xFFFF)<<11)~_IT.layout~
             ((proto.vm_id&0xFF)<<23)~((#proto.code&0xFFFF)*0x45D9F3B))&0xFFFFFFFF
 end
+--<<ENDTARGET_INTEGRITY_MIX>>
 
+--<<TARGET_INTEGRITY_EXPRESSION>>
 local function _ieval(prog,proto)
     local st,sp={},0
     for i=1,#prog do
@@ -301,18 +347,24 @@ local function _ieval(prog,proto)
     end
     return st[sp]&0xFFFFFFFF
 end
+--<<ENDTARGET_INTEGRITY_EXPRESSION>>
 
+--<<TARGET_CONSTANT_RESOLVER>>
 local function kval(k,proto)
     if not k then return nil end
     if k[1]==CK_NIL then return nil end
     if k[1]==CK_STR and k[2] then return _kss(k[2]) end
     if k[1]==CK_IEXPR then
+        --<<TARGET_INTEGRITY_DECODE>>
         return k[2]~_ieval(k[3],proto)
+        --<<ENDTARGET_INTEGRITY_DECODE>>
     end
     return k[2]
 end
+--<<ENDTARGET_CONSTANT_RESOLVER>>
 
 local function decode(ins,key)
+    --<<TARGET_INSTRUCTION_DECODE>>
     ins=ins~key
     local op     =  ins         & 0x7F
     local A      = (ins >> _SH_A) & 0xFF
@@ -323,10 +375,31 @@ local function decode(ins,key)
     local sBx    = Bx - 131071
     local vop    = op | (variant << 7)
     return vop,A,B,C,Bx,sBx
+    --<<ENDTARGET_INSTRUCTION_DECODE>>
 end
 
+local function get_environment(upvals) return upvals.environment end
+local function bind_environment(fn,values,parent)
+    values.environment=get_environment(parent)
+    return fn
+end
+--<<TARGET_SOURCE_VALUE>>
+local function _source_value(v) return v end
+--<<ENDTARGET_SOURCE_VALUE>>
+
 local exec, _EX, _NX
-local _VF=setmetatable({},{__mode="k"})
+-- Closures own their descriptors; this registry must not root environment or
+-- recursive-upvalue cycles on runtimes without ephemeron weak-key tables.
+local _VF=setmetatable({},{__mode="kv"})
+
+--<<TARGET_PRIVATE_MIX>>
+local function _pmix(x)
+    x=(x~(x>>30))*-4658895280553007687
+    x=(x~(x>>27))*-7723592293110705685
+    return (x~(x>>31))&-1
+end
+--<<ENDTARGET_PRIVATE_MIX>>
+
 local _AR=__VM_ARITH_BUNDLE__
 local _GV=__VM_VALUE_GRAPHS__
 local _CG=__VM_CALL_GRAPHS__
@@ -351,12 +424,7 @@ local function _vid(p)
     return p.vm_id
 end
 
-local function _pmix(x)
-    x=(x~(x>>30))*-4658895280553007687
-    x=(x~(x>>27))*-7723592293110705685
-    return (x~(x>>31))&-1
-end
-
+--<<TARGET_ARGUMENT_PACKET>>
 local _AC=0
 local _AN={}
 local function _aseed(q)
@@ -399,10 +467,18 @@ local function _aget(q,i)
         if v==_AN then return nil end
         return v
     end
-    return q and q[i] or nil
+    if q then return q[i] end
+    return nil
 end
+--<<ENDTARGET_ARGUMENT_PACKET>>
 
 local _UV=setmetatable({},{__mode="k"})
+-- Lua table keys equate both zero signs; value identity must preserve them.
+local _negative_zero_key={}
+local function _value_key(v)
+    if type(v)=="number" and v==0 and 1/v<0 then return _negative_zero_key end
+    return v
+end
 local _UO={}
 local _UI=setmetatable({},{__mode="k"})
 local _UC=0
@@ -411,6 +487,8 @@ local _TC=0
 
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
+    --<<TARGET_EXEC_PRIVATE_BINDINGS>>
+    --<<ENDTARGET_EXEC_PRIVATE_BINDINGS>>
     local _fm    = _fr and _fr[__VM_FR_MASK__] or 0
     local regs   = _fr and _fr[__VM_FR_REGS__] or {}
     local boxes  = _fr and _fr[__VM_FR_BOXES__] or {}
@@ -442,12 +520,21 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="k"})
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
+    -- Native reads may be shared across instructions until a representation
+    -- write, rotation, pending producer, or native escape boundary occurs.
+    local _RC    = {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
-                   (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
+                   (--<<TARGET_PRIVATE_EXPRESSION>>
+                    (((_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<17)~#code~
                     ((_PY~=0 and _PN) or 0))|1)
+                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                   )
     local _MG    = _fr and _fr[__VM_FR_MAP_STATE__] or
-                   {((_IT.seed~proto.vm_id~#code~
-                     ((_PY~=0 and _PN) or 0))&0x3FF),0}
+                   {(--<<TARGET_PRIVATE_LOW_EXPRESSION:1024>>
+                     ((_IT.seed~proto.vm_id~#code~
+                     ((_PY~=0 and _PN) or 0))&0x3FF)
+                     --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+                    ),0}
     local _RL    = _fr and _fr[__VM_FR_LOGICAL_SLOTS__] or {}
     local _PR    = _fr and _fr[__VM_FR_ROUTE_STATE__]
     local _SS    = _fr and _fr[__VM_FR_SEM_STATE__]
@@ -461,104 +548,219 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     if not _PR then
-        _PR={_rmix(_PN~(_zz or 0)~(_IT.seed or 0)~
-                   (proto.vm_id<<19)~#code),0}
+        _PR={_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                   _PN~(_zz or 0)~(_IT.seed or 0)~(proto.vm_id<<19)~#code
+                   --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                  )),0}
     end
 
     if not _SS then
-        _SS={_rmix((_zz or 0)~(_IT.seed or 0)~(_IT.layout or 0)~
+        _SS={_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                   (_zz or 0)~(_IT.seed or 0)~(_IT.layout or 0)~
                    (_IT.script or 0)~(proto.vm_id<<23)~#code~_ksd~
-                   ((_XF and _XF[2]) or 0)),0}
+                   ((_XF and _XF[2]) or 0)
+                   --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                  )),0}
     end
 
     local function _ss_step(ip,op,a,b,c)
         if not _SY then return end
-        local n=(_SS[2] or 0)+1
-        local x=_rmix((_SS[1] or 0)~(ip<<32)~(op<<24)~(a<<16)~
+        local n=(--<<TARGET_USER_EXPRESSION>>
+                 (_SS[2] or 0)+1
+                 --<<ENDTARGET_USER_EXPRESSION>>
+                )
+        local x=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                      (_SS[1] or 0)~(ip<<32)~(op<<24)~(a<<16)~
                       (b<<7)~c~n~(_S[611] or 0)~(_XF[1] or 0)~
                       ((_XF and _XF[2]) or 0)~(_PR[1] or 0)~
-                      ((_MG[1] or 0)<<11)~_st~_ksd)
+                      ((_MG[1] or 0)<<11)~_st~_ksd
+                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                     ))
         _SS[1],_SS[2]=x,n
-        _XF[2]=_rmix((_XF[2] or 0)~x~op~ip)
+        _XF[2]=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                      (_XF[2] or 0)~x~op~ip
+                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                     ))
     end
 
     local function _ss_value(slot,encoded,epoch,kind)
         if not _SY then return end
-        local x=_rmix((_SS[1] or 0)~slot~encoded~epoch~(kind or 0)~
+        local x=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                      (_SS[1] or 0)~slot~encoded~epoch~(kind or 0)~
                       ((_RX[1] or 0)<<1)~((_MG[1] or 0)<<17)~
-                      (_XF[2] or 0))
+                      (_XF[2] or 0)
+                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                     ))
         _SS[1]=x
-        _XF[2]=_rmix((_XF[2] or 0)~x~slot~epoch)
+        _XF[2]=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                      (_XF[2] or 0)~x~slot~epoch
+                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                     ))
     end
 
     local function _route_step(ip,op,a,b,c)
-        if _PY==0 then return end
-        local n=(_PR[2] or 0)+1
-        local x=((_PR[1] or 0)~_PN~(ip<<32)~(op<<24)~
+        if (--<<TARGET_USER_EXPRESSION>>
+            _PY==0
+            --<<ENDTARGET_USER_EXPRESSION>>
+           ) then return end
+        local n=(--<<TARGET_USER_EXPRESSION>>
+                 (_PR[2] or 0)+1
+                 --<<ENDTARGET_USER_EXPRESSION>>
+                )
+        local x=(--<<TARGET_PRIVATE_EXPRESSION>>
+                 ((_PR[1] or 0)~_PN~(ip<<32)~(op<<24)~
                  (a<<16)~(b<<7)~c~n~(_MG[1]<<3)~(_RX[1] or 0))&-1
-        x=(x~(x<<13)~(x>>7)~(x<<17))&-1
+                 --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                )
+        x=(--<<TARGET_PRIVATE_EXPRESSION>>
+           (x~(x<<13)~(x>>7)~(x<<17))&-1
+           --<<ENDTARGET_PRIVATE_EXPRESSION>>
+          )
         _PR[1],_PR[2]=x,n
         --<<RUNTIME_TRACE>>
-        _PX=_rmix(_PX~x~ip~(op<<11)~n)
+        _PX=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                  _PX~x~ip~(op<<11)~n
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 ))
         --<<ENDRUNTIME_TRACE>>
     end
 
     local function _poly_gate(salt)
-        return ((_PR[1] or 0)~salt~((_PR[2] or 0)<<7))&0xFFFF
+        return (--<<TARGET_PRIVATE_LOW_EXPRESSION:65536>>
+                ((_PR[1] or 0)~salt~((_PR[2] or 0)<<7))&0xFFFF
+                --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+               )
     end
 
     local function _poly_word(salt)
-        return _rmix((_PR[1] or 0)~salt~((_PR[2] or 0)<<17)~_PN)
+        return _rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                      (_PR[1] or 0)~salt~((_PR[2] or 0)<<17)~_PN
+                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                     ))
     end
 
     local function _poly_pick(count,salt,baseline)
-        if _PY==0 then return baseline end
-        if _poly_gate(salt)>=_PY then return baseline end
+        if (--<<TARGET_USER_EXPRESSION>>
+            _PY==0
+            --<<ENDTARGET_USER_EXPRESSION>>
+           ) then return baseline end
+        if (--<<TARGET_USER_EXPRESSION>>
+            _poly_gate(salt)>=_PY
+            --<<ENDTARGET_USER_EXPRESSION>>
+           ) then return baseline end
         local x=_poly_word(salt)
-        local pick=((x>>16)%count)+1
+        local pick=(--<<TARGET_USER_EXPRESSION>>
+                    (--<<TARGET_PRIVATE_MOD_EXPRESSION>>
+                    (x>>16)%count
+                    --<<ENDTARGET_PRIVATE_MOD_EXPRESSION>>
+                    )+1
+                    --<<ENDTARGET_USER_EXPRESSION>>
+                   )
         --<<RUNTIME_TRACE>>
-        _PX=_rmix(_PX~x~pick~salt)
+        _PX=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                  _PX~x~pick~salt
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 ))
         --<<ENDRUNTIME_TRACE>>
         return pick
     end
 
     local function _poly_lazy(salt)
-        if _PY==0 then return true end
-        if _poly_gate(salt)>=_PY then return true end
+        if (--<<TARGET_USER_EXPRESSION>>
+            _PY==0
+            --<<ENDTARGET_USER_EXPRESSION>>
+           ) then return true end
+        if (--<<TARGET_USER_EXPRESSION>>
+            _poly_gate(salt)>=_PY
+            --<<ENDTARGET_USER_EXPRESSION>>
+           ) then return true end
         local x=_poly_word(salt)
-        local lazy=((x>>16)&1)==0
+        local lazy=(--<<TARGET_USER_EXPRESSION>>
+                    (--<<TARGET_PRIVATE_LOW_EXPRESSION:2>>
+                    ((x>>16)&1)
+                    --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+                    )==0
+                    --<<ENDTARGET_USER_EXPRESSION>>
+                   )
         --<<RUNTIME_TRACE>>
-        _PX=_rmix(_PX~x~(lazy and 0x4C415A59 or 0x4E4F5721))
+        _PX=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                  _PX~x~(lazy and 0x4C415A59 or 0x4E4F5721)
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 ))
         --<<ENDRUNTIME_TRACE>>
         return lazy
     end
 
     local function _poly_route(route,salt)
-        local x=_poly_word(salt~#route~0x424C4F43)
-        local pick=((x>>16)%#route)+1
+        local x=_poly_word((--<<TARGET_PRIVATE_EXPRESSION>>
+                           salt~#route~0x424C4F43
+                           --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                          ))
+        local pick=(--<<TARGET_USER_EXPRESSION>>
+                    (--<<TARGET_PRIVATE_MOD_EXPRESSION>>
+                    (x>>16)%#route
+                    --<<ENDTARGET_PRIVATE_MOD_EXPRESSION>>
+                    )+1
+                    --<<ENDTARGET_USER_EXPRESSION>>
+                   )
         --<<RUNTIME_TRACE>>
-        _PX=_rmix(_PX~x~pick~salt~0x524F5554)
+        _PX=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                  _PX~x~pick~salt~0x524F5554
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 ))
         _PBC=_PBC+1
-        _PBH=_pmix(_PBH~x~pick~route[pick]~_PBC)
+        _PBH=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                   _PBH~x~pick~route[pick]~_PBC
+                   --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                  ))
         --<<ENDRUNTIME_TRACE>>
-        _PR[1]=(_PR[1]~x~route[pick])&-1
+        _PR[1]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                (_PR[1]~x~route[pick])&-1
+                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+               )
         return route[pick]
     end
 
     local function _rparams(slot,epoch)
-        local z=_rmix(_RZ~epoch~((slot+1)*-7046029254386353131))
-        local pair=_RP[(z&15)+1]
-        return pair[1],_rmix(z~-2960836687051489901),pair[2]
+        local z=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                       _RZ~epoch~((slot+1)*-7046029254386353131)
+                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                      ))
+        local pair=_RP[(--<<TARGET_USER_EXPRESSION>>
+                        (--<<TARGET_PRIVATE_LOW_EXPRESSION:16>>
+                         z&15
+                         --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+                        )+1
+                        --<<ENDTARGET_USER_EXPRESSION>>
+                       )]
+        return pair[1],_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                             z~-2960836687051489901
+                             --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                            )),pair[2]
     end
 
     local function _rnext(slot,salt)
-        _RX[1]=((_RX[1] or 0)-7046029254386353131+slot+(salt or 0))&-1
-        return _rmix(_RX[1]~_RZ~(_SY and (_SS[1] or 0) or 0))
+        _RX[1]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                ((_RX[1] or 0)-7046029254386353131+slot+(salt or 0))&-1
+                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+               )
+        return _rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                      _RX[1]~_RZ~(_SY and (_SS[1] or 0) or 0)
+                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                     ))
+    end
+
+    --<<TARGET_REGISTER_MAP>>
+    local function _rslot(slot)
+        return (--<<TARGET_PRIVATE_LOW_EXPRESSION:1024>>
+                (slot&0x3FF)
+                --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+               )
     end
 
     local function _rpos_at(kind,slot,generation)
         local map=_MP[kind]
-        return (slot*map[1]+map[2]+generation*map[3])&0x3FF
+        return (_rslot(slot)*map[1]+map[2]+generation*map[3])%1024
     end
 
     local function _rpositions_at(slot,generation)
@@ -570,28 +772,37 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local generation=_MG[1]
         for kind=1,5 do
             local map=_MP[kind]
-            _MG[kind+2]=(map[2]+generation*map[3])&0x3FF
+            _MG[kind+2]=(map[2]+generation*map[3])%1024
         end
     end
 
     local function _rpos(kind,slot)
-        return (slot*_MP[kind][1]+_MG[kind+2])&0x3FF
+        return (_rslot(slot)*_MP[kind][1]+_MG[kind+2])%1024
     end
 
     local function _rpositions(slot)
-        return (slot*_MP[1][1]+_MG[3])&0x3FF,
-               (slot*_MP[2][1]+_MG[4])&0x3FF,
-               (slot*_MP[3][1]+_MG[5])&0x3FF,
-               (slot*_MP[4][1]+_MG[6])&0x3FF
+        slot=_rslot(slot)
+        return (slot*_MP[1][1]+_MG[3])%1024,
+               (slot*_MP[2][1]+_MG[4])%1024,
+               (slot*_MP[3][1]+_MG[5])%1024,
+               (slot*_MP[4][1]+_MG[6])%1024
     end
 
     _rmap_offsets()
+    --<<ENDTARGET_REGISTER_MAP>>
 
     local function _rstore(slot,encoded,epoch,kind)
+        _RC[slot]=nil
         _PD[_rpos(5,slot)]=nil
-        local share=_rmix(epoch~_RZ~((slot+3)*-3372029247567499371))
+        local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                           epoch~_RZ~((slot+3)*-3372029247567499371)
+                           --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                          ))
         local p1,p2,p3,p4=_rpositions(slot)
-        regs[p1]=encoded-share
+        regs[p1]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                  encoded-share
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 )
         _RS[p2]=share
         _RE[p3]=epoch
         if kind~=nil then _RT[p4]=kind end
@@ -611,10 +822,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if type(v)=="boolean" then return v and 1 or 0,2 end
         if v==nil then return _rmix(epoch~_RZ~0x4E494C),3 end
         local id
-        if not (type(v)=="number" and v~=v) then id=_RI[v] end
+        if not (type(v)=="number" and v~=v) then id=_RI[_value_key(v)] end
         if id==nil then
             _RX[2]=(_RX[2] or 0)+1; id=_RX[2]; _RO[id]=v
-            if not (type(v)=="number" and v~=v) then _RI[v]=id end
+            if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=id end
         end
         return id,4
     end
@@ -622,11 +833,18 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<RGET>>
     local function rget(i)
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
+        local cached=_RC[i]
+        if cached then return cached[1] end
         local p1,p2,p3,p4=_rpositions(i)
         local epoch=_RE[p3]
-        if epoch==nil then return nil end
+        if epoch==nil then _RC[i]={nil}; return nil end
         local _,b,inv=_rparams(i,epoch)
-        return _rdecode(((regs[p1]+_RS[p2])-b)*inv,_RT[p4])
+        local value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
+                              ((regs[p1]+_RS[p2])-b)*inv
+                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                             ),_RT[p4])
+        _RC[i]={value}
+        return value
     end
     --<<ENDRGET>>
 
@@ -637,34 +855,63 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local salt=0
         if seal then
             local desc=seal[1]
-            salt=desc[2]~desc[3]~(seal[2] or 0)~seal[3]
+            salt=(--<<TARGET_PRIVATE_EXPRESSION>>
+                  desc[2]~desc[3]~(seal[2] or 0)~seal[3]
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 )
         end
         local epoch=_rnext(i,salt)
         local payload,kind=_rvalue(v,epoch)
         local a,b=_rparams(i,epoch)
-        _rstore(i,a*payload+b,epoch,kind)
+        _rstore(i,(--<<TARGET_PRIVATE_EXPRESSION>>
+                   a*payload+b
+                   --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                  ),epoch,kind)
     end
     --<<ENDRSET>>
 
     local function _rrotate(slot,salt)
+        _RC[slot]=nil
         local p1,p2,p3=_rpositions(slot)
         local old_epoch=_RE[p3]
         if old_epoch==nil then return end
         local _,old_b,old_inv=_rparams(slot,old_epoch)
         local new_epoch=_rnext(slot,salt)
         local new_a,new_b=_rparams(slot,new_epoch)
-        local alpha=new_a*old_inv
-        local beta=new_b-alpha*old_b
-        local delta=_rmix(new_epoch~salt~_RZ)
-        regs[p1]=alpha*regs[p1]+delta
-        _RS[p2]=alpha*_RS[p2]+beta-delta
+        local alpha=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     new_a*old_inv
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
+        local beta=(--<<TARGET_PRIVATE_EXPRESSION>>
+                    new_b-alpha*old_b
+                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                   )
+        local delta=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                           new_epoch~salt~_RZ
+                           --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                          ))
+        regs[p1]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                  alpha*regs[p1]+delta
+                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                 )
+        _RS[p2]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                 alpha*_RS[p2]+beta-delta
+                 --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                )
         _RE[p3]=new_epoch
     end
 
     local function _rmap_rotate(salt)
+        _RC={}
         local old_generation=_MG[1]
-        local step=(_rmix(_RZ~salt~old_generation)&0x3FF)|1
-        local new_generation=(old_generation+step)&0x3FF
+        local step=(--<<TARGET_PRIVATE_LOW_EXPRESSION:1024>>
+                    ((_rmix(_RZ~salt~old_generation)&0x3FF)|1)
+                    --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+                   )
+        local new_generation=(--<<TARGET_USER_EXPRESSION>>
+                              (old_generation+step)%1024
+                              --<<ENDTARGET_USER_EXPRESSION>>
+                             )
         local new_regs,new_shares,new_epochs,new_types,new_pending={},{},{},{},{}
         for slot in pairs(_RL) do
             local o1,o2,o3,o4=_rpositions_at(slot,old_generation)
@@ -692,7 +939,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _rmap_tick(salt)
         _MG[2]=(_MG[2] or 0)+1
-        if _MG[2]<=2 or (_MG[2]&1023)==0 then
+        if _MG[2]<=__VM_RMAP_INITIAL_TICKS__ or (_MG[2]&__VM_RMAP_PERIOD_MASK__)==0 then
             _rmap_rotate(salt~(_SY and (_SS[1] or 0) or 0))
         end
     end
@@ -701,9 +948,18 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local epoch=_rnext(-7,0x53504C49)
         local payload,kind=_rvalue(v,epoch)
         local a,b=_rparams(-7,epoch)
-        local encoded=a*payload+b
-        _split_share=_rmix(epoch~_RZ~0x544D5053)
-        _split_tmp=encoded-_split_share
+        local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                       a*payload+b
+                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                      )
+        _split_share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                            epoch~_RZ~0x544D5053
+                            --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                           ))
+        _split_tmp=(--<<TARGET_PRIVATE_EXPRESSION>>
+                    encoded-_split_share
+                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                   )
         _split_epoch=epoch
         _split_kind=kind
     end
@@ -711,7 +967,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _split_get()
         if _split_epoch==nil then return _split_tmp end
         local _,b,inv=_rparams(-7,_split_epoch)
-        return _rdecode(((_split_tmp+_split_share)-b)*inv,_split_kind)
+        return _rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
+                         ((_split_tmp+_split_share)-b)*inv
+                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                        ),_split_kind)
     end
 
     if not _fr then
@@ -761,41 +1020,78 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function get_upvalue(box)
+        _RC={}
         if box.get then return box.get() end
         if not _UY then return box.v end
         local q=_UV[box]
         if not q then
             local v=box.v
             _UC=_UC+1
-            local epoch=_rmix(_RZ~_UC~(_SS[1] or 0)~(_XF[2] or 0)~__VM_UV_SEED__)
+            local epoch=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                              _RZ~_UC~(_SS[1] or 0)~(_XF[2] or 0)~__VM_UV_SEED__
+                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                             ))
             local payload,kind
             if math.type(v)=="integer" then payload,kind=v,1
             elseif type(v)=="boolean" then payload,kind=(v and 1 or 0),2
-            elseif v==nil then payload,kind=_rmix(epoch~__VM_UV_NIL__),3
+            elseif v==nil then payload,kind=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                                                  epoch~__VM_UV_NIL__
+                                                  --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                                 )),3
             else
-                if not (type(v)=="number" and v~=v) then payload=_UI[v] end
+                if not (type(v)=="number" and v~=v) then payload=_UI[_value_key(v)] end
                 if payload==nil then
                     payload=#_UO+1; _UO[payload]=v
-                    if not (type(v)=="number" and v~=v) then _UI[v]=payload end
+                    if not (type(v)=="number" and v~=v) then _UI[_value_key(v)]=payload end
                 end
                 kind=4
             end
-            local pair=_RP[(epoch&15)+1]
+            local pair=_RP[(--<<TARGET_USER_EXPRESSION>>
+                           (--<<TARGET_PRIVATE_LOW_EXPRESSION:16>>
+                            epoch&15
+                            --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+                           )+1
+                           --<<ENDTARGET_USER_EXPRESSION>>
+                          )]
             -- Closed boxes cross VM frame boundaries.  Derive their representation
             -- from the box epoch rather than the current frame's register seed so
             -- every closure sharing the box can decode the same payload.
-            local bias=_rmix(epoch~__VM_UV_BIAS__)
-            local encoded=pair[1]*payload+bias
-            local share=_rmix(epoch~__VM_UV_SHARE__)
-            q={[__VM_UV_LEFT__]=encoded-share,[__VM_UV_RIGHT__]=share,
+            local bias=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                             epoch~__VM_UV_BIAS__
+                             --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                            ))
+            local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                           pair[1]*payload+bias
+                           --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                          )
+            local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                              epoch~__VM_UV_SHARE__
+                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                             ))
+            q={[__VM_UV_LEFT__]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                                encoded-share
+                                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                               ),[__VM_UV_RIGHT__]=share,
                [__VM_UV_EPOCH__]=epoch,[__VM_UV_KIND__]=kind}
             _UV[box]=q; box.v=nil
             _ss_value(-31,encoded,epoch,kind)
         end
         local epoch=q[__VM_UV_EPOCH__]
-        local pair=_RP[(epoch&15)+1]
-        local bias=_rmix(epoch~__VM_UV_BIAS__)
-        local payload=((q[__VM_UV_LEFT__]+q[__VM_UV_RIGHT__])-bias)*pair[2]
+        local pair=_RP[(--<<TARGET_USER_EXPRESSION>>
+                       (--<<TARGET_PRIVATE_LOW_EXPRESSION:16>>
+                        epoch&15
+                        --<<ENDTARGET_PRIVATE_LOW_EXPRESSION>>
+                       )+1
+                       --<<ENDTARGET_USER_EXPRESSION>>
+                      )]
+        local bias=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                         epoch~__VM_UV_BIAS__
+                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                        ))
+        local payload=(--<<TARGET_PRIVATE_EXPRESSION>>
+                       ((q[__VM_UV_LEFT__]+q[__VM_UV_RIGHT__])-bias)*pair[2]
+                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                      )
         local kind=q[__VM_UV_KIND__]
         if kind==1 then return payload end
         if kind==2 then return payload~=0 end
@@ -804,6 +1100,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function set_upvalue(box,v)
+        _RC={}
         if box.set then box.set(v)
         elseif not _UY then box.v=v
         else box.v=v; _UV[box]=nil; get_upvalue(box) end
@@ -813,8 +1110,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local t={}
         if not _TY then return t end
         _TC=_TC+1
-        local salt=_rmix(_TC~(_SS[1] or 0)~(_XF[2] or 0)~
-                         _RZ~__VM_TABLE_SEED__)
+        local salt=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                         _TC~(_SS[1] or 0)~(_XF[2] or 0)~_RZ~__VM_TABLE_SEED__
+                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                        ))
         _TM[t]={[__VM_TB_LEFT__]={},[__VM_TB_RIGHT__]={},
                 [__VM_TB_KEYS__]={},[__VM_TB_REVERSE__]={},
                 [__VM_TB_SALT__]=salt,[__VM_TB_NEXT__]=0,
@@ -826,13 +1125,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local id=m[__VM_TB_REVERSE__][k]
         if id~=nil or not create then return id end
         id=m[__VM_TB_NEXT__]+1; m[__VM_TB_NEXT__]=id
-        local physical=_rmix(m[__VM_TB_SALT__]~id~__VM_TABLE_KEY__)
+        local physical=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                             m[__VM_TB_SALT__]~id~__VM_TABLE_KEY__
+                             --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                            ))
         m[__VM_TB_REVERSE__][k]=physical
         m[__VM_TB_KEYS__][physical]=k
         return physical
     end
 
     local function _tget(t,k)
+        _RC={}
         local m=_TM[t]
         if not m or m[__VM_TB_EXPOSED__] then return t[k] end
         local physical=_tkey(m,k,false)
@@ -841,11 +1144,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if left==nil then return nil end
         local right=m[__VM_TB_RIGHT__][physical]
         if type(left)=="number" and math.type(left)=="integer" and
-           type(right)=="number" then return left+right end
+           type(right)=="number" then return (--<<TARGET_PRIVATE_EXPRESSION>>
+                                              left+right
+                                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                             ) end
         return left
     end
 
     local function _tset(t,k,v)
+        _RC={}
         local m=_TM[t]
         if not m or m[__VM_TB_EXPOSED__] then t[k]=v; return end
         local physical=_tkey(m,k,v~=nil)
@@ -856,9 +1163,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             return
         end
         if math.type(v)=="integer" then
-            local share=_rmix(m[__VM_TB_SALT__]~physical~
-                              (_SS[1] or 0)~__VM_TABLE_SHARE__)
-            m[__VM_TB_LEFT__][physical]=v-share
+            local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                              m[__VM_TB_SALT__]~physical~(_SS[1] or 0)~__VM_TABLE_SHARE__
+                              --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                             ))
+            m[__VM_TB_LEFT__][physical]=(--<<TARGET_PRIVATE_EXPRESSION>>
+                                       v-share
+                                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                      )
             m[__VM_TB_RIGHT__][physical]=share
         else
             m[__VM_TB_LEFT__][physical]=v
@@ -868,6 +1180,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _tlen(t)
+        _RC={}
         local m=_TM[t]
         if not m or m[__VM_TB_EXPOSED__] then return #t end
         local n=0
@@ -887,14 +1200,29 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             if x~=nil then
                 local right=m[__VM_TB_RIGHT__][physical]
                 if type(x)=="number" and math.type(x)=="integer" and
-                   type(right)=="number" then x=x+right end
+                   type(right)=="number" then x=(--<<TARGET_PRIVATE_EXPRESSION>>
+                                                x+right
+                                                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                                               ) end
                 v[_texpose(k,seen)]=_texpose(x,seen)
             end
         end
         return v
     end
 
+    local function close_upvalues(first)
+        for slot,box in pairs(boxes) do
+            if slot>=first then
+                local value=get_upvalue(box)
+                box.get=nil; box.set=nil
+                set_upvalue(box,value)
+                boxes[slot]=nil
+            end
+        end
+    end
+
     local function make_closure(sub)
+        _RC={}
         local new_uv={}
         for i,uv in ipairs(sub.upvalues) do
             if uv.instack==1 then
@@ -905,7 +1233,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         end
         -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
+        local metadata={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
         local fn=function(...)
+            local sub,new_uv=metadata[__VM_META_PROTO__],metadata[__VM_META_UPVALS__]
             local _av=table.pack(...)
             local w=_CG[__VM_ROUTE_ENTER__](_NX,{
                 [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=sub,
@@ -916,8 +1246,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
             return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
         end
-        _VF[fn]={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
-        return fn
+        _VF[fn]=metadata
+        return bind_environment(fn,new_uv,upvals)
     end
 
     local _carry
@@ -1057,12 +1387,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _cf(q,field,tag)
         local desc=q[__VM_CF_SEAL__]
-        if not desc then return q[field]~q[__VM_CF_KEY__] end
+        if not desc then return _source_value(q[field]~q[__VM_CF_KEY__]) end
         local key=((_S[desc[4]] or 0)~desc[2]~desc[3]~tag)&-1
-        return q[field]~key
+        return _source_value(q[field]~key)
     end
 
     local function _branch(v,expected,av,tag)
+        _RC={}
         if not _BY then return v==expected end
         local k=(_S[611] or 0)~(_SS[1] or 0)~(_XF[2] or 0)~
                 (pc<<17)~tag~__VM_BRANCH_SEED__
@@ -1075,6 +1406,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     --<<SEM>>
     local function _sem(tag,x,y,z)
+        if tag~=__VM_DATA_VALUE__ then _RC={} end
         if _TY then
             if tag==__VM_OP_NEWTABLE__ then return _tnew() end
             if tag==__VM_DATA_GET__ then return _tget(x,y) end
@@ -1138,6 +1470,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith2(a,b,av,slot,desc)
+        _RC={}
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
         local arithmetic=_AR[1][route]
@@ -1160,6 +1493,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _arith1(a,av,slot,desc)
+        _RC={}
         local base=((pc~slot~proto.vm_id~(_S[611] or 0))&1)+1
         local route=((_AR[2][slot]~_AR[3][slot]~pc~(_S[611] or 0))&1)+1
         local arithmetic=_AR[1][route]
@@ -1192,8 +1526,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local _,rb,ri=_rparams(rhs,re)
         local epoch=_rnext(dst,sign~lhs~(rhs<<8))
         local oa,ob=_rparams(dst,epoch)
-        local encoded=oa*li*(regs[l1]+_RS[l2]-lb)+
-                      sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
+        local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                       oa*li*(regs[l1]+_RS[l2]-lb)+
+                       sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
+                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                      )
         _rstore(dst,encoded,epoch,1)
         return true
     end
@@ -1206,7 +1543,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local _,sb,si=_rparams(src,se)
         local epoch=_rnext(dst,sign~src)
         local oa,ob=_rparams(dst,epoch)
-        _rstore(dst,sign*oa*si*(regs[p1]+_RS[p2]-sb)+ob,epoch,1)
+        _rstore(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
+                     sign*oa*si*(regs[p1]+_RS[p2]-sb)+ob
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    ),epoch,1)
         return true
     end
 
@@ -1220,8 +1560,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _pending_fragment(snapshot,scale,salt)
         local _,bias,inverse=_rparams(snapshot[4],snapshot[3])
-        local share=_rmix(snapshot[3]~salt~_RZ)
-        return scale*inverse*(snapshot[1]+snapshot[2]-bias)-share,share
+        local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                          snapshot[3]~salt~_RZ
+                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                         ))
+        return (--<<TARGET_PRIVATE_EXPRESSION>>
+                scale*inverse*(snapshot[1]+snapshot[2]-bias)-share
+                --<<ENDTARGET_PRIVATE_EXPRESSION>>
+               ),share
     end
 
     _pending_finish=function(dst)
@@ -1229,14 +1575,29 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local q=_PD[physical]
         if q==nil then return end
         _PD[physical]=nil
-        local encoded=q[2]+q[3]
+        local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                       q[2]+q[3]
+                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                      )
         if q[1]==__VM_PENDING_UNM__ then
-            encoded=-encoded
+            encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     -encoded
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
         else
-            local right=q[4]+q[5]
-            encoded=encoded+(q[1]==__VM_PENDING_ADD__ and right or -right)
+            local right=(--<<TARGET_PRIVATE_EXPRESSION>>
+                         q[4]+q[5]
+                         --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                        )
+            encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     encoded+(q[1]==__VM_PENDING_ADD__ and right or -right)
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
         end
-        _rstore(dst,encoded+q[7],q[6],1)
+        _rstore(dst,(--<<TARGET_PRIVATE_EXPRESSION>>
+                    encoded+q[7]
+                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                   ),q[6],1)
     end
 
     local function _defer2r(dst,lhs,rhs,av,slot,token)
@@ -1244,18 +1605,23 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if not desc or desc[1]==0 then
             local left=_pending_snapshot(lhs)
-            local right=_pending_snapshot(rhs)
+            local right
+            if lhs==rhs then right=left else right=_pending_snapshot(rhs) end
             if left and right and _poly_lazy(token~dst~lhs~(rhs<<8)) then
                 local epoch=_rnext(dst,token~lhs~(rhs<<8))
                 local scale,bias=_rparams(dst,epoch)
                 local l1,l2=_pending_fragment(left,scale,epoch~token)
                 local r1,r2=_pending_fragment(right,scale,epoch~token~1)
                 _PD[_rpos(5,dst)]={token,l1,l2,r1,r2,epoch,bias}
+                _RC[dst]=nil
                 _RL[dst]=true
                 return
             end
         end
-        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+        local left=rget(lhs)
+        local right
+        if lhs==rhs then right=left else right=rget(rhs) end
+        rset(dst,_arith2(left,right,av,slot,desc))
     end
 
     local function _defer1r(dst,src,av,slot,token)
@@ -1268,6 +1634,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 local scale,bias=_rparams(dst,epoch)
                 local p1,p2=_pending_fragment(value,scale,epoch~token)
                 _PD[_rpos(5,dst)]={token,p1,p2,nil,nil,epoch,bias}
+                _RC[dst]=nil
                 _RL[dst]=true
                 return
             end
@@ -1280,7 +1647,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local desc=_gsl and _gsl[_gq]
         if linear and (not desc or desc[1]==0) and
            _elinear2(dst,lhs,rhs,linear) then return end
-        rset(dst,_arith2(rget(lhs),rget(rhs),av,slot,desc))
+        local left=rget(lhs)
+        local right
+        if lhs==rhs then right=left else right=rget(rhs) end
+        rset(dst,_arith2(left,right,av,slot,desc))
     end
 
     local function _arith1r(dst,src,av,slot,linear)
@@ -1330,6 +1700,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _native_call(fn,args,a,c,av,tail,tag,...)
+        _RC={}
         local count=args.n
         if not tail then _touch(av,tag) end
         for i=1,count do args[i]=_texpose(args[i]) end
@@ -1388,13 +1759,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     --[[VM_DISPATCH_ENTRY]] while true do
         --<<FETCH>>
-        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=(_S[611] or 0)~(_XF[1] or 0); local ins=(code[pc]~_ksm(pc))~_dk; local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
+        _av_read(); local _ip=pc; _gsl=_gsd[_ip]; _gq=0; local _dk=_ikey48((_S[611] or 0)~(_XF[1] or 0)); local ins=_ixor(_ixor(code[pc],_ksm(pc)),_dk); local _av=_avd[_ip]; local op,A,B,C,Bx,sBx=decode(ins,_dk); pc=pc+1; _route_step(_ip,op,A,B,C); _ss_step(_ip,op,A,B,C)
         --<<ENDFETCH>>
 
         if     op==0  then rset(A,_carry(_sem(__VM_DATA_VALUE__,rget(B),nil,nil),_av,0))
         elseif op==1  then rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[Bx+1],proto),nil,nil),_av,1))
         elseif op==2  then
-            local ei=((code[pc]~_ksm(pc))~_dk)~_dk; pc=pc+1
+            local ei=_ixor(_ixor(_ixor(code[pc],_ksm(pc)),_dk),_dk); pc=pc+1
             local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
             rset(A,_carry(_sem(__VM_DATA_VALUE__,kval(consts[ax+1],proto),nil,nil),_av,2))
         elseif op==3  then rset(A,_carry(_sem(__VM_DATA_VALUE__,(B~=0),nil,nil),_av,3)); if C~=0 then pc=pc+1 end
@@ -1426,10 +1797,19 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==29 then
             local t={}; for i=B,C do t[#t+1]=rget(i) end
             rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
-        elseif op==30 then pc=_jump(sBx,_av,30)
-        elseif op==31 then if not _branch(_carry(_sem(__VM_CMP_EQ__,rget(B),rget(C),nil),_av,31),A~=0,_av,31) then pc=pc+1 end
-        elseif op==32 then if not _branch(_carry(_sem(__VM_CMP_LT__,rget(B),rget(C),nil),_av,32),A~=0,_av,32) then pc=pc+1 end
-        elseif op==33 then if not _branch(_carry(_sem(__VM_CMP_LE__,rget(B),rget(C),nil),_av,33),A~=0,_av,33) then pc=pc+1 end
+        elseif op==30 then if A>0 then close_upvalues(A-1) end; pc=_jump(sBx,_av,30)
+        elseif op==31 then
+            local left=rget(B); local right
+            if B==C then right=left else right=rget(C) end
+            if not _branch(_carry(_sem(__VM_CMP_EQ__,left,right,nil),_av,31),A~=0,_av,31) then pc=pc+1 end
+        elseif op==32 then
+            local left=rget(B); local right
+            if B==C then right=left else right=rget(C) end
+            if not _branch(_carry(_sem(__VM_CMP_LT__,left,right,nil),_av,32),A~=0,_av,32) then pc=pc+1 end
+        elseif op==33 then
+            local left=rget(B); local right
+            if B==C then right=left else right=rget(C) end
+            if not _branch(_carry(_sem(__VM_CMP_LE__,left,right,nil),_av,33),A~=0,_av,33) then pc=pc+1 end
         elseif op==34 then if not _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(A),nil,nil),_av,34),C~=0,_av,34) then pc=pc+1 end
         elseif op==35 then
             if _branch(_carry(_sem(__VM_CMP_TRUTH__,rget(B),nil,nil),_av,35),C~=0,_av,35) then rset(A,rget(B)) else pc=pc+1 end
@@ -1454,6 +1834,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
 
         elseif op==37 then
+            close_upvalues(0)
             local fn=rget(A)
             local ca=_call_args(A,B)
             local ca_n=ca.n
@@ -1471,6 +1852,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             return _native_call(fn,ca,A,C,_av,true,37)
 
         elseif op==38 then
+            close_upvalues(0)
             local r,n=_return_values(A,B)
             return _leave(r,n,_av,38)
 
@@ -1508,6 +1890,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                 pc=_cf(q,__VM_CF_TARGET__,42) end
 
         elseif op==43 then
+            if C==0 then
+                local ei=_ixor(code[pc],_ksm(pc)); pc=pc+1
+                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+            end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
             local vals={}; for i=1,cnt do vals[i]=rget(A+i) end
@@ -1543,12 +1929,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==51 then rset(A,_IT.seed&0xFFFFFFFF)
         elseif op==52 then rset(A,proto.vm_id&0xFFFFFFFF)
         elseif op==53 then rset(A,#proto.code&0xFFFFFFFF)
-        elseif op==54 then rset(A,(rget(B) or 0)~(rget(C) or 0))
+        elseif op==54 then rset(A,_integrity_xor((rget(B) or 0),(rget(C) or 0)))
         elseif op==55 then rset(A,((rget(B) or 0)+(rget(C) or 0))&0xFFFFFFFF)
         elseif op==56 then rset(A,((rget(B) or 0)*((rget(C) or 0)|1))&0xFFFFFFFF)
         elseif op==57 then rset(A,consts[Bx+1][2])
         elseif op==58 then pc=_poly_route(_brd[A+1],A~pc~proto.vm_id)
         elseif op==59 then pc=Bx+1
+        elseif op==60 then rset(A,_sem(__VM_DATA_GET__,get_environment(upvals),kval(consts[Bx+1],proto),nil))
+        elseif op==61 then _sem(__VM_DATA_SET__,get_environment(upvals),kval(consts[Bx+1],proto),rget(A))
+        elseif op==62 then
+            local n=_acount(_va);local t=_tnew();_tset(t,"n",_source_value(n))
+            for i=1,n do _tset(t,i,_aget(_va,i)) end;rset(A,t)
         else error("unknown op "..op) end
     end
     return _leave({},0,nil,138)
@@ -1573,8 +1964,12 @@ _NX=function(...)
 end
 --<<ENDNEXT_ROUTER>>
 
+--<<TARGET_FUNCTION_DUMP>>
+local function _function_dump(fn) return string.dump(fn,true) end
+--<<ENDTARGET_FUNCTION_DUMP>>
+
 local function run(blob,rand_tail,self_func)
-    local dump=string.dump(self_func,true)
+    local dump=_function_dump(self_func)
     local dump_crc=_crc32(dump)
     local crc=(dump_crc~(_LS or 0))&0xFFFFFFFF
     -- anti-tamper: 변조 신호를 키에 섞는다. clean이면 _t==0 -> crc 불변
@@ -1618,13 +2013,23 @@ local function run(blob,rand_tail,self_func)
     local _af=tonumber(_pf:match("(%x+)$") or "0",16) or 0
     local _clock=math.floor(((os.clock and os.clock()) or 0)*1000000000)
     local _wall=(os.time and os.time()) or 0
-    _PN=_pmix(_aa~_af~_clock~(_wall<<21)~crc~seed~_PE)
+    _PN=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+               _aa~_af~_clock~(_wall<<21)~crc~seed~_PE
+               --<<ENDTARGET_PRIVATE_EXPRESSION>>
+              ))
     --<<RUNTIME_TRACE>>
-    _PX=_pmix(_PN~seed~crc)
-    _PBC=0; _PBH=_pmix(_PN~0x424C4F434B)
+    _PX=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+               _PN~seed~crc
+               --<<ENDTARGET_PRIVATE_EXPRESSION>>
+              ))
+    _PBC=0; _PBH=_pmix((--<<TARGET_PRIVATE_EXPRESSION>>
+                        _PN~0x424C4F434B
+                        --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                       ))
     --<<ENDRUNTIME_TRACE>>
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
+    --<<TARGET_FAKE_CONSTANT_SKIP>>
     local _fn=r.u32()
     for _=1,_fn do
         local _ft=r.u8()
@@ -1638,12 +2043,13 @@ local function run(blob,rand_tail,self_func)
             for _j=1,_pn do local _op=r.u8(); if _op==1 then r.u32() end end
         end
     end
+    --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
     --<<RUN_ENTRY>>
     _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box},[__VM_Q_ARGS__]=_apack({},0,crc)})
+         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=_apack({},0,crc)})
     --<<ENDRUN_ENTRY>>
     --<<RUNTIME_TRACE>>
     io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),

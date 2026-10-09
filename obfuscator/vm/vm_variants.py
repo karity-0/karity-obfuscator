@@ -124,9 +124,10 @@ def _render_kss() -> str:
 _KSTREAM_RE = re.compile(r'--<<KSTREAM>>.*?--<<ENDKSTREAM>>', re.S)
 
 
-def apply_keystream(vm_code: str) -> str:
+def apply_keystream(vm_code: str, render_ksm=None, render_kss=None) -> str:
     """KSTREAM 마커 사이(_ksm/_kss 정의)를 랜덤 상수/구조로 재생성한다."""
-    body = "--<<KSTREAM>>\n" + _render_ksm() + "\n" + _render_kss() + "\n--<<ENDKSTREAM>>"
+    body = ("--<<KSTREAM>>\n" + (render_ksm or _render_ksm)() + "\n" +
+            (render_kss or _render_kss)() + "\n--<<ENDKSTREAM>>")
     return _KSTREAM_RE.sub(lambda _m: body, vm_code, count=1)
 
 
@@ -198,9 +199,10 @@ def _render_tamper() -> str:
 _TAMPER_RE = re.compile(r'--<<TAMPER>>.*?--<<ENDTAMPER>>', re.S)
 
 
-def apply_tamper(vm_code: str) -> str:
+def apply_tamper(vm_code: str, renderer=None) -> str:
     """TAMPER 마커 사이(변조 검사 블록)를 랜덤 항목/순서/가중치/혼합식으로 재생성."""
-    return _TAMPER_RE.sub(lambda _m: _render_tamper(), vm_code, count=1)
+    render = renderer or _render_tamper
+    return _TAMPER_RE.sub(lambda _m: render(), vm_code, count=1)
 
 
 # ---------------------------------------------------------------------------
@@ -222,6 +224,9 @@ def apply_line_state(
     output_prefix: str = "",
     finalizer=None,
     output_passes: list[str] | None = None,
+    insertion_anchor: str = "return function(...)",
+    native_u32: bool = False,
+    qualify_globals: bool = False,
 ) -> tuple[str, int, list[int]]:
     """Inject line probes and compute the clean state from the final layout.
 
@@ -231,7 +236,7 @@ def apply_line_state(
     after the large VM output pipeline, so it uses the small structured literal
     emitter directly instead of reparsing the complete VM source.
     """
-    anchor = "return function(...)"
+    anchor = insertion_anchor
     anchor_pos = vm_func_src.find(anchor)
     if anchor_pos < 0:
         raise ValueError("VM function source is missing its return-function anchor")
@@ -310,14 +315,42 @@ def apply_line_state(
     for message_name, value_name, fallback in zip(message_names, value_names, fallbacks):
         block.append(f"local {value_name}={parser_name}({message_name},{fallback})")
     block.append(f"local {state_name}=0")
-    for value_name, (mul, add, shift) in zip(value_names, steps):
-        block.append(
-            f"{state_name}=(({state_name}~(({value_name}*0x{mul:08X})&0xFFFFFFFF))"
-            f"+0x{add:08X})&0xFFFFFFFF"
-        )
-        block.append(
-            f"{state_name}=({state_name}~({state_name}>>{shift}))&0xFFFFFFFF"
-        )
+    if native_u32:
+        xor_name = ident("x")
+        multiply_name = ident("m")
+        block.insert(0, f"""local function {xor_name}(a,b)
+  a=a%4294967296;b=b%4294967296
+  local result,place=0,1
+  while a>0 or b>0 do
+    local left,right=a%2,b%2
+    if left~=right then result=result+place end
+    a=math.floor(a/2);b=math.floor(b/2);place=place*2
+  end
+  return result
+end""")
+        block.insert(1, f"""local function {multiply_name}(a,b)
+  a=a%4294967296;b=b%4294967296
+  local al=a%65536;local ah=math.floor(a/65536)
+  local bl=b%65536;local bh=math.floor(b/65536)
+  return (al*bl+((al*bh+ah*bl)%65536)*65536)%4294967296
+end""")
+        for value_name, (mul, add, shift) in zip(value_names, steps):
+            block.append(
+                f"{state_name}=({xor_name}({state_name},{multiply_name}({value_name},{mul}))"
+                f"+{add})%4294967296"
+            )
+            block.append(
+                f"{state_name}={xor_name}({state_name},math.floor({state_name}/2^{shift}))%4294967296"
+            )
+    else:
+        for value_name, (mul, add, shift) in zip(value_names, steps):
+            block.append(
+                f"{state_name}=(({state_name}~(({value_name}*0x{mul:08X})&0xFFFFFFFF))"
+                f"+0x{add:08X})&0xFFFFFFFF"
+            )
+            block.append(
+                f"{state_name}=({state_name}~({state_name}>>{shift}))&0xFFFFFFFF"
+            )
 
     block_source = "\n".join(block)
     literal_passes = [
@@ -336,6 +369,10 @@ def apply_line_state(
             rng.setstate(random.getstate())
         finally:
             random.setstate(global_random_state)
+
+    if qualify_globals:
+        from ..passes.rename_ts import qualify_runtime_globals
+        block_source = qualify_runtime_globals(block_source)
 
     vm_func_src = re.sub(r"\b_LS\b", state_name, vm_func_src)
     anchor_pos = vm_func_src.find(anchor)

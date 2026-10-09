@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from unittest.mock import patch
 from lua_runtime import lua_executable
 
 
@@ -15,6 +16,7 @@ sys.path.insert(0, str(ROOT_DIR))
 from obfuscator import Pipeline, build_pipeline_from_config
 from obfuscator.profiling import Profiler
 from obfuscator.vm.vm_variants import _render_tamper, apply_line_state
+from obfuscator.vm.targets.lua51 import Lua51Target
 
 
 LUA = lua_executable()
@@ -78,6 +80,18 @@ def main() -> int:
     if re.search(r'\b_l[a-z]{9}\b', rendered):
         raise AssertionError("late line-state helpers bypassed shared naming")
 
+    random.seed(16018)
+    native_seed_state = random.getstate()
+    target = Lua51Target()
+    native_source = "return function(...)--[[TARGET51_PRELUDE_END]]return _LS end"
+    bound, native_state, _ = target.bind_lines(native_source, None)
+    random.setstate(native_seed_state)
+    with patch("obfuscator.vm.targets.lua51.translate",
+               side_effect=AssertionError("late line-state used generic translator")):
+        bound_again, bound_state, _ = target.bind_lines(native_source, None)
+    if (bound_again, bound_state) != (bound, native_state):
+        raise AssertionError("Lua 5.1 native line-state binding changed")
+
     random.seed(16017)
     late_rendered, late_state, _ = apply_line_state(
         "return function(...) return _LS end",
@@ -109,6 +123,43 @@ def main() -> int:
         late = run_lua(runner, str(late_probe))
         if (late.returncode, late.stdout, late.stderr) != (0, f"{late_state}\n".encode(), b""):
             raise AssertionError(f"localized late helpers changed behavior: {late.stderr!r}")
+
+        native_probe = temp / "native-u32.lua"
+        native_probe.write_text(bound, encoding="utf-8")
+        native = run_lua(runner, str(native_probe))
+        if (native.returncode, native.stdout, native.stderr) != (
+                0, f"{native_state}\n".encode(), b""):
+            raise AssertionError(
+                f"native 32-bit line-state mismatch: "
+                f"{(native.returncode, native.stdout, native.stderr)!r}"
+            )
+        multiply_match = re.search(
+            r"local function ([A-Za-z_]\w*)\(a,b\)\n"
+            r"  a=a%4294967296;b=b%4294967296\n  local al=a%65536", bound,
+        )
+        return_match = re.search(r"return ([A-Za-z_]\w*) end$", bound)
+        if not multiply_match or not return_match:
+            raise AssertionError("native line-state arithmetic helpers were not emitted")
+        multiply = multiply_match.group(1)
+        product_source = (
+            bound[:return_match.start()]
+            + f"return {multiply}(4294967295,4294967295),"
+            + f"{multiply}(4275878552,1985229328) end"
+        )
+        product_probe = temp / "native-u32-products.lua"
+        product_probe.write_text(product_source, encoding="utf-8")
+        products = run_lua(runner, str(product_probe))
+        mask = 0xFFFFFFFF
+        expected_products = (
+            f"{(0xFFFFFFFF * 0xFFFFFFFF) & mask}\t"
+            f"{(0xFEDCBA98 * 0x76543210) & mask}\n"
+        ).encode()
+        if (products.returncode, products.stdout, products.stderr) != (
+                0, expected_products, b""):
+            raise AssertionError(
+                f"native modular multiplication mismatch: "
+                f"{(products.returncode, products.stdout, products.stderr)!r}"
+            )
 
         # Short helper names must not capture existing locals, globals, or `_`.
         collision_source = (

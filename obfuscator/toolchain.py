@@ -19,7 +19,7 @@ LIBRARY_DUMP_FUNCTION = (
 )
 
 
-def _executable(value: str | None, key: str, bundled: str, names: tuple[str, ...]) -> str:
+def _executable(value: str | None, key: str, bundled: str, names: tuple[str, ...], lua_version: str = "5.3") -> str:
     if value:
         path = Path(value).expanduser()
         if path.is_file():
@@ -37,7 +37,7 @@ def _executable(value: str | None, key: str, bundled: str, names: tuple[str, ...
         found = shutil.which(name)
         if found:
             return found
-    raise FileNotFoundError(f"{key}: Lua 5.3 tool not found; set {key} explicitly")
+    raise FileNotFoundError(f"{key}: Lua {lua_version} tool not found; set {key} explicitly")
 
 
 @dataclass(frozen=True)
@@ -45,17 +45,29 @@ class LuaToolchain:
     lua_executable: str | None = None
     luac_executable: str | None = None
     lua_library: str | None = None
+    lua_version: str = "5.3"
+
+    def __post_init__(self):
+        if self.lua_version not in ("5.1", "5.3"):
+            raise ValueError("unsupported Lua toolchain version")
 
     @classmethod
     def from_config(cls, config: dict) -> LuaToolchain:
-        return cls(**{key: config.get(key) for key in TOOLCHAIN_KEYS})
+        return cls(**{key: config.get(key) for key in TOOLCHAIN_KEYS},
+                   lua_version=config.get("target", {}).get("lua_version", "5.3"))
 
     def lua(self) -> str:
+        if self.lua_version == "5.1":
+            return _executable(self.lua_executable, "lua_executable",
+                               "lua51.exe" if os.name == "nt" else "lua51", ("lua5.1", "lua51"), "5.1")
         return _executable(self.lua_executable, "lua_executable",
                            "lua.exe" if os.name == "nt" else "lua",
                            ("lua5.3", "lua53", "lua"))
 
     def luac(self) -> str:
+        if self.lua_version == "5.1":
+            return _executable(self.luac_executable, "luac_executable",
+                               "luac51.exe" if os.name == "nt" else "luac51", ("luac5.1", "luac51"), "5.1")
         return _executable(self.luac_executable, "luac_executable",
                            "luac53.exe" if os.name == "nt" else "luac53",
                            ("luac5.3", "luac53", "luac"))
@@ -69,13 +81,14 @@ class LuaToolchain:
             raise FileNotFoundError(f"lua_library: library not found: {self.lua_library}")
         return str(path.resolve())
 
-    def run_library(self, script: str, operation: str = "execute") -> bytes:
+    def run_library(self, script: str, operation: str = "execute", *, lua_version: str | None = None) -> bytes:
         """Compile, dump a returned function, or execute in an isolated DLL host.
 
         Explicit lua_library takes priority over executables for build operations.
         The worker keeps native crashes and Lua state out of the GUI process.
         """
         library = self.library()
+        lua_version = lua_version or self.lua_version
         if library is None:
             raise ValueError("lua_library is not configured")
         with tempfile.TemporaryDirectory(prefix="karity-lua-library-") as folder:
@@ -87,6 +100,8 @@ class LuaToolchain:
                 python = python.with_name("python.exe")
             command = [str(python), str(Path(__file__).with_name("lua_library_worker.py")),
                        library, operation, str(source), str(output)]
+            if lua_version != "5.3":
+                command.append(lua_version)
             try:
                 result = subprocess.run(
                     command, capture_output=True, timeout=120,
