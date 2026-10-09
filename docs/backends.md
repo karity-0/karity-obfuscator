@@ -173,7 +173,10 @@ unsupported controls, including values inherited from a profile.
 
 These are architectural trade-offs, not measured speed rankings or security
 scores. Compare identical source, passes, seeds and VM counts on the intended
-runtime. Use `fast-vm` for diagnosis and `high` for practical release settings;
+runtime. Use `dev` for a minimal diagnostic build. The balanced `fast-vm` preset
+adds source function protection and meme arithmetic; their additional integer
+operations also pass through MOV lowering, which can make recursive or repeated
+calls substantially more expensive. `high` adds further protection, while
 `max` remains an experimental profile. `--release-check` validates the controls
 that apply to the chosen backend, not a performance target or resistance proof.
 
@@ -183,3 +186,7 @@ Run `python test/run_ci.py`. Backend tests exercise alias resolution, direct
 Classic dispatchers, multi-VM execution and MOV lookup paths with native fallback
 traps. Independent microcode checks validate shift/division behavior. The suite
 also checks trace removal, generated docs, release configuration and packing.
+MOV CLI smoke tests retain the call-boundary assertions with short recursive and
+tail-call workloads. The backend tests separately execute the original longer
+call-machine fixture; this is not a runtime performance target for protected
+source functions.

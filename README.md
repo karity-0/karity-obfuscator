@@ -360,7 +360,11 @@ tables obscure the ordered opcode dispatcher, but their Lua operations remain
 inspectable. Handler closures are allocated per call frame to preserve recursive
 calls, coroutine suspension, and return/tail-call packets.
 
-Start with `--profile fast-vm --vm-option backend=mov`. Multiple MOV interpreters
+Start with `--profile dev --vm-option backend=mov`. The balanced `fast-vm`
+preset also protects source functions and inserts meme arithmetic. MOV lowers
+these added integer operations into lookup recipes, so repeated calls and
+recursion can have substantial additional execution cost. Compare the intended
+workload before selecting a stronger preset. Multiple MOV interpreters
 use distinct instruction IDs and digit codebooks, with prototypes assigned by
 `vm_count` as in the other backends. Calls, shared upvalues and tail-call frame
 transitions preserve Lua values across these representations. Each interpreter
