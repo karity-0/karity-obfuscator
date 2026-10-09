@@ -1,0 +1,67 @@
+semantic-ir semantic-v2
+function f0 params=0 vararg=1 stack=5 captures=()
+  value f0:r0 kind=register index=0
+  value f0:r1 kind=register index=1
+  value f0:r2 kind=register index=2
+  value f0:r3 kind=register index=3
+  value f0:r4 kind=register index=4
+  value f0:k0 kind=constant index=0 literal=1.0
+  value f0:k1 kind=constant index=1 literal=2.0
+  value f0:k2 kind=constant index=2 literal=3.0
+  block f0:b0 successors=-
+    f0:i0 CLOSURE in=- out=f0:r0 const=- targets=- operands=(IROperand(role='destination', kind='register', value=0, count=None), IROperand(role='child', kind='proto', value=0, count=None))
+    f0:i1 MOVE in=f0:r0 out=f0:r1 const=- targets=- operands=(IROperand(role='destination', kind='register', value=1, count=None), IROperand(role='source', kind='register', value=0, count=None))
+    f0:i2 LOAD_CONST in=- out=f0:r2 const=f0:k0 targets=- operands=(IROperand(role='destination', kind='register', value=2, count=None), IROperand(role='value', kind='constant', value=0, count=None))
+    f0:i3 LOAD_CONST in=- out=f0:r3 const=f0:k1 targets=- operands=(IROperand(role='destination', kind='register', value=3, count=None), IROperand(role='value', kind='constant', value=1, count=None))
+    f0:i4 LOAD_CONST in=- out=f0:r4 const=f0:k2 targets=- operands=(IROperand(role='destination', kind='register', value=4, count=None), IROperand(role='value', kind='constant', value=2, count=None))
+    f0:i5 TAIL_CALL in=f0:r1,f0:r2,f0:r3,f0:r4 out=- const=- targets=- operands=(IROperand(role='callee', kind='register', value=1, count=None), IROperand(role='arguments', kind='register_range', value=2, count=3))
+  block f0:b6 successors=-
+    f0:i6 RETURN in=f0:r1,f0:r2,f0:r3,f0:r4 out=- const=- targets=- operands=(IROperand(role='values', kind='register_range', value=1, count=None),)
+  block f0:b7 successors=-
+    f0:i7 RETURN in=- out=- const=- targets=- operands=(IROperand(role='values', kind='register_range', value=0, count=0),)
+function f0.0 params=0 vararg=1 stack=9 captures=()
+  value f0.0:r0 kind=register index=0
+  value f0.0:r1 kind=register index=1
+  value f0.0:r2 kind=register index=2
+  value f0.0:r3 kind=register index=3
+  value f0.0:r4 kind=register index=4
+  value f0.0:r5 kind=register index=5
+  value f0.0:r6 kind=register index=6
+  value f0.0:r7 kind=register index=7
+  value f0.0:r8 kind=register index=8
+  value f0.0:k0 kind=constant index=0 literal=0.0
+  value f0.0:k1 kind=constant index=1 literal=b'pairs'
+  block f0.0:b0 successors=f0.0:b12
+    f0.0:i0 LOAD_CONST in=- out=f0.0:r1 const=f0.0:k0 targets=- operands=(IROperand(role='destination', kind='register', value=1, count=None), IROperand(role='value', kind='constant', value=0, count=None))
+    f0.0:i1 GLOBAL_GET in=- out=f0.0:r2 const=f0.0:k1 targets=- operands=(IROperand(role='destination', kind='register', value=2, count=None), IROperand(role='key', kind='constant', value=1, count=None))
+    f0.0:i2 NEW_TABLE in=- out=f0.0:r3 const=- targets=- operands=(IROperand(role='destination', kind='register', value=3, count=None), IROperand(role='array_hint', kind='immediate', value=0, count=None), IROperand(role='hash_hint', kind='immediate', value=0, count=None))
+    f0.0:i3 VARARG in=- out=f0.0:r4,f0.0:r5,f0.0:r6,f0.0:r7,f0.0:r8 const=- targets=- operands=(IROperand(role='results', kind='register_range', value=4, count=None),)
+    f0.0:i4 SET_LIST in=f0.0:r3,f0.0:r4,f0.0:r5,f0.0:r6,f0.0:r7,f0.0:r8 out=- const=- targets=- operands=(IROperand(role='table', kind='register', value=3, count=None), IROperand(role='values', kind='register_range', value=4, count=None), IROperand(role='batch', kind='immediate', value=1, count=None))
+    f0.0:i5 CALL in=f0.0:r2,f0.0:r3 out=f0.0:r2,f0.0:r3,f0.0:r4 const=- targets=- operands=(IROperand(role='callee', kind='register', value=2, count=None), IROperand(role='arguments', kind='register_range', value=3, count=1), IROperand(role='results', kind='register_range', value=2, count=3))
+    f0.0:i6 JUMP in=- out=- const=- targets=f0.0:b12 operands=(IROperand(role='close_from', kind='immediate', value=None, count=None),)
+  block f0.0:b7 successors=f0.0:b12
+    f0.0:i7 CLOSURE in=f0.0:r6 out=f0.0:r7 const=- targets=- operands=(IROperand(role='destination', kind='register', value=7, count=None), IROperand(role='child', kind='proto', value=0, count=None), IROperand(role='capture', kind='register', value=6, count=None))
+    f0.0:i8 MOVE in=f0.0:r7 out=f0.0:r8 const=- targets=- operands=(IROperand(role='destination', kind='register', value=8, count=None), IROperand(role='source', kind='register', value=7, count=None))
+    f0.0:i9 CALL in=f0.0:r8 out=f0.0:r8 const=- targets=- operands=(IROperand(role='callee', kind='register', value=8, count=None), IROperand(role='arguments', kind='register_range', value=9, count=0), IROperand(role='results', kind='register_range', value=8, count=1))
+    f0.0:i10 ADD in=f0.0:r1,f0.0:r8 out=f0.0:r1 const=- targets=- operands=(IROperand(role='destination', kind='register', value=1, count=None), IROperand(role='left', kind='register', value=1, count=None), IROperand(role='right', kind='register', value=8, count=None))
+    f0.0:i11 JUMP in=- out=- const=- targets=f0.0:b12 operands=(IROperand(role='close_from', kind='immediate', value=5, count=None),)
+  block f0.0:b12 successors=f0.0:b15,f0.0:b14
+    f0.0:i12 ITER_CALL in=f0.0:r2,f0.0:r3,f0.0:r4 out=f0.0:r5,f0.0:r6 const=- targets=- operands=(IROperand(role='iterator', kind='register_range', value=2, count=3), IROperand(role='results', kind='register_range', value=5, count=2))
+    f0.0:i13 ITER_LOOP in=f0.0:r4,f0.0:r5 out=f0.0:r4 const=- targets=f0.0:b15,f0.0:b14 operands=(IROperand(role='control', kind='register', value=4, count=None), IROperand(role='result', kind='register', value=5, count=None))
+  block f0.0:b14 successors=f0.0:b16
+    f0.0:i14 JUMP in=- out=- const=- targets=f0.0:b16 operands=(IROperand(role='close_from', kind='immediate', value=None, count=None),)
+  block f0.0:b15 successors=f0.0:b7
+    f0.0:i15 JUMP in=- out=- const=- targets=f0.0:b7 operands=(IROperand(role='close_from', kind='immediate', value=None, count=None),)
+  block f0.0:b16 successors=-
+    f0.0:i16 RETURN in=f0.0:r1 out=- const=- targets=- operands=(IROperand(role='values', kind='register_range', value=1, count=1),)
+  block f0.0:b17 successors=-
+    f0.0:i17 RETURN in=- out=- const=- targets=- operands=(IROperand(role='values', kind='register_range', value=0, count=0),)
+function f0.0.0 params=0 vararg=0 stack=2 captures=(('register', 6),)
+  value f0.0.0:r0 kind=register index=0
+  value f0.0.0:r1 kind=register index=1
+  value f0.0.0:u0 kind=upvalue index=0 name='value'
+  block f0.0.0:b0 successors=-
+    f0.0.0:i0 GET_UPVALUE in=- out=f0.0.0:r0 const=- targets=- operands=(IROperand(role='destination', kind='register', value=0, count=None), IROperand(role='source', kind='upvalue', value=0, count=None))
+    f0.0.0:i1 RETURN in=f0.0.0:r0 out=- const=- targets=- operands=(IROperand(role='values', kind='register_range', value=0, count=1),)
+  block f0.0.0:b2 successors=-
+    f0.0.0:i2 RETURN in=- out=- const=- targets=- operands=(IROperand(role='values', kind='register_range', value=0, count=0),)

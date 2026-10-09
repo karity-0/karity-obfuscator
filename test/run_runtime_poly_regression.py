@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -12,7 +11,6 @@ from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-LUA = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
 TRACE_RE = re.compile(
     rb"(?:^|\r?\n)karity-vm-trace:([0-9a-f]{16}) "
     rb"blocks:([0-9]+) blocktrace:([0-9a-f]{16})\r?\n?"

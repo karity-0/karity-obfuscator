@@ -3,14 +3,18 @@
 # configuration
 
 ## table of contents
+- [selective protection](#selective-protection)
 - [profiles](#profiles)
+- [target](#target)
 - [signature](#signature)
 - feature passes
+  - [strip_info](#strip_info)
   - [remove_comment](#remove_comment)
   - [string_encode](#string_encode)
   - [string_obf](#string_obf)
   - [boolean_obf](#boolean_obf)
   - [number_obf](#number_obf)
+  - [meme_strings](#meme_strings)
   - [table_obf](#table_obf)
   - [function_obf](#function_obf)
   - [rename_obf](#rename_obf)
@@ -21,6 +25,7 @@
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
+  - [requirements](#requirements)
   - [backend](#backend)
   - [dispatcher_type](#dispatcher_type)
   - [dispatcher_target_hiding](#dispatcher_target_hiding)
@@ -48,6 +53,19 @@
   - [helper_diversity_rate](#helper_diversity_rate)
   - [semantic_diversity_rate](#semantic_diversity_rate)
 
+## selective protection
+Use `selection_modes` to choose `all` (the default for enabled passes) or
+`marked` for `string_obf`, `number_obf`, `boolean_obf`, `table_obf`,
+`function_obf`, and `vm`. Source macros/directives can enable an absent
+pass in marked mode. `selection_profiles` supplies named VM option presets
+in flat configs; named input profiles are also available to VM directives.
+Regions support complete sibling statements, partial function protection,
+and nested native exclusions. Selective VM boundaries require Lua 5.3.
+Selected VM regions with equal effective options share one runtime initialization.
+See the [selective protection guide](selective-obfuscation.md) and
+`config.selective.example.json` for syntax, precedence and limitations.
+`--selection-report PATH` writes original-line application results as JSON.
+
 ## profiles
 The default config uses named profiles so test and release builds can switch
 without manually editing pass lists.
@@ -74,6 +92,36 @@ the recommended production profile.
 `--seed` is for reproducible test builds. `--release-check` rejects seeded
 builds and weak VM settings before writing release output.
 
+## target
+
+`target.lua_version` selects `5.3` (default) or experimental `5.1`;
+`target.environment` selects `standalone` (default) or `cheatengine`.
+The VM backend remains in `vm_options.backend` and is independent of both.
+
+`target.compatibility` accepts `portable`, `runtime_specific` (default),
+or `binary_specific`, in increasing order of permitted dependencies.
+VM and packer function-dump integrity requires a compatible runtime dump ABI,
+so Portable rejects those stages. It does not silently weaken their integrity.
+Current integrity does not fingerprint executable files; binary-specific host
+references are a separate materialization feature.
+`target.disabled_capabilities` can remove APIs unavailable in an embedded host.
+`target.runtime_abi` is optional descriptive metadata, not an ABI verifier.
+
+CLI overrides are `--lua-version`, `--target-environment`, and `--compatibility`.
+The GUI exposes the same choices in Lua toolchain. Selecting Cheat Engine
+declares host capabilities; it does not automatically enable native protection.
+`target.host_images` is an optional list of executable/DLL paths (`--host-image`
+can be repeated). It requires VM, Cheat Engine capabilities and Binary specific.
+Matching immutable byte strings are read from the selected loaded modules;
+other constants retain existing serialization. The resolver uses module RVAs
+and excludes writable, executable, relocated and import-table storage.
+See [host image materialization](host-image-materialization.md) for validation limits.
+
+Lua 5.1 supports explicit matching executables or a library; otherwise it uses Lupa.
+Packing and source passes requiring native bit operators or `_ENV` are
+rejected before compilation. VM output passes run before target adaptation
+and must emit syntax compatible with the final target. See [Lua targets](lua-targets.md).
+
 ## signature
 
 `signature.mode` accepts `default`, `none`, `fake`, `generated`, or `custom`.
@@ -93,6 +141,18 @@ comment text only: Lua comment delimiters are removed before rendering.
   "custom": ""
 }}
 ```
+
+## strip_info
+
+**label:** Strip Info
+
+**group:** pre pass
+
+**type:** passes | vm_output_passes | packer_output_passes
+
+Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.
+
+See [`strip_info` design and implementation notes](passes/stripInfo.md) for architecture, trade-offs, and future work.
 
 ## remove_comment
 
@@ -124,6 +184,8 @@ Encodes string literals.
 
 Obfuscates string literals.
 
+**Target requirements:** native_bitops; minimum compatibility `portable`.
+
 ## boolean_obf
 
 **label:** Boolean Obfuscation
@@ -133,6 +195,8 @@ Obfuscates string literals.
 **type:** passes | vm_output_passes | packer_output_passes
 
 Obfuscates boolean literals.
+
+**Target requirements:** native_bitops; minimum compatibility `portable`.
 
 ## number_obf
 
@@ -144,7 +208,23 @@ Obfuscates boolean literals.
 
 Obfuscates number literals.
 
+**Target requirements:** integer_arithmetic, native_bitops; minimum compatibility `portable`.
+
 See [`number_obf` design and implementation notes](passes/numberObfuscation.md) for architecture, trade-offs, and future work.
+
+## meme_strings
+
+**label:** Meme / Fun Strings
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
+
+Replaces some numeric literals with meme string lengths and arithmetic corrections.
+
+**Target requirements:** integer_arithmetic; minimum compatibility `portable`.
+
+See [`meme_strings` design and implementation notes](passes/memeStrings.md) for architecture, trade-offs, and future work.
 
 ## table_obf
 
@@ -166,6 +246,8 @@ Obfuscates table variables.
 
 Recursively transforms SOURCE function boundaries with safe helper inlining, split helper closures, control-flow flattening, and junk blocks.
 
+**Target requirements:** ; minimum compatibility `portable`.
+
 Source nested functions are selected from the initial AST and transformed
 bottom-up. Functions generated by `function_obf` or junk emitters are not
 part of that provenance set and are never recursively reprocessed.
@@ -175,6 +257,11 @@ part of that provenance set and are never recursively reprocessed.
 nested-function transformation (default: `true`), and
 `function_obf_options.nested_max_depth` limits nesting expansion
 (default: `4`, valid range: `0..16`).
+
+`cff`, `junk`, `inline`, and `wrapper` are independently selectable
+boolean switches (all default to `true`). Inlining and compound-loop
+transforms run as components of the CFF rewrite. Source directives can
+override these options per function; see [selective protection](selective-obfuscation.md).
 
 Loop/compound transformation is controlled by `loop_split` (default:
 `true`) and `loop_unroll` (default: `true`). Static integer numeric-for
@@ -213,6 +300,8 @@ See [`rename_obf` design and implementation notes](passes/renameObfuscation.md) 
 
 Converts global variable accesses to local aliases where possible.
 
+**Target requirements:** env_table; minimum compatibility `portable`.
+
 See [`localize_globals` design and implementation notes](passes/localizeGlobals.md) for architecture, trade-offs, and future work.
 
 ## minify
@@ -234,6 +323,8 @@ Reduces script size by removing unnecessary whitespace.
 **type:** passes
 
 Virtualizes Lua bytecode using the custom Lua 5.3 VM.
+
+**Target requirements:** debug_library, function_dump; minimum compatibility `runtime_specific`.
 
 `vm_options.backend` selects only the VM runtime execution model, independently
 from the build profile. Karity and classic use the current compiler, instruction
@@ -440,6 +531,8 @@ See [`vm` design and implementation notes](backends.md) for architecture, trade-
 
 Inserts anti-debugging checks.
 
+**Target requirements:** native_bitops; minimum compatibility `portable`.
+
 See [`anti_debug` design and implementation notes](passes/antiDebug.md) for architecture, trade-offs, and future work.
 
 ## anti_decompile
@@ -452,6 +545,8 @@ See [`anti_debug` design and implementation notes](passes/antiDebug.md) for arch
 
 Adds source-level traps that make decompiler output less useful.
 
+**Target requirements:** native_bitops; minimum compatibility `portable`.
+
 ## pack
 
 **label:** Packer (deflate + load)
@@ -462,9 +557,19 @@ Adds source-level traps that make decompiler output less useful.
 
 Compresses and wraps the final output in a self-extracting loader.
 
+**Target requirements:** debug_library, env_table, function_dump, integer_arithmetic, native_bitops, text_chunk_load; minimum compatibility `runtime_specific`.
+
 See [`pack` design and implementation notes](passes/packer.md) for architecture, trade-offs, and future work.
 
 ## vm_options
+
+### requirements
+
+Protection feature requirements: map feature names to optional or required. Required features must be enabled and supported by the selected backend or an explicitly declared fallback; otherwise the build fails.
+
+default: `{}`
+
+---
 
 ### backend
 

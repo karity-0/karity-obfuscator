@@ -13,9 +13,9 @@ def tables(encode: tuple[int, ...]) -> str:
     invert_top = table([encode[i ^ 7] for i in range(16)])
     return "\n".join((
         f"_ms[177]={{[false]={identity},[true]={invert}}}",
-        f"_ms[178]={{[false]={identity},[true]={invert_top}}}",
+        f"_ms[178]={{[false]=_ms[177][false],[true]={invert_top}}}",
         "_ms[180]=" + table([i == 15 for i in range(16)]),
-        "_ms[181]=" + table([i == 15 for i in range(16)]),
+        "_ms[181]=_ms[180]",
         "_ms[182]=" + table([(i & 7) == 7 for i in range(16)]),
         "_ms[183]=" + table([bool(i & 7) for i in range(16)]),
         "_ms[184]={[false]={[false]=false,[true]=false},[true]={[false]=false,[true]=true}}",

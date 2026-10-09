@@ -34,8 +34,8 @@ install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 
 | Profile | Intended use | VM | Trade-off |
 |---|---|---:|---|
-| `dev` | Fast source-level iteration | No, by default | Fastest builds and easiest debugging |
-| `fast-vm` | VM behavior checks and routine protected builds | Single lightweight VM | Moderate output and runtime cost |
+| `dev` / 빠르게 | StripInfo + Minify, minimal VM protection | One Karity VM | Lowest VM preset overhead |
+| `fast-vm` / 균형 | Adds meme strings, function obfuscation, anti-debug/decompile | One Karity VM | Low-rate runtime diversity |
 | `high` | Strong production-oriented protection | Two diversified VMs | High build and output cost; practical alternative to `max` |
 | `max` | Experimental research and extreme protection combinations | Three diversified VMs | Unbounded build time and output growth; not intended for routine production use |
 
@@ -46,13 +46,27 @@ python main.py input.lua --profile high
 python main.py input.lua --profile max --release-check
 ```
 
-`high` is the strongest preset intended for practical use. It enables the full
-source protection and packing stack with two diversified VMs, while avoiding
-the most explosive VM and packer output-pass combinations used by `max`.
+Every preset applies StripInfo and Minify to source and VM output. All four use
+random blob forms, mixed dispatchers and mixed function boundaries, without a
+fixed seed.
+StripInfo replaces redundant rename/comment-removal passes. `high` adds string,
+number, boolean, table and localization passes, plus all VM protection switches.
+`max` adds string encoding, packing, more variants and heavier output transforms.
+Its VM and packer output apply meme strings before the normal number emitter; other
+configurations keep the existing number-then-meme behavior. This prevents meme
+expansion of generated number expressions without restricting numeric depth or
+random dispatcher choices.
+For packed VM output, generated constant arithmetic and strings stay inside
+the keyed loader and are evaluated once for reuse. The packer decodes bytes in chunks and keeps
+only the 32 KiB DEFLATE history window as individual table entries.
+Trace diagnostics stay off and numeric rates increase without forcing 100%.
+
+`high` uses two diversified VMs without packing; `max` uses three VMs plus packing.
 
 `max` is an experimental research profile. It deliberately combines the most
 aggressive stages and has no build-time or output-size target; very long builds
-are expected. Use `high`, `fast-vm`, or a tuned custom profile for routine
+are expected. Full packer output transforms also substantially increase startup
+cost for large payloads. Use `high`, `fast-vm`, or a tuned custom profile for routine
 protected builds. `--release-check` validates release-safety constraints, but
 does not turn `max` into the recommended production profile.
 
@@ -172,6 +186,26 @@ runtime work sparse.
 For every pass and VM option, see
 [the generated configuration reference](docs/configuration.md).
 
+### Selective protection
+
+Use `STRING_OBF("secret")`, `NUMBER_OBF(123)`, `BOOLEAN_OBF(true)` and
+`TABLE_OBF({1,2,3})` to select individual literals. Function directives select
+source features or function VM boundaries; `-- @VM` selects a whole chunk,
+and `-- @NO_VM` keeps the following function native.
+
+```bash
+python main.py examples/selective.lua -o examples/selective.protected.lua -c config.selective.example.json --seed 1234 --selection-report selections.json
+```
+
+Compare the [selective source](examples/selective.lua) with its
+[protected output](examples/selective.protected.lua), generated with the command above.
+
+The [selective protection guide](docs/selective-obfuscation.md) covers
+`all`/`marked` modes, function options, exclusions, named VM profiles, reports
+and current boundary restrictions. Regions support complete sibling statements,
+live captured locals, partial function protection, and nested native exclusions.
+Selected VM regions with identical effective options share one runtime.
+
 ## CLI usage
 
 ```bash
@@ -215,6 +249,26 @@ python obfuscator_gui.py
 
 The GUI exposes the same profile-based configuration used by the CLI.
 
+The default v2 layout uses a horizontal preset bar, a tabbed code canvas, an
+optional split view, a separate build-settings drawer, and a central run dock.
+Switch between **v1** and **v2** in **Preferences → GUI**; switching keeps the
+current source, output, and build settings.
+
+The **＋ 마커** tool above the source editor inserts literal macros, function
+directives, VM regions, and exclusions around selected code. Optional inline
+arguments support custom function/VM options and named profiles. Markers are
+always recognized in both layouts, including builds without manually enabled
+passes; no marker enable switch is needed.
+
+
+Use **▶** in either editor to execute source (**F5**) or output (**Shift+F5**).
+The console streams stdout/stderr, accepts stdin, and has stop, clear and collapse
+controls. A separate process runs a temporary snapshot, using the opened source
+file's directory as its working directory (otherwise the project directory).
+Source markers are lowered before execution. The configured Lua library takes
+priority over the Lua executable; Lua 5.1 can use the existing Lupa fallback.
+Closing the app stops execution.
+
 ![GUI](images/5.png)
 
 Choose a complete build preset (`dev`, `fast-vm`, `high`, or `max`) or apply an
@@ -222,6 +276,20 @@ independent VM protection level (`Light` through `Maximum`). Every pass and VM
 option can also be edited directly; manual changes automatically switch the
 affected selector to `<Custom>`. VM controls are generated from the central
 option registry so newly registered options stay in sync with the CLI.
+
+Preferences separates **Theme**, **GUI**, **Editor**, and **General**. Theme tiles
+preview the actual palette. Light, Dark, Deep dark, System, and Classic remain
+available alongside Crystal, Ocean, Dracula, Mythic, and Crimson from pyobf.
+The grid starts with System and flows from light to dark across two rows.
+Saved pyobf White/Dark preferences migrate to Light/Dark. The colors
+are bundled in `gui/web/themes.json`; pyobf is not a runtime dependency.
+Korean and English interface languages, layout density, editor font size, motion,
+and section memory save automatically to `obf_gui_preferences.json`.
+
+Both editors include local Lua syntax highlighting and line numbers, including
+compile-time protection markers, long strings, and long comments. Only visible
+rows and columns render, keeping large generated scripts responsive. Source
+text is never persisted automatically, and highlighting never modifies it.
 
 ## Configuration
 
@@ -295,7 +363,11 @@ tables obscure the ordered opcode dispatcher, but their Lua operations remain
 inspectable. Handler closures are allocated per call frame to preserve recursive
 calls, coroutine suspension, and return/tail-call packets.
 
-Start with `--profile fast-vm --vm-option backend=mov`. Multiple MOV interpreters
+Start with `--profile dev --vm-option backend=mov`. The balanced `fast-vm`
+preset also protects source functions and inserts meme arithmetic. MOV lowers
+these added integer operations into lookup recipes, so repeated calls and
+recursion can have substantial additional execution cost. Compare the intended
+workload before selecting a stronger preset. Multiple MOV interpreters
 use distinct instruction IDs and digit codebooks, with prototypes assigned by
 `vm_count` as in the other backends. Calls, shared upvalues and tail-call frame
 transitions preserve Lua values across these representations. Each interpreter
@@ -332,10 +404,54 @@ The most important performance controls are:
 | `semantic_diversity_rate` | Fraction of eligible aliases using alternate semantic lowering |
 | `vm_count` | Number of independent interpreters; strongly affects output and build size |
 
-Start with `fast-vm`, then use `high` when the full protection and packing stack
+Start with `fast-vm`, then use `high` when stronger source and VM protection
 is required. Increase individual option families only after profiling the
 protected program's real workload. A maximum setting in every category is
 rarely the best performance/security balance.
+
+### Custom Lua tools
+
+Set top-level JSON options (shared by profiles, with per-profile overrides), or
+use CLI flags:
+
+```sh
+python main.py input.lua --lua-executable "C:/Lua 5.3/lua.exe" --luac-executable "C:/Lua 5.3/luac.exe"
+```
+
+- `lua_executable` / `--lua-executable`: interpreter used for VM and packer integrity dumps; also available as `pipeline.toolchain.lua()` for execution/validation.
+- `luac_executable` / `--luac-executable`: bytecode compiler used by all VM backends. Its output must be standard bytecode matching `target.lua_version` (5.3 by default).
+- `lua_library` / `--lua-library`: Matching Lua 5.1 or 5.3 DLL/shared-library path. When set, **takes priority over both executables** for VM bytecode compilation and VM/packer integrity dumps. All VM backends use this path. Missing, incompatible or failing libraries cause an error without executable fallback. Calls run in an isolated Python worker with a 120-second timeout.
+
+Set **Lua library** in the GUI to the desired DLL/shared-library path; the
+executable fields may stay empty. The library must match Python's architecture.
+Lua 5.3 requires 64-bit size_t, 64-bit Lua integers and double numbers.
+Lua 5.1 requires standard binary64 numbers and accepts 32-bit or 64-bit size_t.
+
+The library host opens standard Lua libraries. Application-specific APIs are
+not generally available, so final scripts should also be tested in their target
+application. Source code is compiled without executing it; integrity dump
+generation executes only the generated wrapper to obtain its function.
+Supported format-2 dumps are decoded into standard Lua 5.3 bytes for stable
+integrity checks without changing the runtime's dump mode.
+
+Python consumers can call `pipeline.toolchain.run_library(script)` to execute a
+script in the isolated DLL host (Lua errors propagate; no result values are returned).
+The adapter follows the [Lua 5.3 C API](https://www.lua.org/manual/5.3/manual.html#4).
+
+CLI overrides take precedence over the selected profile. Omitted/null executable
+options search `bin/` first, then PATH for Lua 5.3. The experimental Lua 5.1
+build adapter defaults to Lupa when no explicit tools are supplied. Explicit executable values accept file
+paths or command names on PATH; missing explicit tools fail without fallback.
+Relative paths are relative to the process working directory (CLI and GUI), and
+`~` is expanded. Tools are resolved when used, so source-only passes and config
+inspection do not require Lua binaries. GUI settings are under **Lua toolchain**.
+
+Use matching Lua 5.3 interpreter/compiler builds and a matching target runtime:
+VM/packer integrity checks depend on `string.dump` output. Selecting an arbitrary
+executable does not select another Lua version. Choose `--lua-version 5.1`
+for experimental Lua 5.1 VM output with matching 5.1 tools; packing remains
+unavailable. See [Lua targets](docs/lua-targets.md) for current
+limits and external toolchain tests. Lua 5.4 and LuaJIT chunks are unsupported.
 
 ## Testing
 

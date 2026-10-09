@@ -27,9 +27,16 @@ substantial build/runtime cost; use `high` rather than assuming `max` is a bound
 production preset. Do not edit finalized loader/runtime code after hashes are
 computed.
 
+Decoding uses bounded byte buffers and a 32 KiB DEFLATE history window instead
+of one table entry for every output byte. Packed VM loaders with an explicit
+MemeStrings-before-NumberObf order evaluate generated constant arithmetic and
+strings once inside the keyed loader, retaining the complete expressions and
+their normal numeric depth. Other output-pass orders keep their existing path.
+
 ## Verification and implementation
 
 `test/run_packer_regression.py` covers source-only and VM semantics, signatures,
-randomized builds, tamper cases and a runtime budget. MOV regression additionally
+randomized builds, tamper cases, stored/fixed/dynamic DEFLATE window boundaries
+and a runtime budget. MOV regression additionally
 checks its CLI packing path. Both run through `python test/run_ci.py`.
 Implementation: [packer.py](../../obfuscator/passes/packer.py).

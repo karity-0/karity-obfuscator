@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -11,7 +10,6 @@ from lua_runtime import lua_executable
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-LUA = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
 SCRIPTS = (
     "09_table.lua",
     "10_function.lua",

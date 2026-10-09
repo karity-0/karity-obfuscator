@@ -31,6 +31,14 @@ class Scope:
             scope = scope.parent
         return None
 
+    def is_implicit(self, name):
+        scope = self
+        while scope is not None:
+            if name in scope.names:
+                return scope.names[name] is None
+            scope = scope.parent
+        return False
+
 
 def _first(node, typ):
     return next((c for c in node.named_children if c.type == typ), None)
@@ -50,7 +58,7 @@ def _is_reference(node):
     return True
 
 
-def resolve_bindings(ctx):
+def resolve_bindings(ctx, *, free_environments=None):
     """Return symbolic bindings, free names, literals and traversal statistics."""
     if ctx.root.has_error:
         raise ValueError('Cannot rename Lua source with syntax errors')
@@ -80,6 +88,8 @@ def resolve_bindings(ctx):
                 binding = scope.resolve(name)
                 if binding is None:
                     reserved.add(name)
+                    if free_environments is not None:
+                        free_environments[node.id] = None if scope.is_implicit(name) else scope.resolve('_ENV')
                 else:
                     binding.nodes.append(node)
             continue
@@ -183,6 +193,26 @@ def rename_script_ts(script: str, *, seed=None, readable=None) -> str:
     return rename_with_ctx(_ts_parse(script), seed=seed, readable=readable)
 
 
+def qualify_runtime_globals(script: str) -> str:
+    """Prevent an embedded runtime from capturing surrounding source locals.
+
+    This runs before integrity finalization. Explicit _ENV accesses compile in
+    the runtime's own environment even if user locals shadow math/type/string.
+    """
+    ctx = _ts_parse(script)
+    bindings, _, _, _, _ = resolve_bindings(ctx)
+    bound = {node.id for binding in bindings for node in binding.nodes}
+    # _LS is bound by the late line-state emitter after this pass. self is an
+    # implicit method parameter whose declaration has no identifier token.
+    replacements = [
+        (ctx.cs(node), ctx.ce(node), "_ENV." + ctx.text(node))
+        for node in ctx.walk()
+        if node.type == "identifier" and node.id not in bound and _is_reference(node)
+        and ctx.text(node) not in {"_ENV", "self", "_LS"}
+    ]
+    return _apply_replacements_once(script, replacements)
+
+
 def rename_replacements_with_ctx(ctx, **options) -> list[Replacement]:
     return rename_plan_with_ctx(ctx, **options)[0]
 
@@ -192,17 +222,18 @@ def rename_plan_with_ctx(ctx, **options):
     return replacements, literals
 
 
-def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=()):
+def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=(), keep=None):
     options = RENAME_OPTIONS.get()
     seed = options.get('seed') if seed is None else seed
     readable = options.get('readable', False) if readable is None else readable
     start = time.perf_counter()
     bindings, free, literals, scopes, identifiers = resolve_bindings(ctx)
     collected = time.perf_counter()
-    allocator = NameAllocator(free | set(reserved), seed=seed, readable=readable)
+    kept = {id(b) for b in bindings if keep is not None and keep(b)}
+    allocator = NameAllocator(free | set(reserved) | {b.original for b in bindings if id(b) in kept}, seed=seed, readable=readable)
     # Unique names across the chunk also prevent accidental upvalue capture.
     ordered = sorted(bindings, key=lambda b: -len(b.nodes))
-    names = [(b, b.original if b.original == '_ENV' else allocator.allocate(b.original))
+    names = [(b, b.original if b.original == '_ENV' or id(b) in kept else allocator.allocate(b.original))
              for b in ordered]
     allocated = time.perf_counter()
     replacements = [Replacement(ctx.cs(n), ctx.ce(n), name)

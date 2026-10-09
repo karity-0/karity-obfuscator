@@ -1,25 +1,25 @@
 from __future__ import annotations
 
-import os
-import shutil
+import sys
 from pathlib import Path
 
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 
 
-def lua_executable() -> str:
-    """Return the Lua 5.3 executable used by local and CI tests."""
-    bundled = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
-    if bundled.exists():
-        return str(bundled)
+def _toolchain(lua_version: str):
+    # Some scripts import this helper before putting the repository on sys.path.
+    if str(ROOT_DIR) not in sys.path:
+        sys.path.insert(0, str(ROOT_DIR))
+    from obfuscator.toolchain import LuaToolchain
+    return LuaToolchain(lua_version=lua_version)
 
-    for name in ("lua5.3", "lua53", "lua"):
-        system = shutil.which(name)
-        if system:
-            return system
 
-    raise RuntimeError(
-        "Lua interpreter not found "
-        "(checked bundled bin/lua and lua5.3/lua53/lua on PATH)"
-    )
+def lua_executable(lua_version: str = "5.3") -> str:
+    """Use the production bundled/PATH resolver on both Windows and Linux."""
+    return _toolchain(lua_version).lua()
+
+
+def luac_executable(lua_version: str = "5.3") -> str:
+    """Resolve a compiler with the same version-specific toolchain contract."""
+    return _toolchain(lua_version).luac()

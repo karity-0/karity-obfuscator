@@ -15,6 +15,7 @@ from obfuscator.registry import (  # noqa: E402
     get_pass_contexts,
 )
 from obfuscator.vm.backend import VM_BACKENDS, unsupported_vm_options
+from obfuscator.vm.targets.pass_requirements import PASS_REQUIREMENTS
 
 
 OUTPUT = ROOT_DIR / "docs" / "configuration.md"
@@ -234,6 +235,11 @@ def render_pass(name: str, info: dict) -> list[str]:
         PASS_DESCRIPTIONS.get(name, "No description available."),
         "",
     ]
+    if name in PASS_REQUIREMENTS:
+        requirement = PASS_REQUIREMENTS[name]
+        capabilities = ", ".join(sorted(c.value for c in requirement.capabilities))
+        lines.extend([f"**Target requirements:** {capabilities}; minimum compatibility "
+                      f"`{requirement.minimum_compatibility.value}`.", ""])
     if name == "vm":
         lines.extend([VM_DETAILS, ""])
     if name == "rename_obf":
@@ -254,6 +260,11 @@ def render_pass(name: str, info: dict) -> list[str]:
             "nested-function transformation (default: `true`), and",
             "`function_obf_options.nested_max_depth` limits nesting expansion",
             "(default: `4`, valid range: `0..16`).",
+            "",
+            "`cff`, `junk`, `inline`, and `wrapper` are independently selectable",
+            "boolean switches (all default to `true`). Inlining and compound-loop",
+            "transforms run as components of the CFF rewrite. Source directives can",
+            "override these options per function; see [selective protection](selective-obfuscation.md).",
             "",
             "Loop/compound transformation is controlled by `loop_split` (default:",
             "`true`) and `loop_unroll` (default: `true`). Static integer numeric-for",
@@ -300,7 +311,9 @@ def render() -> str:
         "# configuration",
         "",
         "## table of contents",
+        "- [selective protection](#selective-protection)",
         "- [profiles](#profiles)",
+        "- [target](#target)",
         "- [signature](#signature)",
         "- feature passes",
     ]
@@ -311,6 +324,19 @@ def render() -> str:
         lines.append(f"  - [{name}](#{name})")
 
     lines.extend([
+        "",
+        "## selective protection",
+        "Use `selection_modes` to choose `all` (the default for enabled passes) or",
+        "`marked` for `string_obf`, `number_obf`, `boolean_obf`, `table_obf`,",
+        "`function_obf`, and `vm`. Source macros/directives can enable an absent",
+        "pass in marked mode. `selection_profiles` supplies named VM option presets",
+        "in flat configs; named input profiles are also available to VM directives.",
+        "Regions support complete sibling statements, partial function protection,",
+        "and nested native exclusions. Selective VM boundaries require Lua 5.3.",
+        "Selected VM regions with equal effective options share one runtime initialization.",
+        "See the [selective protection guide](selective-obfuscation.md) and",
+        "`config.selective.example.json` for syntax, precedence and limitations.",
+        "`--selection-report PATH` writes original-line application results as JSON.",
         "",
         "## profiles",
         "The default config uses named profiles so test and release builds can switch",
@@ -337,6 +363,36 @@ def render() -> str:
         "",
         "`--seed` is for reproducible test builds. `--release-check` rejects seeded",
         "builds and weak VM settings before writing release output.",
+        "",
+        "## target",
+        "",
+        "`target.lua_version` selects `5.3` (default) or experimental `5.1`;",
+        "`target.environment` selects `standalone` (default) or `cheatengine`.",
+        "The VM backend remains in `vm_options.backend` and is independent of both.",
+        "",
+        "`target.compatibility` accepts `portable`, `runtime_specific` (default),",
+        "or `binary_specific`, in increasing order of permitted dependencies.",
+        "VM and packer function-dump integrity requires a compatible runtime dump ABI,",
+        "so Portable rejects those stages. It does not silently weaken their integrity.",
+        "Current integrity does not fingerprint executable files; binary-specific host",
+        "references are a separate materialization feature.",
+        "`target.disabled_capabilities` can remove APIs unavailable in an embedded host.",
+        "`target.runtime_abi` is optional descriptive metadata, not an ABI verifier.",
+        "",
+        "CLI overrides are `--lua-version`, `--target-environment`, and `--compatibility`.",
+        "The GUI exposes the same choices in Lua toolchain. Selecting Cheat Engine",
+        "declares host capabilities; it does not automatically enable native protection.",
+        "`target.host_images` is an optional list of executable/DLL paths (`--host-image`",
+        "can be repeated). It requires VM, Cheat Engine capabilities and Binary specific.",
+        "Matching immutable byte strings are read from the selected loaded modules;",
+        "other constants retain existing serialization. The resolver uses module RVAs",
+        "and excludes writable, executable, relocated and import-table storage.",
+        "See [host image materialization](host-image-materialization.md) for validation limits.",
+        "",
+        "Lua 5.1 supports explicit matching executables or a library; otherwise it uses Lupa.",
+        "Packing and source passes requiring native bit operators or `_ENV` are",
+        "rejected before compilation. VM output passes run before target adaptation",
+        "and must emit syntax compatible with the final target. See [Lua targets](lua-targets.md).",
         "",
         "## signature",
         "",

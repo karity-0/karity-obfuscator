@@ -11,15 +11,19 @@ not yet a complete MOV-only implementation.
 
 `VMPass(vm_options=...)` normalizes the backend and delegates to `VMBuildPipeline`.
 Its `run(script)` returns protected Lua; `last_profile` reports build phases.
-All backends share compilation, prototype parsing, VM assignment, junk insertion,
-integrity constants, encrypted blob forms, and configured output passes. The
-backend selects instruction lowering and runtime generation. Packing is a separate
-outer pass and also works without a VM.
+All backends share compilation, prototype parsing, Semantic IR construction,
+protection planning, VM assignment, junk insertion, integrity constants,
+encrypted blob forms, and configured output passes. The backend declares its
+capabilities and selects instruction lowering and runtime generation. Packing is
+a separate outer pass and also works without a VM. See the
+[IR architecture and migration map](vm-ir-architecture.md).
 
 ```mermaid
 flowchart TD
     S[Source passes] --> C[luac 5.3 and prototype parsing]
-    C --> A[Junk insertion and prototype-to-VM assignment]
+    C --> I[Backend-neutral Semantic IR]
+    I --> P[Protection plan and capability resolution]
+    P --> A[Junk insertion and prototype-to-VM assignment]
     A --> B{Backend}
     B --> K[Karity graphs and encoded registers]
     B --> L[Classic direct handlers and registers]
@@ -129,6 +133,7 @@ unsupported controls, including values inherited from a profile.
 
 | Option | Karity | Classic | MOV |
 |---|---|---|---|
+| `requirements` | Yes | Yes | Yes |
 | `backend` | Yes | Yes | Yes |
 | `dispatcher_type` | Yes | Yes | No |
 | `dispatcher_target_hiding` | Yes | Yes | No |
@@ -168,7 +173,10 @@ unsupported controls, including values inherited from a profile.
 
 These are architectural trade-offs, not measured speed rankings or security
 scores. Compare identical source, passes, seeds and VM counts on the intended
-runtime. Use `fast-vm` for diagnosis and `high` for practical release settings;
+runtime. Use `dev` for a minimal diagnostic build. The balanced `fast-vm` preset
+adds source function protection and meme arithmetic; their additional integer
+operations also pass through MOV lowering, which can make recursive or repeated
+calls substantially more expensive. `high` adds further protection, while
 `max` remains an experimental profile. `--release-check` validates the controls
 that apply to the chosen backend, not a performance target or resistance proof.
 
@@ -178,3 +186,7 @@ Run `python test/run_ci.py`. Backend tests exercise alias resolution, direct
 Classic dispatchers, multi-VM execution and MOV lookup paths with native fallback
 traps. Independent microcode checks validate shift/division behavior. The suite
 also checks trace removal, generated docs, release configuration and packing.
+MOV CLI smoke tests retain the call-boundary assertions with short recursive and
+tail-call workloads. The backend tests separately execute the original longer
+call-machine fixture; this is not a runtime performance target for protected
+source functions.

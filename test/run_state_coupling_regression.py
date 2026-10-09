@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -12,7 +11,6 @@ from lua_runtime import lua_executable
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT_DIR))
-LUA = ROOT_DIR / "bin" / ("lua.exe" if os.name == "nt" else "lua")
 SCRIPTS = (
     "14_vm_call_machine.lua",
     "18_vm_cross_instruction_semantics.lua",
@@ -72,13 +70,13 @@ def assert_target_transform() -> None:
 
     fixtures = (
         "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
-        "for i in setmetatable({},{__call=function(t)return t end}) do "
+        "--[[VM_DISPATCH_ENTRY]] while true do "
         "if op==7 then return 1 elseif op==19 then return 2 end end end",
         "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
-        "local _H=setmetatable({},{}) _H[7]=function()end "
+        "--[[VM_DISPATCH_ENTRY]] local _H={} _H[7]=function()end "
         "_H[19]=function()end return _H[op]() end",
         "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
-        "local _dsm=setmetatable({},{}) if op<=7 then return 1 "
+        "--[[VM_DISPATCH_ENTRY]] if op<=7 then return 1 "
         "elseif op<19 then return 2 end end",
     )
     forbidden = re.compile(r"\bop\s*(?:==|<=|<)\s*\d+|_H\[\d+\]")
@@ -88,6 +86,24 @@ def assert_target_transform() -> None:
             raise AssertionError(f"plain dispatcher target survived: {transformed}")
         if "local _DM=" not in transformed or "local function _ds" not in transformed:
             raise AssertionError("state-coupled target helpers were not emitted")
+    state_site = (
+        "exec=function(...) local _S,_XF,_PR,_SS,_MG={}, {}, {}, {}, {} "
+        "--[[VM_DISPATCH_ENTRY]] _ss_step(_ip,op,A,B,C); "
+        "if op==7 then return 1 end end end"
+    )
+    local_state = apply_dispatch_target_hiding(state_site)
+    assert ";_ds(op)" in local_state and "_MJ._ds(op)" not in local_state
+    native_state = apply_dispatch_target_hiding(state_site, native_state=True)
+    assert ";_MJ._ds(op)" in native_state
+    exact_site = state_site.replace(
+        "--[[VM_DISPATCH_ENTRY]]",
+        "--<<TARGET_KARITY_EXEC_STATE>>\n--[[VM_DISPATCH_ENTRY]]",
+    )
+    exact_state = apply_dispatch_target_hiding(exact_site, native_state=True)
+    assert ";_MJ._ds(op)" in exact_state
+    assert "_peq(_MJ._DV,_pxor(" in exact_state
+    assert "_pxor(_S[611] or 0,_XF[1] or 0)" in exact_state
+    assert "_MJ._c_xor(_S[611]" not in exact_state
 
 
 def main() -> int:

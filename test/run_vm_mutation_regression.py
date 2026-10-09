@@ -11,16 +11,48 @@ from lua_runtime import lua_executable
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from obfuscator.vm.vm_mutation import mutate_handler_body
+from obfuscator.vm.vm_mutation import (
+    mutate_handler_body, mutate_handlers, planned_mutation_seeds,
+)
 
 
 
 def main() -> int:
     assigned_body = """local r,n=make_values(A,B)
-return consume(r,n)"""
+local entry={empty={},r=r,n=n}
+local joined='x'..tostring(entry.n)
+return consume(entry.r,entry.n)+#joined-2"""
     declared_body = """local r,n
 r,n=make_values(A,B)
-return consume(r,n)"""
+local entry={empty={},r=r,n=n}
+local joined='x'..tostring(entry.n)
+return consume(entry.r,entry.n)+#joined-2"""
+
+    # Production mutation topology is keyed by the plan's stable handler ID,
+    # not by a backend-allocated vop or unrelated emitter RNG consumption.
+    for native_state in (False, True):
+        seed = 0x1294A0BD1177CAFE
+        first_seed = planned_mutation_seeds(seed, {17: "alias:13:0"})
+        second_seed = planned_mutation_seeds(seed, {27001: "alias:13:0"})
+        random.seed(1122)
+        before = random.getstate()
+        first = mutate_handlers({17: assigned_body}, native_state=native_state,
+                                planned_seeds=first_seed)[17]
+        assert random.getstate() == before
+        random.getrandbits(64)
+        second = mutate_handlers({27001: assigned_body}, native_state=native_state,
+                                 planned_seeds=second_seed)[27001]
+        assert first == second
+        assert first != mutate_handlers(
+            {17: assigned_body}, native_state=native_state,
+            planned_seeds=planned_mutation_seeds(seed, {17: "alias:13:1"}),
+        )[17]
+    try:
+        mutate_handlers({17: assigned_body}, planned_seeds={})
+    except ValueError as error:
+        assert "identities are incomplete" in str(error)
+    else:
+        raise AssertionError("mutation accepted a missing planned identity")
 
     for seed in range(100):
         random.seed(seed)
@@ -31,6 +63,7 @@ local A,B,Bx,C,sBx,pc,regs=3,7,0,0,0,1,{{}}
 local function make_values(a,b) return {{a,b}},2 end
 local function consume(values,count) return values[1]+values[2]+count end
 local function rset() end
+local function _source_value(value) return value end
 local function run_assigned()
 {assigned}
 end
@@ -60,7 +93,52 @@ assert(run_declared()==12, "declared multi-local handler mutation lost values")
             print(result.stderr, file=sys.stderr)
             return result.returncode or 1
 
-    print("vm mutation regression passed")
+    # The Lua 5.1 Classic executor keeps its handler mutation CFF inside a
+    # target-native region. Exercise the same randomized generator directly
+    # against a 5.1 parser/runtime rather than relying on the generic source
+    # compatibility lowerer to repair generated Lua 5.3 bit syntax.
+    from lupa.lua51 import LuaRuntime
+    native_prelude = '''
+local function _c_u32(v) return v%4294967296 end
+local function _c_bit(a,b,mode)
+  a=_c_u32(a); b=_c_u32(b); local out,p=0,1
+  while a>0 or b>0 do
+    local x=a%2; local y=b%2
+    if (mode==0 and x~=y) or (mode==1 and x==1 and y==1) or (mode==2 and (x==1 or y==1)) then out=out+p end
+    a=math.floor(a/2); b=math.floor(b/2); p=p*2
+  end
+  return out
+end
+local function _c_xor(a,b) return _c_bit(a,b,0) end
+local function _c_and(a,b) return _c_bit(a,b,1) end
+local function _c_or(a,b) return _c_bit(a,b,2) end
+local _MJ={}
+_MJ._c_u32=_c_u32;_MJ._c_xor=_c_xor;_MJ._c_and=_c_and;_MJ._c_or=_c_or
+'''
+    for seed in range(100):
+        random.seed(seed)
+        assigned = mutate_handler_body(assigned_body, [0], native_state=True)
+        declared = mutate_handler_body(declared_body, [0], native_state=True)
+        if any(token in assigned + declared for token in ('<<', '>>', '//', '&', '|')):
+            raise AssertionError(f"native mutation emitted Lua 5.3 syntax for seed {seed}")
+        native_source = native_prelude + f'''
+local A,B,Bx,C,sBx,pc,regs=3,7,0,0,0,1,{{}}
+local function make_values(a,b) return {{a,b}},2 end
+local function consume(values,count) return values[1]+values[2]+count end
+local function rset() end
+local function _source_value(value) return value end
+local function run_assigned()
+{assigned}
+end
+local function run_declared()
+{declared}
+end
+assert(run_assigned()==12, "native assigned mutation lost values")
+assert(run_declared()==12, "native declared mutation lost values")
+'''
+        LuaRuntime(encoding=None).execute(native_source.encode())
+
+    print("vm mutation regression passed native-lua51-seeds=100")
     return 0
 
 

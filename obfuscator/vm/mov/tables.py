@@ -1,7 +1,10 @@
 """Build-time nibble tables; no runtime arithmetic table construction."""
 
 
-STATE_COUNTS = (2, 2, 2, 2, 2, 3, 3, 16, 4, 4)
+# AND/OR/XOR are carry-independent. Their recipes begin with state 0 and
+# always return state 0, so a second identical state row only bloats the MOV
+# extension (two bytes per x/y pair, for each of the three banks and each VM).
+STATE_COUNTS = (2, 2, 1, 1, 1, 3, 3, 16, 4, 4)
 
 
 def banks(encode: tuple[int, ...]) -> list[list]:

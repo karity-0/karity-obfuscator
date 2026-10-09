@@ -2,7 +2,20 @@
 --<<SHARED>>
 local _mov_kits
 local _mov_div_steps=__MOV_DIV_STEPS__
-local _mov_closures=setmetatable({},{__mode="k"})
+local _mov_closures=setmetatable({},{__mode="kv"})
+--<<TARGET_MOV_FLOAT_STORAGE>>
+local function _mov_f64_digits(value,encode)
+    local bits=string.unpack("<i8",string.pack("<d",value))
+    local digits={}
+    for j=0,15 do digits[j]=encode[(bits>>(j*4))&15] end
+    return digits
+end
+local function _mov_f64_from_digits(digits,decode,offset)
+    local bits=0; offset=offset or 0
+    for j=15,0,-1 do bits=(bits<<4)|decode[digits[offset+j]] end
+    return string.unpack("<d",string.pack("<i8",bits))
+end
+--<<ENDTARGET_MOV_FLOAT_STORAGE>>
 local function _mov_uint(r)
     local __VM_HOT_LOOP__=true
     local value,shift=0,0
@@ -79,8 +92,10 @@ end
         local d=_mdigits[i]
         if d then
             if regs[i]~=nil then return regs[i] end
+            --<<TARGET_INTEGER_DIGITS>>
             local v=0
             for j=15,0,-1 do v=(v<<4)|_mdecode[d[j]] end
+            --<<ENDTARGET_INTEGER_DIGITS>>
             regs[i]=v
             return v
         end
@@ -103,10 +118,9 @@ end
         regs[a]=regs[b]; _mdigits[a]=_mdigits[b]; _mstrings[a]=_mstrings[b]
     end
     local function _mov_float_digits(v)
-        local bits=string.unpack("<i8",string.pack("<d",v))
-        local d={}
-        for j=0,15 do d[j]=_mencode[(bits>>(j*4))&15] end
-        return d
+        --<<TARGET_FLOAT_DIGITS>>
+        return _mov_f64_digits(v,_mencode)
+        --<<ENDTARGET_FLOAT_DIGITS>>
     end
     local function _mov_string_nodes(s)
         local node={false}
@@ -171,7 +185,7 @@ end
     local _ma,_mresume
     local _mselect={}
 --<<LOOP>>
-    for i in setmetatable({},{__call=function(t)return t end}) do
+    --[[VM_DISPATCH_ENTRY]] while true do
         local q=_mtape[_mp]; _mp=_mp+1
         local kind=q[1]
         if kind==__MOV_MOVE__ then
@@ -278,9 +292,9 @@ end
             _mstrings[_ma]=_ms[322][4]; _mdigits[_ma]=nil; regs[_ma]=nil
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==9 then
-            local bits=0
-            for j=15,0,-1 do bits=(bits<<4)|_mdecode[_ms[64+j]] end
-            rset(_ma,(string.unpack("<d",string.pack("<i8",bits))))
+            --<<TARGET_FLOAT_RESULT>>
+            rset(_ma,_mov_f64_from_digits(_ms,_mdecode,64))
+            --<<ENDTARGET_FLOAT_RESULT>>
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==0 then
             pc=q[3]
