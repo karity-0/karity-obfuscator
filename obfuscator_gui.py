@@ -11,6 +11,7 @@ import webview
 
 from obfuscator import Pipeline, __version__
 from obfuscator.profiling import Profiler
+from obfuscator.gui_execution import LuaExecution
 from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
     CONFIG_PASS_LISTS,
@@ -33,8 +34,11 @@ PREFERENCES_PATH = ROOT_DIR / "obf_gui_preferences.json"
 PROJECT_CONFIG_PATH = ROOT_DIR / "config.json"
 EXAMPLE_CONFIG_PATH = ROOT_DIR / "config.example.json"
 
-THEMES = ("light", "dark", "deepdark", "system", "classic")
+THEME_CATALOG = json.loads((WEB_DIR / "themes.json").read_text(encoding="utf-8"))
+THEMES = tuple(THEME_CATALOG)
 _DEFAULT_PREFERENCES = {
+    "gui_version": "v2",
+    "language": "ko",
     "theme": "system",
     "density": "comfortable",
     "editor_font_size": 12,
@@ -149,7 +153,12 @@ def _protection_levels(profiles: dict[str, dict]) -> dict[str, dict]:
         "semantic_diversity_rate": 0.55,
     }
     maximum = copy.deepcopy(profiles.get("max", {}).get("vm_options", strong))
-    return {"light": light, "balanced": balanced, "strong": strong, "maximum": maximum}
+    return {
+        name: {**fallback, **profiles.get(profile, {}).get("vm_options", {})}
+        for name, profile, fallback in (
+            ("light", "dev", light), ("balanced", "fast-vm", balanced),
+            ("strong", "high", strong), ("maximum", "max", maximum))
+    }
 
 
 def _range_bounds(info: dict, default) -> tuple[float | int, float | int, float | int]:
@@ -218,7 +227,7 @@ def _pass_meta() -> list[dict]:
 
 def _initial_state(profiles: dict[str, dict], default_profile: str | None) -> dict:
     selected = default_profile if default_profile in profiles else next(iter(profiles), None)
-    level_for_profile = {"dev": "light", "fast-vm": "balanced", "max": "maximum"}
+    level_for_profile = {"dev": "light", "fast-vm": "balanced", "high": "strong", "max": "maximum"}
     return {
         "preset": selected or "custom",
         "protection_level": level_for_profile.get(selected, "custom"),
@@ -231,8 +240,17 @@ def _normalize_preferences(value: object) -> dict:
     """Return a small, forward-compatible and safe GUI preference object."""
     source = value if isinstance(value, dict) else {}
     preferences = copy.deepcopy(_DEFAULT_PREFERENCES)
-    if source.get("theme") in THEMES:
-        preferences["theme"] = source["theme"]
+    if source.get("gui_version") in ("v1", "v2"):
+        preferences["gui_version"] = source["gui_version"]
+    if source.get("language") in ("ko", "en"):
+        preferences["language"] = source["language"]
+    theme = source.get("theme")
+    if theme == "white":
+        theme = "light"
+    elif theme == "pyobf-dark":
+        theme = "dark"
+    if theme in THEMES:
+        preferences["theme"] = theme
     if source.get("density") in ("comfortable", "compact"):
         preferences["density"] = source["density"]
     if source.get("motion") in ("system", "reduced", "full"):
@@ -262,6 +280,7 @@ class Api:
     """Backend exposed to JavaScript through window.pywebview.api."""
 
     def __init__(self):
+        self._execution = LuaExecution()
         self._restore_geometry: tuple[int, int, int, int] | None = None
         self._is_maximized = False
 
@@ -284,12 +303,14 @@ class Api:
                              "release_check": False, "config": _complete_config(saved)}
             except Exception:
                 pass
+        state["config"].setdefault("_selection_profiles", copy.deepcopy(root.get("profiles", {})))
         return {
             "state": state, "profiles": profiles, "protection_levels": levels,
             "passes": _pass_meta(), "vm_options": _vm_option_meta(),
             "profile_source": source, "backend_aliases": dict(VM_BACKEND_ALIASES),
             "preferences": _load_preferences(),
             "preference_defaults": _normalize_preferences({}),
+            "themes": copy.deepcopy(THEME_CATALOG),
         }
 
     def save_preferences(self, preferences: dict):
@@ -335,9 +356,11 @@ class Api:
         config = _complete_config(payload.get("config", {}))
         if not script.strip():
             return {"ok": False, "error": "입력 스크립트가 비어있습니다."}
-        if not config["passes"]:
-            return {"ok": False, "error": "선택된 패스가 없습니다."}
         try:
+            if not config["passes"]:
+                from obfuscator.selection import SelectionPlan
+                if not SelectionPlan(script, config.get("selection_modes")).active:
+                    return {"ok": False, "error": "패스를 선택하거나 보호 마커를 추가하세요."}
             validate_config(config)
             if payload.get("release_check"):
                 validate_release_config(config)
@@ -350,6 +373,26 @@ class Api:
                     "profile": profiler.as_dict(), "warnings": config_warnings(config)}
         except Exception:
             return {"ok": False, "error": traceback.format_exc()}
+
+    def start_execution(self, payload: dict):
+        try:
+            script = payload.get("script", "")
+            config = payload.get("config", {})
+            if payload.get("target") == "source":
+                from obfuscator.selection import SelectionPlan
+                script = SelectionPlan(script, config.get("selection_modes")).source
+            return self._execution.start(script, config, payload.get("source_path", ""))
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    def poll_execution(self, run_id: str, cursor: int = 0):
+        return self._execution.poll(run_id, cursor)
+
+    def send_execution_input(self, run_id: str, value: str):
+        return self._execution.send_input(run_id, value)
+
+    def stop_execution(self, run_id: str):
+        return self._execution.stop(run_id)
 
     def save_output(self, content: str, default_name: str = "obfuscated.lua"):
         path = self.pick_save_path(default_name)
@@ -380,15 +423,21 @@ class Api:
             self._is_maximized = True
 
     def window_close(self):
+        self._execution.close()
         webview.windows[0].destroy()
 
 
 def main():
-    webview.create_window(
+    api = Api()
+    window = webview.create_window(
         "Karity Obfuscator", (WEB_DIR / "index.html").resolve().as_uri(),
-        js_api=Api(), width=1440, height=900, min_size=(1040, 680),
+        js_api=api, width=1440, height=900, min_size=(1040, 680),
         background_color="#070a12", frameless=True, easy_drag=False)
-    webview.start(debug=False)
+    window.events.closed += api._execution.close
+    try:
+        webview.start(debug=False)
+    finally:
+        api._execution.close()
 
 
 if __name__ == "__main__":

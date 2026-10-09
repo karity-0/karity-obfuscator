@@ -34,8 +34,8 @@ install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 
 | Profile | Intended use | VM | Trade-off |
 |---|---|---:|---|
-| `dev` | Fast source-level iteration | No, by default | Fastest builds and easiest debugging |
-| `fast-vm` | VM behavior checks and routine protected builds | Single lightweight VM | Moderate output and runtime cost |
+| `dev` / 빠르게 | StripInfo + Minify, minimal VM protection | One Karity VM | Lowest VM preset overhead |
+| `fast-vm` / 균형 | Adds meme strings, function obfuscation, anti-debug/decompile | One Karity VM | Low-rate runtime diversity |
 | `high` | Strong production-oriented protection | Two diversified VMs | High build and output cost; practical alternative to `max` |
 | `max` | Experimental research and extreme protection combinations | Three diversified VMs | Unbounded build time and output growth; not intended for routine production use |
 
@@ -46,13 +46,27 @@ python main.py input.lua --profile high
 python main.py input.lua --profile max --release-check
 ```
 
-`high` is the strongest preset intended for practical use. It enables the full
-source protection and packing stack with two diversified VMs, while avoiding
-the most explosive VM and packer output-pass combinations used by `max`.
+Every preset applies StripInfo and Minify to source and VM output. All four use
+random blob forms, mixed dispatchers and mixed function boundaries, without a
+fixed seed.
+StripInfo replaces redundant rename/comment-removal passes. `high` adds string,
+number, boolean, table and localization passes, plus all VM protection switches.
+`max` adds string encoding, packing, more variants and heavier output transforms.
+Its VM and packer output apply meme strings before the normal number emitter; other
+configurations keep the existing number-then-meme behavior. This prevents meme
+expansion of generated number expressions without restricting numeric depth or
+random dispatcher choices.
+For packed VM output, generated constant arithmetic and strings stay inside
+the keyed loader and are evaluated once for reuse. The packer decodes bytes in chunks and keeps
+only the 32 KiB DEFLATE history window as individual table entries.
+Trace diagnostics stay off and numeric rates increase without forcing 100%.
+
+`high` uses two diversified VMs without packing; `max` uses three VMs plus packing.
 
 `max` is an experimental research profile. It deliberately combines the most
 aggressive stages and has no build-time or output-size target; very long builds
-are expected. Use `high`, `fast-vm`, or a tuned custom profile for routine
+are expected. Full packer output transforms also substantially increase startup
+cost for large payloads. Use `high`, `fast-vm`, or a tuned custom profile for routine
 protected builds. `--release-check` validates release-safety constraints, but
 does not turn `max` into the recommended production profile.
 
@@ -232,6 +246,26 @@ python obfuscator_gui.py
 
 The GUI exposes the same profile-based configuration used by the CLI.
 
+The default v2 layout uses a horizontal preset bar, a tabbed code canvas, an
+optional split view, a separate build-settings drawer, and a central run dock.
+Switch between **v1** and **v2** in **Preferences → GUI**; switching keeps the
+current source, output, and build settings.
+
+The **＋ 마커** tool above the source editor inserts literal macros, function
+directives, VM regions, and exclusions around selected code. Optional inline
+arguments support custom function/VM options and named profiles. Markers are
+always recognized in both layouts, including builds without manually enabled
+passes; no marker enable switch is needed.
+
+
+Use **▶** in either editor to execute source (**F5**) or output (**Shift+F5**).
+The console streams stdout/stderr, accepts stdin, and has stop, clear and collapse
+controls. A separate process runs a temporary snapshot, using the opened source
+file's directory as its working directory (otherwise the project directory).
+Source markers are lowered before execution. The configured Lua library takes
+priority over the Lua executable; Lua 5.1 can use the existing Lupa fallback.
+Closing the app stops execution.
+
 ![GUI](images/5.png)
 
 Choose a complete build preset (`dev`, `fast-vm`, `high`, or `max`) or apply an
@@ -240,11 +274,19 @@ option can also be edited directly; manual changes automatically switch the
 affected selector to `<Custom>`. VM controls are generated from the central
 option registry so newly registered options stay in sync with the CLI.
 
-The appearance menu in the title bar provides Light, Dark, Deep dark, System,
-and the original green terminal-style Classic theme, along with layout density,
-editor font size, motion, and section-memory controls. These GUI preferences are
-saved automatically to `obf_gui_preferences.json`; source text is never
-persisted automatically.
+Preferences separates **Theme**, **GUI**, **Editor**, and **General**. Theme tiles
+preview the actual palette. Light, Dark, Deep dark, System, and Classic remain
+available alongside Crystal, Ocean, Dracula, Mythic, and Crimson from pyobf.
+The grid starts with System and flows from light to dark across two rows.
+Saved pyobf White/Dark preferences migrate to Light/Dark. The colors
+are bundled in `gui/web/themes.json`; pyobf is not a runtime dependency.
+Korean and English interface languages, layout density, editor font size, motion,
+and section memory save automatically to `obf_gui_preferences.json`.
+
+Both editors include local Lua syntax highlighting and line numbers, including
+compile-time protection markers, long strings, and long comments. Only visible
+rows and columns render, keeping large generated scripts responsive. Source
+text is never persisted automatically, and highlighting never modifies it.
 
 ## Configuration
 
@@ -355,7 +397,7 @@ The most important performance controls are:
 | `semantic_diversity_rate` | Fraction of eligible aliases using alternate semantic lowering |
 | `vm_count` | Number of independent interpreters; strongly affects output and build size |
 
-Start with `fast-vm`, then use `high` when the full protection and packing stack
+Start with `fast-vm`, then use `high` when stronger source and VM protection
 is required. Increase individual option families only after profiling the
 protected program's real workload. A maximum setting in every category is
 rarely the best performance/security balance.

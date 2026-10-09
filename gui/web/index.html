@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ko">
+<html lang="ko" data-gui-version="v2" data-editor-view="source">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -30,7 +30,17 @@
 
   <div class="workspace">
     <aside class="settings-rail">
+      <header class="settings-drawer-head v2-only"><strong>빌드 설정</strong><button id="settings-close" class="button tiny ghost" aria-label="닫기">×</button></header>
       <div class="rail-scroll">
+        <section class="quick-setup v2-only">
+          <span class="eyebrow">PROTECTION</span>
+          <h1>보호 설정</h1>
+          <div id="quick-presets" class="preset-grid" aria-label="보호 프리셋"></div>
+          <span id="quick-preset-status" class="quick-status"></span>
+        </section>
+        <details id="advanced-settings" class="advanced-settings">
+          <summary>고급 설정</summary>
+          <div class="advanced-body">
         <section class="hero-card">
           <span class="eyebrow">BUILD CONFIGURATION</span>
           <h1>Protection setup</h1>
@@ -131,6 +141,8 @@
         </details>
 
         <div id="vm-option-groups"></div>
+          </div>
+        </details>
       </div>
 
       <footer class="rail-footer">
@@ -141,6 +153,17 @@
     </aside>
 
     <main class="main-stage">
+      <section id="workspace-toolbar" class="workspace-toolbar v2-only">
+        <div id="preset-toolbar-slot"></div>
+        <button id="settings-open" class="button ghost" title="빌드 설정">⚒ <span>설정</span></button>
+      </section>
+      <nav class="editor-view-tabs v2-only" aria-label="작업 화면">
+        <div role="tablist" aria-label="코드 보기">
+          <button id="source-view" role="tab" aria-selected="true">코드</button>
+          <button id="output-view" role="tab" aria-selected="false" tabindex="-1">결과 <span id="result-dot"></span></button>
+        </div>
+        <button id="split-view" class="button tiny ghost" aria-pressed="false" title="나란히 보기">◫</button>
+      </nav>
       <section class="overview-bar">
         <div>
           <span class="eyebrow">ACTIVE BUILD</span>
@@ -164,75 +187,130 @@
       <section class="editors">
         <article class="editor-card">
           <header class="editor-header">
-            <div><span class="editor-kicker">SOURCE</span><span id="input-filename" class="filename"></span></div>
+            <div><span class="editor-kicker">Source</span><span id="input-filename" class="filename"></span></div>
             <div class="editor-actions">
+              <button id="execute-source-btn" class="button tiny execute-button" title="원본 실행 (F5)" aria-label="원본 실행 (F5)">▶</button>
               <button id="open-file-btn" class="button tiny">Open</button>
               <button id="clear-input-btn" class="button tiny ghost">Clear</button>
             </div>
           </header>
-          <textarea id="input-script" class="code-editor" spellcheck="false" placeholder="-- Lua 5.3 source
+          <details id="marker-tools" class="marker-tools">
+            <summary title="선택한 코드에 보호 마커 삽입">＋ 마커</summary>
+            <div class="marker-popover">
+              <div class="marker-caption">선택 보호 <span>항상 적용</span></div>
+              <label class="field-label" for="marker-kind">종류</label>
+              <select id="marker-kind" class="select-control">
+                <option value="STRING_OBF">문자열</option><option value="NUMBER_OBF">숫자</option>
+                <option value="BOOLEAN_OBF">불리언</option><option value="TABLE_OBF">테이블</option>
+                <option value="VM_START">VM 영역</option><option value="FUNCTION_OBF">함수</option>
+                <option value="FUNCTION_OBF_START">함수 내부 영역</option><option value="VM">파일 전체 VM</option>
+                <option value="NO_VM">함수 VM 제외</option><option value="NO_VM_START">영역 VM 제외</option>
+                <option value="NO_OBF_START">영역 보호 제외</option>
+              </select>
+              <label id="marker-options-label" class="field-label" for="marker-options">옵션</label>
+              <input id="marker-options" class="text-control" placeholder='예: junk_rate=0.05' aria-label="커스텀 마커 옵션">
+              <p id="marker-hint" class="marker-hint" aria-live="polite"></p>
+              <button id="insert-marker-btn" class="button secondary">삽입</button>
+            </div>
+          </details>
+          <textarea id="input-script" class="code-editor" spellcheck="false" data-v2-placeholder="Lua 코드를 붙여넣거나 파일을 여세요." placeholder="-- Lua 5.3 source
 print(&quot;hello, karity&quot;)"></textarea>
         </article>
 
         <article class="editor-card output-card">
           <header class="editor-header">
-            <div><span class="editor-kicker">PROTECTED OUTPUT</span><span id="output-stats" class="filename"></span></div>
+            <div><span class="editor-kicker">Output</span><span id="output-stats" class="filename"></span></div>
             <div class="editor-actions">
+              <button id="execute-output-btn" class="button tiny execute-button" title="결과 실행 (Shift+F5)" aria-label="결과 실행 (Shift+F5)">▶</button>
               <button id="copy-output-btn" class="button tiny ghost">Copy</button>
               <button id="save-output-btn" class="button tiny">Save</button>
             </div>
           </header>
-          <textarea id="output-script" class="code-editor output" spellcheck="false" readonly placeholder="Protected output will appear here."></textarea>
+          <textarea id="output-script" class="code-editor output" spellcheck="false" readonly data-v2-placeholder="난독화 결과가 여기에 표시됩니다." placeholder="Protected output will appear here."></textarea>
         </article>
       </section>
 
+      <section id="execution-console" class="execution-console" hidden aria-label="실행 콘솔">
+        <header class="console-header">
+          <strong>콘솔</strong><span id="execution-status" role="status"></span>
+          <div class="console-actions">
+            <button id="execution-stop" class="button tiny ghost" title="실행 중지" aria-label="실행 중지" disabled>■</button>
+            <button id="console-clear" class="button tiny ghost" title="콘솔 지우기" aria-label="콘솔 지우기">⌫</button>
+            <button id="console-hide" class="button tiny ghost" title="콘솔 접기" aria-label="콘솔 접기">⌄</button>
+          </div>
+        </header>
+        <pre id="console-output" class="console-output" tabindex="0" aria-label="실행 출력"></pre>
+        <form id="console-input-form" class="console-input-form">
+          <span>›</span><input id="console-input" autocomplete="off" spellcheck="false" maxlength="4096" placeholder="입력 후 Enter" aria-label="실행 입력" disabled>
+          <button id="console-send" class="button tiny ghost" title="입력 보내기" aria-label="입력 보내기" disabled>↵</button>
+        </form>
+      </section>
+
       <footer class="run-dock">
+        <button id="console-toggle" class="button tiny ghost console-toggle" title="실행 콘솔" aria-label="실행 콘솔" aria-expanded="false">›_</button>
         <div class="status-wrap">
           <span id="status-indicator" class="status-indicator"></span>
           <div><span id="status-msg">Ready</span><small id="profile-summary">Configure a build or choose a preset.</small></div>
         </div>
-        <label class="release-check"><input id="release-check" type="checkbox"><span>Release check</span></label>
-        <button id="run-btn" class="button primary"><span>Karitify</span><span class="run-arrow">→</span></button>
+        <label class="release-check" title="배포용 보안 설정 검사"><input id="release-check" type="checkbox"><span>Release check</span></label>
+        <button id="run-btn" class="button primary"><span>Obfuscate</span><span class="run-arrow">→</span></button>
       </footer>
     </main>
   </div>
 </div>
 
+<div id="settings-backdrop" class="settings-backdrop hidden"></div>
 <div id="tooltip" class="tooltip"></div>
 <div id="preferences-overlay" class="preferences-overlay hidden" role="presentation">
   <section class="preferences-panel" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
     <header class="preferences-header">
-      <div><span class="eyebrow">GUI PREFERENCES</span><h2 id="preferences-title">Appearance</h2></div>
+      <div><span class="eyebrow">PREFERENCES</span><h2 id="preferences-title">환경설정</h2></div>
       <button id="preferences-close" class="button tiny ghost" aria-label="환경설정 닫기">Close</button>
     </header>
-    <div class="preferences-body">
-      <label class="preference-row" for="theme-select">
-        <span><strong>Theme</strong><small>앱 색상 테마</small></span>
-        <select id="theme-select" class="select-control">
-          <option value="light">Light</option><option value="dark">Dark</option>
-          <option value="deepdark">Deep dark</option><option value="system">System</option>
-          <option value="classic">Classic</option>
-        </select>
-      </label>
+    <div class="preference-tabs" role="tablist" aria-label="환경설정">
+      <button id="appearance-tab" role="tab" aria-selected="true" aria-controls="appearance-panel" class="active">테마</button>
+      <button id="gui-tab" role="tab" aria-selected="false" aria-controls="gui-panel" tabindex="-1">GUI</button>
+      <button id="editor-tab" role="tab" aria-selected="false" aria-controls="editor-panel" tabindex="-1">편집기</button>
+      <button id="general-tab" role="tab" aria-selected="false" aria-controls="general-panel" tabindex="-1">일반</button>
+    </div>
+    <div id="gui-panel" class="preferences-body hidden" role="tabpanel" aria-labelledby="gui-tab">
+      <div class="gui-choices" aria-label="GUI 디자인">
+        <button class="gui-choice" data-gui-choice="v1" aria-pressed="false"><span class="design-mini design-v1" aria-hidden="true"><i></i><i></i><i></i></span><strong>v1</strong></button>
+        <button class="gui-choice" data-gui-choice="v2" aria-pressed="true"><span class="design-mini design-v2" aria-hidden="true"><i></i><i></i><i></i></span><strong>v2</strong></button>
+      </div>
       <label class="preference-row" for="density-select">
-        <span><strong>Density</strong><small>설정 패널 간격</small></span>
+        <span><strong>간격</strong></span>
         <select id="density-select" class="select-control">
           <option value="comfortable">Comfortable</option><option value="compact">Compact</option>
         </select>
       </label>
+      <label class="preference-row choice" for="remember-sections">
+        <span><strong>설정 그룹 상태 기억</strong></span>
+        <input id="remember-sections" type="checkbox">
+      </label>
+    </div>
+    <div id="appearance-panel" class="preferences-body" role="tabpanel" aria-labelledby="appearance-tab">
+      <div id="theme-grid" class="theme-grid" aria-label="테마"></div>
+    </div>
+    <div id="editor-panel" class="preferences-body hidden" role="tabpanel" aria-labelledby="editor-tab">
+      <pre class="editor-sample"><code><span class="token-comment">-- Karity</span>
+<span class="token-keyword">local function</span> <span class="token-function">greet</span>(name)
+  <span class="token-keyword">return</span> <span class="token-string">"hello, "</span> .. name, <span class="token-number">42</span>
+<span class="token-keyword">end</span></code></pre>
       <label class="preference-row" for="editor-font-size">
-        <span><strong>Editor font</strong><small><span id="editor-font-value">12</span>px</small></span>
+        <span><strong>글자 크기</strong><small><span id="editor-font-value">12</span>px</small></span>
         <input id="editor-font-size" class="range-control" type="range" min="10" max="18" step="1">
       </label>
+    </div>
+    <div id="general-panel" class="preferences-body hidden" role="tabpanel" aria-labelledby="general-tab">
+      <label class="preference-row" for="language-select"><span><strong>언어</strong></span>
+        <select id="language-select" class="select-control"><option value="ko">한국어</option><option value="en">English</option></select>
+      </label>
       <label class="preference-row" for="motion-select">
-        <span><strong>Motion</strong><small>애니메이션 효과</small></span>
+        <span><strong>애니메이션</strong></span>
         <select id="motion-select" class="select-control">
           <option value="system">System</option><option value="reduced">Reduced</option><option value="full">Full</option>
         </select>
-      </label>
-      <label class="preference-row choice" for="remember-sections">
-        <span><strong>Remember sections</strong><small>접거나 펼친 설정 그룹 복원</small></span>
-        <input id="remember-sections" type="checkbox">
       </label>
     </div>
     <footer class="preferences-footer">
@@ -241,6 +319,8 @@ print(&quot;hello, karity&quot;)"></textarea>
     </footer>
   </section>
 </div>
+<script src="i18n.js"></script>
+<script src="editor.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

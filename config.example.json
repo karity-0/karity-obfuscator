@@ -1,5 +1,9 @@
 {
-    "target": {"lua_version": "5.3", "environment": "standalone", "compatibility": "runtime_specific"},
+    "target": {
+        "lua_version": "5.3",
+        "environment": "standalone",
+        "compatibility": "runtime_specific"
+    },
     "lua_executable": null,
     "luac_executable": null,
     "lua_library": null,
@@ -24,73 +28,41 @@
     "profiles": {
         "dev": {
             "passes": [
-                "remove_comment",
-                "string_obf",
-                "number_obf",
-                "rename_obf",
-                "minify"
-            ],
-            "vm_output_passes": [
-                "minify"
-            ],
-            "packer_output_passes": [
-                "minify"
-            ],
-            "vm_options": {
-                "backend": "karity",
-                "dispatcher_type": "ifelseif",
-                "dispatcher_target_hiding": false,
-                "semantic_state_threading": false,
-                "argument_virtualization": false,
-                "upvalue_virtualization": false,
-                "table_virtualization": false,
-                "branch_virtualization": false,
-                "blob_form": "string",
-                "vm_count": 1,
-                "fake_handlers": false,
-                "mutate_handlers": false,
-                "junk_instructions": false,
-                "junk_rate": 0.0,
-                "integrity_constants": false,
-                "integrity_constant_rate": 0.0,
-                "graph_execution_rate": 0.1,
-                "cross_instruction_rate": 0.2,
-                "runtime_polymorphism_rate": 0.2,
-                "runtime_trace": false,
-                "block_variant_rate": 0.08,
-                "block_variant_count": 3,
-                "block_variant_max_instructions": 6,
-                "helper_variant_count": 3,
-                "helper_diversity_rate": 0.35,
-                "semantic_diversity_rate": 0.35
-            }
-        },
-        "fast-vm": {
-            "passes": [
-                "remove_comment",
-                "string_obf",
-                "number_obf",
-                "rename_obf",
+                "strip_info",
                 "minify",
                 "vm"
             ],
             "vm_output_passes": [
-                "rename_obf",
+                "strip_info",
                 "minify"
             ],
             "packer_output_passes": [
+                "strip_info",
                 "minify"
             ],
+            "function_obf_options": {
+                "boundary_mode": "mixed",
+                "nested": false,
+                "nested_max_depth": 1,
+                "loop_split": true,
+                "loop_unroll": false,
+                "loop_unroll_rate": 0.0,
+                "loop_unroll_max_iterations": 4,
+                "loop_max_generated_blocks": 32,
+                "loop_max_expansion_ratio": 32.0,
+                "loop_max_depth": 1
+            },
             "vm_options": {
+                "requirements": {},
                 "backend": "karity",
-                "dispatcher_type": "ifelseif",
+                "dispatcher_type": "mixed",
                 "dispatcher_target_hiding": false,
                 "semantic_state_threading": false,
                 "argument_virtualization": false,
                 "upvalue_virtualization": false,
                 "table_virtualization": false,
                 "branch_virtualization": false,
-                "blob_form": "string",
+                "blob_form": "random",
                 "vm_count": 1,
                 "fake_handlers": false,
                 "mutate_handlers": false,
@@ -98,8 +70,70 @@
                 "junk_rate": 0.0,
                 "integrity_constants": false,
                 "integrity_constant_rate": 0.0,
-                "graph_execution_rate": 0.1,
-                "cross_instruction_rate": 0.15,
+                "graph_execution_rate": 0.0,
+                "cross_instruction_rate": 0.0,
+                "runtime_polymorphism_rate": 0.0,
+                "runtime_trace": false,
+                "block_variant_rate": 0.0,
+                "block_variant_count": 2,
+                "block_variant_max_instructions": 6,
+                "helper_variant_count": 1,
+                "helper_diversity_rate": 0.0,
+                "semantic_diversity_rate": 0.0
+            }
+        },
+        "fast-vm": {
+            "passes": [
+                "strip_info",
+                "anti_debug",
+                "anti_decompile",
+                "function_obf",
+                "meme_strings",
+                "minify",
+                "vm"
+            ],
+            "vm_output_passes": [
+                "strip_info",
+                "function_obf",
+                "meme_strings",
+                "minify"
+            ],
+            "packer_output_passes": [
+                "strip_info",
+                "minify"
+            ],
+            "function_obf_options": {
+                "boundary_mode": "mixed",
+                "nested": false,
+                "nested_max_depth": 1,
+                "loop_split": true,
+                "loop_unroll": false,
+                "loop_unroll_rate": 0.0,
+                "loop_unroll_max_iterations": 4,
+                "loop_max_generated_blocks": 32,
+                "loop_max_expansion_ratio": 32.0,
+                "loop_max_depth": 1
+            },
+            "vm_options": {
+                "requirements": {},
+                "backend": "karity",
+                "dispatcher_type": "mixed",
+                "dispatcher_target_hiding": false,
+                "semantic_state_threading": false,
+                "argument_virtualization": false,
+                "upvalue_virtualization": false,
+                "table_virtualization": false,
+                "branch_virtualization": false,
+                "blob_form": "random",
+                "vm_count": 1,
+                "fake_handlers": false,
+                "mutate_handlers": false,
+                "junk_instructions": false,
+                "junk_rate": 0.0,
+                "integrity_constants": false,
+                "integrity_constant_rate": 0.0,
+                "graph_execution_rate": 0.05,
+                "cross_instruction_rate": 0.1,
                 "runtime_polymorphism_rate": 0.1,
                 "runtime_trace": false,
                 "block_variant_rate": 0.03,
@@ -112,6 +146,7 @@
         },
         "high": {
             "passes": [
+                "strip_info",
                 "anti_debug",
                 "anti_decompile",
                 "function_obf",
@@ -119,23 +154,35 @@
                 "table_obf",
                 "string_obf",
                 "number_obf",
-                "rename_obf",
                 "localize_globals",
+                "meme_strings",
                 "minify",
-                "vm",
-                "pack"
+                "vm"
             ],
             "vm_output_passes": [
-                "rename_obf",
-                "localize_globals",
+                "strip_info",
+                "function_obf",
+                "meme_strings",
                 "minify"
             ],
             "packer_output_passes": [
-                "function_obf",
-                "rename_obf",
+                "strip_info",
                 "minify"
             ],
+            "function_obf_options": {
+                "boundary_mode": "mixed",
+                "nested": true,
+                "nested_max_depth": 2,
+                "loop_split": true,
+                "loop_unroll": true,
+                "loop_unroll_rate": 0.35,
+                "loop_unroll_max_iterations": 4,
+                "loop_max_generated_blocks": 48,
+                "loop_max_expansion_ratio": 64.0,
+                "loop_max_depth": 2
+            },
             "vm_options": {
+                "requirements": {},
                 "backend": "karity",
                 "dispatcher_type": "mixed",
                 "dispatcher_target_hiding": true,
@@ -149,23 +196,24 @@
                 "fake_handlers": true,
                 "mutate_handlers": true,
                 "junk_instructions": true,
-                "junk_rate": 0.3,
+                "junk_rate": 0.2,
                 "integrity_constants": true,
-                "integrity_constant_rate": 0.35,
-                "graph_execution_rate": 0.15,
-                "cross_instruction_rate": 0.4,
-                "runtime_polymorphism_rate": 0.35,
+                "integrity_constant_rate": 0.25,
+                "graph_execution_rate": 0.12,
+                "cross_instruction_rate": 0.3,
+                "runtime_polymorphism_rate": 0.25,
                 "runtime_trace": false,
-                "block_variant_rate": 0.18,
+                "block_variant_rate": 0.12,
                 "block_variant_count": 3,
                 "block_variant_max_instructions": 8,
-                "helper_variant_count": 4,
-                "helper_diversity_rate": 0.7,
-                "semantic_diversity_rate": 0.75
+                "helper_variant_count": 3,
+                "helper_diversity_rate": 0.5,
+                "semantic_diversity_rate": 0.55
             }
         },
         "max": {
             "passes": [
+                "strip_info",
                 "anti_debug",
                 "anti_decompile",
                 "function_obf",
@@ -173,31 +221,49 @@
                 "table_obf",
                 "string_obf",
                 "number_obf",
-                "rename_obf",
                 "localize_globals",
+                "string_encode",
+                "meme_strings",
                 "minify",
                 "vm",
                 "pack"
             ],
             "vm_output_passes": [
-                "function_obf",
-                "rename_obf",
-                "localize_globals",
-                "string_obf",
-                "number_obf",
-                "minify"
-            ],
-            "packer_output_passes": [
+                "strip_info",
                 "function_obf",
                 "boolean_obf",
                 "table_obf",
                 "string_obf",
+                "meme_strings",
                 "number_obf",
-                "rename_obf",
                 "localize_globals",
                 "minify"
             ],
+            "packer_output_passes": [
+                "strip_info",
+                "function_obf",
+                "boolean_obf",
+                "table_obf",
+                "string_obf",
+                "meme_strings",
+                "number_obf",
+                "localize_globals",
+                "minify"
+            ],
+            "function_obf_options": {
+                "boundary_mode": "mixed",
+                "nested": true,
+                "nested_max_depth": 4,
+                "loop_split": true,
+                "loop_unroll": true,
+                "loop_unroll_rate": 0.65,
+                "loop_unroll_max_iterations": 4,
+                "loop_max_generated_blocks": 64,
+                "loop_max_expansion_ratio": 128.0,
+                "loop_max_depth": 3
+            },
             "vm_options": {
+                "requirements": {},
                 "backend": "karity",
                 "dispatcher_type": "mixed",
                 "dispatcher_target_hiding": true,
@@ -214,13 +280,13 @@
                 "junk_rate": 0.3,
                 "integrity_constants": true,
                 "integrity_constant_rate": 0.35,
-                "graph_execution_rate": 0.15,
+                "graph_execution_rate": 0.18,
                 "cross_instruction_rate": 0.4,
                 "runtime_polymorphism_rate": 0.35,
                 "runtime_trace": false,
                 "block_variant_rate": 0.18,
-                "block_variant_count": 3,
-                "block_variant_max_instructions": 8,
+                "block_variant_count": 4,
+                "block_variant_max_instructions": 10,
                 "helper_variant_count": 4,
                 "helper_diversity_rate": 0.7,
                 "semantic_diversity_rate": 0.75
