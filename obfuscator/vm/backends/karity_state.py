@@ -416,7 +416,10 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
     materialized = resolved_pending if not transition.encoded_fast_path else ()
     for register in resolved_pending:
         current = values[register]
-        values[register] = RegisterState(Representation.ENCODED, current.epoch)
+        values[register] = RegisterState(
+            Representation.ENCODED, current.epoch,
+            epochs=current.epochs or (current.epoch,),
+        )
     for register in transition.writes:
         if register == transition.pending_write:
             values[register] = RegisterState(

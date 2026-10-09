@@ -3,10 +3,12 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import random
 import subprocess
 import sys
 import tempfile
 import time
+import zlib
 from pathlib import Path
 from lua_runtime import lua_executable
 
@@ -191,6 +193,35 @@ def test_pack_semantics(ctx: Path):
     assert_same_runtime(ARGS.lua_exe, source, output, ARGS.timeout)
 
 
+def test_inflate_window_boundaries(ctx: Path):
+    # Exercise stored/fixed/dynamic blocks, overlapping copies and references
+    # crossing the 32 KiB history ring. Compare binary output, including NUL.
+    stub = (ROOT_DIR / "obfuscator/passes/pack_stub.lua").read_text(encoding="utf-8")
+    decoder = stub[stub.index("local function _inf(data)"):stub.index("__CTX_SETUP__")]
+    rng = random.Random(1032)
+    block = rng.randbytes(32000)
+    data = block * 3 + b"abc\x00" * 40000 + block + b"tail"
+    for index, (level, strategy) in enumerate([
+        (0, zlib.Z_DEFAULT_STRATEGY),
+        (9, zlib.Z_FIXED),
+        (9, zlib.Z_DEFAULT_STRATEGY),
+    ]):
+        compressor = zlib.compressobj(level, zlib.DEFLATED, -15, 8, strategy)
+        compressed = compressor.compress(data) + compressor.flush()
+        literal = '"' + ''.join(f"\\{byte:03d}" for byte in compressed) + '"'
+        path = ctx / f"inflate_window_{index}.lua"
+        decoded = ctx / f"inflate_window_{index}.bin"
+        path.write_text(
+            "local _byte=string.byte;local _char=string.char;local _concat=table.concat;"
+            + decoder + "local f=assert(io.open(" + json.dumps(decoded.as_posix())
+            + ',"wb"));f:write(_inf(' + literal + "));f:close()",
+            encoding="utf-8",
+        )
+        executed = run_lua(ARGS.lua_exe, path, ARGS.timeout)
+        assert executed.returncode == 0, decode(executed.stderr)
+        assert decoded.read_bytes() == data, f"DEFLATE window mismatch, strategy {strategy}"
+
+
 def test_vm_pack_semantics(ctx: Path):
     source = ctx / "semantic_vm.lua"
     output = ctx / "semantic_vm_pack.lua"
@@ -298,6 +329,7 @@ def test_vm_packer_performance(ctx: Path):
 
 
 TESTS = [
+    ("inflate window boundaries", test_inflate_window_boundaries),
     ("pack semantics", test_pack_semantics),
     ("vm + pack semantics", test_vm_pack_semantics),
     ("single signature header", test_single_signature_header),

@@ -284,6 +284,22 @@ print(f(true))
         self.assertIn('"plain"', b)
         self.assertEqual([], pipeline.last_selection_report)
 
+    def test_compressed_region_keeps_keyword_separator(self):
+        from obfuscator.names import NameAllocator
+        from obfuscator.passes.ts_utils import parse
+        from obfuscator.selection import Span, _apply
+        from obfuscator.statement_regions import lower_region, transport_prelude
+        from obfuscator.passes.base import Replacement
+        for body in ('local x=1; print(x)', 'print(1)'):
+            source = 'if true then ' + body + ' else print("bad") end'
+            span = Span(source.index(' ' + body), source.index(' else'), 'vm')
+            allocator = NameAllocator.for_source(source)
+            _, transport = transport_prelude(allocator, '5.3')
+            region = lower_region(source, parse(source), span, allocator, transport=transport)
+            temporary = _apply(source, [*region.outside, Replacement(span.start, span.end - 1,
+                               region.setup + region.helper + region.left + region.name + '()' + region.right)])
+            self.assertEqual(run(source), run(temporary))
+
     def test_existing_profiles_for_vm_selection(self):
         config = resolve_config_profile({"profile": "source", "profiles": {
             "source": {"passes": []}, "fast-vm": {"vm_options": VM}}})

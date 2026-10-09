@@ -18,30 +18,36 @@ local function _b64(s)
     local map={}
     local al="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
     for i=1,#al do map[_byte(al,i)]=i-1 end
-    local out={}; local on=0
+    local out={}; local on=0; local chunks={}
     local acc=0; local nb=0
     for i=1,#s do
         local v=map[_byte(s,i)]
         if v then
             acc=(acc<<6)|v; nb=nb+6
-            if nb>=8 then nb=nb-8; on=on+1; out[on]=_char((acc>>nb)&0xFF) end
+            if nb>=8 then
+                nb=nb-8; on=on+1; out[on]=_char((acc>>nb)&0xFF)
+                if on==8192 then chunks[#chunks+1]=_concat(out); out={}; on=0 end
+            end
         end
     end
-    return _concat(out)
+    chunks[#chunks+1]=_concat(out)
+    return _concat(chunks)
 end
 
 local function _xor(data,seed)
     local s=(seed|1)&0xFFFFFFFF
-    local out={}
+    local out={}; local on=0; local chunks={}
     for i=1,#data do
         s=(s~((s<<13)&0xFFFFFFFF))&0xFFFFFFFF
         s=(s~(s>>17))&0xFFFFFFFF
         s=(s~((s<<5)&0xFFFFFFFF))&0xFFFFFFFF
         local c=_byte(data,i)
-        out[i]=_char(c~(s&0xFF))
+        on=on+1; out[on]=_char(c~(s&0xFF))
+        if on==8192 then chunks[#chunks+1]=_concat(out); out={}; on=0 end
         s=(s~c~((i*0x9E3779B9)&0xFFFFFFFF))&0xFFFFFFFF
     end
-    return _concat(out)
+    chunks[#chunks+1]=_concat(out)
+    return _concat(chunks)
 end
 
 local function _inf(data)
@@ -60,7 +66,9 @@ local function _inf(data)
         return v
     end
 
-    local out={}; local on=0
+    -- DEFLATE distances never exceed 32768. Keep that history in a ring,
+    -- and save completed windows as strings rather than one slot per byte.
+    local out={}; local on=0; local chunks={}
 
     local function build(lens)
         local count={}; for i=0,15 do count[i]=0 end
@@ -102,7 +110,8 @@ local function _inf(data)
             if sym==256 then break
             elseif sym<256 then
                 on=on+1
-                out[on]=_char(sym)
+                out[((on-1)&0x7FFF)+1]=_char(sym)
+                if (on&0x7FFF)==0 then chunks[#chunks+1]=_concat(out) end
             else
                 sym=sym-256
                 local length=lbase[sym]+bits(lext[sym])
@@ -111,7 +120,8 @@ local function _inf(data)
                 local start=on-dist
                 for i=1,length do
                     on=on+1
-                    out[on]=out[start+i]
+                    out[((on-1)&0x7FFF)+1]=out[((start+i-1)&0x7FFF)+1]
+                    if (on&0x7FFF)==0 then chunks[#chunks+1]=_concat(out) end
                 end
             end
         end
@@ -131,7 +141,8 @@ local function _inf(data)
             if ((len~nlen)&0xFFFF)~=0xFFFF then error("invalid stored block",0) end
             for _=1,len do
                 on=on+1
-                out[on]=_char(_byte(data,pos))
+                out[((on-1)&0x7FFF)+1]=_char(_byte(data,pos))
+                if (on&0x7FFF)==0 then chunks[#chunks+1]=_concat(out) end
                 pos=pos+1
             end
         elseif btype==1 then
@@ -174,7 +185,8 @@ local function _inf(data)
         end
     until final==1
 
-    return _concat(out)
+    if (on&0x7FFF)~=0 then chunks[#chunks+1]=_concat(out,"",1,on&0x7FFF) end
+    return _concat(chunks)
 end
 
 __CTX_SETUP__

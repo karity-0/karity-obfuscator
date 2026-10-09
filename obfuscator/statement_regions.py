@@ -117,7 +117,9 @@ def lower_region(source, ctx, span, allocator, lua_version="5.3", *, transport):
 
     name, packet, packed = [allocator.allocate(h) for h in ("region", "result", "varargs")]
     pack, unpack = transport
-    setup = "local " + ",".join(hoisted.values()) + "\n" if hoisted else ""
+    # A compressed region can own the only separator after then/do/else.
+    # Keep generated declarations and calls separate from the preceding token.
+    setup = "\n" + ("local " + ",".join(hoisted.values()) + "\n" if hoisted else "")
     if varargs:
         setup += f"local {packed}={pack}(...)\n"
         edits.extend(Replacement(ctx.cs(node), ctx.ce(node), f"{unpack}({packed},1,{packed}.n)") for node in varargs)

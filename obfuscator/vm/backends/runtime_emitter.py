@@ -198,7 +198,9 @@ def _dump_function_stripped(
                 lo = max(0, line_no - 24)
                 hi = min(len(lines), line_no + 3)
                 excerpt = "\n" + "\n".join(
-                    f"{i + 1}: {lines[i]}" for i in range(lo, hi)
+                    f"{i + 1}: {lines[i][:600]}" +
+                    (f" … ({len(lines[i]) - 600} characters omitted)" if len(lines[i]) > 600 else "")
+                    for i in range(lo, hi)
                 )
             raise RuntimeError(f"lua dump failed: {error}{excerpt}")
 
@@ -290,6 +292,7 @@ def _obfuscate_vm_output(
     pass_names: list[str],
     *,
     compact_globals: bool = False,
+    protect_vm_dispatcher: bool = True,
 ) -> tuple[str, list[dict]]:
     """Run structural VM passes, shared literal emitters, then text post-passes."""
     from obfuscator.pipeline import Pipeline
@@ -300,9 +303,16 @@ def _obfuscate_vm_output(
     after: list[tuple[str, type]] = []
     emitter_names: list[str] = []
     identifier_names: list[str] = []
+    # Preserve the existing Number -> Meme path. Also honor an explicitly
+    # requested Meme -> Number order without encrypting the visible phrases
+    # or making Meme rewrap Number's generated arithmetic leaves.
+    meme_before_number = (
+        "meme_strings" in pass_names and "number_obf" in pass_names
+        and pass_names.index("meme_strings") < pass_names.index("number_obf")
+    )
 
     for name in pass_names:
-        if name in EMITTER_PASS_NAMES:
+        if name in EMITTER_PASS_NAMES or (name == "meme_strings" and meme_before_number):
             emitter_names.append(name)
             continue
         if name in {"rename_obf", "localize_globals"}:
@@ -316,8 +326,10 @@ def _obfuscate_vm_output(
         cls = info["cls"]
         if cls.__name__ == "VMPass":
             continue
+        # Strip final identifiers/comments only after function transforms: VM
+        # dispatcher labels/comments are compiler sentinels, still needed there.
         # Keep fun phrases visible after the structured string/number emitters.
-        (after if issubclass(cls, PostPass) or name == "meme_strings" else before).append((name, cls))
+        (after if issubclass(cls, PostPass) or name in {"strip_info", "meme_strings"} else before).append((name, cls))
 
     output = script
     details: list[dict] = []
@@ -346,7 +358,7 @@ def _obfuscate_vm_output(
         names: list[str] = []
         for configured_name, cls in entries:
             if cls.__name__ == "FunctionObfuscationPass":
-                pipeline.add(cls(skip_vm_dispatcher=True))
+                pipeline.add(cls(skip_vm_dispatcher=protect_vm_dispatcher))
             else:
                 pipeline.add(cls())
             names.append(configured_name)
@@ -396,7 +408,7 @@ def _obfuscate_vm_output(
 
         configured_name, cls = before.pop(0)
         stage_start = time.perf_counter()
-        function_pass = cls(skip_vm_dispatcher=True)
+        function_pass = cls(skip_vm_dispatcher=protect_vm_dispatcher)
         function_replacements = function_pass.run(output, shared_ctx)
         transformed = apply_replacements(output, function_replacements)
         details.append({
@@ -528,7 +540,8 @@ def _obfuscate_vm_output(
     details.extend(post_details)
 
     # Never expose build-time dispatcher annotations, even without minify.
-    output = output.replace("--[[VM_DISPATCH_ENTRY]]", " ")
+    if protect_vm_dispatcher:
+        output = output.replace("--[[VM_DISPATCH_ENTRY]]", " ")
     return output, details
 
 

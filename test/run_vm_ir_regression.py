@@ -823,6 +823,22 @@ def check_karity_state_model():
     pending_input = materializer.native_inputs[materializer.reads.index(pending.pending_write)]
     assert pending_input.producers == (pending.pc,)
     assert pending_input.epochs == (pending.pc + 1,)
+    # Reading a deferred value resolves its producer, but a later closure
+    # capture still needs the representation epochs carried by that value.
+    from obfuscator.vm.backends.karity_state import _transfer, RegisterState, Representation
+    register = pending.pending_write
+    registers = [RegisterState(Representation.ENCODED, 0, epochs=(0,)) for _ in range(4)]
+    registers[register] = RegisterState(
+        Representation.MAYBE_PENDING, 7, producer=pending.pc,
+        producers=(pending.pc,), epochs=(2, 7),
+    )
+    read_only = replace(materializer, writes=(), captures=(), boxes_created=(), close_from=None)
+    resolved = _transfer(read_only, tuple(registers), frozenset())[0]
+    assert resolved[register].representation == Representation.ENCODED
+    assert resolved[register].epoch == 7 and resolved[register].epochs == (2, 7)
+    capture = replace(read_only, reads=(), captures=(register,), graph_descriptors=())
+    captured = _transfer(capture, resolved, frozenset())[5]
+    assert captured[0].epochs == (2, 7) and captured[0].epoch == 7
     assert all(
         item.operation != "RETURN" or item.native_boundary
         for item in transitions
