@@ -11,11 +11,15 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 모두에서 자동으로 사용 가능해진다.
 """
 from __future__ import annotations
+
+__lazy_modules__ = {"obfuscator", "obfuscator.passes", "obfuscator.vm"}
+
+from collections.abc import Mapping
+
 from .toolchain import LuaToolchain, TOOLCHAIN_KEYS
 
 import re
 
-from .vm import VMPass
 from .vm.backends import backend_choices, backend_capabilities
 from .vm.backend import normalize_vm_backend, unsupported_vm_options, vm_option_resolution
 from .vm.targets.profile import TargetProfile
@@ -28,118 +32,128 @@ from .passes.output_signature import (
     strip_comment_tokens,
 )
 
-from .passes import (
-    StringEncodePass,
-    StringObfuscationPass,
-    NumberObfuscationPass,
-    MemeStringsPass,
-    BooleanObfuscationPass,
-    TableObfuscationPass,
-    FunctionObfuscationPass,
-    RenameObfuscationPass,
-    StripInfoPass,
-    LocalizeGlobalsPass,
-    RemoveCommentPass,
-    MinifyPass,
-    AntiDebugPass,
-    AntiDecompilePass,
-    PackerPass,
-    OutputSignaturePass,
-)
+from . import passes
+from .vm import VMPass
+from .passes import OutputSignaturePass
 
 
-PASS_REGISTRY: dict[str, dict] = {
+class _PassInfo(Mapping):
+    """Expose pass metadata without loading its implementation until cls is read."""
+
+    def __init__(self, metadata):
+        self._metadata = metadata
+        self.class_name = metadata["cls"]
+        self._cls = None
+
+    def __getitem__(self, key):
+        if key == "cls":
+            if self._cls is None:
+                self._cls = (VMPass if self.class_name == "VMPass"
+                             else getattr(passes, self.class_name))
+            return self._cls
+        return self._metadata[key]
+
+    def __iter__(self):
+        return iter(self._metadata)
+
+    def __len__(self):
+        return len(self._metadata)
+
+
+PASS_REGISTRY: dict[str, Mapping] = {
     "strip_info": {
-        "cls": StripInfoPass,
+        "cls": "StripInfoPass",
         "label": "Strip Info",
         "group": "pre",
         "docs": "passes/stripInfo.md",
     },
     "remove_comment": {
-        "cls": RemoveCommentPass,
+        "cls": "RemoveCommentPass",
         "label": "Remove Comment",
         "group": "pre",
     },
     "string_encode": {
-        "cls": StringEncodePass,
+        "cls": "StringEncodePass",
         "label": "Encode String",
         "group": "base",
     },
     "string_obf": {
-        "cls": StringObfuscationPass,
+        "cls": "StringObfuscationPass",
         "label": "String Obfuscation",
         "group": "base",
     },
     "boolean_obf": {
-        "cls": BooleanObfuscationPass,
+        "cls": "BooleanObfuscationPass",
         "label": "Boolean Obfuscation",
         "group": "base",
     },
     "number_obf": {
-        "cls": NumberObfuscationPass,
+        "cls": "NumberObfuscationPass",
         "label": "Number Obfuscation",
         "group": "base",
         "docs": "passes/numberObfuscation.md"
     },
     "meme_strings": {
-        "cls": MemeStringsPass,
+        "cls": "MemeStringsPass",
         "label": "Meme / Fun Strings",
         "group": "base",
         "docs": "passes/memeStrings.md",
     },
     "table_obf": {
-        "cls": TableObfuscationPass,
+        "cls": "TableObfuscationPass",
         "label": "Table Obfuscation",
         "group": "base",
     },
     "function_obf": {
-        "cls": FunctionObfuscationPass,
+        "cls": "FunctionObfuscationPass",
         "label": "Function Obfuscation",
         "group": "base",
         "docs": "passes/functionObfuscation.md",
     },
     "rename_obf": {
-        "cls": RenameObfuscationPass,
+        "cls": "RenameObfuscationPass",
         "label": "Rename Obfuscation",
         "group": "base",
         "docs": "passes/renameObfuscation.md",
     },
     "localize_globals": {
-        "cls": LocalizeGlobalsPass,
+        "cls": "LocalizeGlobalsPass",
         "label": "Localize Globals",
         "group": "base",
         "docs": "passes/localizeGlobals.md",
     },
     "minify": {
-        "cls": MinifyPass,
+        "cls": "MinifyPass",
         "label": "Minify",
         "group": "post",
     },
     "vm": {
-        "cls": VMPass,
+        "cls": "VMPass",
         "label": "VM",
         "group": "post",
         "docs": "backends.md",
     },
     "anti_debug": {
-        "cls": AntiDebugPass,
+        "cls": "AntiDebugPass",
         "label": "Anti-Debug Wrapper",
         "group": "pre",
         "docs": "passes/antiDebug.md",
     },
     "anti_decompile": {
-        "cls": AntiDecompilePass,
+        "cls": "AntiDecompilePass",
         "label": "Anti-Decompile (unluac trap)",
         "group": "base",
     },
     "pack": {
-        "cls": PackerPass,
+        "cls": "PackerPass",
         "label": "Packer (deflate + load)",
         "group": "post",
         "docs": "passes/packer.md",
     },
 }
 
+
+PASS_REGISTRY = {name: _PassInfo(info) for name, info in PASS_REGISTRY.items()}
 
 CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
@@ -753,7 +767,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
         info = PASS_REGISTRY.get(name)
 
         cls = info["cls"]
-        if cls is VMPass:
+        if name == "vm":
             pipeline.add(cls(
                 target=pipeline.target_profile,
                 toolchain=pipeline.toolchain,
@@ -765,7 +779,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 debug_dumps=config.get("debug_dumps", {}),
                 output_prefix="" if has_packer else signature_pass.prefix,
             ))
-        elif cls is PackerPass:
+        elif name == "pack":
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
                 packer_output_passes=packer_output_passes + [
@@ -774,7 +788,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 ],
                 output_prefix=signature_pass.prefix,
             ))
-        elif cls is FunctionObfuscationPass:
+        elif name == "function_obf":
             pipeline.add(cls(**function_obf_options))
         else:
             pipeline.add(cls())

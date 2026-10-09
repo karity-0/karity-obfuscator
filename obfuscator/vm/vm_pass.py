@@ -1,6 +1,13 @@
 """Orchestrate frontend, protection, lowering and backend emission stages."""
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.vm.backends.runtime_emitter",
+    "obfuscator.vm.ir.optimize",
+    "obfuscator.vm.ir.protect",
+}
+
 from functools import partial
 from pathlib import Path
 import subprocess  # Public toolchain test hook shares the standard module.

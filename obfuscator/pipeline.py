@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "luaparser",
+    "obfuscator.passes.rename_obfuscation",
+}
+
 import time
 from typing import Union
 
@@ -9,6 +15,7 @@ from .passes.base import BasePass, PostPass, PrePass, Replacement
 from .passes.output_signature import DEFAULT_SIGNATURE, OutputSignaturePass
 from .profiling import ProfileRecord, Profiler
 from .verbosity import Verbosity
+from .passes.rename_obfuscation import RenameObfuscationPass
 
 
 PassType = Union[BasePass, PrePass, PostPass]
@@ -114,8 +121,6 @@ class Pipeline:
         # Renaming is an emission step: collect every generated base-pass helper
         # before choosing final names. Localization resolves lexical bindings on
         # its own, so it does not need an earlier rename to distinguish globals.
-        from .passes.rename_obfuscation import RenameObfuscationPass
-
         renamers = [
             p
             for p in self._passes

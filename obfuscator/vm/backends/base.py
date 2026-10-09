@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.vm.backends.handler_ir",
+    "obfuscator.vm.semantic_ir",
+}
+
 from dataclasses import dataclass, field
 from typing import Any
 

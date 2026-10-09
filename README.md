@@ -30,6 +30,14 @@ choose another path.
 On Windows, compatible Lua binaries are included in `bin/`. On other platforms,
 install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
 
+Python 3.15 uses `__lazy_modules__` to defer processing imports: CLI help,
+configuration metadata, and GUI startup do not load the Lua parsers or VM emitter.
+Pass implementations load when selected, and parser/emitter modules load when used.
+Python 3.10–3.14 keep ordinary eager import behavior with the same source syntax.
+To diagnose imports, use `python -X importtime main.py --help`.
+This reduces startup and unused-feature loading, rather than the computation cost
+of a pass after its dependencies have loaded.
+
 ## Choose a profile
 
 | Profile | Intended use | VM | Trade-off |

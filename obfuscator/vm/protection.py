@@ -1,6 +1,11 @@
 """Backend-neutral protection planning and capability resolution."""
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.vm.semantic_ir",
+}
+
 from dataclasses import dataclass, field
 from enum import Enum
 import random

@@ -1,3 +1,10 @@
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator",
+    "obfuscator.profiling",
+    "obfuscator.selection",
+}
+
 import argparse
 import copy
 import json
