@@ -872,8 +872,11 @@ class NumberObfuscationPass(BasePass):
                 f"(({floor_expr}|0) + 0)"
             )
 
+        # Unary bitwise not binds below exponentiation in Lua. The outer
+        # parentheses keep this value intact when replacing a numeric token
+        # used as the left operand of ``^``.
         return (
-            f"~(~({floor_expr}))"
+            f"(~(~({floor_expr})))"
         )
 
     def _gen_float_backed_int(

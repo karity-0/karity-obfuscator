@@ -15,7 +15,11 @@ sys.path.insert(0, str(ROOT_DIR))
 from obfuscator import Pipeline, build_pipeline_from_config
 from obfuscator.profiling import Profiler
 from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
+from obfuscator.passes.meme_strings import MemeStringsPass
+from obfuscator.passes.packer import PackerPass, _cache_loader_meme_constants
 from obfuscator.vm.output_emitter import emit_vm_literals
+from obfuscator.vm.backends.runtime_emitter import _obfuscate_vm_output, _dump_function_stripped
+from obfuscator.toolchain import LuaToolchain
 
 
 LUA = lua_executable()
@@ -71,9 +75,19 @@ def walk_details(details: list[dict]):
 
 
 def main() -> int:
+    # A one-line generated chunk can be megabytes; compiler diagnostics must
+    # remain useful without copying the complete source into the GUI console.
+    oversized_branch = 'return function(flag) local x=0 if flag then ' + 'x=x+1;' * 200000 + ' end return x end'
+    try:
+        _dump_function_stripped(oversized_branch, "", "decoy", "", LuaToolchain())
+    except RuntimeError as error:
+        assert "control structure too long" in str(error), str(error)[:2000]
+        assert "characters omitted" in str(error) and len(str(error)) < 10000
+    else:
+        raise AssertionError("oversized Lua branch unexpectedly compiled")
     nested_helper_source = """
 local function dispatch(x)
-    local marker=setmetatable({},{__call=function(t)return t end})
+    --[[VM_DISPATCH_ENTRY]]
     local function helper(a)
         local b=a+1
         local c=b*2
@@ -97,6 +111,80 @@ print(dispatch(3))
             f"skipped={function_pass.last_skipped_dispatcher_count} "
             f"transformed={function_pass.last_transformed_count}"
         )
+
+    user_call_source = """
+local function call(a)
+    local t=setmetatable({value=a},{__call=function(self,b)return self.value+b end})
+    local text="--[[VM_DISPATCH_ENTRY]]"
+    return t(5), text
+end
+print(call(3))
+"""
+    transformed_call = helper_pipeline.run(user_call_source)
+    if function_pass.last_skipped_dispatcher_count != 0:
+        raise AssertionError("user __call or string literal classified as dispatcher")
+    if run_source(transformed_call) != run_source(user_call_source):
+        raise AssertionError("user __call semantics changed")
+
+    # Stripping compiler sentinels first would flatten the protected dispatcher
+    # again. Its ordinary helper should still transform, then names/comments go.
+    stripped_helper, details = _obfuscate_vm_output(nested_helper_source, [
+        "strip_info", "function_obf", "string_obf", "minify",
+    ])
+    function_detail = next(item for item in details if item["phase"] == "vm_output:function_obf")
+    assert function_detail["skipped_dispatchers"] == 1, function_detail
+    assert function_detail["transformed_functions"] >= 1, function_detail
+    phases = [item["phase"] for item in details]
+    assert phases.index("vm_output:function_obf") < phases.index("vm_output:strip_info")
+    assert "VM_DISPATCH_ENTRY" not in stripped_helper
+    assert run_source(stripped_helper) == (0, b"8\n", b"")
+
+    numeric_probe = ('local values={0,1,-42,0x7fffffffffffffff,0xffffffffffffffff,'
+                     '0x1p-1074,1.25,1e300};for _,v in ipairs(values) do '
+                     'print(math.type(v),string.format("%a",v)) end')
+    expected_probe = run_source(numeric_probe)
+    for seed in range(16):
+        random.seed(seed)
+        combined_probe, probe_details = _obfuscate_vm_output(numeric_probe, ["number_obf", "meme_strings"])
+        assert run_source(combined_probe) == expected_probe, seed
+        number_stage = next(d for d in probe_details if d["phase"] == "vm_output:number_obf")
+        assert number_stage["replacements"] >= 6 and "compact_numbers" not in number_stage
+
+        random.seed(seed)
+        ordered_probe, ordered_details = _obfuscate_vm_output(numeric_probe, ["meme_strings", "number_obf"])
+        assert run_source(ordered_probe) == expected_probe, seed
+        phases = [d["phase"] for d in ordered_details]
+        assert phases.index("vm_output:meme_strings") < phases.index("vm_output:number_obf")
+
+    # Existing Number -> Meme configurations retain the exact seeded output.
+    random.seed(260830)
+    existing_order, _ = _obfuscate_vm_output(numeric_probe, ["number_obf", "meme_strings"])
+    random.seed(260830)
+    original_numbers, _ = emit_vm_literals(numeric_probe, ["number_obf"])
+    original_combo = Pipeline(show_header=False).add(MemeStringsPass()).run(original_numbers)
+    assert existing_order == original_combo
+    constant_keys = ('return function()local total=0;for i=1,100 do '
+                     'total=total+#(string.char(65,66):rep(3)..string.char(67))'
+                     '+#string.char(i) end print(total) end')
+    cached_keys = _cache_loader_meme_constants(constant_keys)
+    assert run_source('(' + cached_keys.removeprefix('return ') + ')()') == (0, b"800\n", b"")
+    assert run_source('(' + constant_keys.removeprefix('return ') + ')()') == (0, b"800\n", b"")
+    assert 'string.char(i)' in cached_keys
+    random.seed(260830)
+    large_branch = 'local x=0;while x<1 do ' + 'x=x+1;' * 4000 + 'end;print(x)'
+    ordered_branch, _ = _obfuscate_vm_output(large_branch, ["meme_strings", "number_obf", "minify"])
+    assert run_source(ordered_branch) == (0, b"4000\n", b"")
+
+    vm_shaped_payload = ('local f=function(a,b,c,d,e,g,h)return function(blob,tail,self)'
+                         'print(12,"ok")end end;return (f(1032,413,258,104,953,283,120))'
+                         '("blob","abcdefghijklmnop",f)')
+    for seed in range(4):
+        random.seed(seed)
+        packed = PackerPass(packer_output_passes=[
+            "strip_info", "function_obf", "boolean_obf", "table_obf",
+            "string_obf", "meme_strings", "number_obf", "localize_globals", "minify",
+        ]).run(vm_shaped_payload)
+        assert run_source(packed) == (0, b"12\tok\n", b""), seed
 
     random.seed(260826)
     source = (
@@ -184,6 +272,8 @@ print(dispatch(3))
             raise AssertionError(
                 f"generated VM symbol bypassed output integration: {leaked_name}"
             )
+    if "__call" in vm_output or "VM_DISPATCH_ENTRY" in vm_output:
+        raise AssertionError("dispatcher signature leaked through full output passes")
     vm_details = [
         detail
         for record in profiler.records

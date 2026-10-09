@@ -60,5 +60,16 @@ jobs:
         run: |
           cp config.example.json config.json
 
+      - name: Verify test Lua runtimes
+        run: >-
+          python -c "import sys, subprocess; sys.path.insert(0, 'test');
+          from lua_runtime import lua_executable, luac_executable;
+          from lupa.lua51 import LuaRuntime as Lua51;
+          from lupa.lua53 import LuaRuntime as Lua53;
+          assert Lua51().eval('_VERSION') == 'Lua 5.1';
+          assert Lua53().eval('_VERSION') == 'Lua 5.3';
+          subprocess.run([lua_executable(), '-v'], check=True);
+          subprocess.run([luac_executable(), '-v'], check=True)"
+
       - name: Run shared verification suite
         run: python test/run_ci.py

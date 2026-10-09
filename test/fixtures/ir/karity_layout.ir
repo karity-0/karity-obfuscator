@@ -1,0 +1,30 @@
+backend-ir v1 backend=karity kind=karity-handler-graph
+generation=5d60c6afca64e752d1f33446
+karity-routes arithmetic ADD:1,SUB:1,MUL:0,BIT_AND:1,BIT_OR:1,BIT_XOR:0,SHIFT_LEFT:1,SHIFT_RIGHT:1,NEGATE:1,BIT_NOT:1
+karity-routes semantic VALUE:1,TABLE_GET:0,TABLE_SET:1,EQUAL:1,LESS_THAN:0,LESS_EQUAL:0,TRUTH:0,MOD:0,POW:0,DIV:1,FLOOR_DIV:1,LOGICAL_NOT:1,LENGTH:1,CONCAT:0,NEW_TABLE:1,SET_LIST:1,CLOSURE:0,VARARG:0
+karity-rotation boundaries=frame-snapshot,graph-completion initial-ticks=3 period=1024
+karity-state f0 transitions=2 pending=0 materializations=0 conditional-materializations=0 pending-resolutions=0 encoded-fast-paths=0 native-values=1 native-boundaries=1 graph-sites=0
+karity-transition function=f0 pc=1 source=f0:i1 op=RETURN reads=(0,) writes=() pending=None guard=() encoded-fast-path=False resolved-pending=() materialized=() maybe-materialized=() native=((0, 'native', (1,), ()),) captures=() close=() close-materialized=() boundary=host-return graph-epochs=()
+active handler_aliases
+policy block_variant_rate=0.08
+policy cross_instruction_rate=0.2
+policy graph_execution_rate=0.1
+policy runtime_polymorphism_rate=0.2
+policy semantic_diversity_rate=0.35
+lowered-function f0 blocks=1 instructions=2
+lifetimes f0
+  live-block f0:b0 in=- out=-
+  live-instruction f0:i0 before=- after=f0:r0 captures-before=- captures-after=- open=0
+  live-instruction f0:i1 before=f0:r0 after=- captures-before=- captures-after=- open=0
+handler-function f0
+  h0 LOAD_CONST source=f0:i0 a=0 b=0 c=0
+  h1 RETURN source=f0:i1 a=0 b=2 c=0
+physical-function f0 vm=0 instructions=2
+  p0 LOAD_CONST vop=18660 source=f0:i0 a=0 b=0 c=0 scratch=() graphs=()
+  p1 RETURN vop=17819 source=f0:i1 a=0 b=2 c=0 scratch=() graphs=()
+optimization backend=karity
+optimization comparison_aliases_specialized=0
+optimization comparison_reads_coalesced=0
+optimization dead_deferred_handlers=0
+optimization deferred_handlers_after=0
+optimization deferred_handlers_before=0

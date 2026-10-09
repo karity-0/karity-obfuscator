@@ -5,6 +5,7 @@ import random
 import subprocess
 import sys
 from pathlib import Path
+from unittest.mock import patch
 from lua_runtime import lua_executable
 
 
@@ -13,12 +14,28 @@ sys.path.insert(0, str(ROOT_DIR))
 
 from obfuscator.passes.number_obfuscation import NumberObfuscationPass
 from obfuscator.passes.string_obfuscation import StringObfuscationPass
+from obfuscator.passes.string_encode import StringEncodePass
 from obfuscator.passes.packer import _obfuscate_packer_output
 from obfuscator.pipeline import Pipeline
 
 
 
 def main() -> int:
+    # String encoding must read native Lua numbers and keep literal bytes,
+    # including after number_obf introduces hexadecimal float expressions.
+    mixed_source = r'''local n=0XF32C.8d4
+io.write(string.format("%a",n),"|","한글\0007","|",[=[
+long
+text]=])'''
+    baseline = subprocess.run([lua_executable(), "-"], input=mixed_source.encode(), capture_output=True, timeout=10)
+    assert baseline.returncode == 0, baseline.stderr
+    for seed in range(16):
+        random.seed(seed)
+        encoded = Pipeline(show_header=False).add(NumberObfuscationPass()).add(StringEncodePass()).run(mixed_source)
+        result = subprocess.run([lua_executable(), "-"], input=encoded.encode(), capture_output=True, timeout=10)
+        assert (result.returncode, result.stdout, result.stderr) == (0, baseline.stdout, b""), (seed, result.stderr)
+    print("number-string-encode-ok 16")
+
     values = [
         -1, 0, 1, 2, 5, 7, 8, 13, 16, 17, 24, 31, 32, 63, 64,
         127, 128, 255, 256, 4095, 4096, 65535, 0x7FFFFFFF,
@@ -44,6 +61,12 @@ def main() -> int:
                 f"failed: rc={result.returncode} stderr={stderr[:1000]!r}\n"
             )
         return result.returncode
+
+    with patch('obfuscator.passes.number_obfuscation.random.randrange', return_value=99):
+        exponent_base = generator._wrap_floor_to_int('2')
+    assert run_number_batch([
+        f"assert({exponent_base} ^ 10 == 1024, 'exponent base precedence')"
+    ], 0) == 0
 
     for seed in range(128):
         random.seed(seed)

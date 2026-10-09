@@ -9,8 +9,8 @@ from .mixed_compare import tables as mixed_tables
 from .shift import tables as shift_tables
 
 
-def _native_arithmetic(runtime: str) -> str:
-    """Native fallback uses function lookup, never a slot comparison chain."""
+def _native_arithmetic(runtime: str, *, binary64_target: bool = False) -> str:
+    """Emit the MOV host arithmetic bank for the selected numeric model."""
     binary = dict(ADD="+", SUB="-", MUL="*", BAND="&", BOR="|",
                   BXOR="~", SHL="<<", SHR=">>")
     unary = dict(UNM="-", BNOT="~")
@@ -19,23 +19,41 @@ def _native_arithmetic(runtime: str) -> str:
         entries = []
         for slot in random.sample(list(operators), len(operators)):
             operator = operators[slot]
-            expr = f"a{operator}b" if name == "binary" else f"{operator}a"
+            if binary64_target and slot in {"BAND", "BOR", "BXOR", "SHL", "SHR", "BNOT"}:
+                # Lua 5.1 has no bitwise numeric subtype or operators. This
+                # bank is unreachable from Lua 5.1 source IR; fail explicitly
+                # if an incompatible semantic opcode reaches the MOV host.
+                expr = f'error("unsupported Lua 5.1 MOV operation: {slot}")'
+            else:
+                expr = f"a{operator}b" if name == "binary" else f"{operator}a"
             entries.append(f"[__VM_SLOT_{slot}__]=function({args}) return {expr} end")
         declarations.append(f"local _mov_{name}={{" + ",".join(entries) + "}")
     start = runtime.index("    local function _arith2(a,b,av,slot)")
     end = runtime.index("    local function _arith2r(", start)
-    return runtime[:start] + "\n".join(declarations) + """
+    arithmetic_body = "\n".join(declarations) + """
     local function _arith2(a,b,av,slot)
         return _mov_binary[slot](a,b)
     end
     local function _arith1(a,av,slot)
         return _mov_unary[slot](a)
     end
-""" + runtime[end:]
+"""
+    if binary64_target:
+        # This is a generated user-value operation bank, not a private-word
+        # expression. Keep the complete target-native implementation outside
+        # the later Lua 5.1 compatibility lowering pass.
+        arithmetic_body = (
+            "--<<TARGET_51_NATIVE_51_MOV_NATIVE>>\n"
+            + arithmetic_body
+            + "--<<ENDTARGET_51_NATIVE_51_MOV_NATIVE>>\n"
+        )
+    return runtime[:start] + arithmetic_body + runtime[end:]
 
 
-def build_runtime(classic: str, kits: list[VMKit]) -> str:
-    template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
+def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None) -> str:
+    binary64_target = bool(target and target.user_number_model == "binary64")
+    if template is None:
+        template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
     template = template.replace("__MOV_DIV_STEPS__", "{" + ",".join(
         f"[{i}]={{{i - 1},{str(i > 1).lower()},{max(i - 4, 0)},{str(i > 4).lower()}}}"
         for i in range(1, 65)
@@ -51,33 +69,35 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     handlers = classic[a:b]
     # A VM tail call returns a frame transition, consumed by the outer
     # trampoline. Native functions still use Lua's normal call semantics.
-    handlers = handlers.replace(
-        "local res = table.pack(fn(table.unpack(ca,1,ca_n)))",
-        """local target=_mov_closures[fn]
-            if target then ca.n=ca_n; return {mov_tail=target,args=ca} end
-            local res = table.pack(fn(table.unpack(ca,1,ca_n)))""",
+    tail_start = handlers.index("--<<VM_TAIL_DISPATCH>>")
+    tail_end = handlers.index("--<<ENDVM_TAIL_DISPATCH>>", tail_start)
+    pack_values, unpack_values = (
+        target.value_packet_api() if target else ('table.pack', 'table.unpack')
     )
+    handlers = handlers[:tail_start] + f"""local target=_mov_closures[fn]
+            local res
+            if target then ca.n=ca_n; return {{mov_tail=target,args=ca}} end
+            res={pack_values}(fn({unpack_values}(ca,1,ca_n)))
+            """ + handlers[tail_end + len("--<<ENDVM_TAIL_DISPATCH>>"):]
     handlers = handlers.replace("elseif op==30 then pc=pc+sBx",
                                 'elseif op==30 then error("unexpected MOV host jump")')
-    # SETLIST's extra word is data, not an independently executed instruction.
-    handlers = handlers.replace(
-        "local base=(C-1)*50; local cnt=B==0 and (top-A) or B",
-        """if C==0 then
-                local ei=code[pc]~_ksm(pc); pc=pc+1
-                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
-            end
-            local base=(C-1)*50; local cnt=B==0 and (top-A) or B""",
-    )
     # Every host opcode crosses the same indirect call boundary. Keep frame
     # state in closure upvalues; a returned packet exits the interpreter only
     # for RETURN/TAILCALL, while ordinary handlers return nil.
     blocks = _parse_handler_blocks(handlers)
-    if set(blocks) != set(range(60)):
+    from ..backends.handler_ir import OPERATIONS
+    if set(blocks) != set(range(len(OPERATIONS))):
         raise ValueError("unexpected MOV host handler set")
-    host_dispatch = """local result=_mov_host[op~__MOV_HOST_KEY__](A,B,C,Bx,sBx,_av)
-            if result then return result end"""
+    host_slot = (
+        "_ixor(op,__MOV_HOST_KEY__)" if binary64_target
+        else "op~__MOV_HOST_KEY__"
+    )
+    host_dispatch = (
+        f"local result=_mov_host[{host_slot}](A,B,C,Bx,sBx,_av)\n"
+        "            if result then return result end"
+    )
     loop = section("LOOP", "END").replace("--<<HOST_HANDLERS>>", host_dispatch)
-    loop_start = classic.index("    for i in setmetatable(")
+    loop_start = classic.index("    --[[VM_DISPATCH_ENTRY]] while true do")
     loop_end = classic.index("    return {r={},n=0}", b)
     runtime = classic[:loop_start] + section("FRAME", "LOOP") + "\n--<<HOST_BANK>>\n" + loop + classic[loop_end:]
     reg_start = runtime.index("    --<<RGET>>")
@@ -86,16 +106,16 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     runtime = runtime.replace("get=function() return regs[slot] end", "get=function() return rget(slot) end")
     runtime = runtime.replace("set=function(v) regs[slot]=v end", "set=function(v) rset(slot,v) end")
     runtime = runtime.replace(
-        """return function(...)
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...))
-            return table.unpack(w.r, 1, w.n)
-        end""",
-        """local fn=function(...)
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...))
-            return table.unpack(w.r, 1, w.n)
-        end
-        _mov_closures[fn]={sub,new_uv}
-        return fn""",
+        "return bind_environment(fn,new_uv,upvals)",
+        "_mov_closures[fn]=metadata;return bind_environment(fn,new_uv,upvals)",
+    )
+    # The closure owns its descriptor; the registry owns neither side. This
+    # allows environment/upvalue cycles to collect even in Lua 5.1, whose weak
+    # keys do not provide Lua 5.3 ephemeron semantics.
+    runtime = runtime.replace(
+        "local fn=function(...)\n            local w=",
+        "local metadata={sub,new_uv}\n        local fn=function(...)\n"
+        "            local sub,new_uv=metadata[1],metadata[2]\n            local w=",
     )
     start = runtime.index("--<<EXEC>>") + len("--<<EXEC>>")
     end = runtime.index("--<<ENDEXEC>>")
@@ -115,15 +135,18 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
         ) + "\n}"
         definition = definition.replace("--<<HOST_BANK>>", bank)
         definition = definition.replace("__MOV_HOST_KEY__", str(key))
-        definition = _native_arithmetic(definition)
+        definition = _native_arithmetic(
+            definition,
+            binary64_target=binary64_target,
+        )
         for op in Op:
             definition = definition.replace(f"__MOV_{op.name}__", str(kit.opcodes[op]))
         definitions.append(definition)
     runtime = runtime[:start] + "\n".join(definitions) + runtime[end:]
     runtime = runtime.replace("local exec, _EX", "local _EX; local _mov_dispatch={}", 1)
-    runtime = runtime.replace("_EX={exec}", """local function _mov_invoke(proto,upvals,args)
+    runtime = runtime.replace("_EX={exec}", """local function _mov_invoke(proto,upvals,args,va_in,source_parents)
         while true do
-            local w=_mov_dispatch[proto.vm_id+1](proto,upvals,args)
+            local w=_mov_dispatch[proto.vm_id+1](proto,upvals,args,nil,source_parents)
             if not w.mov_tail then return w end
             proto=w.mov_tail[1]; upvals=w.mov_tail[2]; args=w.args
         end
@@ -131,4 +154,8 @@ def build_runtime(classic: str, kits: list[VMKit]) -> str:
     _EX={}
     for i=1,""" + str(len(kits)) + " do _EX[i]=_mov_invoke end")
     runtime = section("SHARED", "REGISTERS") + runtime
+    if binary64_target:
+        # Select the target-native MOV executor before output passes may erase
+        # marker comments. The target consumes this marker during preparation.
+        runtime = "--<<TARGET_MOV_EXEC_NATIVE>>\n" + runtime
     return runtime

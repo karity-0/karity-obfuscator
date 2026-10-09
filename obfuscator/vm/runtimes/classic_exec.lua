@@ -1,13 +1,16 @@
 local exec, _EX
+local _VF=setmetatable({},{__mode="kv"})
 local _PN,_PE=0,0
+--<<TARGET_PRIVATE_MIX>>
 local function _pmix(x)
     x=(x~(x>>30))*-4658895280553007687
     x=(x~(x>>27))*-7723592293110705685
     return (x~(x>>31))&-1
 end
+--<<ENDTARGET_PRIVATE_MIX>>
 
 --<<EXEC>>
-exec = function(proto, upvals, args, va_in)
+exec = function(proto, upvals, args, va_in, _source_parents)
     local regs   = {}
     local boxes  = {}
     local consts = proto["constants"]
@@ -22,11 +25,15 @@ exec = function(proto, upvals, args, va_in)
     local _va    = va_in or {n=0}
     local _split_tmp
     local _S={[611]=(proto.vm_id~#code)&-1}
+    local _MJ={}
+    _MJ._c_u32=_c_u32;_MJ._c_xor=_c_xor;_MJ._c_and=_c_and;_MJ._c_or=_c_or
+    _MJ._c_not=_c_not;_MJ._c_shl=_c_shl;_MJ._c_shr=_c_shr
     local _XF={0,0}
     local _PR={0,0}
     local _SS={0,0}
     local _MG={0}
 
+    --<<TARGET_USER_STATEMENT>>
     args = args or {}
     local _argc=args.n or #args
     for i=1,proto.num_params do regs[i-1]=args[i] end
@@ -35,6 +42,7 @@ exec = function(proto, upvals, args, va_in)
         for i=proto.num_params+1,_argc do n=n+1; _va[n]=args[i] end
         _va.n=n
     end
+    --<<ENDTARGET_USER_STATEMENT>>
 
     --<<RGET>>
     local function rget(i) return regs[i] end
@@ -47,8 +55,20 @@ exec = function(proto, upvals, args, va_in)
     end
     --<<ENDRSET>>
 
+    --<<TARGET_USER_STATEMENT>>
     local function _acount(q) return q and (q.n or #q) or 0 end
-    local function _aget(q,i) return q and q[i] or nil end
+    local function _aget(q,i) if q then return q[i] end; return nil end
+    local function _collect_values(first,count)
+        if count==nil then count=top-first+1 end
+        if count<0 then count=0 end
+        local values={n=count}
+        for i=1,count do values[i]=rget(first+i-1) end
+        return values
+    end
+    local function _store_values(first,values,count)
+        for i=1,count do rset(first+i-1,values[i]) end
+    end
+    --<<ENDTARGET_USER_STATEMENT>>
     local function _av_read() end
     local function _carry(v) return v end
     --<<FLOW>>
@@ -66,13 +86,32 @@ exec = function(proto, upvals, args, va_in)
     --<<SEM>>
     local function _sem(tag,x,y,z)
         if tag==__VM_DATA_VALUE__ then return x
-        elseif tag==__VM_DATA_GET__ then return x[y]
-        elseif tag==__VM_DATA_SET__ then x[y]=z; return z
-        elseif tag==__VM_CMP_EQ__ then return x==y
-        elseif tag==__VM_CMP_LT__ then return x<y
-        elseif tag==__VM_CMP_LE__ then return x<=y
+        elseif tag==__VM_DATA_GET__ then return (--<<TARGET_USER_EXPRESSION>>
+            x[y]
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
+        elseif tag==__VM_DATA_SET__ then
+            --<<TARGET_USER_STATEMENT>>
+            x[y]=z
+            --<<ENDTARGET_USER_STATEMENT>>
+            return z
+        elseif tag==__VM_CMP_EQ__ then return (--<<TARGET_USER_EXPRESSION>>
+            x==y
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
+        elseif tag==__VM_CMP_LT__ then return (--<<TARGET_USER_EXPRESSION>>
+            x<y
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
+        elseif tag==__VM_CMP_LE__ then return (--<<TARGET_USER_EXPRESSION>>
+            x<=y
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
         elseif tag==__VM_CMP_TRUTH__ then return not not x
-        elseif tag==__VM_OP_MOD__ then return x%y
+        elseif tag==__VM_OP_MOD__ then return (--<<TARGET_USER_EXPRESSION>>
+            x%y
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
         elseif tag==__VM_OP_POW__ then return x^y
         elseif tag==__VM_OP_DIV__ then return x/y
         elseif tag==__VM_OP_IDIV__ then return x//y
@@ -92,9 +131,18 @@ exec = function(proto, upvals, args, va_in)
     --<<ENDSEM>>
 
     local function _arith2(a,b,av,slot)
-        if slot==__VM_SLOT_ADD__ then return a+b
-        elseif slot==__VM_SLOT_SUB__ then return a-b
-        elseif slot==__VM_SLOT_MUL__ then return a*b
+        if slot==__VM_SLOT_ADD__ then return (--<<TARGET_USER_EXPRESSION>>
+            a+b
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
+        elseif slot==__VM_SLOT_SUB__ then return (--<<TARGET_USER_EXPRESSION>>
+            a-b
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
+        elseif slot==__VM_SLOT_MUL__ then return (--<<TARGET_USER_EXPRESSION>>
+            a*b
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
         elseif slot==__VM_SLOT_BAND__ then return a&b
         elseif slot==__VM_SLOT_BOR__ then return a|b
         elseif slot==__VM_SLOT_BXOR__ then return a~b
@@ -103,7 +151,10 @@ exec = function(proto, upvals, args, va_in)
         error("unknown arithmetic slot")
     end
     local function _arith1(a,av,slot)
-        if slot==__VM_SLOT_UNM__ then return -a
+        if slot==__VM_SLOT_UNM__ then return (--<<TARGET_USER_EXPRESSION>>
+            -a
+            --<<ENDTARGET_USER_EXPRESSION>>
+        )
         elseif slot==__VM_SLOT_BNOT__ then return ~a end
         error("unknown unary slot")
     end
@@ -137,6 +188,7 @@ exec = function(proto, upvals, args, va_in)
         end
     end
 
+    --<<TARGET_USER_STATEMENT>>
     local function get_box(slot)
         if not boxes[slot] then
             boxes[slot]={
@@ -156,6 +208,17 @@ exec = function(proto, upvals, args, va_in)
         if box.set then box.set(v) else box.v=v end
     end
 
+    local function close_upvalues(first)
+        for slot,box in pairs(boxes) do
+            if slot>=first then
+                local value=get_upvalue(box)
+                box.get=nil; box.set=nil
+                set_upvalue(box,value)
+                boxes[slot]=nil
+            end
+        end
+    end
+
     local function make_closure(sub)
         local new_uv={}
         for i,uv in ipairs(sub.upvalues) do
@@ -167,13 +230,18 @@ exec = function(proto, upvals, args, va_in)
         end
         -- exec는 {r=테이블, n=개수} wrapper를 단일값으로 반환.
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
-        return function(...)
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...))
+        local metadata={sub,new_uv}
+        local fn=function(...)
+            local sub,new_uv=metadata[1],metadata[2]
+            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...),nil,nil)
             return table.unpack(w.r, 1, w.n)
         end
+        _VF[fn]=metadata
+        return bind_environment(fn,new_uv,upvals)
     end
+    --<<ENDTARGET_USER_STATEMENT>>
 
-    for i in setmetatable({},{__call=function(t)return t end}) do
+    --[[VM_DISPATCH_ENTRY]] while true do
         --<<FETCH>>
         local _ip=pc; local op,A,B,C,Bx,sBx=decode(code[pc],_ksm(pc));
         local _av=nil; pc=pc+1; _route_step(_ip,op,A,B,C)
@@ -182,7 +250,7 @@ exec = function(proto, upvals, args, va_in)
         if     op==0  then rset(A,rget(B))
         elseif op==1  then rset(A,kval(consts[Bx+1],proto))
         elseif op==2  then
-            local ei=code[pc]~_ksm(pc); pc=pc+1
+            local ei=_ixor(code[pc],_ksm(pc)); pc=pc+1
             local ax=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
             rset(A,kval(consts[ax+1],proto))
         elseif op==3  then rset(A,(B~=0)); if C~=0 then pc=pc+1 end
@@ -214,7 +282,7 @@ exec = function(proto, upvals, args, va_in)
         elseif op==29 then
             local out=rget(C); for i=C-1,B,-1 do out=rget(i)..out end
             rset(A,out)
-        elseif op==30 then pc=pc+sBx
+        elseif op==30 then if A>0 then close_upvalues(A-1) end; pc=pc+sBx
         elseif op==31 then if (rget(B)==rget(C))~=(A~=0) then pc=pc+1 end
         elseif op==32 then if (rget(B)<rget(C))~=(A~=0) then pc=pc+1 end
         elseif op==33 then if (rget(B)<=rget(C))~=(A~=0) then pc=pc+1 end
@@ -223,38 +291,46 @@ exec = function(proto, upvals, args, va_in)
             if (not not rget(B))==(C~=0) then rset(A,rget(B)) else pc=pc+1 end
 
         elseif op==36 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
-            local res=table.pack(fn(table.unpack(ca,1,ca_n)))
+            local fn=rget(A); local ca
+            if B==0 then ca=_collect_values(A+1)
+            else ca=_collect_values(A+1,B-1) end
+            local ca_n=ca.n
+            local vm=_VF[fn];local res
+            if vm and _source_parents then
+                local parents={upvals.environment}
+                for i=1,#(_source_parents or {}) do parents[#parents+1]=_source_parents[i] end
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],table.pack(table.unpack(ca,1,ca_n)),nil,parents)
+                res=w.r;res.n=w.n
+            else res=table.pack(fn(table.unpack(ca,1,ca_n))) end
             if C==0 then
-                for i=1,res.n do rset(A+i-1,res[i]) end; top=A+res.n-1
+                _store_values(A,res,res.n); top=A+res.n-1
             elseif C>1 then
-                for i=1,C-1 do rset(A+i-1,res[i]) end
+                _store_values(A,res,C-1)
             end
 
         elseif op==37 then
-            local fn=rget(A); local ca={}; local ca_n=0
-            if B>1 then
-                for i=A+1,A+B-1 do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            elseif B==0 then
-                for i=A+1,top do ca_n=ca_n+1; ca[ca_n]=rget(i) end
-            end
-            local res = table.pack(fn(table.unpack(ca,1,ca_n)))
+            close_upvalues(0)
+            local fn=rget(A); local ca
+            if B==0 then ca=_collect_values(A+1)
+            else ca=_collect_values(A+1,B-1) end
+            local ca_n=ca.n
+            --<<VM_TAIL_DISPATCH>>
+            local vm=_VF[fn];local res
+            if vm and _source_parents then
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],table.pack(table.unpack(ca,1,ca_n)),nil,_source_parents)
+                res=w.r;res.n=w.n
+            else res=table.pack(fn(table.unpack(ca,1,ca_n))) end
+            --<<ENDVM_TAIL_DISPATCH>>
             return {r=res, n=res.n}
 
         elseif op==38 then
+            close_upvalues(0)
             if B==1 then return {r={},n=0}
             elseif B==0 then
-                local r={}; local n=0
-                for i=A,top do n=n+1; r[n]=rget(i) end
+                local n=top-A+1; local r=_collect_values(A,n)
                 return {r=r,n=n}
             else
-                local n=B-1; local r={}
-                for i=A,A+n-1 do r[i-A+1]=rget(i) end
+                local n=B-1; local r=_collect_values(A,n)
                 return {r=r,n=n}
             end
 
@@ -270,12 +346,16 @@ exec = function(proto, upvals, args, va_in)
 
         elseif op==41 then
             local res=table.pack(rget(A)(rget(A+1),rget(A+2)))
-            for i=1,C do rset(A+2+i,res[i]) end
+            _store_values(A+3,res,C)
 
         elseif op==42 then
             if rget(A+1)~=nil then rset(A,rget(A+1)); pc=pc+sBx end
 
         elseif op==43 then
+            if C==0 then
+                local ei=_ixor(code[pc],_ksm(pc)); pc=pc+1
+                C=(((ei>>_SH_A)&0xFF)<<18)|(((ei>>_SH_B)&0x1FF)<<9)|((ei>>_SH_C)&0x1FF)
+            end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
             for i=1,cnt do tbl[base+i]=rget(A+i) end
@@ -288,9 +368,9 @@ exec = function(proto, upvals, args, va_in)
         elseif op==45 then
             if B==0 then
                 local n=_acount(_va)
-                for i=1,n do rset(A+i-1,_va[i]) end; top=A+n-1
+                _store_values(A,_va,n); top=A+n-1
             else
-                for i=1,B-1 do rset(A+i-1,_va[i]) end
+                _store_values(A,_va,B-1)
             end
 
         elseif op==46 then error("unexpected EXTRAARG")
@@ -301,12 +381,17 @@ exec = function(proto, upvals, args, va_in)
         elseif op==51 then rset(A,_IT.seed&0xFFFFFFFF)
         elseif op==52 then rset(A,proto.vm_id&0xFFFFFFFF)
         elseif op==53 then rset(A,#proto.code&0xFFFFFFFF)
-        elseif op==54 then rset(A,(rget(B) or 0)~(rget(C) or 0))
+        elseif op==54 then rset(A,_integrity_xor((rget(B) or 0),(rget(C) or 0)))
         elseif op==55 then rset(A,((rget(B) or 0)+(rget(C) or 0))&0xFFFFFFFF)
         elseif op==56 then rset(A,((rget(B) or 0)*((rget(C) or 0)|1))&0xFFFFFFFF)
         elseif op==57 then rset(A,consts[Bx+1][2])
         elseif op==58 then pc=_poly_route(_brd[A+1])
         elseif op==59 then pc=Bx+1
+        elseif op==60 then rset(A,get_environment(upvals)[kval(consts[Bx+1],proto)])
+        elseif op==61 then get_environment(upvals)[kval(consts[Bx+1],proto)]=rget(A)
+        elseif op==62 then
+            local n=_acount(_va);local t={n=_source_value(n)}
+            for i=1,n do t[i]=_aget(_va,i) end;rset(A,t)
         else error("unknown op "..op) end
     end
     return {r={},n=0}

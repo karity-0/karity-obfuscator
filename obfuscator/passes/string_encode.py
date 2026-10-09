@@ -1,4 +1,3 @@
-from luaparser import astnodes
 from .base import BasePass, Replacement
 from .string_obfuscation import parse_lua_string
 
@@ -19,18 +18,19 @@ def _encode(raw: str) -> str:
 class StringEncodePass(BasePass):
     """문자열 리터럴을 ASCII 이스케이프 시퀀스로 난독화하는 pass."""
 
+    # Lua hexadecimal floats produced by number_obf cannot be read by
+    # luaparser's Python-number converter. Keep this textual pass on Lua syntax.
+    parser = "treesitter"
+
     def run(self, script: str, tree) -> list[Replacement]:
         replacements: list[Replacement] = []
 
-        for node in self.walk(tree):
-            if isinstance(node, astnodes.String):
-                # luaparser의 node.raw는 long string에서 대괄호를 빼버려
-                # short string으로 오인된다. 원본 소스 텍스트를 그대로
-                # 슬라이스해 넘겨 short/long 모두 정확히 디코드한다.
-                literal = script[node.start_char:node.stop_char + 1]
+        for node in tree.walk():
+            if node.type == "string":
+                literal = tree.text(node)
                 replacements.append(Replacement(
-                    start    = node.start_char,
-                    end      = node.stop_char,
+                    start    = tree.cs(node),
+                    end      = tree.ce(node),
                     new_text = _encode(literal),
                 ))
 
