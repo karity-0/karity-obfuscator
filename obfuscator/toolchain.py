@@ -106,10 +106,13 @@ class LuaToolchain:
                        library, operation, str(source), str(output)]
             if lua_version != "5.3":
                 command.append(lua_version)
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NO_WINDOW
             try:
                 result = subprocess.run(
                     command, capture_output=True, timeout=120,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    creationflags=creation_flags,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError("lua_library worker timed out after 120 seconds") from exc

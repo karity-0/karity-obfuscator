@@ -8,8 +8,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def main():
-    subprocess.run([sys.executable, "-m", "mypy", "--config-file", "mypy.ini"],
-                   cwd=ROOT, check=True)
+    for platform in ("linux", "win32"):
+        subprocess.run([sys.executable, "-m", "mypy", "--config-file", "mypy.ini",
+                        "--platform", platform], cwd=ROOT, check=True)
     negative = subprocess.run(
         [sys.executable, "-m", "mypy", "--config-file", "mypy.ini",
          "test/typing/invalid_contracts.py"], cwd=ROOT,
