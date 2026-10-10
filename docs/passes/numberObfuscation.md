@@ -18,6 +18,13 @@ behavior.
 
 The exact representation is randomized per generation.
 
+The full source generator remains unchanged. Generated StringObf/FunctionObf
+operands can use its formatting through [Literal Mosaic](../literal-mosaic.md)
+under smaller budgets. Protected generated operands are skipped by subsequent
+NumberObf; original source literals retain the full transformation. The common
+engine also exposes generated-only bounded multiply/divide/modulo/bitwise
+alternatives, without changing source-pass seeded generation.
+
 It is available in:
 
 - `passes`

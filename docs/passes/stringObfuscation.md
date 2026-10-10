@@ -86,6 +86,12 @@ of the literal length. Encoded record storage and runtime work remain linear in
 the byte length. There is no per-byte local variable and no large `string.char`
 argument list, avoiding Lua's local/register and argument limits.
 
+When enabled in the same source/output scope, [Literal Mosaic](../literal-mosaic.md)
+generates the numeric reconstruction operands using bounded NumberObf/MemeStrings
+strategies. Those operands carry protected provenance, so later literal passes
+do not expand them again. The mutable reconstruction program and its subsequent
+CFF protection remain in place. Original source numbers still receive full NumberObf.
+
 NumberObf and CFF still add cost to these programs. Repeated literal passes and
 extreme output-pass combinations can expand source substantially; default
 StringObf does not automatically repeat them. No reconstruction cache is hoisted

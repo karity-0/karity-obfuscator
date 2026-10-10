@@ -44,3 +44,11 @@ The high/max profiles enable `strip_info`, `rename_obf`, `meme_strings`,
 and varied numeric notation without another FunctionObf/StringObf round on the
 generated runtime. The additional literal stages still increase output size and
 processing/runtime cost; they are not merely text decoration.
+
+The phrase pool and expression engine are shared through
+[Literal Mosaic](../literal-mosaic.md). StringObf/FunctionObf can generate
+bounded meme operands when this pass is enabled in their actual scope.
+Their separate candidate rate defaults to 0.15; the original pass rate stays
+0.35. Already handled generated operands are skipped, avoiding another layer.
+Use `selection_modes.meme_strings: "marked"` with
+`--@MEME_STRINGS_START` / `--@MEME_STRINGS_END` for selected statement regions.
