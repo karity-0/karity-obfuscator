@@ -12,14 +12,19 @@ from __future__ import annotations
 
 import tree_sitter as ts
 import tree_sitter_lua as tsl
+from array import array
 
 _LANG = ts.Language(tsl.language())
 _PARSER = ts.Parser(_LANG)
 
 
-def _build_b2c(script: str, nbytes: int) -> list[int]:
+def _build_b2c(script: str, nbytes: int) -> array:
     """byte offset → char offset 매핑."""
-    b2c = [0] * (nbytes + 1)
+    # Unicode memes make otherwise large ASCII-generated chunks need this
+    # mapping too. Store offsets compactly rather than keeping a Python int
+    # object per character plus a pointer per byte. Retain large-input support.
+    kind = 'I' if len(script) <= (1 << (array('I').itemsize*8))-1 else 'Q'
+    b2c = array(kind,[0]) * (nbytes + 1)
     b = 0
     for ci, ch in enumerate(script):
         nb = b + len(ch.encode("utf-8"))

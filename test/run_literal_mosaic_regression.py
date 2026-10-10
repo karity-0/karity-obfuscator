@@ -173,6 +173,13 @@ return selected(),outside()
     assert number_origin(moved,3,6).startswith('function_constant/mosaic:')
     from obfuscator.passes.number_expressions import NumberExpressionEngine
     from obfuscator.passes.ts_utils import parse
+    unicode_source='local text="🍤한글\u202ewrong way\u202c";return "done"'
+    unicode_ctx=parse(unicode_source)
+    assert unicode_ctx.b2c.itemsize<=8
+    literals=[n for n in unicode_ctx.walk() if n.type=='string']
+    assert {unicode_ctx.text(n) for n in literals}=={'"done"','"🍤한글\u202ewrong way\u202c"'}
+    for node in literals:
+        assert unicode_source[unicode_ctx.cs(node):unicode_ctx.ce(node)+1]==unicode_ctx.text(node)
     plain='local function f()return (10+20)+2 end;return f()'
     start=plain.index('(10+20)')
     tagged=CodeText(plain,[(start,start+7)],origins=[(start,start+7,'string_constant/mosaic:number_bounded')])
