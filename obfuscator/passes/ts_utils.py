@@ -13,6 +13,7 @@ from __future__ import annotations
 import tree_sitter as ts
 import tree_sitter_lua as tsl
 from array import array
+import re
 
 _LANG = ts.Language(tsl.language())
 _PARSER = ts.Parser(_LANG)
@@ -24,14 +25,16 @@ def _build_b2c(script: str, nbytes: int) -> array:
     # mapping too. Store offsets compactly rather than keeping a Python int
     # object per character plus a pointer per byte. Retain large-input support.
     kind = 'I' if len(script) <= (1 << (array('I').itemsize*8))-1 else 'Q'
-    b2c = array(kind,[0]) * (nbytes + 1)
-    b = 0
-    for ci, ch in enumerate(script):
-        nb = b + len(ch.encode("utf-8"))
-        while b < nb:
-            b2c[b] = ci
-            b += 1
-    b2c[nbytes] = len(script)
+    b2c = array(kind)
+    previous = 0
+    # Bulk ASCII runs are built inside array.extend rather than encoding and
+    # assigning every ASCII byte in Python. Only Unicode codepoints repeat.
+    for match in re.finditer(r'[^\x00-\x7f]',script):
+        ci = match.start()
+        b2c.extend(range(previous,ci))
+        b2c.extend([ci]*len(match.group().encode('utf-8')))
+        previous = ci+1
+    b2c.extend(range(previous,len(script)+1))
     return b2c
 
 

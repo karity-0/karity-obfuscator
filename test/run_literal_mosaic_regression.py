@@ -172,7 +172,8 @@ return selected(),outside()
     assert protected_number(moved,3,6)
     assert number_origin(moved,3,6).startswith('function_constant/mosaic:')
     from obfuscator.passes.number_expressions import NumberExpressionEngine
-    from obfuscator.passes.ts_utils import parse
+    from obfuscator.passes.ts_utils import parse, _build_b2c
+    assert list(_build_b2c('A😄B한',9))==[0,1,1,1,1,2,3,3,3,4]
     unicode_source='local text="🍤한글\u202ewrong way\u202c";return "done"'
     unicode_ctx=parse(unicode_source)
     assert unicode_ctx.b2c.itemsize<=8
