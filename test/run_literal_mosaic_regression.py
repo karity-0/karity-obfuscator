@@ -193,6 +193,14 @@ return selected(),outside()
     for a,b,text in sorted(edits,reverse=True): encoded=encoded[:a]+text+encoded[b:]
     decoded=transport.finish(encoded)
     assert run(decoded)==32 and len(decoded.protected)==1
+    from obfuscator.vm.output_emitter import emit_vm_literals
+    from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
+    # Structured emission clips protected spans through punctuation. They
+    # must stay safe when passed to a later structural transformation.
+    fragmented,_=emit_vm_literals(tagged,['number_obf'])
+    assert run(fragmented)==32
+    transformed=Pipeline(show_header=False).add(FunctionObfuscationPass()).run(fragmented)
+    assert run(transformed)==32
     try: transport.finish('--[[KarityNumericOrigin:99999:begin]] return 2')
     except RuntimeError: pass
     else: raise AssertionError('unregistered marker accepted')
