@@ -25,6 +25,11 @@ MEME_STRINGS = (
     # pls
     "its loadstring obf", "js leave me alone", "pls no deob",
     ".l", "this is uncrackable", "stop dumping", "totally encrypted",
+
+    # RLO reverses the displayed phrase; PDF ends it inside the Lua literal.
+    "\u202ewrong way\u202c", "\u202ekeep looking\u202c",
+    "\u202etrust me bro\u202c", "\u202eskill issue\u202c",
+    "\u202estop dumping\u202c", "\u202etotally encrypted\u202c",
 )
 
 STRINGS_BY_LENGTH: dict[int, tuple[str, ...]] = {

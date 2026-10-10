@@ -24,6 +24,13 @@ Phrase lengths count UTF-8 bytes, including Unicode phrases. Parentheses
 preserve precedence, including powers and unary minus. Comments and existing
 strings are never rewritten. The usual build seed controls selection.
 
+The phrase pool also includes six variants wrapped in U+202E (RIGHT-TO-LEFT
+OVERRIDE) and U+202C (POP DIRECTIONAL FORMATTING). Supporting viewers display
+the phrase in reverse character order. Both controls stay inside the quoted
+Lua string; each contributes three UTF-8 bytes to its length. Generated Lua
+contains the actual control characters, while the Python phrase list spells
+them with Unicode escapes for readability.
+
 Place this pass after string transformations to keep the fun strings visible.
 VM output automatically runs it after the structured literal emitters and
 before post passes such as minification.
