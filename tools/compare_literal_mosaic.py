@@ -62,6 +62,8 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--seed',type=int,default=9300)
     parser.add_argument('--runtime-repeats',type=int,default=3)
+    parser.add_argument('--reuse-before-report',type=Path,
+                        help='reuse isolated before rows with the same fixture, interpreter and seed; rerun every after row')
     args = parser.parse_args()
     work = ROOT/'temp-mosaic-benchmark'
     work.mkdir(exist_ok=True)
@@ -71,11 +73,23 @@ def main():
         'memory':'child peak Windows working set, sampled every 50ms; excludes grandchildren',
         'timing':'serial processes; profiling on both revisions; runtime includes native Lua startup',
         'records':[]}
+    before_rows={}
+    if args.reuse_before_report:
+        previous=json.loads(args.reuse_before_report.read_text(encoding='utf-8'))
+        for key in ('fixture','input_bytes','seed','python','platform','pythonhashseed'):
+            if previous[key]!=report[key]: raise ValueError('baseline environment mismatch: '+key)
+        before_rows={(row['kind'],row['profile']):row for row in previous['records'] if row['revision']=='before'}
+        report['reused_baseline_note']='Before rows from an earlier isolated serial run on the identical environment; every after row rerun.'
     def save():
         args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
     for kind in ('source','mov','karity'):
         for profile in ('high','max'):
             for revision,checkout in (('before',args.before.resolve()),('after',ROOT)):
+                if revision=='before' and (kind,profile) in before_rows:
+                    report['records'].append(before_rows[kind,profile])
+                    save()
+                    print('benchmark-reused-before',kind,profile,flush=True)
+                    continue
                 name = f'{revision}-{kind}-{profile}'
                 output,profile_report = work/(name+'.lua'),work/(name+'.json')
                 print('benchmark-start',name,flush=True)

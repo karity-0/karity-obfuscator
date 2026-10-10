@@ -111,6 +111,11 @@ transformation pipeline, not Lua files reloaded by a separate build. Minificatio
 and final serialized files are intentional text boundaries; raw final output
 contains no provenance markers. Reprocessing an emitted file is a new input.
 
+An already handled expression is transported once as a whole, rather than
+registering its numeric leaves separately. Unicode byte/character coordinates
+use a compact unsigned offset array (ASCII still needs no mapping), limiting
+the memory cost of early emoji/RLO meme generation without changing offsets.
+
 ## Metrics and limits
 
 Profiling (`--profile-report`) or `diversity_metrics: true` enables counters.
