@@ -198,7 +198,7 @@ the `string_obf`/`boolean_obf`/`number_obf` literal stages from one shared
 Tree-sitter context when no structural rewrite invalidates it. Identifier and
 literal replacements are merged by a structured emitter, while generated
 literals remain typed for later stages. This preserves cross-pass layering such
-as string XOR operands flowing into number obfuscation without parsing and
+as string-reconstruction operands flowing into number obfuscation without parsing and
 rendering the expanded VM source after every pass.
 
 Handler, arithmetic, semantic, call, control, and loop graph sources are inserted

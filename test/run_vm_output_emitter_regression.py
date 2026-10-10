@@ -239,8 +239,8 @@ print(call(3))
         "print(string.char(65))", ["number_obf"],
     )
     char_number = next(d for d in char_details if d["phase"] == "vm_output:number_obf")
-    if char_number["replacements"] != 0 or run_source(char_source) != (0, b"A\n", b""):
-        raise AssertionError("original string.char byte-domain exclusion regressed")
+    if char_number["replacements"] != 1 or run_source(char_source) != (0, b"A\n", b""):
+        raise AssertionError("number emitter did not layer existing string.char operands")
 
     random.seed(260829)
     profiler = Profiler()

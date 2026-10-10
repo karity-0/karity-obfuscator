@@ -185,9 +185,11 @@ Encodes string literals.
 
 **type:** passes | vm_output_passes | packer_output_passes
 
-Obfuscates string literals.
+Reconstructs strings through randomized, interleaved arithmetic and bitwise statements.
 
-**Target requirements:** native_bitops; minimum compatibility `portable`.
+**Target requirements:** integer_arithmetic, native_bitops; minimum compatibility `portable`.
+
+See [`string_obf` design and implementation notes](passes/stringObfuscation.md) for architecture, trade-offs, and future work.
 
 ## boolean_obf
 
@@ -506,7 +508,7 @@ the `string_obf`/`boolean_obf`/`number_obf` literal stages from one shared
 Tree-sitter context when no structural rewrite invalidates it. Identifier and
 literal replacements are merged by a structured emitter, while generated
 literals remain typed for later stages. This preserves cross-pass layering such
-as string XOR operands flowing into number obfuscation without parsing and
+as string-reconstruction operands flowing into number obfuscation without parsing and
 rendering the expanded VM source after every pass.
 
 Handler, arithmetic, semantic, call, control, and loop graph sources are inserted

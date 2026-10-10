@@ -39,7 +39,13 @@ class TSContext:
     def __init__(self, script: str):
         self.script = script
         data = script.encode("utf-8")
-        self.tree = _PARSER.parse(data)
+        # The grammar accepts escaped LF but rejects Lua's escaped CR/CRLF
+        # continuations. Normalize only the parser buffer, preserving its byte
+        # length so literal decoding and replacements still use the exact source.
+        parser_data = (data.replace(b"\\\r\n", b"\\\n ")
+                       .replace(b"\\\n\r", b"\\\n ")
+                       .replace(b"\\\r", b"\\\n"))
+        self.tree = _PARSER.parse(parser_data)
         self.root = self.tree.root_node
         # Generated VM/packer sources are ASCII. In that common multi-MB
         # case, byte and character coordinates are identical, so building an

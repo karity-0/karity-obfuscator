@@ -20,7 +20,8 @@ from ..passes.boolean_obfuscation import generate_rand_xor
 from ..passes.base import Replacement
 from ..passes.number_obfuscation import NumberObfuscationPass
 from ..passes.meme_strings import MemeStringsPass
-from ..passes.string_obfuscation import _CHUNK_SIZE, parse_lua_string
+from ..passes.string_obfuscation import _encode, parse_lua_string
+from ..names import NameAllocator
 from ..passes.ts_utils import _LANG, parse
 
 
@@ -119,34 +120,6 @@ def _split_meme_literals(expr: str, eligible: bool) -> list[Fragment]:
     return parts
 
 
-def _inside_string_char(node, ctx, cache: dict[int, bool]) -> bool:
-    visited: list[int] = []
-    current = node.parent
-    while current is not None:
-        cached = cache.get(current.id)
-        if cached is not None:
-            for node_id in visited:
-                cache[node_id] = cached
-            return cached
-        visited.append(current.id)
-        if current.type == "function_call":
-            result = bool(
-                current.children
-                and ctx.text(current.children[0]) == "string.char"
-            )
-            for node_id in visited:
-                cache[node_id] = result
-            return result
-        if current.type in ("assignment_statement", "return_statement"):
-            for node_id in visited:
-                cache[node_id] = False
-            return False
-        current = current.parent
-    for node_id in visited:
-        cache[node_id] = False
-    return False
-
-
 def _parse_fragments(
     source: str,
     ctx,
@@ -193,7 +166,6 @@ def _parse_fragments(
     parts: list[Fragment] = []
     pos = 0
     captured_count = 0
-    string_char_cache: dict[int, bool] = {}
     replacement_index = 0
     literal_index = 0
     literal_event = None
@@ -256,8 +228,7 @@ def _parse_fragments(
         if node.type == "number":
             parts.append(NumberLiteral(
                 token,
-                not _inside_string_char(node, ctx, string_char_cache)
-                and _EXACT_HEX64_RE.fullmatch(token) is None
+                _EXACT_HEX64_RE.fullmatch(token) is None
                 and not in_exact_graph(start, end),
             ))
         elif node.type == "string":
@@ -271,28 +242,11 @@ def _parse_fragments(
     return parts, captured_count
 
 
-def _emit_string(token: str) -> list[Fragment]:
-    data = parse_lua_string(token)
-    if not data:
-        return [StringLiteral('""')]
-
-    parts: list[Fragment] = []
-    for chunk_index, offset in enumerate(range(0, len(data), _CHUNK_SIZE)):
-        if chunk_index:
-            _append_raw(parts, "..")
-        _append_raw(parts, "string.char(")
-        chunk = data[offset:offset + _CHUNK_SIZE]
-        for index, value in enumerate(chunk):
-            if index:
-                _append_raw(parts, ",")
-            first = random.randint(10_000, 9_999_999)
-            _append_raw(parts, "(")
-            parts.append(NumberLiteral(str(first)))
-            _append_raw(parts, "~")
-            parts.append(NumberLiteral(str(first ^ value)))
-            _append_raw(parts, ")")
-        _append_raw(parts, ")")
-    return parts
+def _emit_string(token: str, allocator: NameAllocator) -> list[Fragment]:
+    # The shared generator emits no quoted literals or comments. Keep every
+    # numeric leaf eligible for later NumberObf/Meme stages, without reparsing
+    # the complete VM. Its identifiers are reserved from the input/plans.
+    return _split_generated_numbers(_encode(parse_lua_string(token), allocator))
 
 
 def _emit_boolean(value: bool) -> list[Fragment]:
@@ -356,6 +310,11 @@ def emit_vm_literals(
         "capture_source": "rename_traversal" if literal_nodes is not None else "query",
     }]
 
+    allocator = None
+    if "string_obf" in stages:
+        allocator = NameAllocator.for_source(source, seed=random.getrandbits(64))
+        for replacement in replacements:
+            allocator.used.update(re.findall(r"[A-Za-z_][A-Za-z_0-9]*", replacement.new_text))
     number_emitter = NumberObfuscationPass()
     meme_emitter = MemeStringsPass()
     for stage_index, name in enumerate(stages):
@@ -369,7 +328,7 @@ def emit_vm_literals(
 
         for part in parts:
             if name == "string_obf" and isinstance(part, StringLiteral):
-                output.extend(_emit_string(part.token))
+                output.extend(_emit_string(part.token, allocator))
                 replacements += 1
             elif name == "boolean_obf" and isinstance(part, BooleanLiteral):
                 output.extend(_emit_boolean(part.value))
