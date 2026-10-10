@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import re
 import subprocess
@@ -143,6 +144,25 @@ print(call(3))
                      '0x1p-1074,1.25,1e300};for _,v in ipairs(values) do '
                      'print(math.type(v),string.format("%a",v)) end')
     expected_probe = run_source(numeric_probe)
+    # Shipped final-output defaults keep visible memes and the full NumberObf
+    # formatter, without letting MemeStrings expand NumberObf's new leaves.
+    profiles = json.loads((ROOT_DIR / 'config.example.json').read_text(encoding='utf-8'))['profiles']
+    style_probe = 'local t={' + ','.join(str(i) for i in range(1, 201)) + '};print(t[1],t[200],1.25)'
+    for profile in ('high', 'max'):
+        passes = profiles[profile]['vm_output_passes']
+        random.seed(261010)
+        styled, style_details = _obfuscate_vm_output(style_probe, passes)
+        assert run_source(styled) == run_source(style_probe), profile
+        assert re.search(r'#"', styled), profile
+        assert re.search(r'0[xX][0-9a-fA-F]*\.', styled), profile
+        assert re.search(r'(?<![\w.])\.\d', styled), profile
+        style_numbers = next(d for d in style_details if d['phase'] == 'vm_output:number_obf')
+        assert style_numbers['retokenized_generated_numbers'] is False, style_numbers
+        assert style_numbers['replacements'] > 100, style_numbers
+        random.seed(261010)
+        styled_loader = PackerPass(packer_output_passes=profiles[profile]['packer_output_passes']).run(style_probe)
+        assert '#"' in styled_loader, profile
+        assert run_source(styled_loader) == run_source(style_probe), profile
     for seed in range(16):
         random.seed(seed)
         combined_probe, probe_details = _obfuscate_vm_output(numeric_probe, ["number_obf", "meme_strings"])

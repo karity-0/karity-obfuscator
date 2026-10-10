@@ -127,7 +127,10 @@ protection remain. Individual randomized builds can differ slightly in size.
 
 ## Complete profiles and VM work
 
-high/max now default to StripInfo, RenameObf and Minify on VM/packer output.
+At measured revision `f687f17`, high/max defaulted to StripInfo, RenameObf and
+Minify on VM/packer output. The subsequent visible-style update restores
+MemeStrings → NumberObf before Minify in both lists; measurements below describe
+the earlier three-pass output and are not the new default's performance claim.
 Explicit expensive pass lists remain supported. Handler/graph protection,
 instruction variants, state dependencies and dispatcher protection are unchanged.
 When RenameObf is present, StripInfo does not redundantly perform its own rename.
@@ -155,6 +158,38 @@ execution. The original median is 0.026 seconds. Baseline high/max have no full
 build/runtime comparison because their VM input does not compile. max includes
 packing, so file size is not directly comparable to unpacked high. VM/backend
 randomization also affects output size independently of source-pass savings.
+
+## Visible numeric and meme output follow-up
+
+The subsequent preset update restores `meme_strings` then `number_obf` between
+RenameObf and Minify in both high/max output lists. NumberObf uses its complete
+existing expression/format engine, not the lightweight generated-state policy.
+Memes stay visible; their residuals and other eligible runtime numbers receive
+the varied decimal/hexadecimal notation. Running MemeStrings first avoids its
+expansion of every new NumberObf operand. FunctionObf/StringObf are not repeated
+on default VM/packer output, and the source CFF/provenance changes above remain.
+
+| Backend/profile | Previous final bytes | Style final bytes | Style build seconds | Style execution median, 3 samples |
+| --- | ---: | ---: | ---: | ---: |
+| MOV high | 4,215,877 | 4,381,175 | 13.04 | 6.35 |
+| MOV max, packed | 2,445,113 | 2,994,717 | 28.37 | 16.70 |
+| Karity high | 6,129,941 | 12,814,047 | 137.96 | 5.81 |
+| Karity max, packed | 3,134,807 | 9,991,669 | 189.23 | 24.51 |
+
+These builds use the same fixture/seed but different measurement sessions with
+concurrent tests, so timing is not a controlled speedup/slowdown comparison.
+Full NumberObf and runtime meme arithmetic have material cost, particularly in
+the number-heavy Karity output. All four new files compile and print the same
+`hello world`. The final packed max loaders also visibly retain both features.
+MOV high contains 1,475 meme length expressions; Karity high contains 85,845.
+Uppercase hex, hex fractions and leading-dot notation occur in every new file.
+Detailed samples/counts are in `visible_output_style` in the JSON report.
+
+The new preset/appearance/loader regression passes on Python 3.12 and 3.15,
+as does the GUI regression. MOV high's existing CLI release-check passes on
+Python 3.12 in 19.35 seconds, with its 180-second timeout unchanged. The GitHub
+run below validates the earlier code revision; it does not claim CI results
+for this later preset update.
 
 ## Verification
 

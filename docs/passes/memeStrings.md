@@ -32,8 +32,15 @@ contains the actual control characters, while the Python phrase list spells
 them with Unicode escapes for readability.
 
 Place this pass after string transformations to keep the fun strings visible.
-VM output automatically runs it after the structured literal emitters and
-before post passes such as minification.
+For VM/packer output, `meme_strings` before `number_obf` keeps the phrases visible
+while NumberObf transforms their residual numbers with its full expression and
+literal-format engine. Both run in the shared literal emitter. This order avoids
+wrapping every generated NumberObf operand in more string arithmetic. Existing
+explicit NumberObf → MemeStrings configurations retain their former behavior.
 Source passes execute before VM compilation; use `vm_output_passes` or
 `packer_output_passes` to put the phrases in the generated runtime or loader.
-This optional pass is not enabled automatically by the existing profiles.
+The high/max profiles enable `strip_info`, `rename_obf`, `meme_strings`,
+`number_obf`, `minify` for both VM and packer output. They retain visible memes
+and varied numeric notation without another FunctionObf/StringObf round on the
+generated runtime. The additional literal stages still increase output size and
+processing/runtime cost; they are not merely text decoration.

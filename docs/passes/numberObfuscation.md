@@ -200,6 +200,15 @@ and CFF/VM composition.
 
 ## VM output integration
 
+The high/max default VM and packer output lists are `strip_info`, `rename_obf`,
+`meme_strings`, `number_obf`, `minify`. NumberObf uses its full existing expression
+and numeric-format engine here, including randomized `0x`/`0X`, decimal fractions,
+leading-dot and hexadecimal fractional/exponent notation. It does not use
+FunctionObf's bounded generated-state policy for these ordinary output literals.
+MemeStrings runs first so visible phrases survive and NumberObf's generated
+operands are not all expanded into more meme arithmetic. Explicit custom lists
+continue to honor their configured literal-stage order.
+
 Generated VM Lua can grow to many megabytes, so `number_obf` does not use the
 normal:
 

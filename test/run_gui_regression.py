@@ -126,7 +126,9 @@ def main() -> int:
     assert "pack" not in shipped_profiles["high"]["passes"] and "pack" in shipped_profiles["max"]["passes"]
     for context in ("vm_output_passes", "packer_output_passes"):
         for name in ("high", "max"):
-            assert shipped_profiles[name][context] == ["strip_info", "rename_obf", "minify"]
+            assert shipped_profiles[name][context] == [
+                "strip_info", "rename_obf", "meme_strings", "number_obf", "minify",
+            ]
     for name in ("high", "max"):
         stages=shipped_profiles[name]['passes']
         assert stages.index('string_obf') < stages.index('function_obf') < stages.index('number_obf')
