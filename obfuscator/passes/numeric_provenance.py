@@ -164,13 +164,23 @@ class NumericTransport:
         if isinstance(ctx.script,CodeText):
             first=max(0,bisect_right(ctx.script._starts,start)-1)
             last=bisect_right(ctx.script._starts,end)
+            expression_spans={(ctx.cs(n),ctx.ce(n)+1) for n in nodes
+                if n.type in ('number','parenthesized_expression','binary_expression','unary_expression')}
             for a,b in ctx.script.protected[first:last]:
                 if start <= a and b <= end and not protected_number(registered,a,b):
+                    fragment=ctx.script[a:b]
+                    expression_start=a+len(fragment)-len(fragment.lstrip())
+                    expression_end=a+len(fragment.rstrip())
+                    if (expression_start,expression_end) not in expression_spans:
+                        # A renderer/edit can clip metadata through punctuation.
+                        # Such spans are not expressions; preserve their numeric
+                        # leaves individually below rather than wrapping syntax.
+                        continue
                     # Transport an already handled expression once, rather
                     # than serializing every numeric leaf inside it. This
                     # preserves its generation budget and structural origin.
                     protected.append((a,b))
-                    edits.append((a,b,self.wrap(ctx.script[a:b],True,
+                    edits.append((a,b,self.wrap(fragment,True,
                         number_origin(ctx.script,a,b))))
         covered=CodeText(ctx.script,[(a,b) for a,b,_ in regions]+protected)
         for node in nodes:
