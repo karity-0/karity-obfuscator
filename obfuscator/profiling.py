@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import time
-from typing import cast
+from typing import cast, TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .passes.mosaic_metrics import DiversityMetrics
 
 from .data_types import JSONValue, ProfileDetail
 
@@ -39,16 +42,20 @@ class ProfileRecord:
 class Profiler:
     def __init__(self) -> None:
         self.records: list[ProfileRecord] = []
+        self.literal_mosaic: DiversityMetrics | None = None
 
     def add(self, record: ProfileRecord) -> None:
         self.records.append(record)
 
     def as_dict(self) -> dict[str, JSONValue]:
         total = sum(record.elapsed for record in self.records)
-        return {
+        result: dict[str, JSONValue] = {
             "total_elapsed": round(total, 6),
             "passes": [record.as_dict() for record in self.records],
         }
+        if self.literal_mosaic is not None:
+            result['literal_mosaic'] = self.literal_mosaic.report()
+        return result
 
 
 class PhaseTimer:

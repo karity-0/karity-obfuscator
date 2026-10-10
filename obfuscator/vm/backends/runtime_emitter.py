@@ -289,6 +289,19 @@ def _rename_vm_keys(src: str) -> str:
 
 
 def _obfuscate_vm_output(
+    script: str, pass_names: list[str], *, compact_globals: bool = False,
+    protect_vm_dispatcher: bool = True,
+) -> tuple[str,list[dict]]:
+    from obfuscator.passes.literal_mosaic import boundary, use_mosaic
+    from obfuscator.passes.function_costs import POLICY
+    service = boundary(pass_names,lua_version=POLICY.get().lua_version,
+        phase='vm_output' if protect_vm_dispatcher else 'packer_output')
+    with use_mosaic(service):
+        return _obfuscate_vm_output_scoped(script,pass_names,
+            compact_globals=compact_globals,protect_vm_dispatcher=protect_vm_dispatcher)
+
+
+def _obfuscate_vm_output_scoped(
     script: str,
     pass_names: list[str],
     *,
@@ -357,6 +370,8 @@ def _obfuscate_vm_output(
             return source, []
 
         pipeline = Pipeline(show_header=False)
+        from obfuscator.passes.literal_mosaic import ACTIVE
+        pipeline.mosaic_scope = ACTIVE.get()
         names: list[str] = []
         for configured_name, cls in entries:
             if cls.__name__ == "FunctionObfuscationPass":

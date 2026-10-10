@@ -38,6 +38,42 @@ def _parse_float_token(token: str) -> float:
 class NumberExpressionEngine:
     portable = False
 
+    def mosaic_int(self, value: int, depth: int = 1) -> str:
+        """Cheap generated-operand alternatives; original source stays unchanged.
+
+        Callers enforce their operation/character budgets. Operands are in the
+        exact working domain checked by Mosaic; scaling uses powers of two.
+        Portable modulo additionally reserves binary64 headroom.
+        """
+        mode = random.randrange(4 if self.portable else 8)
+        literal = lambda n: '(' + self._fmt_plain_int(n) + ')'
+        if mode == 0:
+            return self._gen_plain_int_expr(value,depth)
+        if mode == 1:
+            factor = 1 << random.randint(1,4)
+            quotient,remainder = divmod(value,factor)
+            return f'({literal(quotient)}*{factor}+{remainder})'
+        if mode == 2:
+            factor = 1 << random.randint(1,4)
+            operator = '/' if self.portable else '//'
+            return f'({literal(value*factor)}{operator}{factor})'
+        if mode == 3:
+            if self.portable and abs(value) > (1 << 50):
+                return self._gen_plain_int_expr(value,depth)
+            modulus = abs(value)+random.randint(1,255)
+            sign = '-' if value < 0 else ''
+            return f'{sign}({literal(abs(value)+modulus)}%{literal(modulus)})'
+        if mode == 4:
+            mask = random.randint(1,255)
+            return f'(({literal(value)}|{mask})&{literal(value)})'
+        if mode == 5 or (mode == 6 and value < 0):
+            return f'(~(~{literal(value)}))'
+        if mode == 6:
+            shift = random.randint(1,4)
+            return f'(({literal(value)}<<{shift})>>{shift})'
+        mask = (1 << random.randint(1,8))-1
+        return f'({literal(value&mask)}|{literal(value&~mask)})'
+
     def generated_int(self, value: int, *, hot: bool = True,
                       max_chars: int = 192, max_operations: int = 3) -> str:
         """Use the same integer generator with a bounded, exact 5.1/5.3 policy.

@@ -1,5 +1,6 @@
 import random
 import re
+from contextlib import nullcontext
 
 from ..names import NameAllocator
 from .string_reconstruction import reconstruct
@@ -102,8 +103,14 @@ def parse_lua_string(raw: str) -> bytes:
 
 def _encode(data: bytes, allocator: NameAllocator | None = None) -> str:
     from .numeric_provenance import CodeText
+    from .literal_mosaic import ACTIVE
     expression = reconstruct(data, allocator)
-    return CodeText(expression, reconstructions=[(0, len(expression))])
+    mosaic = ACTIVE.get()
+    if mosaic is not None:
+        expression = mosaic.transform_generated(expression)
+    return CodeText(expression, getattr(expression,'protected',()),
+                    reconstructions=[(0,len(expression))],
+                    origins=getattr(expression,'origins',()) or [(0,len(expression),'string_constant')])
 
 
 class StringObfuscationPass(BasePass):
@@ -112,17 +119,21 @@ class StringObfuscationPass(BasePass):
     parser = "treesitter"
 
     def run(self, script: str, tree) -> list[Replacement]:
+        from .literal_mosaic import ACTIVE
         replacements: list[Replacement] = []
         allocator = NameAllocator.for_source(script, seed=random.getrandbits(64))
+        mosaic = ACTIVE.get()
 
         for node in tree.walk():
             if node.type != "string":
                 continue
 
+            with mosaic.at(tree.cs(node),tree.ce(node)+1) if mosaic is not None else nullcontext():
+                expression = _encode(parse_lua_string(tree.text(node)),allocator)
             replacements.append(Replacement(
                 start    = tree.cs(node),
                 end      = tree.ce(node),
-                new_text = _encode(parse_lua_string(tree.text(node)), allocator),
+                new_text = expression,
             ))
 
         return replacements

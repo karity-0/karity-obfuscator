@@ -82,7 +82,7 @@ class SelectionRuntime:
         from .vm.targets.profile import TargetProfile
         present = {self.names.get(type(p)) for p in passes}
         extra = []
-        for feature in ("string_obf", "boolean_obf", "number_obf", "table_obf", "function_obf"):
+        for feature in ("string_obf", "boolean_obf", "number_obf", "meme_strings", "table_obf", "function_obf"):
             if self.plan.explicit(feature) and feature not in present:
                 targets = [s for s in self.plan.spans if s.feature == feature]
                 if self.plan.modes.get(feature, "marked") == "marked" and all(

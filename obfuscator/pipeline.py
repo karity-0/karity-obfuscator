@@ -9,7 +9,10 @@ __lazy_modules__ = {
 }
 
 import time
-from typing import Self
+from typing import Self, TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from .passes.literal_mosaic import LiteralMosaic
 
 from luaparser import ast
 
@@ -59,6 +62,8 @@ class Pipeline:
         self._post_passes: list[PostPass] = []
         self.show_header = show_header
         self.selection_config: ObfuscatorConfig = {}
+        self.mosaic_scope: LiteralMosaic | None = None
+        self.last_mosaic_metrics: dict[str, Any] = {}
         self.target_profile: TargetProfile
         self.toolchain: LuaToolchain
         self.last_selection_report: list[dict[str, JSONValue]] = []
@@ -84,6 +89,15 @@ class Pipeline:
         profiler: Profiler | None = None,
     ) -> str:
         from .names import RENAME_OPTIONS
+        from .passes.literal_mosaic import LiteralMosaic, use_mosaic
+        from .passes.mosaic_metrics import DiversityMetrics
+
+        mosaic = self.mosaic_scope or LiteralMosaic(
+            lua_version=getattr(getattr(self,'target_profile',None),'lua_version','5.3'),
+            options=self.selection_config.get('literal_mosaic',{}),
+            metrics=DiversityMetrics(profiler is not None or self.selection_config.get('literal_mosaic',{}).get('diversity_metrics',False)))
+        if profiler is not None and mosaic.metrics.enabled:
+            profiler.literal_mosaic = mosaic.metrics
 
         token = (
             RENAME_OPTIONS.set(self.rename_options)
@@ -91,8 +105,10 @@ class Pipeline:
             else None
         )
         try:
-            return self._run(script, verbose, profiler)
+            with use_mosaic(mosaic):
+                return self._run(script, verbose, profiler)
         finally:
+            self.last_mosaic_metrics = mosaic.metrics.report() if mosaic.metrics.enabled else {}
             if token is not None:
                 RENAME_OPTIONS.reset(token)
 
@@ -146,6 +162,17 @@ class Pipeline:
 
         if selection.enabled:
             base_passes = selection.base_passes(base_passes)
+
+        if self.mosaic_scope is None:
+            from dataclasses import replace
+            from .registry import PASS_REGISTRY
+            from .passes.literal_mosaic import ACTIVE
+            service = ACTIVE.get()
+            assert service is not None
+            class_names = {cast(Any,info).class_name:name for name,info in PASS_REGISTRY.items()}
+            service.policy = replace(service.policy, passes=frozenset(
+                class_names.get(type(p).__name__,'') for p in base_passes))
+            service.selection = selection.plan if selection.enabled else None
 
         for pass_ in base_passes:
             before = _size(script)

@@ -2,7 +2,7 @@ import random
 
 from .base import BasePass, Replacement
 from .number_expressions import NumberExpressionEngine
-from .numeric_provenance import protected_number
+from .numeric_provenance import protected_number, number_origin
 
 
 class NumberObfuscationPass(NumberExpressionEngine, BasePass):
@@ -15,6 +15,8 @@ class NumberObfuscationPass(NumberExpressionEngine, BasePass):
     ) -> list[Replacement]:
         replacements: list[Replacement] = []
         self.last_skipped_generated_count = 0
+        from .literal_mosaic import ACTIVE
+        mosaic = ACTIVE.get()
 
         for node in tree.walk():
             if node.type != "number":
@@ -24,7 +26,7 @@ class NumberObfuscationPass(NumberExpressionEngine, BasePass):
                 continue
             token = tree.text(node)
 
-            expr = self.obfuscate_token(token)
+            expr = mosaic.original_number(token,engine=self,origin=number_origin(script,tree.cs(node),tree.ce(node)+1)) if mosaic is not None else self.obfuscate_token(token)
 
             replacements.append(
                 Replacement(
@@ -34,6 +36,8 @@ class NumberObfuscationPass(NumberExpressionEngine, BasePass):
                 )
             )
 
+        if mosaic is not None:
+            mosaic.metrics.skip(mosaic.policy.phase+':number_obf',self.last_skipped_generated_count)
         self.last_profile = [{"phase": "number_origins", "elapsed": 0.0,
                               "protected_generated_numbers": self.last_skipped_generated_count,
                               "source_replacements": len(replacements)}]
