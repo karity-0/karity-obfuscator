@@ -157,9 +157,22 @@ class NumericTransport:
             nodes.append(node)
             stack.extend(node.children)
         _,regions,_=self.regions(ctx.script,ctx=ctx,nodes=nodes)
-        covered=CodeText(ctx.script,[(a,b) for a,b,_ in regions])
         edits=[]
         start,end=ctx.cs(function_node),ctx.ce(function_node)+1
+        registered=CodeText(ctx.script,[(a,b) for a,b,_ in regions])
+        protected=[]
+        if isinstance(ctx.script,CodeText):
+            first=max(0,bisect_right(ctx.script._starts,start)-1)
+            last=bisect_right(ctx.script._starts,end)
+            for a,b in ctx.script.protected[first:last]:
+                if start <= a and b <= end and not protected_number(registered,a,b):
+                    # Transport an already handled expression once, rather
+                    # than serializing every numeric leaf inside it. This
+                    # preserves its generation budget and structural origin.
+                    protected.append((a,b))
+                    edits.append((a,b,self.wrap(ctx.script[a:b],True,
+                        number_origin(ctx.script,a,b))))
+        covered=CodeText(ctx.script,[(a,b) for a,b,_ in regions]+protected)
         for node in nodes:
             if node.type!='number':continue
             a,b=ctx.cs(node),ctx.ce(node)+1

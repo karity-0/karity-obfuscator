@@ -17,7 +17,7 @@ from obfuscator.registry import build_pipeline_from_config, validate_config, Con
 from obfuscator.profiling import Profiler
 from obfuscator.passes.literal_mosaic import LiteralMosaic, use_mosaic, ACTIVE, boundary
 from obfuscator.passes.mosaic_metrics import DiversityMetrics, structural_fingerprint, expression_summary
-from obfuscator.passes.numeric_provenance import CodeText, join_code, number_origin, protected_number
+from obfuscator.passes.numeric_provenance import CodeText, NumericTransport, join_code, number_origin, protected_number
 from obfuscator.vm.backends.runtime_emitter import _obfuscate_vm_output
 
 SOURCE='''local function f(x)
@@ -171,6 +171,23 @@ return selected(),outside()
     moved=join_code(('xx',text[1:6]))
     assert protected_number(moved,3,6)
     assert number_origin(moved,3,6).startswith('function_constant/mosaic:')
+    from obfuscator.passes.number_expressions import NumberExpressionEngine
+    from obfuscator.passes.ts_utils import parse
+    plain='local function f()return (10+20)+2 end;return f()'
+    start=plain.index('(10+20)')
+    tagged=CodeText(plain,[(start,start+7)],origins=[(start,start+7,'string_constant/mosaic:number_bounded')])
+    ctx=parse(tagged)
+    function=next(n for n in ctx.walk() if n.type=='function_declaration')
+    transport=NumericTransport(tagged,NumberExpressionEngine())
+    edits=transport.source_edits(ctx,function)
+    assert len(edits)==2,edits  # one whole generated expression + source 2
+    encoded=plain
+    for a,b,text in sorted(edits,reverse=True): encoded=encoded[:a]+text+encoded[b:]
+    decoded=transport.finish(encoded)
+    assert run(decoded)==32 and len(decoded.protected)==1
+    try: transport.finish('--[[KarityNumericOrigin:99999:begin]] return 2')
+    except RuntimeError: pass
+    else: raise AssertionError('unregistered marker accepted')
     a=structural_fingerprint('(a+b)~c')[0]
     assert a==structural_fingerprint('(x+y)~z')[0]
     assert a!=structural_fingerprint('(a<<b)-c')[0]
