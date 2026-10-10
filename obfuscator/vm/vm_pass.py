@@ -44,7 +44,7 @@ _DEFAULT_VM_OPTIONS: VMOptions = {
     "upvalue_virtualization": False,
     "table_virtualization": False,
     "branch_virtualization": False,
-    # 블롭 저장 형태: "string"(단일 문자열) | "table"(스크램블 청크 테이블) | "random"
+    # 블롭 저장 형태: string, table, numeric, emoji, chinese 또는 random.
     "blob_form": "random",
     "vm_count": 1,    # 멀티VM: 함수(proto)를 N개 독립 VM에 분산(1=단일, >1=출력 ~N×)
     "fake_handlers": True,

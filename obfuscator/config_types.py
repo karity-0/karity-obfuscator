@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from typing import Literal, TypedDict
 
-type BlobForm = Literal["string", "table", "numeric", "random"]
+type BlobForm = Literal["string", "table", "numeric", "emoji", "chinese", "random"]
 type RequirementLevel = Literal["optional", "required"]
 type SelectionMode = Literal["all", "marked"]
 type SelectablePass = Literal["string_obf", "number_obf", "boolean_obf", "table_obf", "function_obf", "vm"]

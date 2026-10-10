@@ -166,7 +166,7 @@ PASS_REGISTRY = {name: _PassInfo(info) for name, info in PASS_REGISTRY.items()}
 
 CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
-VALID_BLOB_FORMS = {"string", "table", "numeric", "random"}
+VALID_BLOB_FORMS = {"string", "table", "numeric", "emoji", "chinese", "random"}
 OUTPUT_PASS_EXCLUDES = {"vm", "pack"}
 VALID_SIGNATURE_MODES = {"default", "none", "fake", "generated", "custom"}
 VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
@@ -244,6 +244,8 @@ VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
             ("string", "single base36 string literal"),
             ("table", "base36 blob split into scrambled string-table chunks"),
             ("numeric", "scrambled table of 32-bit integers rebuilt at runtime"),
+            ("emoji", "UTF-8 emoji string with a randomized byte alphabet"),
+            ("chinese", "UTF-8 Chinese character string with a randomized byte alphabet"),
             ("random", "randomly choose per obfuscation run"),
         ],
     },

@@ -18,6 +18,7 @@ from obfuscator.vm.backends.handler_codec import (
     patch_integrity_sources,
 )
 from obfuscator.vm.kae_blob import encrypt_blob
+from obfuscator.vm.blob_formats import unicode_blob_codec
 from obfuscator.vm.vm_variants import apply_instr_layout
 from obfuscator.vm.output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from obfuscator.vm.runtime_trace import apply_runtime_trace
@@ -599,10 +600,12 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     #   - string : 단일 base36 문자열 (주입 없음)
     #   - table  : 스크램블 청크 테이블 → table.concat 후 from_base36
     #   - numeric: 32비트 정수 테이블 → base36 우회, 바이트 직접 복원
+    #   - emoji/chinese: 고정 UTF-8 폭의 문자표 → 암호문 바이트 직접 복원
     # 주입은 output_transform(재난독화) 전에 해야 주입한 전역(table.concat/
     # string.char 등)도 함께 localize/rename 된다. 블롭 리터럴 자체는 _vmf
     # 인자라 dump/crc와 무관(컨테이너 형태를 바꿔도 anti-tamper 영향 없음).
     blob_form = root_protection["blob_form"]
+    unicode_codec = unicode_blob_codec(blob_form) if blob_form in {"emoji", "chinese"} else None
     if blob_form == "table":
         vm_code = vm_code.replace("from_base36(blob)",
                                   "from_base36(table.concat(blob))", 1)
@@ -611,6 +614,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         vm_code = vm_code.replace(
             decode_call, target.numeric_blob_decoder(_NUMERIC_DECODE), 1,
         )
+    elif unicode_codec is not None:
+        vm_code = vm_code.replace(target.blob_decode_call(), unicode_codec.decoder(), 1)
 
     # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
     _phase_start = time.perf_counter()
@@ -713,6 +718,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         lua_blob = _to_table_blob(encrypted_blob, random.randint(16, 48))
     elif blob_form == "numeric":
         lua_blob = _to_numeric_blob(encrypted_blob)
+    elif unicode_codec is not None:
+        lua_blob = unicode_codec.literal(encrypted_blob)
     else:
         lua_blob = _to_base36(encrypted_blob)
     context.profile.append({"phase": "encrypt_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})

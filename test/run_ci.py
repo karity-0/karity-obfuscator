@@ -8,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 REGRESSIONS = (
     "typing",
     "import",
+    "blob_form",
     "selection",
     "strip_info",
     "minify",

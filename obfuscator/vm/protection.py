@@ -15,6 +15,7 @@ from typing import Any, cast
 from ..config_types import VMOptions
 
 from .semantic_ir import SemanticIR
+from .blob_formats import BLOB_FORMS
 
 
 class RequirementLevel(str, Enum):
@@ -145,7 +146,7 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
                     ) for cycle in routes.values())):
                     raise ValueError("invalid planned runtime variant")
     blob_form = plan.functions.get(ir.root.id, {}).get("blob_form")
-    if blob_form is not None and blob_form not in {"string", "table", "numeric"}:
+    if blob_form is not None and blob_form not in BLOB_FORMS:
         raise ValueError("invalid planned blob representation")
     representation_routes = plan.functions.get(ir.root.id, {}).get(
         "representation_routes"
@@ -499,7 +500,7 @@ class ProtectionPlanner:
         dispatcher = self.options.get("dispatcher_type") or "ifelseif"
         blob_form = self.options.get("blob_form") or "string"
         root_state["blob_form"] = (
-            rng.choice(("string", "table", "numeric"))
+            rng.choice(BLOB_FORMS)
             if blob_form == "random" else blob_form
         )
         root_state["representation_routes"] = (

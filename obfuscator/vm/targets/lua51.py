@@ -584,13 +584,15 @@ end
         # arithmetic. Emit it in the target-native binary64 domain for every
         # backend so bind_lines never needs the whole-source compatibility
         # translator after backend emission.
-        result, state, lines = apply_line_state(source, "",
+        result, state, lines = apply_line_state(source, context.output_prefix,
                                                output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]",
                                                native_u32=True)
         return result.replace("--[[TARGET51_PRELUDE_END]]", ""), state, lines
 
     def dump_function(self, source, header, decoy_name, decoy_value, toolchain):
-        return normalize_dump(run_tool(source, "dump", toolchain))
+        # Canonical Lua 5.1 dumps retain each function's line boundaries. Match
+        # the final wrapper's prefix without executing its contents at build time.
+        return normalize_dump(run_tool("\n" * header.count("\n") + source, "dump", toolchain))
 
     def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
         if not source.startswith("return "):

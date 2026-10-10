@@ -35,6 +35,7 @@ constants: list[LuaConstant] = [None, True, 1, 2.5, "text", b"\xff"]
 value = IRValue("constant", "constant", 0, literal=constants[0])
 assert_type(value.literal, LuaConstant)
 options: VMOptions = config["vm_options"]
+unicode_options: list[VMOptions] = [{"blob_form": "emoji"}, {"blob_form": "chinese"}]
 context = BackendContext(options)
 assert_type(context.options, VMOptions)
 assert_type(get_backend("karity")._policy(options), BackendPolicy)

@@ -342,7 +342,8 @@ def check_alias_planning():
     assert planner.build(ir).dump() == plan.dump()
     assert len(requirements) == 2
     assert len(runtime_variants) == 2
-    assert plan.functions[ir.root.id]['blob_form'] in {'string', 'table', 'numeric'}
+    from obfuscator.vm.blob_formats import BLOB_FORMS
+    assert plan.functions[ir.root.id]['blob_form'] in BLOB_FORMS
     representation_routes = dict(plan.functions[ir.root.id]['representation_routes'])
     assert set(representation_routes) == {'arithmetic', 'semantic'}
     assert all(

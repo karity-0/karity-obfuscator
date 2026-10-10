@@ -32,6 +32,19 @@ python main.py hello.lua --profile fast-vm
 The result is written next to the input as `hello_obfuscated.lua`. Use `-o` to
 choose another path.
 
+Encrypted VM bytecode can also be stored as emoji or Chinese characters:
+
+```bash
+python main.py hello.lua --profile dev --vm-option blob_form=emoji
+python main.py hello.lua --profile dev --vm-option blob_form=chinese
+```
+
+The Blob representation control in the GUI exposes the same choices. `random`
+chooses among `string`, `table`, `numeric`, `emoji`, and `chinese`. Each Unicode
+form uses a fresh byte alphabet and needs no Lua `utf8` library, including on
+Lua 5.1. Generated files use UTF-8; emoji and Chinese forms respectively store
+four and three source bytes per encrypted byte.
+
 > **Obfuscation example:** Compare the [original `print("hello karity")` source](examples/hello.lua)
 > with its [obfuscated output](examples/hello.protected.lua), generated through the GUI using
 > the `obf_gui_config` configuration.

@@ -666,6 +666,8 @@ How the encrypted bytecode blob is stored in the output.
 | `string` | single base36 string literal |
 | `table` | base36 blob split into scrambled string-table chunks |
 | `numeric` | scrambled table of 32-bit integers rebuilt at runtime |
+| `emoji` | UTF-8 emoji string with a randomized byte alphabet |
+| `chinese` | UTF-8 Chinese character string with a randomized byte alphabet |
 | `random` | randomly choose per obfuscation run |
 
 default: `random`
