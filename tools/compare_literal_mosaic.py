@@ -62,6 +62,7 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--seed',type=int,default=9300)
     parser.add_argument('--runtime-repeats',type=int,default=3)
+    parser.add_argument('--unprofiled',action='store_true',help='measure ordinary VM builds with diagnostics disabled')
     parser.add_argument('--reuse-before-report',type=Path,
                         help='reuse isolated before rows with the same fixture, interpreter and seed; rerun every after row')
     args = parser.parse_args()
@@ -72,17 +73,22 @@ def main():
         'seed':args.seed,'python':sys.version,'platform':platform.platform(),'pythonhashseed':'0',
         'memory':'child peak Windows working set, sampled every 50ms; excludes grandchildren',
         'timing':'serial processes; profiling on both revisions; runtime includes native Lua startup',
+        'profiling_enabled':not args.unprofiled,
         'records':[]}
+    if args.unprofiled:
+        report['timing']='serial ordinary VM builds with profiling/metrics disabled; runtime includes native Lua startup'
     before_rows={}
     if args.reuse_before_report:
         previous=json.loads(args.reuse_before_report.read_text(encoding='utf-8'))
+        if previous.get('profiling_enabled',True)!=report['profiling_enabled']:
+            raise ValueError('baseline profiling mode mismatch')
         for key in ('fixture','input_bytes','seed','python','platform','pythonhashseed'):
             if previous[key]!=report[key]: raise ValueError('baseline environment mismatch: '+key)
         before_rows={(row['kind'],row['profile']):row for row in previous['records'] if row['revision']=='before'}
         report['reused_baseline_note']='Before rows from an earlier isolated serial run on the identical environment; every after row rerun.'
     def save():
         args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-    for kind in ('source','mov','karity'):
+    for kind in (('mov','karity') if args.unprofiled else ('source','mov','karity')):
         for profile in ('high','max'):
             for revision,checkout in (('before',args.before.resolve()),('after',ROOT)):
                 if revision=='before' and (kind,profile) in before_rows:
@@ -90,7 +96,7 @@ def main():
                     save()
                     print('benchmark-reused-before',kind,profile,flush=True)
                     continue
-                name = f'{revision}-{kind}-{profile}'
+                name = ('default-' if args.unprofiled else '')+f'{revision}-{kind}-{profile}'
                 output,profile_report = work/(name+'.lua'),work/(name+'.json')
                 print('benchmark-start',name,flush=True)
                 if kind == 'source':
@@ -99,10 +105,10 @@ def main():
                 else:
                     command = [sys.executable,'main.py',str(fixture),'-o',str(output),'-c','config.example.json',
                         '--profile',profile,'--seed',str(args.seed),'--vm-option','backend='+kind,
-                        '--profile-report',str(profile_report)]
+                        *([] if args.unprofiled else ['--profile-report',str(profile_report)])]
                 record = {'revision':revision,'kind':kind,'profile':profile,
                     **run(command,checkout,work/(name+'.log'))}
-                raw = json.loads(profile_report.read_text(encoding='utf-8'))
+                raw = {} if args.unprofiled else json.loads(profile_report.read_text(encoding='utf-8'))
                 record['profiling'] = raw
                 record['output_bytes'] = output.stat().st_size
                 native = ROOT/'bin/lua.exe'
