@@ -7,6 +7,13 @@ It combines conventional source transformations with opcode virtualization,
 encoded value storage, dynamic register mapping, cross-instruction semantics,
 runtime-polymorphic execution, and build-time diversification of hot VM paths.
 
+Karity 1.2.0 replaces the fixed XOR string encoding with per-literal arithmetic
+and bitwise reconstruction programs. Random chunking, interleaved state updates,
+and numeric/partial/mixed strategies produce statements that subsequent function
+obfuscation, NumberObf, renaming and VM stages can protect. The existing
+`STRING_OBF` macros and `selection_modes` settings are unchanged; see
+[String Obfuscation](docs/passes/stringObfuscation.md) for ordering and cost limits.
+
 > Obfuscation is a delay mechanism, not a mathematical guarantee. A determined
 > analyst with full control of the runtime can eventually recover behavior.
 

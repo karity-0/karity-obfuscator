@@ -2770,7 +2770,9 @@ def _compound_statement_chunks(ctx, stmt, lexical_plan: _LexicalPlan,
         inline_map or {},
     )
     compound_stats["split_bodies"] += 1
-    return [prefix + mini + suffix]
+    # The body can begin with an empty statement (`do;local ...`). Replacing
+    # that body drops its separator, so preserve token boundaries explicitly.
+    return [prefix + "\n" + mini + "\n" + suffix]
 
 
 def _inline_chunk_helpers(script: str) -> tuple[str, int]:

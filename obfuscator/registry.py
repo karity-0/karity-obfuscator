@@ -89,6 +89,7 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "cls": "StringObfuscationPass",
         "label": "String Obfuscation",
         "group": "base",
+        "docs": "passes/stringObfuscation.md",
     },
     "boolean_obf": {
         "cls": "BooleanObfuscationPass",
@@ -174,7 +175,7 @@ PASS_DESCRIPTIONS = {
     "strip_info": "Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.",
     "remove_comment": "Removes comments from the source code before AST parsing.",
     "string_encode": "Encodes string literals.",
-    "string_obf": "Obfuscates string literals.",
+    "string_obf": "Reconstructs strings through randomized, interleaved arithmetic and bitwise statements.",
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
     "meme_strings": "Replaces some numeric literals with meme string lengths and arithmetic corrections.",

@@ -11,7 +11,7 @@ REGRESSIONS = (
     "selection",
     "strip_info",
     "minify",
-    "meme_strings",
+    "meme_strings", "string_obf",
     "rename", "backend_options", "number_obf", "packer", "runtime_poly", "runtime_trace",
     "vm_ir", "cross_backend_generated", "lua_frontend", "lua51_word", "lua51_runtime", "lua51_pass_matrix", "lua51_semantic_matrix", "dump51", "lua51_toolchain", "closure_gc", "target_capability", "image_resolver", "host_materialization", "native_lowering", "vm_backend", "mov_backend", "state_coupling", "vm_mutation",
     "vm_output_emitter", "vm_choke", "gui", "signature", "line_state",

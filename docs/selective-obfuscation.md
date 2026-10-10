@@ -234,6 +234,11 @@ independently selected VM regions/functions. Exclusions remain stronger than
 inner VM selections. Whole VM execution without selective boundaries continues
 to support existing targets.
 
+If every top-level statement is covered by `NO_VM` or `NO_OBF`, the chunk stays
+native without generating a VM runtime or host factory bank. Source passes
+still apply inside `NO_VM`. Comments and empty statements outside the excluded
+regions do not require a VM runtime.
+
 Generated VM output is emitted at its final line position and is not rewritten
 after integrity binding. Use `vm_output_passes` for output minification. In a
 configuration that already enables `vm`, choose `selection_modes.vm="marked"`

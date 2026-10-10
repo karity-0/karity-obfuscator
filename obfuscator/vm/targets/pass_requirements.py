@@ -4,7 +4,7 @@ from .capabilities import Capability as C, CompatibilityPolicy as P, TargetRequi
 
 # Unlisted passes only rewrite syntax without adding target API requirements.
 PASS_REQUIREMENTS = {
-    "string_obf": R({C.NATIVE_BITOPS}),
+    "string_obf": R({C.NATIVE_BITOPS, C.INTEGER_ARITHMETIC}),
     "boolean_obf": R({C.NATIVE_BITOPS}),
     "number_obf": R({C.NATIVE_BITOPS, C.INTEGER_ARITHMETIC}),
     "meme_strings": R({C.INTEGER_ARITHMETIC}),

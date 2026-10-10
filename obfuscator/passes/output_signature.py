@@ -34,6 +34,10 @@ WELL_KNOWN_SIGNATURES = (
     ("This file was generated using Luraph Obfuscator v3", "line"),
 
     ("This file was protected using Luraph Obfuscator v14.5", "block"),
+    ("This file was protected using Luraph Obfuscator v15.0", "line"),
+
+    ("This Script is Part of the Prometheus Obfuscator", "line"),
+    ("Obfuscated by Hercules v2.0.0", "line"),
 
     ("Protected by Mnx Obfuscator | Public Enemy", "line"),
 
@@ -45,14 +49,14 @@ WELL_KNOWN_SIGNATURES = (
 
     ("This file was obfuscated using PSU Obfuscator 4.0.A", "line"),
 
-    ("Synapse Xen v1.1.2\nVM Hash: 1a23bafcf4d256aecd1204a7df4d22a1b4123521abbcfddea8ed0bc12425", "block"),
+    ("Synapse Xen v1.1.2\nVM Hash: {hash}", "block"),
 
     ("Obfuscated With Xemon", "line")
 
 )
 
 _COMMENT_TOKEN_RE = re.compile(r"--(?:\[(=*)\[)?|\](=*)\]")
-_PLACEHOLDERS = {"name", "version"}
+_PLACEHOLDERS = {"name", "version", "hash"}
 
 
 def strip_comment_tokens(value: str) -> str:
@@ -66,14 +70,18 @@ def sanitize_generator_pattern(value: str) -> str:
     value = strip_comment_tokens(value)
     formatter = string.Formatter()
     try:
+        parsed = list(formatter.parse(value))
+        if any("{" in (format_spec or "") for _, _, format_spec, _ in parsed):
+            return ""
         fields = {
             field_name
-            for _, field_name, _, _ in formatter.parse(value)
+            for _, field_name, _, _ in parsed
             if field_name is not None
         }
-    except ValueError:
-        return ""
-    if not fields.issubset(_PLACEHOLDERS):
+        if not fields.issubset(_PLACEHOLDERS):
+            return ""
+        value.format(name="Example", version="1.0", hash="0" * 64)
+    except (ValueError, KeyError, IndexError, AttributeError):
         return ""
     return value
 
@@ -153,6 +161,22 @@ def _generated_version() -> str:
     return random.choice(forms)()
 
 
+def _format_pattern(pattern: str) -> str:
+    fields = {
+        field_name
+        for _, field_name, _, _ in string.Formatter().parse(pattern)
+        if field_name is not None
+    }
+    values = {}
+    if "name" in fields:
+        values["name"] = _generated_name()
+    if "version" in fields:
+        values["version"] = _generated_version()
+    if "hash" in fields:
+        values["hash"] = f"{random.getrandbits(256):064x}"
+    return pattern.format(**values)
+
+
 def _render_comment(text: str, style: str = "auto") -> str:
     text = strip_comment_tokens(text)
     if not text:
@@ -220,10 +244,7 @@ class OutputSignaturePass(PostPass):
         if not patterns:
             patterns = list(DEFAULT_GENERATOR_PATTERNS)
         return [
-            _render_comment(pattern.format(
-                name=_generated_name(),
-                version=_generated_version(),
-            ))
+            _render_comment(_format_pattern(pattern))
             for pattern in patterns
         ]
 
@@ -242,7 +263,10 @@ class OutputSignaturePass(PostPass):
 
         candidates: list[str] = []
         if "well_known" in self.options.fake_sources:
-            candidates.extend(_render_comment(text, style) for text, style in WELL_KNOWN_SIGNATURES)
+            candidates.extend(
+                _render_comment(_format_pattern(text), style)
+                for text, style in WELL_KNOWN_SIGNATURES
+            )
         if "generated" in self.options.fake_sources:
             candidates.extend(self._generated_candidates())
         return random.choice(candidates) if candidates else ""

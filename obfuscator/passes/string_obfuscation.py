@@ -1,8 +1,9 @@
 import random
+import re
+
+from ..names import NameAllocator
+from .string_reconstruction import reconstruct
 from .base import BasePass, Replacement
-
-
-_CHUNK_SIZE = 16  # string.char() 하나당 묶을 바이트 수
 
 
 # 단일 문자 이스케이프 → 바이트 값.
@@ -36,9 +37,8 @@ def parse_lua_string(raw: str) -> bytes:
     bl = _long_bracket_len(raw)
     if bl:
         inner = raw[bl:-bl]           # 닫는 대괄호 길이는 여는 것과 동일
-        if inner.startswith('\r\n'):  # 첫 줄바꿈은 Lua가 스킵
-            inner = inner[2:]
-        elif inner[:1] in ('\n', '\r'):
+        inner = re.sub(r'\r\n|\n\r|\r', '\n', inner)
+        if inner.startswith('\n'):  # 첫 줄바꿈은 Lua가 스킵
             inner = inner[1:]
         return inner.encode('utf-8')
 
@@ -61,9 +61,9 @@ def parse_lua_string(raw: str) -> bytes:
             break
         c = raw[i]
 
-        if c.isdigit():                       # \ddd (십진 1~3자리)
+        if c in '0123456789':                       # \ddd (십진 1~3자리)
             j = i
-            while j < n and raw[j].isdigit() and j - i < 3:
+            while j < n and raw[j] in '0123456789' and j - i < 3:
                 j += 1
             out.append(int(raw[i:j], 10) & 0xFF)
             i = j
@@ -80,7 +80,7 @@ def parse_lua_string(raw: str) -> bytes:
         elif c == 'u':                        # \u{XXXX}: 코드포인트 → UTF-8
             j = raw.find('}', i)
             if raw[i + 1:i + 2] == '{' and j != -1:
-                out.extend(chr(int(raw[i + 2:j], 16)).encode('utf-8'))
+                out.extend(chr(int(raw[i + 2:j], 16)).encode('utf-8', errors='surrogatepass'))
                 i = j + 1
             else:
                 out.extend(b'u')
@@ -91,59 +91,27 @@ def parse_lua_string(raw: str) -> bytes:
         elif c in ('\n', '\r'):               # 줄 연속(\ + 개행) → 개행 바이트
             out.append(10)
             i += 1
+            if i < n and raw[i] in ('\n', '\r') and raw[i] != c:
+                i += 1
         else:                                  # 알 수 없는 이스케이프: 문자 그대로
             out.extend(c.encode('utf-8'))
             i += 1
 
     return bytes(out)
 
-def _xor_expr(n: int) -> str:
-    """정수 n을 (a~b) XOR 연산식으로 표현."""
-    a = random.randint(10_000, 9_999_999)
-    return f"({a}~{a ^ n})"
 
-
-def _encode(data: bytes) -> str:
-    """
-    바이트열을 청크로 쪼개 string.char(xor식, ...) 형태로 인코딩한다.
-
-    예) b"hi" ->
-        string.char((123456~123497),(789012~789083))
-
-    청크가 여럿이면 .. 으로 이어붙인다:
-        string.char(...)..string.char(...)
-
-    빈 문자열은 "" 로 그대로 둔다.
-    """
-    if not data:
-        return '""'
-
-    chunks = [
-        data[i : i + _CHUNK_SIZE]
-        for i in range(0, len(data), _CHUNK_SIZE)
-    ]
-    parts = [
-        "string.char(" + ",".join(_xor_expr(b) for b in chunk) + ")"
-        for chunk in chunks
-    ]
-    return "..".join(parts)
+def _encode(data: bytes, allocator: NameAllocator | None = None) -> str:
+    return reconstruct(data, allocator)
 
 
 class StringObfuscationPass(BasePass):
-    """
-    문자열 리터럴을 string.char(XOR식, ...) 형태로 난독화한다.
-
-    before:
-        print("hello")
-
-    after:
-        print(string.char((177718~177641),(834217~834166),(873852~873744),(186485~186449))..string.char((505048~505121)))
-    """
+    """Lower each literal to a fresh, bounded multi-statement reconstruction."""
 
     parser = "treesitter"
 
     def run(self, script: str, tree) -> list[Replacement]:
         replacements: list[Replacement] = []
+        allocator = NameAllocator.for_source(script, seed=random.getrandbits(64))
 
         for node in tree.walk():
             if node.type != "string":
@@ -152,7 +120,7 @@ class StringObfuscationPass(BasePass):
             replacements.append(Replacement(
                 start    = tree.cs(node),
                 end      = tree.ce(node),
-                new_text = _encode(parse_lua_string(tree.text(node))),
+                new_text = _encode(parse_lua_string(tree.text(node)), allocator),
             ))
 
         return replacements
