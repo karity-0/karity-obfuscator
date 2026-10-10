@@ -128,6 +128,12 @@ class ContextPlan:
 
 
 def _obfuscate_packer_output(script: str, pass_names: list[str], *, cache_literals: bool = False) -> str:
+    from .literal_mosaic import boundary, use_mosaic
+    with use_mosaic(boundary(pass_names,phase='packer_output')):
+        return _obfuscate_packer_output_scoped(script,pass_names,cache_literals=cache_literals)
+
+
+def _obfuscate_packer_output_scoped(script: str, pass_names: list[str], *, cache_literals: bool = False) -> str:
     if ("meme_strings" in pass_names and "number_obf" in pass_names
             and pass_names.index("meme_strings") < pass_names.index("number_obf")):
         # Share literal lowering so negative meme residuals keep their exact
@@ -139,6 +145,8 @@ def _obfuscate_packer_output(script: str, pass_names: list[str], *, cache_litera
     from ..registry import PASS_REGISTRY
 
     pipeline = Pipeline(show_header=False)
+    from .literal_mosaic import ACTIVE
+    pipeline.mosaic_scope = ACTIVE.get()
     for name in pass_names:
         info = PASS_REGISTRY.get(name)
         if info is None:

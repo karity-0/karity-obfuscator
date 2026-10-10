@@ -23,7 +23,7 @@ from ..passes.meme_strings import MemeStringsPass
 from ..passes.string_obfuscation import _encode, parse_lua_string
 from ..names import NameAllocator
 from ..passes.ts_utils import _LANG, parse
-from ..passes.numeric_provenance import CodeText, protected_number, join_code
+from ..passes.numeric_provenance import CodeText, protected_number, number_origin, join_code
 
 
 EMITTER_PASS_NAMES = frozenset({"number_obf", "string_obf", "boolean_obf"})
@@ -39,11 +39,13 @@ class NumberLiteral:
     token: str
     eligible: bool = True
     protected: bool = False
+    origin: str = 'vm_constant'
 
 
 @dataclass(frozen=True, slots=True)
 class StringLiteral:
     token: str
+    origin: str = 'source_string'
 
 
 @dataclass(frozen=True, slots=True)
@@ -100,7 +102,8 @@ def _split_generated_numbers(expr: str) -> list[Fragment]:
     pos = 0
     for match in _GENERATED_NUMBER_RE.finditer(expr):
         _append_raw(parts, expr[pos:match.start()])
-        parts.append(NumberLiteral(match.group(0)))
+        parts.append(NumberLiteral(match.group(0),protected=protected_number(expr,match.start(),match.end()),
+            origin=number_origin(expr,match.start(),match.end(),'vm_constant')))
         pos = match.end()
     _append_raw(parts, expr[pos:])
     return parts
@@ -114,8 +117,9 @@ def _split_meme_literals(expr: str, eligible: bool) -> list[Fragment]:
         _append_raw(parts, expr[pos:match.start()])
         token = match.group(0)
         parts.append(
-            StringLiteral(token) if token.startswith('"')
-            else NumberLiteral(token, eligible and _EXACT_HEX64_RE.fullmatch(token) is None)
+            StringLiteral(token,'meme_expression') if token.startswith('"')
+            else NumberLiteral(token, eligible and _EXACT_HEX64_RE.fullmatch(token) is None,
+                               origin='meme_expression')
         )
         pos = match.end()
     _append_raw(parts, expr[pos:])
@@ -233,6 +237,7 @@ def _parse_fragments(
                 _EXACT_HEX64_RE.fullmatch(token) is None
                 and not in_exact_graph(start, end),
                 protected_number(source, start, end + 1),
+                number_origin(source,start,end+1,'vm_constant'),
             ))
         elif node.type == "string":
             parts.append(StringLiteral(token))
@@ -268,15 +273,30 @@ def _render(parts: list[Fragment]) -> str:
         if isinstance(part, str):
             rendered.append(part)
         elif isinstance(part, NumberLiteral):
-            rendered.append(CodeText(part.token, [(0, len(part.token))]) if part.protected else part.token)
+            rendered.append(CodeText(part.token,[(0,len(part.token))] if part.protected else (),
+                                      origins=[(0,len(part.token),part.origin)]))
         elif isinstance(part, StringLiteral):
-            rendered.append(part.token)
+            rendered.append(CodeText(part.token,origins=[(0,len(part.token),part.origin)]))
         else:
             rendered.append("true" if part.value else "false")
     return join_code(rendered)
 
 
 def emit_vm_literals(
+    source: str, pass_names: list[str], *, ctx=None,
+    replacements: list[Replacement] | None = None, literal_nodes: list | None = None,
+) -> tuple[str,list[dict]]:
+    from ..passes.literal_mosaic import ACTIVE, boundary, use_mosaic
+    from ..passes.function_costs import POLICY
+    parent = ACTIVE.get()
+    phase = parent.policy.phase if parent is not None and parent.policy.phase in ('vm_output','packer_output') else 'vm_internal'
+    service = boundary(pass_names,lua_version=POLICY.get().lua_version,phase=phase)
+    with use_mosaic(service):
+        return _emit_vm_literals_scoped(source,pass_names,ctx=ctx,
+            replacements=replacements,literal_nodes=literal_nodes)
+
+
+def _emit_vm_literals_scoped(
     source: str,
     pass_names: list[str],
     *,
@@ -320,8 +340,13 @@ def emit_vm_literals(
             allocator.used.update(re.findall(r"[A-Za-z_][A-Za-z_0-9]*", replacement.new_text))
     number_emitter = NumberObfuscationPass()
     meme_emitter = MemeStringsPass()
+    from ..passes.literal_mosaic import ACTIVE
+    mosaic = ACTIVE.get()
     for stage_index, name in enumerate(stages):
         stage_start = time.perf_counter()
+        if name in {'number_obf','meme_strings'}:
+            skipped = sum(isinstance(part,NumberLiteral) and part.protected for part in parts)
+            mosaic.metrics.skip(mosaic.policy.phase+':'+name,skipped)
         output: list[Fragment] = []
         replacements = 0
         retokenize_generated_numbers = (
@@ -338,7 +363,7 @@ def emit_vm_literals(
                 replacements += 1
             elif name == "meme_strings" and isinstance(part, NumberLiteral) and not part.protected:
                 if random.random() < meme_emitter.replacement_rate:
-                    output.extend(_split_meme_literals(meme_emitter.obfuscate_token(part.token), part.eligible))
+                    output.extend(_split_meme_literals(mosaic.original_meme(part.token,engine=meme_emitter,origin=part.origin), part.eligible))
                     replacements += 1
                 else:
                     output.append(part)
@@ -348,7 +373,7 @@ def emit_vm_literals(
                 and part.eligible
                 and not part.protected
             ):
-                expression = number_emitter.obfuscate_token(part.token)
+                expression = mosaic.original_number(part.token,engine=number_emitter,origin=part.origin)
                 if retokenize_generated_numbers:
                     output.extend(_split_generated_numbers(expression))
                 else:

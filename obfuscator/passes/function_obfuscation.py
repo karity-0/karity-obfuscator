@@ -3538,6 +3538,16 @@ class FunctionObfuscationPass(BasePass):
         return join_code(parts)
 
     def _transform_source_function(
+        self, source_ctx, source_node, children_by_id, provenance, processed_ids,
+    ):
+        from .literal_mosaic import ACTIVE
+        from contextlib import nullcontext
+        mosaic = ACTIVE.get()
+        with mosaic.at(source_ctx.cs(source_node),source_ctx.ce(source_node)+1) if mosaic is not None else nullcontext():
+            return self._transform_source_function_scoped(source_ctx,source_node,
+                children_by_id,provenance,processed_ids)
+
+    def _transform_source_function_scoped(
         self,
         source_ctx,
         source_node,
@@ -3726,6 +3736,18 @@ class FunctionObfuscationPass(BasePass):
         return fragment, True
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        from .literal_mosaic import ACTIVE, LiteralMosaic, use_mosaic
+        version = getattr(self,'lua_version',POLICY.get().lua_version)
+        parent = ACTIVE.get()
+        if parent is not None and parent.policy.lua_version != version:
+            service = LiteralMosaic(parent.policy.passes,lua_version=version,
+                phase=parent.policy.phase,options=parent.options,metrics=parent.metrics,
+                selection=parent.selection)
+            with use_mosaic(service):
+                return self._run_mosaic_scoped(script,ctx)
+        return self._run_mosaic_scoped(script,ctx)
+
+    def _run_mosaic_scoped(self, script: str, ctx) -> list[Replacement]:
         version = getattr(self, 'lua_version', POLICY.get().lua_version)
         original = measure(script, version=version)
         if 'error' in original:

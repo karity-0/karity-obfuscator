@@ -21,7 +21,9 @@ from .passes.ts_utils import parse
 MACROS = {"STRING_OBF": "string_obf", "NUMBER_OBF": "number_obf",
           "BOOLEAN_OBF": "boolean_obf", "TABLE_OBF": "table_obf"}
 FUNCTION_TYPES = {"function_declaration", "function_definition"}
-SELECTABLE = frozenset((*MACROS.values(), "function_obf", "vm"))
+SELECTABLE = frozenset((*MACROS.values(), "function_obf", "meme_strings", "vm"))
+_REGION_FEATURES = {'VM':'vm','FUNCTION_OBF':'function_obf','NO_VM':'no_vm',
+                    'NO_OBF':'no_obf','NUMBER_OBF':'number_obf','MEME_STRINGS':'meme_strings'}
 _TOKEN = re.compile(
     r"(?P<longcomment>--\[(?P<ceq>=*)\[.*?\](?P=ceq)\])"
     r"|(?P<comment>--[^\r\n]*)"
@@ -188,14 +190,14 @@ class SelectionPlan:
                     _error(source, start, "@NO_VM accepts no options")
                 self.spans.append(Span(ctx.cs(node), ctx.ce(node) + 1, feature, opts,
                                        source.count("\n", 0, start) + 1, "function"))
-            elif name.endswith("_START") and name[:-6] in {"VM", "FUNCTION_OBF", "NO_VM", "NO_OBF"}:
+            elif name.endswith("_START") and name[:-6] in _REGION_FEATURES:
                 base = name[:-6]
-                feature = {"VM": "vm", "FUNCTION_OBF": "function_obf", "NO_VM": "no_vm", "NO_OBF": "no_obf"}[base]
+                feature = _REGION_FEATURES[base]
                 opts = _options(source, start, tail, feature)
-                if feature.startswith("no_") and opts:
+                if (feature.startswith("no_") or feature in {'number_obf','meme_strings'}) and opts:
                     _error(source, start, f"@{name} accepts no options")
                 stack.append((start, end, base, feature, opts))
-            elif name.endswith("_END") and name[:-4] in {"VM", "FUNCTION_OBF", "NO_VM", "NO_OBF"}:
+            elif name.endswith("_END") and name[:-4] in _REGION_FEATURES:
                 if tail.strip() or not stack or stack[-1][2] != name[:-4]:
                     _error(source, start, f"unmatched @{name}")
                 opening, body_start, _, feature, opts = stack.pop()

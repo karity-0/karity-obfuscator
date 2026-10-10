@@ -446,6 +446,7 @@ def validate_config(config: object) -> None:
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
     _validate_rename_options(config.get("rename_obf_options", {}))
+    _validate_literal_mosaic(config.get('literal_mosaic',{}))
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_debug_dumps(config.get("debug_dumps", {}))
@@ -465,6 +466,23 @@ def validate_config(config: object) -> None:
             validate_pass_target(name, target)
     except (ValueError, TypeError) as error:
         raise ConfigError(str(error)) from error
+
+
+def _validate_literal_mosaic(options):
+    if not isinstance(options,dict): raise ConfigError('literal_mosaic must be an object')
+    allowed = {'style','cost','diversity_metrics','generated_meme_rate','max_chars','max_operations'}
+    if set(options)-allowed: raise ConfigError('unknown literal_mosaic options: '+', '.join(sorted(set(options)-allowed)))
+    for key,values in (('style',('compact','balanced','exotic')),('cost',('auto','low','medium','high'))):
+        if key in options and options[key] not in values: raise ConfigError('invalid literal_mosaic.'+key)
+    if 'diversity_metrics' in options and not isinstance(options['diversity_metrics'],bool):
+        raise ConfigError('literal_mosaic.diversity_metrics must be boolean')
+    rate=options.get('generated_meme_rate',0.15)
+    if isinstance(rate,bool) or not isinstance(rate,(int,float)) or not 0 <= rate <= 1:
+        raise ConfigError('literal_mosaic.generated_meme_rate must be between 0 and 1')
+    for key,default,lo,hi in (('max_chars',192,64,4096),('max_operations',12,0,32)):
+        value=options.get(key,default)
+        if isinstance(value,bool) or not isinstance(value,int) or not lo <= value <= hi:
+            raise ConfigError(f'literal_mosaic.{key} must be between {lo} and {hi}')
 
 
 def validate_release_config(config: Mapping[str, Any]) -> None:
