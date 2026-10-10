@@ -71,12 +71,14 @@ class Lua53Target:
 
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state
+        passes = context.output_passes if context is not None else ()
+        prefix = context.output_prefix if context is not None else ''
         finalizer = None
-        if "minify" in context.output_passes:
+        if "minify" in passes:
             from ...passes.minify import MinifyPass
             finalizer = MinifyPass().run
-        return apply_line_state(source, context.output_prefix, finalizer=finalizer,
-                                output_passes=context.output_passes,
+        return apply_line_state(source, prefix, finalizer=finalizer,
+                                output_passes=passes,
                                 qualify_globals=getattr(self, "isolate_runtime_globals", False))
 
     def dump_function(self, source, header, decoy_name, decoy_value, toolchain):

@@ -588,7 +588,8 @@ end
         # arithmetic. Emit it in the target-native binary64 domain for every
         # backend so bind_lines never needs the whole-source compatibility
         # translator after backend emission.
-        result, state, lines = apply_line_state(source, context.output_prefix,
+        prefix = context.output_prefix if context is not None else ''
+        result, state, lines = apply_line_state(source, prefix,
                                                output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]",
                                                native_u32=True)
         return result.replace("--[[TARGET51_PRELUDE_END]]", ""), state, lines
