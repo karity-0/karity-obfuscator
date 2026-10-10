@@ -5,6 +5,8 @@ import re
 import string
 from dataclasses import dataclass
 
+from ..config_types import SignatureConfig
+
 from .base import PostPass
 
 
@@ -195,9 +197,11 @@ class SignatureOptions:
     custom: str = ""
 
     @classmethod
-    def from_config(cls, config: dict | None) -> "SignatureOptions":
+    def from_config(cls, config: SignatureConfig | None) -> "SignatureOptions":
         config = config if isinstance(config, dict) else {}
-        fake = config.get("fake") if isinstance(config.get("fake"), dict) else {}
+        fake = config.get("fake", {})
+        if not isinstance(fake, dict):
+            fake = {}
         sources = fake.get("sources", ["well_known", "generated"])
         patterns = fake.get("generator_patterns", list(DEFAULT_GENERATOR_PATTERNS))
         if not isinstance(sources, list):
@@ -220,7 +224,7 @@ class SignatureOptions:
 class OutputSignaturePass(PostPass):
     """Select and prepend exactly one final output signature."""
 
-    def __init__(self, options: SignatureOptions | dict | None = None):
+    def __init__(self, options: SignatureOptions | SignatureConfig | None = None):
         if isinstance(options, SignatureOptions):
             self.options = options
         else:

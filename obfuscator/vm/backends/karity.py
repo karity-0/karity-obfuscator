@@ -1,4 +1,4 @@
-from typing import Any
+from ...config_types import BackendPolicy, VMOptions
 
 from .base import KARITY_OPTIONS, RuntimeBody, VMBackend
 from ..protection import BackendCapabilities, option_feature
@@ -88,7 +88,7 @@ class KarityBackend(VMBackend):
             raise ValueError("Karity deferred handler map changed after optimization")
         return super().emit(lowered, context)
 
-    def _policy(self, options: dict[str, Any]) -> dict[str, Any]:
+    def _policy(self, options: VMOptions) -> BackendPolicy:
         policy = super()._policy(options)
         policy.update({
             "graph_execution_rate": float(options.get("graph_execution_rate", 0.1)),

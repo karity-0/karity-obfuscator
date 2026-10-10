@@ -7,9 +7,12 @@ runtime skips them after constructing a closure).
 """
 from __future__ import annotations
 
+from builtins import bytes as ByteString
+
 import math
 import struct
 
+from .data_types import LuaConstant, LuaNumber
 from .parser import LocVar, Proto, Upvalue
 
 
@@ -62,7 +65,7 @@ class Lua51Reader:
     def instruction(self) -> int:
         return self.integer(4, signed=False)
 
-    def number(self) -> int | float:
+    def number(self) -> LuaNumber:
         raw = self.bytes(self.number_size)
         if self.integral_numbers:
             code = {4: "i", 8: "q"}.get(self.number_size)
@@ -78,7 +81,7 @@ class Lua51Reader:
             return float("nan")
         return value
 
-    def string(self) -> bytes | None:
+    def string(self) -> ByteString | None:
         size = self.size_t()
         if size == 0:
             return None
@@ -157,7 +160,7 @@ class Lua51Parser:
         max_stack_size = r.byte()
 
         code = [r.instruction() for _ in range(r.count())]
-        constants: list[object] = []
+        constants: list[LuaConstant] = []
         for _ in range(r.count()):
             tag = r.byte()
             if tag == 0:
@@ -202,7 +205,7 @@ class Lua51Parser:
         )
         # Useful to serializers even when a prototype is never referenced by a
         # closure in malformed/dead bytecode.
-        proto.lua51_nups = nups
+        setattr(proto, "lua51_nups", nups)
         self._materialize_closure_bindings(proto)
         return proto
 
@@ -246,7 +249,7 @@ class Lua51Parser:
             signature = [(uv.instack, uv.idx) for uv in bindings]
             if previous is not None and previous != signature:
                 raise ValueError("inconsistent bindings for reused Lua 5.1 prototype")
-            child.lua51_bindings = signature
+            setattr(child, "lua51_bindings", signature)
             child.upvalues = bindings
             pc += nups + 1
 

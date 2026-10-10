@@ -1,5 +1,12 @@
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator",
+    "obfuscator.gui_execution",
+    "obfuscator.profiling",
+}
+
 import copy
 import json
 import re

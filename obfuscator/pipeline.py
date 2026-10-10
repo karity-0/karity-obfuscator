@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "luaparser",
+    "obfuscator.passes.rename_obfuscation",
+    "obfuscator.toolchain",
+    "obfuscator.vm.targets.profile",
+}
+
 import time
-from typing import Union
+from typing import Self
 
 from luaparser import ast
 
+from .data_types import JSONValue
+from .config_types import ObfuscatorConfig, RenameOptions
+from .toolchain import LuaToolchain
+from .vm.targets.profile import TargetProfile
 from .passes.base import BasePass, PostPass, PrePass, Replacement
 from .passes.output_signature import DEFAULT_SIGNATURE, OutputSignaturePass
 from .profiling import ProfileRecord, Profiler
 from .verbosity import Verbosity
+from .passes.rename_obfuscation import RenameObfuscationPass
 
 
-PassType = Union[BasePass, PrePass, PostPass]
+type PassType = BasePass | PrePass | PostPass
 
 
 def info_message(step: str, p: PassType, message: str):
@@ -39,18 +52,20 @@ class Pipeline:
     HEADER = DEFAULT_SIGNATURE
 
     def __init__(self, show_header: bool = True):
-        self.rename_options = None
+        self.rename_options: RenameOptions | None = None
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
         self.show_header = show_header
-        self.selection_config = {}
-        self.last_selection_report = []
+        self.selection_config: ObfuscatorConfig = {}
+        self.target_profile: TargetProfile
+        self.toolchain: LuaToolchain
+        self.last_selection_report: list[dict[str, JSONValue]] = []
         self._output_signature: OutputSignaturePass | None = (
             OutputSignaturePass() if show_header else None
         )
 
-    def add(self, pass_: BasePass | PrePass | PostPass) -> Pipeline:
+    def add(self, pass_: PassType) -> Self:
         if isinstance(pass_, OutputSignaturePass):
             self._output_signature = pass_
         elif isinstance(pass_, PrePass):
@@ -114,8 +129,6 @@ class Pipeline:
         # Renaming is an emission step: collect every generated base-pass helper
         # before choosing final names. Localization resolves lexical bindings on
         # its own, so it does not need an earlier rename to distinguish globals.
-        from .passes.rename_obfuscation import RenameObfuscationPass
-
         renamers = [
             p
             for p in self._passes

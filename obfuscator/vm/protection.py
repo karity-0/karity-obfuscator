@@ -1,10 +1,18 @@
 """Backend-neutral protection planning and capability resolution."""
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.vm.semantic_ir",
+}
+
 from dataclasses import dataclass, field
 from enum import Enum
+from collections.abc import Mapping
 import random
-from typing import Any
+from typing import Any, cast
+
+from ..config_types import VMOptions
 
 from .semantic_ir import SemanticIR
 
@@ -281,8 +289,9 @@ def _enabled(name: str, value: Any) -> bool:
     return bool(value)
 
 
-def protection_requests(options: dict[str, Any]) -> tuple[ProtectionRequest, ...]:
+def protection_requests(options: VMOptions) -> tuple[ProtectionRequest, ...]:
     """Resolve user intent without requiring a compiled program."""
+    values: Mapping[str, object] = options
     levels = options.get("requirements", {})
     if not isinstance(levels, dict):
         raise ValueError("vm_options.requirements must be an object")
@@ -296,14 +305,14 @@ def protection_requests(options: dict[str, Any]) -> tuple[ProtectionRequest, ...
     for option, feature in _OPTION_FEATURES.items():
         if option in _PARAMETER_OPTIONS:
             continue
-        if option not in options or not _enabled(option, options[option]):
+        if option not in values or not _enabled(option, values[option]):
             continue
-        grouped.setdefault(feature, {})[option] = options[option]
+        grouped.setdefault(feature, {})[option] = values[option]
         sources.setdefault(feature, []).append(option)
     for option in _PARAMETER_OPTIONS:
         feature = _OPTION_FEATURES[option]
-        if feature in grouped and option in options:
-            grouped[feature][option] = options[option]
+        if feature in grouped and option in values:
+            grouped[feature][option] = values[option]
             sources[feature].append(option)
     for feature, level in levels.items():
         if level == "required" and feature not in grouped:
@@ -322,8 +331,8 @@ def protection_features() -> tuple[str, ...]:
 class ProtectionPlanner:
     """Translate user controls into desired semantic protection state."""
 
-    def __init__(self, options: dict[str, Any]):
-        self.options = dict(options)
+    def __init__(self, options: VMOptions):
+        self.options = cast(VMOptions, dict(options))
         self._random_state = random.getstate()
 
     def build(self, ir: SemanticIR) -> ProtectionPlan:

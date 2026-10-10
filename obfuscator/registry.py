@@ -11,11 +11,23 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 모두에서 자동으로 사용 가능해진다.
 """
 from __future__ import annotations
+
+__lazy_modules__ = {
+    "obfuscator",
+    "obfuscator.passes",
+    "obfuscator.pipeline",
+    "obfuscator.vm",
+}
+
+from collections.abc import Mapping
+from typing import Any, cast
+
+from .config_types import ObfuscatorConfig, VMOptions
+from .pipeline import Pipeline
 from .toolchain import LuaToolchain, TOOLCHAIN_KEYS
 
 import re
 
-from .vm import VMPass
 from .vm.backends import backend_choices, backend_capabilities
 from .vm.backend import normalize_vm_backend, unsupported_vm_options, vm_option_resolution
 from .vm.targets.profile import TargetProfile
@@ -28,119 +40,129 @@ from .passes.output_signature import (
     strip_comment_tokens,
 )
 
-from .passes import (
-    StringEncodePass,
-    StringObfuscationPass,
-    NumberObfuscationPass,
-    MemeStringsPass,
-    BooleanObfuscationPass,
-    TableObfuscationPass,
-    FunctionObfuscationPass,
-    RenameObfuscationPass,
-    StripInfoPass,
-    LocalizeGlobalsPass,
-    RemoveCommentPass,
-    MinifyPass,
-    AntiDebugPass,
-    AntiDecompilePass,
-    PackerPass,
-    OutputSignaturePass,
-)
+from . import passes
+from .vm import VMPass
+from .passes import OutputSignaturePass
 
 
-PASS_REGISTRY: dict[str, dict] = {
+class _PassInfo(Mapping):
+    """Expose pass metadata without loading its implementation until cls is read."""
+
+    def __init__(self, metadata):
+        self._metadata = metadata
+        self.class_name = metadata["cls"]
+        self._cls = None
+
+    def __getitem__(self, key):
+        if key == "cls":
+            if self._cls is None:
+                self._cls = (VMPass if self.class_name == "VMPass"
+                             else getattr(passes, self.class_name))
+            return self._cls
+        return self._metadata[key]
+
+    def __iter__(self):
+        return iter(self._metadata)
+
+    def __len__(self):
+        return len(self._metadata)
+
+
+PASS_REGISTRY: dict[str, Mapping] = {
     "strip_info": {
-        "cls": StripInfoPass,
+        "cls": "StripInfoPass",
         "label": "Strip Info",
         "group": "pre",
         "docs": "passes/stripInfo.md",
     },
     "remove_comment": {
-        "cls": RemoveCommentPass,
+        "cls": "RemoveCommentPass",
         "label": "Remove Comment",
         "group": "pre",
     },
     "string_encode": {
-        "cls": StringEncodePass,
+        "cls": "StringEncodePass",
         "label": "Encode String",
         "group": "base",
     },
     "string_obf": {
-        "cls": StringObfuscationPass,
+        "cls": "StringObfuscationPass",
         "label": "String Obfuscation",
         "group": "base",
         "docs": "passes/stringObfuscation.md",
     },
     "boolean_obf": {
-        "cls": BooleanObfuscationPass,
+        "cls": "BooleanObfuscationPass",
         "label": "Boolean Obfuscation",
         "group": "base",
     },
     "number_obf": {
-        "cls": NumberObfuscationPass,
+        "cls": "NumberObfuscationPass",
         "label": "Number Obfuscation",
         "group": "base",
         "docs": "passes/numberObfuscation.md"
     },
     "meme_strings": {
-        "cls": MemeStringsPass,
+        "cls": "MemeStringsPass",
         "label": "Meme / Fun Strings",
         "group": "base",
         "docs": "passes/memeStrings.md",
     },
     "table_obf": {
-        "cls": TableObfuscationPass,
+        "cls": "TableObfuscationPass",
         "label": "Table Obfuscation",
         "group": "base",
     },
     "function_obf": {
-        "cls": FunctionObfuscationPass,
+        "cls": "FunctionObfuscationPass",
         "label": "Function Obfuscation",
         "group": "base",
         "docs": "passes/functionObfuscation.md",
     },
     "rename_obf": {
-        "cls": RenameObfuscationPass,
+        "cls": "RenameObfuscationPass",
         "label": "Rename Obfuscation",
         "group": "base",
         "docs": "passes/renameObfuscation.md",
     },
     "localize_globals": {
-        "cls": LocalizeGlobalsPass,
+        "cls": "LocalizeGlobalsPass",
         "label": "Localize Globals",
         "group": "base",
         "docs": "passes/localizeGlobals.md",
     },
     "minify": {
-        "cls": MinifyPass,
+        "cls": "MinifyPass",
         "label": "Minify",
         "group": "post",
     },
     "vm": {
-        "cls": VMPass,
+        "cls": "VMPass",
         "label": "VM",
         "group": "post",
         "docs": "backends.md",
     },
     "anti_debug": {
-        "cls": AntiDebugPass,
+        "cls": "AntiDebugPass",
         "label": "Anti-Debug Wrapper",
         "group": "pre",
         "docs": "passes/antiDebug.md",
     },
     "anti_decompile": {
-        "cls": AntiDecompilePass,
+        "cls": "AntiDecompilePass",
         "label": "Anti-Decompile (unluac trap)",
         "group": "base",
     },
     "pack": {
-        "cls": PackerPass,
+        "cls": "PackerPass",
         "label": "Packer (deflate + load)",
         "group": "post",
         "docs": "passes/packer.md",
     },
 }
 
+
+PASS_REGISTRY = {name: _PassInfo(info) for name, info in PASS_REGISTRY.items()}
 
 CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
@@ -168,7 +190,7 @@ PASS_DESCRIPTIONS = {
     "pack": "Compresses and wraps the final output in a self-extracting loader.",
 }
 
-VM_OPTION_DOCS = {
+VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
     "requirements": {
         "description": "Protection feature requirements: map feature names to optional or required. Required features must be enabled and supported by the selected backend or an explicitly declared fallback; otherwise the build fails.",
         "default": {},
@@ -328,14 +350,14 @@ def get_pass_contexts(name: str) -> list[str]:
     return list(CONFIG_PASS_LISTS)
 
 
-def get_profile_names(config: dict) -> list[str]:
+def get_profile_names(config: Mapping[str, Any]) -> list[str]:
     profiles = config.get("profiles")
     if not isinstance(profiles, dict):
         return []
     return list(profiles.keys())
 
 
-def resolve_config_profile(config: dict, profile_name: str | None = None) -> dict:
+def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None = None) -> ObfuscatorConfig:
     """Return the selected profile config. Legacy flat configs still work."""
     if not isinstance(config, dict):
         raise ConfigError("config root must be an object")
@@ -346,7 +368,7 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
             raise ConfigError("--profile was given, but this config has no profiles")
         resolved = dict(config)
         validate_config(resolved)
-        return resolved
+        return cast(ObfuscatorConfig, resolved)
 
     if not isinstance(profiles, dict) or not profiles:
         raise ConfigError("'profiles' must be a non-empty object")
@@ -369,10 +391,10 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
     resolved["_selection_profiles"] = profiles
     resolved["_profile"] = selected
     validate_config(resolved)
-    return resolved
+    return cast(ObfuscatorConfig, resolved)
 
 
-def config_warnings(config: dict) -> list[str]:
+def config_warnings(config: Mapping[str, Any]) -> list[str]:
     """Valid but unsupported controls are retained and ignored, never coerced.
 
     Report once at the UI/CLI boundary, rather than during repeated validation.
@@ -393,7 +415,9 @@ def config_warnings(config: dict) -> list[str]:
     return [f"backend={backend}: " + "; ".join(messages)] if messages else []
 
 
-def validate_config(config: dict) -> None:
+def validate_config(config: object) -> None:
+    if not isinstance(config, dict):
+        raise ConfigError("config root must be an object")
     from .selection import validate_modes
     try:
         validate_modes(config.get("selection_modes", {}))
@@ -425,7 +449,7 @@ def validate_config(config: dict) -> None:
     _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
     try:
-        target = TargetProfile.from_config(config)
+        target = TargetProfile.from_config(cast(ObfuscatorConfig, config))
         if target.host_images and "vm" not in config.get("passes", []):
             raise ValueError("target.host_images requires the VM materialization stage")
         for name in config.get("passes", []):
@@ -441,7 +465,7 @@ def validate_config(config: dict) -> None:
         raise ConfigError(str(error)) from error
 
 
-def validate_release_config(config: dict) -> None:
+def validate_release_config(config: Mapping[str, Any]) -> None:
     validate_config(config)
     errors: list[str] = []
     passes = config.get("passes", [])
@@ -496,7 +520,7 @@ def validate_release_config(config: dict) -> None:
         raise ReleaseCheckError("release-check failed:\n- " + "\n- ".join(errors))
 
 
-def _reject_nested_output_passes(config: dict, key: str) -> None:
+def _reject_nested_output_passes(config: Mapping[str, Any], key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
         raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
@@ -654,7 +678,7 @@ def _validate_vm_options(options: dict) -> None:
     try:
         effective = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
         effective.update(options)
-        resolve_capabilities(protection_requests(effective),
+        resolve_capabilities(protection_requests(cast(VMOptions, effective)),
                              backend_capabilities(normalize_vm_backend(options.get("backend"))))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
@@ -710,7 +734,9 @@ def _validate_signature(signature: dict) -> None:
         raise ConfigError("generated signatures require a generator pattern or custom pattern")
 
 
-def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = True):
+def build_pipeline_from_config[P: Pipeline](
+    config: ObfuscatorConfig, pipeline_cls: type[P], show_header: bool = True,
+) -> P:
     """
     config 예시:
         {
@@ -751,10 +777,10 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
             protected_output = len(stages) - 1
 
     for name, finalizers in stages:
-        info = PASS_REGISTRY.get(name)
+        info = PASS_REGISTRY[name]
 
         cls = info["cls"]
-        if cls is VMPass:
+        if name == "vm":
             pipeline.add(cls(
                 target=pipeline.target_profile,
                 toolchain=pipeline.toolchain,
@@ -766,7 +792,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 debug_dumps=config.get("debug_dumps", {}),
                 output_prefix="" if has_packer else signature_pass.prefix,
             ))
-        elif cls is PackerPass:
+        elif name == "pack":
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
                 packer_output_passes=packer_output_passes + [
@@ -775,7 +801,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 ],
                 output_prefix=signature_pass.prefix,
             ))
-        elif cls is FunctionObfuscationPass:
+        elif name == "function_obf":
             pipeline.add(cls(**function_obf_options))
         else:
             pipeline.add(cls())

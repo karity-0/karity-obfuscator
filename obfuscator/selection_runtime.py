@@ -1,6 +1,11 @@
 """Integrate source selections with existing passes without changing defaults."""
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.passes.ts_utils",
+}
+
 import difflib
 
 from .selection import SelectionPlan, Span, SelectionError, SELECTABLE, FUNCTION_TYPES, _ancestors
@@ -26,7 +31,9 @@ class SelectionRuntime:
         self.config = pipeline.selection_config
         self.plan = SelectionPlan(source, self.config.get("selection_modes", {}))
         self.enabled = self.plan.active
-        self.names = {info["cls"]: name for name, info in PASS_REGISTRY.items()}
+        class_names = {info.class_name: name for name, info in PASS_REGISTRY.items()}
+        self.names = {type(p): class_names.get(type(p).__name__)
+                      for p in (*pipeline._pre_passes, *pipeline._passes, *pipeline._post_passes)}
         self.vm_finished = False
         self._function_defaults = {}
         for span in self.plan.spans:
@@ -88,6 +95,7 @@ class SelectionRuntime:
                     raise SelectionError(f"line {targets[0].line}: {error}") from error
                 extra.append(PASS_REGISTRY[feature]["cls"](**(self.config.get("function_obf_options", {})
                                                             if feature == "function_obf" else {})))
+                self.names[type(extra[-1])] = feature
                 self.plan.modes.setdefault(feature, "marked")
         # New macro passes precede final renaming; existing pass order is retained.
         from .passes.rename_obfuscation import RenameObfuscationPass

@@ -6,6 +6,8 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1]
 REGRESSIONS = (
+    "typing",
+    "import",
     "selection",
     "strip_info",
     "minify",

@@ -1,7 +1,16 @@
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.vm.backends.handler_ir",
+    "obfuscator.vm.semantic_ir",
+}
+
+from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
+
+from ...config_types import BackendPolicy, VMOptions
 
 from .handler_ir import (HandlerFunction, lower_handler_ir, serialization_targets,
                          validate_handler_ir)
@@ -15,7 +24,7 @@ from .domains import ExecutionDomain
 
 @dataclass(frozen=True)
 class BackendContext:
-    options: dict[str, Any]
+    options: VMOptions
     toolchain: Any = None
     output_passes: tuple[str, ...] = ()
     output_prefix: str = ""
@@ -33,7 +42,7 @@ class LoweredIR:
     protection_plan: ProtectionPlan
     resolution: CapabilityResolution
     program: HandlerFunction
-    policy: dict[str, Any]
+    policy: BackendPolicy
     protected_ir: ProtectedIR
     backend_data: dict[str, Any] = field(default_factory=dict)
 
@@ -53,8 +62,8 @@ class LoweredIR:
             lines.append(f"active {request.feature}")
         for request in self.resolution.disabled:
             lines.append(f"fallback-disable {request.feature}")
-        for key in sorted(self.policy):
-            lines.append(f"policy {key}={self.policy[key]!r}")
+        for key, value in sorted(self.policy.items()):
+            lines.append(f"policy {key}={value!r}")
         for function in self.semantic_ir.functions():
             instruction_count = sum(len(block.instructions) for block in function.blocks)
             lines.append(
@@ -243,12 +252,14 @@ class VMBackend:
         from .runtime_emitter import emit_runtime
         return emit_runtime(self, lowered, context)
 
-    def _policy(self, options: dict[str, Any]) -> dict[str, Any]:
-        policy = {
-            option: options[option]
+    def _policy(self, options: VMOptions) -> BackendPolicy:
+        # Filtering declared option keys preserves their individual value types.
+        values: Mapping[str, object] = options
+        policy = cast(BackendPolicy, {
+            option: values[option]
             for option in sorted(self.capabilities.supported_options)
-            if option != "backend" and option in options
-        }
+            if option != "backend" and option in values
+        })
         policy.update({
             "graph_execution_rate": 0.0,
             "cross_instruction_rate": 0.0,

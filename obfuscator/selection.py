@@ -5,6 +5,11 @@ through the pipeline; it is never rediscovered in generated Lua helpers.
 """
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.passes.ts_utils",
+}
+
 import ast
 from dataclasses import dataclass, field
 import difflib
