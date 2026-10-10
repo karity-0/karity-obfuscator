@@ -61,6 +61,12 @@ class RenameOptions(TypedDict, total=False):
 
 
 class FunctionOptions(TypedDict, total=False):
+    reconstruction_group_size: int
+    max_jump_instructions: int
+    max_function_instructions: int
+    max_pass_instructions: int | None
+    generated_number_max_chars: int
+    generated_number_max_operations: int
     cff: bool
     junk: bool
     inline: bool

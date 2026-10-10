@@ -216,6 +216,9 @@ def label_replacements(ctx):
 
 
 class StripInfoPass(PrePass):
+    def __init__(self, *, rename_locals=True):
+        self.rename_locals = rename_locals
+
     def run(self, script):
         ctx = parse(script)
         replacements = field_replacements(ctx)
@@ -235,4 +238,4 @@ class StripInfoPass(PrePass):
                 continue
             replacements.append((start, end, '\n' if '\n' in ctx.text(node) else ' '))
         stripped = _apply_replacements_once(script, replacements)
-        return rename_script_ts(stripped, readable=False)
+        return rename_script_ts(stripped, readable=False) if self.rename_locals else stripped

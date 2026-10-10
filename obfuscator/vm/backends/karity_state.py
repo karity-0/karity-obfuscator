@@ -12,6 +12,9 @@ ProtectionPlan remain free of runtime-bank fields and source tokens.
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from collections import deque
+from bisect import bisect_left
+import time
 from enum import Enum
 from typing import Iterable
 
@@ -319,8 +322,30 @@ def _successors(function: PhysicalFunction, index: int, internal: set[int]) -> t
     return valid((next_pc,))
 
 
+def _merge_epochs(first: tuple[int,...], second: tuple[int,...]) -> tuple[int,...]:
+    """Union sorted epoch sets without rebuilding an existing superset.
+
+    Writes contribute a singleton PC; at a dispatcher join its definition is
+    often already present. A binary search avoids repeatedly sorting thousands
+    of loop-carried epochs. The fallback preserves the full set, with no cap.
+    """
+    if first is second or first == second:
+        return first
+    if len(first) < len(second):
+        first,second = second,first
+    if len(second) == 1:
+        index = bisect_left(first,second[0])
+        if index < len(first) and first[index] == second[0]:
+            return first
+        return first[:index] + second + first[index:]
+    return tuple(sorted(set(first).union(second)))
+
+
 def _merge(left: tuple[RegisterState, ...], right: tuple[RegisterState, ...]) -> tuple[RegisterState, ...]:
+    if left == right:
+        return left
     result = []
+    changed = False
     for first, second in zip(left, right):
         if first == second:
             result.append(first)
@@ -336,20 +361,19 @@ def _merge(left: tuple[RegisterState, ...], right: tuple[RegisterState, ...]) ->
                     + (() if first.producer is None else (first.producer,))
                     + (() if second.producer is None else (second.producer,))
                 ))),
-                epochs=tuple(sorted(set(
-                    (first.epochs or (first.epoch,))
-                    + (second.epochs or (second.epoch,))
-                ))),
+                epochs=_merge_epochs(first.epochs or (first.epoch,),second.epochs or (second.epoch,)),
             ))
         else:
-            result.append(RegisterState(
-                Representation.ENCODED, max(first.epoch, second.epoch),
-                epochs=tuple(sorted(set(
-                    (first.epochs or (first.epoch,))
-                    + (second.epochs or (second.epoch,))
-                ))),
-            ))
-    return tuple(result)
+            epochs = _merge_epochs(first.epochs or (first.epoch,),second.epochs or (second.epoch,))
+            epoch = max(first.epoch,second.epoch)
+            if (first.representation == Representation.ENCODED and first.epochs is epochs
+                    and first.epoch == epoch and first.producer is None
+                    and not first.dependencies and not first.producers):
+                result.append(first)
+            else:
+                result.append(RegisterState(Representation.ENCODED,epoch,epochs=epochs))
+        changed = changed or result[-1] is not first
+    return tuple(result) if changed else left
 
 
 def _capture_registers(function: PhysicalFunction, instruction) -> tuple[int, ...]:
@@ -434,13 +458,15 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
             )
     boxes_after = (open_boxes | frozenset(transition.boxes_created)) - frozenset(closed_registers)
     return (
-        tuple(values), resolved_pending, materialized, maybe_materialized, native_inputs,
+        tuple(values) if transition.writes or resolved_pending or close_materialized else state,
+        resolved_pending, materialized, maybe_materialized, native_inputs,
         capture_states, graph_dependencies, closed_registers, close_states,
         close_materialized, boxes_after,
     )
 
 
-def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
+def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityFunctionState:
+    started = time.perf_counter()
     split_parts, internal, deferred = _forms(function, vm_map)
     aliases = vm_map[0]
     transitions: list[KarityTransition] = []
@@ -503,12 +529,43 @@ def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
                     for _ in range(function.source.max_stack_size))
     incoming: dict[int, tuple[RegisterState, ...]] = {0: initial} if transitions else {}
     incoming_boxes: dict[int, frozenset[int]] = {0: frozenset()} if transitions else {}
-    worklist = [0] if transitions else []
+    # A LIFO list repeatedly revisits a dispatcher backedge before the other
+    # cases contribute their register epochs. Coalesce queued nodes and visit
+    # them fairly; the lattice, transfers and fixed-point result are unchanged.
+    worklist = deque([0]) if transitions else deque()
+    queued = {0} if transitions else set()
+    successors = {pc: tuple(_successors(function, pc, internal))
+                  for pc in range(len(transitions)) if pc not in internal}
+    # Reverse postorder identifies backedges, including irreducible source CFF.
+    # Delay them until the current forward wave has joined all dispatcher cases;
+    # otherwise each individual case starts another full loop propagation.
+    postorder = []
+    seen = set()
+    stack = [(0,False)] if transitions else []
+    while stack:
+        pc,done = stack.pop()
+        if done:
+            postorder.append(pc)
+        elif pc not in seen:
+            seen.add(pc)
+            stack.append((pc,True))
+            stack.extend((target,False) for target in reversed(successors.get(pc,())))
+    ranks = {pc:rank for rank,pc in enumerate(reversed(postorder))}
+    next_wave = set()
     completed = list(transitions)
-    while worklist:
-        pc = worklist.pop()
+    transfers = 0
+    waves = 1 if transitions else 0
+    while worklist or next_wave:
+        if not worklist:
+            waves += 1
+            worklist.extend(sorted(next_wave,key=ranks.__getitem__))
+            queued.update(next_wave)
+            next_wave.clear()
+        pc = worklist.popleft()
+        queued.remove(pc)
         if pc in internal:
             continue
+        transfers += 1
         (output, resolved_pending, materialized, maybe_materialized, native_inputs,
          capture_states, graph_dependencies, closed_registers, close_states,
          close_materialized, boxes_after) = _transfer(
@@ -523,7 +580,7 @@ def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
             closed_registers=closed_registers, close_states=close_states,
             close_materialized=close_materialized, reachable=True,
         )
-        for successor in _successors(function, pc, internal):
+        for successor in successors[pc]:
             previous = incoming.get(successor)
             previous_boxes = incoming_boxes.get(successor)
             merged = output if previous is None else _merge(previous, output)
@@ -531,20 +588,51 @@ def _function_state(function: PhysicalFunction, vm_map) -> KarityFunctionState:
             if previous is None or previous != merged or previous_boxes != merged_boxes:
                 incoming[successor] = merged
                 incoming_boxes[successor] = merged_boxes
-                worklist.append(successor)
+                if successor in queued:
+                    continue
+                if ranks[successor] <= ranks[pc]:
+                    next_wave.add(successor)
+                else:
+                    next_wave.discard(successor)
+                    queued.add(successor)
+                    worklist.append(successor)
+    if profile is not None:
+        profile.append({'phase':'karity_state_function','elapsed':round(time.perf_counter()-started,6),
+                        'function':function.source.id,'instructions':len(transitions),
+                        'registers':function.source.max_stack_size,'transfers':transfers,'waves':waves})
     return KarityFunctionState(
         function.source.id, function.source.max_stack_size, tuple(completed)
     )
 
 
-def lower_state(layout, representation_routes, rotation_policy) -> KarityState:
+def state_input_signature(layout):
+    """Snapshot every input read by the fixed-point analysis.
+
+    Instructions/descriptors are frozen. Unreferenced deferred handlers have
+    no transfer and do not belong to this signature; removing them is safe.
+    """
+    result = []
+    for function in iter_functions(layout.functions):
+        mapping = layout.vm_maps[function.vm_id]
+        split,internal,deferred = _forms(function,mapping)
+        referenced = {item.vop for item in function.code}
+        captures = tuple(tuple((u.instack,u.idx) for u in p.upvalues)
+                         for p in function.source.protos)
+        result.append((function.source.id,function.vm_id,function.source.max_stack_size,captures,
+                       tuple(function.code),tuple(tuple(r) for r in function.routes),
+                       tuple((op,tuple(vops)) for op,vops in sorted(mapping[0].items())),
+                       tuple(sorted(split.items())),frozenset(internal),frozenset(deferred & referenced)))
+    return tuple(result)
+
+
+def lower_state(layout, representation_routes, rotation_policy, *, profile=None) -> KarityState:
     if representation_routes is None:
         raise ValueError("Karity lowered state requires planned representation routes")
     if rotation_policy is None:
         raise ValueError("Karity lowered state requires planned runtime rotation policy")
     return KarityState(
         tuple(
-            _function_state(function, layout.vm_maps[function.vm_id])
+            _function_state(function, layout.vm_maps[function.vm_id], profile)
             for function in iter_functions(layout.functions)
         ),
         tuple((group, tuple((name, route) for name, route in routes))
@@ -566,10 +654,32 @@ def _validate_producers(function: KarityFunctionState, register: int,
     return producers
 
 
+def _validation_key(lowered):
+    root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
+    routes = tuple((group,tuple((name,route) for name,route in items))
+                   for group,items in root['representation_routes'])
+    return (state_input_signature(lowered.backend_data['layout']),routes,
+            tuple(sorted(root['runtime_rotation_policy'].items())),
+            frozenset(lowered.backend_data['layout'].graph_sites))
+
+
+def seed_state_validation(lowered):
+    # Construction supplies a trusted expected projection, but its contracts
+    # must still be checked once. Immutable state + copied input signatures
+    # make later reuse safe without losing diagnostics for replaced states.
+    lowered.backend_data['_karity_state_validation'] = (
+        _validation_key(lowered),lowered.backend_data['karity_state'],False)
+
+
 def validate_state(lowered) -> None:
     actual = lowered.backend_data.get("karity_state")
     if not isinstance(actual, KarityState):
         raise ValueError("Karity lowered state is missing")
+    key = _validation_key(lowered)
+    cached = lowered.backend_data.get('_karity_state_validation')
+    expected = cached[1] if cached is not None and cached[0] == key else None
+    if expected is actual and cached[2]:
+        return
     seen_sites: set[int] = set()
     for function in actual.functions:
         for pc, transition in enumerate(function.transitions):
@@ -708,9 +818,11 @@ def validate_state(lowered) -> None:
     # it is a fresh snapshot.  Otherwise every malformed state fails only the
     # equality check below and the more useful invariants above are unreachable.
     root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
-    expected = lower_state(
-        lowered.backend_data["layout"], root["representation_routes"],
-        root["runtime_rotation_policy"],
-    )
+    if expected is None:
+        expected = lower_state(
+            lowered.backend_data["layout"], root["representation_routes"],
+            root["runtime_rotation_policy"],
+        )
     if actual != expected:
         raise ValueError("Karity lowered state differs from physical layout or protection plan")
+    lowered.backend_data['_karity_state_validation'] = (key,actual,True)

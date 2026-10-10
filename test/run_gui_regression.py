@@ -125,8 +125,11 @@ def main() -> int:
     assert {"anti_debug", "anti_decompile", "function_obf", "meme_strings"} <= set(shipped_profiles["fast-vm"]["passes"])
     assert "pack" not in shipped_profiles["high"]["passes"] and "pack" in shipped_profiles["max"]["passes"]
     for context in ("vm_output_passes", "packer_output_passes"):
-        stages = shipped_profiles["max"][context]
-        assert stages.index("string_obf") < stages.index("meme_strings") < stages.index("number_obf")
+        for name in ("high", "max"):
+            assert shipped_profiles[name][context] == ["strip_info", "rename_obf", "minify"]
+    for name in ("high", "max"):
+        stages=shipped_profiles[name]['passes']
+        assert stages.index('string_obf') < stages.index('function_obf') < stages.index('number_obf')
     if "max" in profiles:
         validate_release_config(profiles["max"])
 

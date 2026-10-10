@@ -22,6 +22,7 @@ from .passes.output_signature import DEFAULT_SIGNATURE, OutputSignaturePass
 from .profiling import ProfileRecord, Profiler
 from .verbosity import Verbosity
 from .passes.rename_obfuscation import RenameObfuscationPass
+from .passes.numeric_provenance import join_code
 
 
 type PassType = BasePass | PrePass | PostPass
@@ -176,6 +177,7 @@ class Pipeline:
                 _size(script),
                 parser=parser,
                 replacements=len(replacements),
+                details=getattr(pass_, "last_profile", []),
             )
 
             if profiler:
@@ -302,4 +304,4 @@ class Pipeline:
                 pos = end + 1
 
         parts.append(src[pos:])
-        return "".join(parts)
+        return join_code(parts)

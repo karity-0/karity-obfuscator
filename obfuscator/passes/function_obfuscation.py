@@ -12,7 +12,7 @@
 """
 from __future__ import annotations
 from bisect import bisect_left
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from contextvars import ContextVar
 import copy
 import random
@@ -21,9 +21,17 @@ import time
 
 _FUNCTION_FEATURES = ContextVar("function_features", default={})
 
+
+def _code_size(text):
+    transport = CURRENT.get()
+    return len(transport.clean(text) if transport is not None else text)
+
 from .base import BasePass, Replacement
 from ..names import NameAllocator
-from ..vm.vm_mutation import _zv, _new_state
+from .number_expressions import NumberExpressionEngine
+from .numeric_provenance import CURRENT, NumericTransport, join_code
+from .function_costs import POLICY, CostPolicy, MAX_JUMP, measure, projected_cost, has_owner_return
+from ..vm.vm_mutation import _zv, _new_state as _allocate_state
 
 # CFF로 hoisting된 local 변수 + 내부 생성 zv 개수가 이 값을 넘으면,
 # 개별 local 슬롯이 아니라 테이블 필드(`_T1.name`)로 몰아넣는다.
@@ -905,7 +913,13 @@ class _LexicalPlanner:
 
 
 def _build_lexical_plan(ctx, function_node) -> _LexicalPlan:
-    return _LexicalPlanner(ctx, function_node).build()
+    plan = _LexicalPlanner(ctx, function_node).build()
+    transport = CURRENT.get()
+    if transport is not None:
+        plan.replacements.extend(transport.source_edits(ctx, function_node))
+        plan.replacements.sort(key=lambda item: item[0])
+        plan.starts = [item[0] for item in plan.replacements]
+    return plan
 
 
 def _rewrite_range_with_plan(
@@ -1150,6 +1164,9 @@ def _obf_int(n: int) -> str:
     Generated constants are bounded (|n| <= 100129), and k <= 65535.
     Every intermediate is an exact binary64 integer, including negative deltas.
     """
+    transport = CURRENT.get()
+    if transport is not None:
+        return transport.generated_expression(n,hot=True)
     if random.random() < 0.45:
         return str(n)
     k = random.randint(1, 0xFFFF)
@@ -1172,10 +1189,15 @@ def _obf_int(n: int) -> str:
 # 않고, 비교식에도 산술 역연산이 섞여 단순 `sv==const` 패턴 매칭이 깨진다.
 #
 # m은 소수, k∈[2,m) 은 소수 m과 항상 서로소라 역원이 존재한다. 모든 상태
-# id(<10000)와 종료값 0은 m(>1e5)보다 작아 인코딩이 단사(injective)이므로
+# id(<100003)와 종료값 0은 m(>=100003)보다 작아 인코딩이 단사(injective)이므로
 # 서로 다른 상태는 서로 다른 인코딩 값을 갖고 종료 상태와도 충돌하지 않는다.
 # ---------------------------------------------------------------------------
 _ENC_PRIMES = (100003, 100019, 100043, 100057, 100069, 100103, 100109, 100129)
+
+
+def _new_state(used: set[int]) -> int:
+    # Keep affine encoding injective even when the allocator grows its domain.
+    return _allocate_state(used,upper_limit=min(_ENC_PRIMES)-1)
 
 
 class _Affine:
@@ -2028,6 +2050,45 @@ def _emit_dispatch_closure(blocks, entry_id, c, param_vars, rich_junk, hoist_nam
     return lines
 
 
+def _emit_dispatch_compact(blocks, entry_id, c, param_vars, rich_junk, hoist_names):
+    """Share decoding/predicates while retaining every real CFG state/edge.
+
+    Budget fallback keeps affine states and live state-dependent junk, with a
+    smaller dead-state bank instead of nested opaque wrappers per statement.
+    """
+    sv,decoded=_zv(c),_zv(c)
+    enc=_Affine()
+    live=list(param_vars)+[(sv,'int')]
+    used={0}; sid={0:0}
+    for block in blocks:
+        block['s']=_new_state(used); sid[block['id']]=block['s']
+    metas=[]
+    for block in blocks:
+        cur=block['s']
+        if block['kind']=='return': updates=[]
+        elif block['kind']=='goto':
+            updates=[f"{sv}={sv}+{enc.delta_expr(cur,sid[block['succ']])}"]
+        else:
+            updates=_branch_updates_flat(block['cond'],sv,enc,cur,sid[block['t']],sid[block['e']],c)
+        metas.append((cur,block['lines'],updates,True))
+    # One dead case per four real cases; all real statements stay in the CFG.
+    for _ in range(max(1,len(blocks)//4)):
+        state=_new_state(used); junk=_junk_simple(c,live)
+        metas.append((state,junk,[f'{sv}={sv}+{enc.delta_expr(state,0)}'],False))
+    random.shuffle(metas)
+    lines=[f'local {sv}={enc.enc_expr(sid[entry_id])}',f'while {sv}~={enc.enc_expr(0)} do',
+           f'local {decoded}={enc.dec_expr(sv)}']
+    for index,(state,body,updates,real) in enumerate(metas):
+        lines.append(f'{"if" if index==0 else "elseif"} {decoded}=={_obf_int(state)} then')
+        if real and _FUNCTION_FEATURES.get().get('junk',True):
+            junk=_junk_simple(c,live); lines.extend(junk)
+            sink=_last_zv(junk[:1])
+            if sink:lines.append(f'{sv}={sv}+{_zero_from(sink)}')
+        lines.extend(body+updates)
+    lines.extend(('end','end'))
+    return lines
+
+
 def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names,
                          boundary_stats=None):
     """일부 state block을 여러 helper closure로 분리한 평면 디스패처.
@@ -2070,14 +2131,16 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
             "lines": blk["lines"],
             "updates": updates,
             "real": True,
-            "returns": blk["kind"] == "return",
+            "returns": blk["kind"] == "return" or has_owner_return('\n'.join(blk['lines'])),
         })
 
     all_ids = [blk["id"] for blk in blocks]
     dead_meta: list[dict] = []
-    for _ in range(random.randint(len(real_meta), len(real_meta) * 2 + 1)):
+    compact = POLICY.get().compact_pass or _FUNCTION_FEATURES.get().get('budget_compact', False)
+    dead_count = max(1, len(real_meta)//4) if compact else random.randint(len(real_meta), len(real_meta) * 2 + 1)
+    for _ in range(dead_count):
         ds = _new_state(used)
-        jl = _junk_flow(c, rich_junk, live)
+        jl = _junk_simple(c, live) if compact else _junk_flow(c, rich_junk, live)
         sink = _last_zv(jl)
         weave = f"+{_zero_from(sink)}" if sink else ""
         update = (
@@ -2098,17 +2161,42 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
 
     # 일부 block은 outer dispatcher에 그대로 두어 split과 inline boundary가 한
     # 함수 안에 공존하게 한다. helper 쪽에는 항상 적어도 하나를 남긴다.
-    inline_count = min(
-        max(1, len(movable) // 3),
-        max(0, len(movable) - 1),
-    )
+    # Keep returns in the owner function; this preserves multiple results and
+    # trailing nil without introducing a pack/unpack runtime dependency.
+    inline_count = 0
     inline_metas = return_metas + movable[:inline_count]
     helper_metas = movable[inline_count:]
 
-    helper_count = min(3, max(1, len(helper_metas)))
+    # Emit each case exactly once, then partition by measured compiler work
+    # including a bound for the source literals that later passes can expand.
+    for meta in helper_metas + inline_metas:
+        emitted=[]
+        def case_emit(level,text):
+            emitted.append('  '*level+text)
+        if POLICY.get().compact_pass or _FUNCTION_FEATURES.get().get('budget_compact',False):
+            if meta['real'] and _FUNCTION_FEATURES.get().get('junk',True):
+                junk=_junk_simple(c,live); emitted.extend(junk)
+                sink=_last_zv(junk[:1])
+                if sink: emitted.append(f'{sv}={sv}+{_zero_from(sink)}')
+        elif rich_junk and meta['real'] and random.random() < 0.85:
+            _emit_live_junk(case_emit,0,c,rich_junk,live,sv)
+        if not (POLICY.get().compact_pass or _FUNCTION_FEATURES.get().get('budget_compact',False)) and random.random() < 0.35:
+            _emit_absorbing_junk(case_emit,0,c,rich_junk,live,sv)
+        emitted.extend(meta['lines']+meta['updates'])
+        meta['emitted']=emitted
+        meta['cost']=projected_cost('\n'.join(emitted))
+    total_cost=sum(m['cost'] for m in helper_metas)
+    helper_count=max(1,(total_cost+POLICY.get().max_jump-1)//POLICY.get().max_jump)
+    # Small forced split functions retain multiple boundary shapes; there is
+    # no upper limit of three for large functions.
+    helper_count=max(helper_count,min(3,len(helper_metas)))
     groups: list[list[dict]] = [[] for _ in range(helper_count)]
-    for index, meta in enumerate(helper_metas):
-        groups[index % helper_count].append(meta)
+    group_costs=[0]*helper_count
+    for meta in sorted(helper_metas,key=lambda m:m['cost'],reverse=True):
+        index=min(range(len(groups)),key=group_costs.__getitem__)
+        if groups[index] and group_costs[index]+meta['cost'] > POLICY.get().max_jump:
+            index=len(groups); groups.append([]); group_costs.append(0)
+        groups[index].append(meta); group_costs[index] += meta['cost']
     groups = [group for group in groups if group]
 
     lines: list[str] = []
@@ -2119,24 +2207,29 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
     emit(0, f"local {sv}={enc.enc_expr(entry_s)}")
     emit(0, f"local {ht}={{}}")
 
-    helper_keys: list[int] = []
+    routes = _zv(c)
+    emit(0, f'local {routes}={{}}')
     for group in groups:
         key = _new_state(used)
-        helper_keys.append(key)
+        for meta in group:
+            emit(0, f'{routes}[{enc.enc_expr(meta["s"])}]={key}')
         arg = _zv(c)
         emit(0, f"{ht}[{key}]=function({arg})")
+        decoded = _zv(c)
+        emit(1, f'local {decoded}={enc.dec_expr(arg)}')
         for index, meta in enumerate(group):
+            if len(group) == 1:
+                # Routing already identifies the state; omit a jump over
+                # the body of a potentially large singleton case.
+                for line in meta['emitted']:
+                    emit(1, line)
+                continue
             kw = "if" if index == 0 else "elseif"
-            emit(1, f"{kw} {enc.dec_expr(arg)}=={meta['s']} then")
-            if rich_junk and meta["real"] and random.random() < 0.85:
-                _emit_live_junk(emit, 2, c, rich_junk, live, sv)
-            if random.random() < 0.35:
-                _emit_absorbing_junk(emit, 2, c, rich_junk, live, sv)
-            for line in meta["lines"]:
+            emit(1, f"{kw} {decoded}=={meta['s']} then")
+            for line in meta['emitted']:
                 emit(2, line)
-            for update in meta["updates"]:
-                emit(2, update)
-        emit(1, "end")
+        if len(group) > 1:
+            emit(1, "end")
         emit(0, "end")
 
     emit(0, f"while {sv}~={enc.enc_expr(0)} do")
@@ -2147,23 +2240,17 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
     for index, meta in enumerate(inline_metas):
         kw = "if" if index == 0 else "elseif"
         emit(1, f"{kw} {enc.dec_expr(snap)}=={meta['s']} then")
-        if rich_junk and meta["real"] and random.random() < 0.85:
-            _emit_live_junk(emit, 2, c, rich_junk, live, sv)
-        if random.random() < 0.35:
-            _emit_absorbing_junk(emit, 2, c, rich_junk, live, sv)
-        for line in meta["lines"]:
+        for line in meta['emitted']:
             emit(2, line)
-        for update in meta["updates"]:
-            emit(2, update)
 
     if inline_metas:
         emit(1, "else")
         call_level = 2
     else:
         call_level = 1
-    random.shuffle(helper_keys)
-    for key in helper_keys:
-        emit(call_level, f"{ht}[{key}]({snap})")
+    selected = _zv(c)
+    emit(call_level, f'local {selected}={routes}[{snap}]')
+    emit(call_level, f'if {selected} then {ht}[{selected}]({snap}) end')
     if inline_metas:
         emit(1, "end")
 
@@ -2172,12 +2259,9 @@ def _emit_dispatch_split(blocks, entry_id, c, param_vars, rich_junk, hoist_names
     emit(0, "end")
 
     if boundary_stats is not None:
-        boundary_stats["split_helpers"] = (
-            boundary_stats.get("split_helpers", 0) + len(groups)
-        )
-        boundary_stats["inline_blocks"] = (
-            boundary_stats.get("inline_blocks", 0) + len(inline_metas)
-        )
+        boundary_stats['projected_helper_instructions']=max(group_costs,default=0)
+        boundary_stats["split_helpers"] = len(groups)
+        boundary_stats["inline_blocks"] = len(inline_metas)
     return lines
 
 
@@ -2186,7 +2270,7 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
                        rich_junk: bool = True,
                        param_names: list[str] | None = None,
                        boundary_mode: str = "mixed",
-                       boundary_stats=None) -> str:
+                       boundary_stats=None, _automatic_split=False, _compact=False) -> str:
     """블록 전이 그래프를 generic dead-state와 함께 state machine으로 분산.
 
     blocks: `_compile_stmts_to_blocks`가 만든 블록 리스트. 각 블록은 dict:
@@ -2211,6 +2295,27 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     한도를 회피한다. 이 변환은 거대한 VM dispatcher처럼 hoist 대상이
     매우 많은 경우에만 활성화되며, 일반적인 작은 함수는 영향이 없다.
     """
+    policy = POLICY.get()
+    # Even a direct singleton helper needs a transfer and a return. The normal
+    # styles also create at least one dead state per real state. Reject an
+    # impossible minimum, or choose compact before allocating large junk banks.
+    if len(blocks)*2 > policy.max_instructions:
+        raise RuntimeError(f'FunctionObf minimum CFF cost exceeds function budget: '
+                           f'blocks={len(blocks)} minimum_instructions={len(blocks)*2} '
+                           f'budget={policy.max_instructions}')
+    if (not (_compact or policy.compact_pass or _FUNCTION_FEATURES.get().get('budget_compact',False))
+            and len(blocks)*4 > policy.max_instructions):
+        if boundary_stats is not None:
+            boundary_stats['compact_regions'] = boundary_stats.get('compact_regions',0)+1
+            boundary_stats['budget_reason'] = 'minimum real/dead-state instruction cost'
+            boundary_stats['protection_adjustment'] = 'reduced junk/dead-state density; retained all source CFF blocks'
+        feature_token = _FUNCTION_FEATURES.set({**_FUNCTION_FEATURES.get(),'budget_compact':True})
+        try:
+            return _build_generic_cff(blocks,entry_id,c,extra_hoist_names,rich_junk,
+                                      param_names,boundary_mode,boundary_stats,_automatic_split,True)
+        finally:
+            _FUNCTION_FEATURES.reset(feature_token)
+
     # Phase 2에서는 hoist 대상이 AST resolver에서 이미 확정되어 있다.
     # emitted text를 다시 `_scan_local_names()`로 훑으면 nested function/opaque loop
     # 내부 local까지 바깥 scope local로 오인해 hoist하는 옛 버그가 되살아난다.
@@ -2241,13 +2346,16 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     emitters = [_emit_dispatch_nested, _emit_dispatch_flat]
     if rich_junk and not _blocks_have_return(blocks):
         emitters.append(_emit_dispatch_closure)
-    split_eligible = rich_junk and len(blocks) >= 2
-    if boundary_mode == "split" and split_eligible:
+    split_eligible = len(blocks) >= 2 and not POLICY.get().avoid_helper_captures
+    if (boundary_mode == "split" or _automatic_split) and split_eligible:
         emitter = _emit_dispatch_split
     else:
-        if boundary_mode == "mixed" and split_eligible:
+        if boundary_mode == "mixed" and split_eligible and rich_junk:
             emitters.append(_emit_dispatch_split)
         emitter = random.choice(emitters)
+    compact = _compact or POLICY.get().compact_pass or _FUNCTION_FEATURES.get().get('budget_compact',False)
+    if compact and emitter is not _emit_dispatch_split:
+        emitter = _emit_dispatch_compact
     if emitter is _emit_dispatch_split:
         lines = emitter(
             blocks, entry_id, c, param_vars, rich_junk, hoist_names,
@@ -2261,7 +2369,15 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     # 4) hoist 대상(real_names ∪ extra_hoist_names) + CFF가 생성한 zv
     #    (sv1/sv2/junk 전부) 총 개수로 테이블화 여부를 결정한다.
     all_hoisted_names = set(hoist_names) | set(zv_names)
+    # Splitting adds captures. Lua 5.1 allows only 60 upvalues per closure,
+    # versus 255 in 5.3; shared table cells keep the capture set bounded.
+    capture_limit = 60 if POLICY.get().lua_version == '5.1' else 255
+    pooled_params = []
     use_tables = len(all_hoisted_names) > _TABLE_THRESHOLD
+    if emitter is _emit_dispatch_split and len(all_hoisted_names)+len(param_names or []) > capture_limit:
+        pooled_params = list(param_names or [])
+        all_hoisted_names.update(pooled_params)
+        use_tables = True
 
     # ------------------------------------------------------------------
     # Lua for-control variable 보호
@@ -2342,7 +2458,7 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
     # 이렇게 해야 CFF의 서로 다른 state에서도 동일한 outer local을
     # 공유하면서, `for i=...`가 만드는 loop-local은 자연스럽게 outer i를
     # shadow한다.
-    body = ("\n" + _IND).join(prologue + lines)
+    body = ("\n" + _IND).join(lines)
 
     if use_tables:
         # 실제 table substitution 대상과 충돌하는 nested function parameter만
@@ -2385,6 +2501,10 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
             )
             body = lexical_decl + "\n" + body
 
+        param_initializers = [f'{name_to_ref[name]}={name}' for name in pooled_params
+                              if name in name_to_ref]
+        body = '\n'.join(prologue+param_initializers+[body])
+
     else:
         # 비-table mode에서는 기존 방식 그대로.
         #
@@ -2405,6 +2525,48 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
                 + body
             )
 
+    report = measure(body)
+    projected = projected_cost(body, report) if 'error' not in report else MAX_JUMP+1
+    policy = POLICY.get()
+    unsafe = ('error' in report or report.get('max_jump',0) > policy.max_jump
+              or projected > policy.max_instructions)
+    if unsafe and emitter is not _emit_dispatch_split and split_eligible:
+        c[0] = zv_start
+        if boundary_stats is not None:
+            boundary_stats['automatic_splits'] = boundary_stats.get('automatic_splits',0)+1
+        # One structural fallback. Do not retry random emitters indefinitely.
+        return _build_generic_cff(blocks,entry_id,c,extra_hoist_names,rich_junk,
+                                  param_names,boundary_mode,boundary_stats,True)
+    max_jump = max((f['max_jump'] for f in report.get('functions',[])),default=0)
+    if (('error' in report or max_jump > policy.max_jump
+         or report.get('total_instructions', 0) > policy.max_instructions) and not compact):
+        c[0] = zv_start
+        if boundary_stats is not None:
+            boundary_stats['compact_regions'] = boundary_stats.get('compact_regions',0)+1
+            boundary_stats['budget_reason'] = 'compiler jump/instruction budget'
+            boundary_stats['protection_adjustment'] = 'reduced junk/dead-state density; retained all source CFF blocks'
+        feature_token=_FUNCTION_FEATURES.set({**_FUNCTION_FEATURES.get(),'budget_compact':True})
+        try:
+            return _build_generic_cff(blocks,entry_id,c,extra_hoist_names,rich_junk,
+                                      param_names,boundary_mode,boundary_stats,
+                                      emitter is _emit_dispatch_split,True)
+        finally:
+            _FUNCTION_FEATURES.reset(feature_token)
+    if 'error' in report or max_jump > policy.max_jump:
+        details = report.get('error') or [f for f in report['functions'] if f['max_jump'] > policy.max_jump]
+        raise RuntimeError('FunctionObf cannot safely partition CFF: '
+                           f'blocks={len(blocks)} mode={emitter.__name__} '
+                           f'jump_budget={policy.max_jump} details={details}')
+    if report['total_instructions'] > policy.max_instructions:
+        raise RuntimeError('FunctionObf function budget exhausted after structural split and compact retry: '
+                           f'blocks={len(blocks)} instructions={report["total_instructions"]} '
+                           f'budget={policy.max_instructions} max_jump={max_jump}')
+    if boundary_stats is not None:
+        boundary_stats['cff_blocks'] = boundary_stats.get('cff_blocks',0)+len(blocks)
+        boundary_stats['compiler_instructions'] = report['total_instructions']
+        boundary_stats['compiler_max_jump'] = max(f['max_jump'] for f in report['functions'])
+        boundary_stats['projected_instructions'] = projected
+        boundary_stats['style'] = emitter.__name__
     return body
 
 
@@ -2657,7 +2819,11 @@ def _mini_cff_body(body_text: str, compound_options: dict,
     if transform_budget["blocks_left"] < cost:
         return None
 
-    transformed, _ = _transform_body(
+    checkpoint = dict(transform_budget)
+    def rollback():
+        transform_budget.clear()
+        transform_budget.update(checkpoint)
+    transformed, mini_stats = _transform_body(
         mini_ctx, root, block,
         rich_junk=False,
         boundary_mode="cff",
@@ -2666,13 +2832,26 @@ def _mini_cff_body(body_text: str, compound_options: dict,
         compound_depth=compound_depth + 1,
     )
     if transformed is None:
+        rollback()
         return None
     limit = max(
-        len(body_text) + 64,
-        int(len(body_text) * compound_options["max_expansion_ratio"]),
+        _code_size(body_text) + 64,
+        int(_code_size(body_text) * compound_options["max_expansion_ratio"]),
     )
-    if len(transformed) > limit:
-        return None
+    if _code_size(transformed) > limit:
+        rollback()
+        feature_token=_FUNCTION_FEATURES.set({**_FUNCTION_FEATURES.get(),'budget_compact':True})
+        try:
+            transformed, mini_stats = _transform_body(
+                mini_ctx,root,block,rich_junk=False,boundary_mode='cff',
+                compound_options=compound_options,transform_budget=transform_budget,
+                compound_depth=compound_depth+1,
+            )
+        finally:
+            _FUNCTION_FEATURES.reset(feature_token)
+        if transformed is None or _code_size(transformed) > limit:
+            rollback()
+            return None
     # Each mini-CFG starts its private `_z` counter at zero. Without a namespace,
     # parent table-pooling can mistake those names for its own generated locals and
     # rewrite references across lexical scopes. The lexical binding prefix is known
@@ -2689,12 +2868,14 @@ def _mini_cff_body(body_text: str, compound_options: dict,
         lambda match: namespace + "z" + match.group(1),
         transformed,
     )
-    growth = max(0, len(transformed) - len(body_text))
+    growth = max(0, _code_size(transformed) - _code_size(body_text))
     if growth > transform_budget["chars_left"]:
+        rollback()
         return None
     transform_budget["blocks_left"] -= cost
     transform_budget["chars_left"] -= growth
     transform_budget["generated_chars"] += growth
+    transform_budget['mini_cff_blocks'] = transform_budget.get('mini_cff_blocks',0) + mini_stats.get('cff_blocks',0)
     return transformed
 
 
@@ -3088,10 +3269,11 @@ def _transform_body(
             "blocks_left": compound_options["max_generated_blocks"],
             "chars_left": max(
                 256,
-                int(len(ctx.text(block)) * compound_options["max_expansion_ratio"]),
+                int(_code_size(ctx.text(block)) * compound_options["max_expansion_ratio"]),
             ),
             "generated_chars": 0,
         }
+    initial_mini_blocks = transform_budget.get('mini_cff_blocks',0) if transform_budget else 0
 
     stmts = _block_stmts(ctx, block)
     if not stmts:
@@ -3127,6 +3309,37 @@ def _transform_body(
         compound_depth=compound_depth,
         compound_stats=boundary_stats,
     )
+
+    if _FUNCTION_FEATURES.get().get('reconstruction', False):
+        # Basic blocks preserve execution and dependency order. Only collapse
+        # single-predecessor linear chains, never joins, returns or branches.
+        # Four statements keep reconstruction spread over multiple CFF states
+        # while amortizing a state guard, decode, transition and junk bank.
+        before = len(blocks)
+        group_size = min(_FUNCTION_FEATURES.get().get('reconstruction_group_size',4), max(1,before//2))
+        by_id = {b['id']: b for b in blocks}
+        incoming = {b['id']: 0 for b in blocks}
+        incoming[entry] += 1
+        for b in blocks:
+            targets = [b['succ']] if b['kind'] == 'goto' else ([b['t'], b['e']] if b['kind'] == 'branch' else [])
+            for target in targets:
+                if target in incoming:
+                    incoming[target] += 1
+        consumed = set()
+        for b in reversed(blocks):
+            if b['id'] in consumed or b['kind'] != 'goto':
+                continue
+            for _ in range(group_size-1):
+                successor = by_id.get(b['succ'])
+                if (successor is None or successor['id'] in consumed
+                        or successor['kind'] != 'goto' or incoming[successor['id']] != 1):
+                    break
+                b['lines'].extend(successor['lines'])
+                b['succ'] = successor['succ']
+                consumed.add(successor['id'])
+        blocks = [b for b in blocks if b['id'] not in consumed]
+        boundary_stats['reconstruction_statements'] = before
+        boundary_stats['coalesced_states'] = before-len(blocks)
 
     c: list[int] = [0]
     params = list(lexical_plan.root_param_names)
@@ -3179,7 +3392,13 @@ def _transform_body(
         boundary_mode=boundary_mode,
         boundary_stats=boundary_stats,
     )
-    return "\n".join(prefix_lines + [cff]), boundary_stats
+    result = "\n".join(prefix_lines + [cff])
+    boundary_stats['mini_cff_blocks'] = (transform_budget.get('mini_cff_blocks',0)-initial_mini_blocks
+                                        if transform_budget else 0)
+    transport = CURRENT.get()
+    if transport is not None:
+        result = transport.lower(result)
+    return result, boundary_stats
 
 
 # Build-time annotation, removed by the VM output pipeline. No runtime sentinel.
@@ -3224,12 +3443,34 @@ class FunctionObfuscationPass(BasePass):
                  loop_max_expansion_ratio: float = 128.0,
                  loop_max_depth: int = 3,
                  cff: bool = True, junk: bool = True,
-                 inline: bool = True, wrapper: bool = True):
+                 inline: bool = True, wrapper: bool = True,
+                 max_jump_instructions: int = MAX_JUMP//4,
+                 max_function_instructions: int = MAX_JUMP//2,
+                 max_pass_instructions: int | None = None,
+                 generated_number_max_chars: int = 192,
+                 generated_number_max_operations: int = 3,
+                 reconstruction_group_size: int = 4):
         if boundary_mode not in {"mixed", "split", "cff"}:
             raise ValueError(
                 "boundary_mode must be 'mixed', 'split', or 'cff'"
             )
         self.skip_vm_dispatcher = skip_vm_dispatcher
+        limits = {
+            'max_jump_instructions': (max_jump_instructions, 32, MAX_JUMP//2),
+            'max_function_instructions': (max_function_instructions, 256, MAX_JUMP),
+            'max_pass_instructions': (max_pass_instructions, 256, None),
+            'generated_number_max_chars': (generated_number_max_chars, 64, 4096),
+            'generated_number_max_operations': (generated_number_max_operations, 1, 3),
+            'reconstruction_group_size': (reconstruction_group_size, 1, 8),
+        }
+        for name, (value, minimum, maximum) in limits.items():
+            if value is None and name == 'max_pass_instructions':
+                setattr(self, name, value)
+                continue
+            if (not isinstance(value, int) or isinstance(value, bool)
+                    or value < minimum or (maximum is not None and value > maximum)):
+                raise ValueError(f'{name} must be an integer in [{minimum}, {maximum}]')
+            setattr(self, name, value)
         self.features = {"cff": cff, "junk": junk, "inline": inline, "wrapper": wrapper}
         self.selection_resolver = None
         self.boundary_mode = boundary_mode
@@ -3294,7 +3535,7 @@ class FunctionObfuscationPass(BasePass):
             parts.append(replacement.new_text)
             pos = replacement.end + 1
         parts.append(source[pos:])
-        return "".join(parts)
+        return join_code(parts)
 
     def _transform_source_function(
         self,
@@ -3315,6 +3556,7 @@ class FunctionObfuscationPass(BasePass):
 
         node_start = source_ctx.cs(source_node)
         fragment = source_ctx.text(source_node)
+        reconstruction = (0, len(fragment)) in getattr(fragment, 'reconstructions', ())
         child_replacements: list[Replacement] = []
 
         can_descend = self.selection_resolver is not None or (self.nested and record.depth < self.nested_max_depth)
@@ -3345,7 +3587,9 @@ class FunctionObfuscationPass(BasePass):
                 return fragment, False
             self.last_selection_results[source_id] = False
             worker = copy.copy(self)
-            for key in ("boundary_mode", "nested", "nested_max_depth"):
+            for key in ("boundary_mode", "nested", "nested_max_depth", "reconstruction_group_size",
+                        "max_jump_instructions", "max_function_instructions",
+                        "generated_number_max_chars", "generated_number_max_operations"):
                 if key in options:
                     setattr(worker, key, options[key])
             worker.features = {**self.features, **{k: v for k, v in options.items() if k in self.features}}
@@ -3390,8 +3634,20 @@ class FunctionObfuscationPass(BasePass):
             for child in params_node.children
             if child.type == "identifier"
         ]
+        if (not worker.features['cff'] and not worker.features['junk']
+                and not (params and worker.features['wrapper'])):
+            # A disabled selection must retain its original spelling and
+            # skipped status; it does not need numeric transport markers.
+            return fragment, False
         if not worker.features["cff"]:
             new_body = fragment_ctx.text(block)
+            transport = CURRENT.get()
+            if transport is not None:
+                offset = fragment_ctx.cs(block)
+                edits = [Replacement(a-offset,b-offset-1,text)
+                         for a,b,text in transport.source_edits(fragment_ctx,root)
+                         if offset <= a and b <= fragment_ctx.ce(block)+1]
+                new_body = self._apply_replacements(new_body,edits)
             if params and worker.features["wrapper"]:
                 new_body = f"local {','.join(params)}=...\n" + new_body
             if worker.features["junk"]:
@@ -3400,8 +3656,24 @@ class FunctionObfuscationPass(BasePass):
                 new_body = f"local {name}=17; {name}=({name}*3+1)%97\n" + new_body
             boundary_stats = dict.fromkeys(("split_helpers", "inline_blocks", "inlined_functions", "split_bodies",
                                            "lowered_loops", "unrolled_loops", "unrolled_iterations", "skipped_unsafe", "budget_fallbacks"), 0)
+            if transport is not None:
+                prior_limits = (transport.max_chars, transport.max_operations)
+                transport.max_chars = worker.generated_number_max_chars
+                transport.max_operations = worker.generated_number_max_operations
+                try:
+                    new_body = transport.lower(new_body)
+                finally:
+                    transport.max_chars, transport.max_operations = prior_limits
         else:
-            token = _FUNCTION_FEATURES.set(worker.features)
+            token = _FUNCTION_FEATURES.set({**worker.features, 'reconstruction': reconstruction,
+                                           'reconstruction_group_size': worker.reconstruction_group_size})
+            cost_token = POLICY.set(replace(POLICY.get(), max_jump=worker.max_jump_instructions,
+                                           max_instructions=worker.max_function_instructions))
+            transport = CURRENT.get()
+            prior_limits = (transport.max_chars, transport.max_operations) if transport is not None else None
+            if transport is not None:
+                transport.max_chars = worker.generated_number_max_chars
+                transport.max_operations = worker.generated_number_max_operations
             try:
                 new_body, boundary_stats = _transform_body(
                     fragment_ctx, root, block, rich_junk=True,
@@ -3409,8 +3681,19 @@ class FunctionObfuscationPass(BasePass):
                 )
             finally:
                 _FUNCTION_FEATURES.reset(token)
+                POLICY.reset(cost_token)
+                if transport is not None:
+                    transport.max_chars, transport.max_operations = prior_limits
         if new_body is None:
             return fragment, False
+
+        self.last_function_costs.append({
+            'phase':'function_cff', 'elapsed':0.0,
+            'source_start':node_start, 'source_depth':record.depth,
+            'input_bytes':len(CURRENT.get().clean(fragment).encode()),
+            'output_bytes':len(CURRENT.get().clean(new_body).encode()),
+            **boundary_stats,
+        })
 
         local_replacements = [Replacement(
             start=fragment_ctx.cs(block),
@@ -3443,6 +3726,59 @@ class FunctionObfuscationPass(BasePass):
         return fragment, True
 
     def run(self, script: str, ctx) -> list[Replacement]:
+        version = getattr(self, 'lua_version', POLICY.get().lua_version)
+        original = measure(script, version=version)
+        if 'error' in original:
+            raise RuntimeError(f'FunctionObf input does not compile under Lua {version}: {original["error"]}')
+        # A full depth-three binary expression has eight leaves. Keep room for
+        # one compiler jump domain plus that expansion of the input prototypes.
+        pass_budget = self.max_pass_instructions or MAX_JUMP + original['total_instructions'] * (2**3)
+        avoid_helper_captures = False
+        retry_reason = None
+        for compact in (False, True):
+            transport = NumericTransport(script, NumberExpressionEngine(),
+                max_chars=self.generated_number_max_chars,
+                max_operations=self.generated_number_max_operations)
+            token = CURRENT.set(transport)
+            cost_token = POLICY.set(CostPolicy(version, self.max_jump_instructions,
+                self.max_function_instructions, compact, avoid_helper_captures))
+            self.last_function_costs = []
+            try:
+                replacements = self._run_with_origins(script, ctx)
+                for replacement in replacements:
+                    replacement.new_text = transport.finish(replacement.new_text)
+                output = self._apply_replacements(script, replacements)
+                report = measure(output, version=version)
+                if 'error' in report:
+                    if not compact:
+                        retry_reason = report['error']
+                        avoid_helper_captures = 'upvalue' in report['error']
+                        continue
+                    raise RuntimeError(f'FunctionObf final compile failed under Lua {version}: {report["error"]}')
+                if report['total_instructions'] > pass_budget:
+                    if not compact:
+                        retry_reason = 'whole-pass instruction budget'
+                        continue
+                    raise RuntimeError(f'FunctionObf pass budget exhausted after compact retry: '
+                        f'{report["total_instructions"]} instructions > {pass_budget}; '
+                        f'functions={len(report["functions"])}; source_bytes={len(script.encode())}')
+                self.last_generated_number_count = sum(len(getattr(r.new_text, 'protected', ())) for r in replacements)
+                self.last_profile = [{'phase': 'function_numbers', 'elapsed': 0.0,
+                    'generated_numbers': self.last_generated_number_count,
+                    'source_numbers': transport.source_count},
+                    {'phase': 'function_pass_budget', 'elapsed': 0.0,
+                     'instruction_budget': pass_budget, 'compiler_instructions': report['total_instructions'],
+                     'compiler_max_jump': max(r['max_jump'] for r in report['functions']),
+                     'compact_retry': compact, 'protection_adjustment':
+                     'reduced junk and dead-state density; all source CFF blocks retained' if compact else None,
+                     'retry_reason':retry_reason, 'avoid_helper_captures':avoid_helper_captures}]
+                self.last_profile.extend(self.last_function_costs)
+                return replacements
+            finally:
+                CURRENT.reset(token)
+                POLICY.reset(cost_token)
+
+    def _run_with_origins(self, script: str, ctx) -> list[Replacement]:
         self.last_selection_results = {}
         self.last_transformed_count = 0
         self.last_split_helper_count = 0

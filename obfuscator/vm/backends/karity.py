@@ -35,12 +35,14 @@ class KarityBackend(VMBackend):
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
-        from .karity_state import lower_state
+        from .karity_state import lower_state, seed_state_validation
         root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
         lowered.backend_data["karity_state"] = lower_state(
             lowered.backend_data["layout"], root["representation_routes"],
             root["runtime_rotation_policy"],
+            profile=context.profile,
         )
+        seed_state_validation(lowered)
         return lowered
 
     def optimize(self, lowered, context):
@@ -48,7 +50,7 @@ class KarityBackend(VMBackend):
         # The optimizer only removes producer handlers that no physical
         # instruction references; the state projection must remain identical.
         super().optimize(lowered, context)
-        from .karity_state import lower_state, validate_state
+        from .karity_state import lower_state, validate_state, state_input_signature
         from .karity_optimizer import deferred_signature, optimize_layout
         layout = lowered.backend_data["layout"]
         signature = lowered.backend_data.get("karity_optimized_deferred_signature")
@@ -60,11 +62,12 @@ class KarityBackend(VMBackend):
         root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
         routes = root["representation_routes"]
         rotation = root["runtime_rotation_policy"]
-        before_state = lower_state(layout, routes, rotation)
-        lowered.backend_data["karity_state"] = before_state
+        before_state = lowered.backend_data["karity_state"]
+        before_inputs = state_input_signature(layout)
         validate_state(lowered)
         statistics, events, specialized = optimize_layout(layout)
-        after_state = lower_state(layout, routes, rotation)
+        after_state = (before_state if before_inputs == state_input_signature(layout)
+                       else lower_state(layout,routes,rotation,profile=context.profile))
         if after_state != before_state:
             raise ValueError("Karity optimizer changed representation transitions")
         lowered.backend_data["karity_state"] = after_state

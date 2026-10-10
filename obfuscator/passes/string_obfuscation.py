@@ -101,7 +101,9 @@ def parse_lua_string(raw: str) -> bytes:
 
 
 def _encode(data: bytes, allocator: NameAllocator | None = None) -> str:
-    return reconstruct(data, allocator)
+    from .numeric_provenance import CodeText
+    expression = reconstruct(data, allocator)
+    return CodeText(expression, reconstructions=[(0, len(expression))])
 
 
 class StringObfuscationPass(BasePass):

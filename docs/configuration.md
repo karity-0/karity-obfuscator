@@ -276,6 +276,24 @@ Eligible loops choose unrolling with the seed-driven `loop_unroll_rate`
 `loop_max_generated_blocks` (default: `64`),
 `loop_max_expansion_ratio` (default: `128.0`), and `loop_max_depth`
 (default: `3`) bound recursive compound expansion.
+Compiler budgets: `max_jump_instructions` defaults to `32767` (a quarter
+of Lua 5.1/5.3's signed jump domain), `max_function_instructions` to
+`65535` (including helper prototypes). `max_pass_instructions` defaults
+to `131071 + 8 * input bytecode instructions`. Override it with an integer.
+Large regions automatically use measured, cost-balanced helpers; budget
+pressure selects shared-decode CFF with less junk/dead-state density.
+All selected source blocks remain in CFF. One compact retry is allowed;
+an unsatisfiable budget produces a diagnostic instead of unlimited retries.
+Generated state/junk numbers share NumberObf's engine and carry origin
+spans through edits. Later NumberObf/Meme stages skip these expressions;
+source numbers retain their existing protection. `generated_number_max_chars`
+(default `192`) and `generated_number_max_operations` (default `3`, range `1..3`) bound
+the generated expressions. Hot states use one arithmetic layer and Lua
+5.1-compatible syntax. Profiling records native costs and protection adjustments.
+`reconstruction_group_size` (default `4`, range `1..8`) groups consecutive
+StringObf reconstruction statements into basic blocks. Joins/branches/returns
+remain boundaries, data dependencies and execution order stay intact, and
+all reconstruction operations remain in CFF. Profiling records coalesced states.
 
 See [`function_obf` design and implementation notes](passes/functionObfuscation.md) for architecture, trade-offs, and future work.
 

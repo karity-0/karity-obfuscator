@@ -184,13 +184,13 @@ class VMBuildPipeline(PostPass):
             "backend": backend.name,
         })
         dumps = {
-            "ir": source_ir.dump(), "optimized_ir": optimized_ir.dump(), "protected_ir": semantic_ir.dump(),
-            "protection_plan": plan.dump() + lowered.resolution.dump(),
-            "backend_ir": lowered.dump(),
+            "ir": source_ir.dump, "optimized_ir": optimized_ir.dump, "protected_ir": semantic_ir.dump,
+            "protection_plan": lambda: plan.dump() + lowered.resolution.dump(),
+            "backend_ir": lowered.dump,
         }
         for name, path in cast(dict[str, str], self.debug_dumps).items():
             if name in dumps and path:
-                Path(path).write_text(dumps[name], encoding="utf-8")
+                Path(path).write_text(dumps[name](), encoding="utf-8")
         return output
 
 

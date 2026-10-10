@@ -549,6 +549,9 @@ def _validate_function_obf_options(options: dict) -> None:
         "loop_unroll_rate",
         "loop_max_generated_blocks", "loop_max_expansion_ratio",
         "loop_max_depth",
+        "max_jump_instructions", "max_function_instructions", "max_pass_instructions",
+        "generated_number_max_chars", "generated_number_max_operations",
+        "reconstruction_group_size",
     }
     unknown = sorted(set(options) - allowed)
     if unknown:
@@ -581,6 +584,12 @@ def _validate_function_obf_options(options: dict) -> None:
         ("loop_unroll_max_iterations", 0, 32),
         ("loop_max_generated_blocks", 1, 1024),
         ("loop_max_depth", 0, 16),
+        ("max_jump_instructions", 32, 65535),
+        ("max_function_instructions", 256, 131071),
+        ("max_pass_instructions", 256, float('inf')),
+        ("generated_number_max_chars", 64, 4096),
+        ("generated_number_max_operations", 1, 3),
+        ("reconstruction_group_size", 1, 8),
     ):
         value = options.get(key)
         if value is not None and (
@@ -804,7 +813,9 @@ def build_pipeline_from_config[P: Pipeline](
                 output_prefix=signature_pass.prefix,
             ))
         elif name == "function_obf":
-            pipeline.add(cls(**function_obf_options))
+            function_pass = cls(**function_obf_options)
+            function_pass.lua_version = pipeline.target_profile.lua_version
+            pipeline.add(function_pass)
         else:
             pipeline.add(cls())
 

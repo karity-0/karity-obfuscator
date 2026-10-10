@@ -56,6 +56,8 @@ class SelectionRuntime:
 
     def function_options(self, options):
         from .registry import _validate_function_obf_options
+        if 'max_pass_instructions' in options:
+            raise SelectionError('max_pass_instructions is a whole-pass setting; configure function_obf_options')
         _validate_function_obf_options(options)
         return {**self._function_defaults, **self.config.get("function_obf_options", {}), **options}
 
@@ -189,7 +191,7 @@ class SelectionRuntime:
         # dictionary. Those defaults also govern region lowering and nesting.
         self._function_defaults = {
             **pass_.features,
-            **{key: getattr(pass_, key) for key in ("boundary_mode", "nested", "nested_max_depth")},
+            **{key: getattr(pass_, key) for key in ("boundary_mode", "nested", "nested_max_depth", "reconstruction_group_size")},
             **{"loop_" + key: value for key, value in pass_.compound_options.items()},
         }
         from .statement_regions import lower_region, transport_prelude

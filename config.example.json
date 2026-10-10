@@ -161,12 +161,12 @@
             ],
             "vm_output_passes": [
                 "strip_info",
-                "function_obf",
-                "meme_strings",
+                "rename_obf",
                 "minify"
             ],
             "packer_output_passes": [
                 "strip_info",
+                "rename_obf",
                 "minify"
             ],
             "function_obf_options": {
@@ -230,24 +230,12 @@
             ],
             "vm_output_passes": [
                 "strip_info",
-                "function_obf",
-                "boolean_obf",
-                "table_obf",
-                "string_obf",
-                "meme_strings",
-                "number_obf",
-                "localize_globals",
+                "rename_obf",
                 "minify"
             ],
             "packer_output_passes": [
                 "strip_info",
-                "function_obf",
-                "boolean_obf",
-                "table_obf",
-                "string_obf",
-                "meme_strings",
-                "number_obf",
-                "localize_globals",
+                "rename_obf",
                 "minify"
             ],
             "function_obf_options": {

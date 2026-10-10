@@ -399,11 +399,24 @@ def _hoist_locals(lines: list[str]) -> tuple[list[str], list[str]]:
 # CFF state machine
 # ---------------------------------------------------------------------------
 
-def _new_state(used: set[int]) -> int:
-    while True:
-        s = random.randint(100, 9999)
+def _new_state(used: set[int], *, upper_limit: int | None = None) -> int:
+    # Large source CFFs share this allocator with VM handler CFF. Grow the
+    # domain before it saturates; preserve the historical small-function range.
+    # At <=50% occupancy, 32 collisions have probability <=2**-32. A bounded
+    # deterministic fallback also handles a pathological/injected RNG.
+    upper = max(9999, 100 + (1 << (2*len(used)).bit_length()))
+    if upper_limit is not None:
+        upper = min(upper,upper_limit)
+    if len(used) >= upper-99 and sum(100 <= value <= upper for value in used) >= upper-99:
+        raise RuntimeError(f'CFF state allocation exhausted: states={len(used)} domain=100..{upper}')
+    for _ in range(32):
+        s = random.randint(100, upper)
         if s not in used:
             used.add(s); return s
+    for s in range(100, upper+1):
+        if s not in used:
+            used.add(s); return s
+    raise RuntimeError(f'CFF state allocation exhausted: states={len(used)} domain=100..{upper}')
 
 
 def _make_dead_body(c: list[int], native_state: bool = False) -> list[str]:

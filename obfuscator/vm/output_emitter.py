@@ -23,6 +23,7 @@ from ..passes.meme_strings import MemeStringsPass
 from ..passes.string_obfuscation import _encode, parse_lua_string
 from ..names import NameAllocator
 from ..passes.ts_utils import _LANG, parse
+from ..passes.numeric_provenance import CodeText, protected_number, join_code
 
 
 EMITTER_PASS_NAMES = frozenset({"number_obf", "string_obf", "boolean_obf"})
@@ -37,6 +38,7 @@ _LITERAL_QUERY = ts.Query(
 class NumberLiteral:
     token: str
     eligible: bool = True
+    protected: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,7 +84,7 @@ def _append_raw(parts: list[Fragment], text: str) -> None:
         and isinstance(parts[-1], str)
         and len(parts[-1]) + len(text) <= 4096
     ):
-        parts[-1] += text
+        parts[-1] = join_code((parts[-1], text))
     else:
         parts.append(text)
 
@@ -230,6 +232,7 @@ def _parse_fragments(
                 token,
                 _EXACT_HEX64_RE.fullmatch(token) is None
                 and not in_exact_graph(start, end),
+                protected_number(source, start, end + 1),
             ))
         elif node.type == "string":
             parts.append(StringLiteral(token))
@@ -265,12 +268,12 @@ def _render(parts: list[Fragment]) -> str:
         if isinstance(part, str):
             rendered.append(part)
         elif isinstance(part, NumberLiteral):
-            rendered.append(part.token)
+            rendered.append(CodeText(part.token, [(0, len(part.token))]) if part.protected else part.token)
         elif isinstance(part, StringLiteral):
             rendered.append(part.token)
         else:
             rendered.append("true" if part.value else "false")
-    return "".join(rendered)
+    return join_code(rendered)
 
 
 def emit_vm_literals(
@@ -333,7 +336,7 @@ def emit_vm_literals(
             elif name == "boolean_obf" and isinstance(part, BooleanLiteral):
                 output.extend(_emit_boolean(part.value))
                 replacements += 1
-            elif name == "meme_strings" and isinstance(part, NumberLiteral):
+            elif name == "meme_strings" and isinstance(part, NumberLiteral) and not part.protected:
                 if random.random() < meme_emitter.replacement_rate:
                     output.extend(_split_meme_literals(meme_emitter.obfuscate_token(part.token), part.eligible))
                     replacements += 1
@@ -343,6 +346,7 @@ def emit_vm_literals(
                 name == "number_obf"
                 and isinstance(part, NumberLiteral)
                 and part.eligible
+                and not part.protected
             ):
                 expression = number_emitter.obfuscate_token(part.token)
                 if retokenize_generated_numbers:

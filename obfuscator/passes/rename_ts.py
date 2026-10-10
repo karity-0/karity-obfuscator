@@ -186,7 +186,8 @@ def _apply_replacements_once(script: str, replacements: list[tuple[int, int, str
         pos = end + 1
 
     parts.append(script[pos:])
-    return "".join(parts)
+    from .numeric_provenance import join_code
+    return join_code(parts)
 
 
 def rename_script_ts(script: str, *, seed=None, readable=None) -> str:

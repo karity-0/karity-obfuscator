@@ -337,6 +337,7 @@ def _obfuscate_vm_output(
     shared_ctx = None
 
     def apply_replacements(source: str, replacements) -> str:
+        from ...passes.numeric_provenance import join_code
         if not replacements:
             return source
         parts: list[str] = []
@@ -346,7 +347,7 @@ def _obfuscate_vm_output(
             parts.append(replacement.new_text)
             pos = replacement.end + 1
         parts.append(source[pos:])
-        return "".join(parts)
+        return join_code(parts)
 
     def run_legacy(
         source: str,
@@ -360,6 +361,10 @@ def _obfuscate_vm_output(
         for configured_name, cls in entries:
             if cls.__name__ == "FunctionObfuscationPass":
                 pipeline.add(cls(skip_vm_dispatcher=protect_vm_dispatcher))
+            elif cls.__name__ == "StripInfoPass":
+                # The shared identifier emitter already renamed locals. Keep
+                # fields/labels/comments stripped without a second rename scan.
+                pipeline.add(cls(rename_locals='rename_obf' not in identifier_names))
             else:
                 pipeline.add(cls())
             names.append(configured_name)
@@ -654,10 +659,15 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # Graph banks and blob decoders may introduce target API operations too.
     # Finalize the complete runtime before output passes rename its identifiers.
     vm_func_src = target.finalize_runtime(vm_func_src)
-    vm_func_src, vm_output_details = output_transform(
-        vm_func_src,
-        context.output_passes,
-    )
+    from ...passes.function_costs import POLICY, CostPolicy
+    cost_token = POLICY.set(CostPolicy(lua_version=target.lua_version))
+    try:
+        vm_func_src, vm_output_details = output_transform(
+            vm_func_src,
+            context.output_passes,
+        )
+    finally:
+        POLICY.reset(cost_token)
     vm_func_src = vm_func_src.replace(
         "--[[KARITY_EXACT_BEGIN]]", "",
     ).replace("--[[KARITY_EXACT_END]]", "")

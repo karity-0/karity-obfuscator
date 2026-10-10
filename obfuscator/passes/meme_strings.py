@@ -3,6 +3,7 @@ import random
 import re
 
 from .base import BasePass, Replacement
+from .numeric_provenance import protected_number
 
 
 # Lua measures UTF-8 bytes, so Unicode phrases must use their encoded length.
@@ -83,6 +84,8 @@ class MemeStringsPass(BasePass):
         replacements = []
         for node in tree.walk():
             if node.type != "number":
+                continue
+            if protected_number(script, tree.cs(node), tree.ce(node)+1):
                 continue
             token = tree.text(node)
             if random.random() >= self.replacement_rate:

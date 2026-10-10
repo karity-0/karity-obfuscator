@@ -337,6 +337,7 @@ def _walk(node):
 
 
 def _apply(source, replacements):
+    from .passes.numeric_provenance import join_code
     parts, position = [], 0
     for r in sorted(replacements, key=lambda r: (r.start, r.end)):
         if not (0 <= r.start <= len(source) and r.start - 1 <= r.end < len(source)):
@@ -345,4 +346,4 @@ def _apply(source, replacements):
             raise SelectionError("overlapping selection replacements")
         parts.extend((source[position:r.start], r.new_text))
         position = r.end + 1
-    return "".join((*parts, source[position:]))
+    return join_code((*parts, source[position:]))
