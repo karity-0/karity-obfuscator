@@ -1,0 +1,4074 @@
+{
+  "date": "2026-10-10",
+  "input": "test/scripts/01_helloWorld.lua",
+  "seed": 9300,
+  "baseline_revision": "102243e",
+  "implementation_revision": "2ceea6d",
+  "platform": "Windows-11-10.0.22631-SP0",
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "timing_note": "Representative local measurements during concurrent verification; not a CI timeout or speed guarantee. Default Karity and MOV samples are separate builds.",
+  "baseline": {
+    "high": {
+      "passes": [
+        {
+          "step": "PRE",
+          "name": "StripInfoPass",
+          "elapsed": 0.000357,
+          "input_bytes": 20,
+          "output_bytes": 20,
+          "delta_bytes": 0
+        },
+        {
+          "step": "PRE",
+          "name": "AntiDebugPass",
+          "elapsed": 0.000131,
+          "input_bytes": 20,
+          "output_bytes": 192,
+          "delta_bytes": 172
+        },
+        {
+          "step": "BASE",
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000516,
+          "input_bytes": 192,
+          "output_bytes": 591,
+          "delta_bytes": 399,
+          "parser": "treesitter",
+          "replacements": 6,
+          "bytecode": {
+            "prototype_count": 1,
+            "total_instructions": 99,
+            "max_jump": 46,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 99,
+                "max_jump": 46,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.001019,
+          "input_bytes": 591,
+          "output_bytes": 619,
+          "delta_bytes": 28,
+          "parser": "treesitter",
+          "replacements": 1,
+          "bytecode": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "TableObfuscationPass",
+          "elapsed": 0.000575,
+          "input_bytes": 619,
+          "output_bytes": 619,
+          "delta_bytes": 0,
+          "parser": "treesitter",
+          "replacements": 0,
+          "bytecode": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "StringObfuscationPass",
+          "elapsed": 0.001493,
+          "input_bytes": 619,
+          "output_bytes": 6825,
+          "delta_bytes": 6206,
+          "parser": "treesitter",
+          "replacements": 4,
+          "bytecode": {
+            "prototype_count": 5,
+            "total_instructions": 625,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 203,
+                "max_jump": 0,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 120,
+                "max_jump": 0,
+                "locals": 10,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 109,
+                "max_jump": 17,
+                "locals": 19,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 106,
+                "max_jump": 48,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "FunctionObfuscationPass",
+          "elapsed": 0.271242,
+          "input_bytes": 6825,
+          "output_bytes": 383775,
+          "delta_bytes": 376950,
+          "parser": "treesitter",
+          "replacements": 4,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 46589,
+            "max_jump": 21877,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 21888,
+                "max_jump": 21877,
+                "locals": 15,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 12456,
+                "max_jump": 12448,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 7539,
+                "max_jump": 7534,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0",
+                "instructions": 3563,
+                "max_jump": 3560,
+                "locals": 22,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.788602,
+          "input_bytes": 383775,
+          "output_bytes": 2192004,
+          "delta_bytes": 1808229,
+          "parser": "treesitter",
+          "replacements": 23185,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 49000,
+            "max_jump": 23001,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 23012,
+                "max_jump": 23001,
+                "locals": 15,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 13016,
+                "max_jump": 13008,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 7975,
+                "max_jump": 7970,
+                "locals": 13,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0",
+                "instructions": 3758,
+                "max_jump": 3755,
+                "locals": 22,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 2.197244,
+          "input_bytes": 2192004,
+          "output_bytes": 2191995,
+          "delta_bytes": -9,
+          "parser": "treesitter",
+          "replacements": 23,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 48952,
+            "max_jump": 22980,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 22991,
+                "max_jump": 22980,
+                "locals": 15,
+                "upvalues": 2
+              },
+              {
+                "path": "0.2",
+                "instructions": 13004,
+                "max_jump": 12996,
+                "locals": 12,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 7960,
+                "max_jump": 7955,
+                "locals": 13,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 3752,
+                "max_jump": 3749,
+                "locals": 22,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "MemeStringsPass",
+          "elapsed": 1.584401,
+          "input_bytes": 2191995,
+          "output_bytes": 4211516,
+          "delta_bytes": 2019521,
+          "parser": "treesitter",
+          "replacements": 49406,
+          "bytecode": {
+            "error": "[string \"local gc=_ENV local hc=gc[\"debug\"] local ic=g...\"]:3635: control structure too long near 'end'"
+          }
+        },
+        {
+          "step": "POST",
+          "name": "OutputSignaturePass",
+          "elapsed": 1.3e-05,
+          "input_bytes": 4211516,
+          "output_bytes": 4211516,
+          "delta_bytes": 0
+        }
+      ],
+      "cff_regions": [
+        {
+          "blocks": 4,
+          "bytes": 5269,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 490,
+            "max_jump": 483,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 487,
+                "max_jump": 483,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 32,
+          "bytes": 42058,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 3566,
+            "max_jump": 3560,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 3563,
+                "max_jump": 3560,
+                "locals": 22,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 4,
+          "bytes": 6054,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 526,
+            "max_jump": 519,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 523,
+                "max_jump": 519,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 4,
+          "bytes": 4959,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 446,
+            "max_jump": 439,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 443,
+                "max_jump": 439,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 4,
+          "bytes": 7534,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 699,
+            "max_jump": 692,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 696,
+                "max_jump": 692,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 40,
+          "bytes": 75204,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 7542,
+            "max_jump": 7534,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 7539,
+                "max_jump": 7534,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 42,
+          "bytes": 97935,
+          "compile": {
+            "prototype_count": 59,
+            "total_instructions": 12822,
+            "max_jump": 12448,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 12456,
+                "max_jump": 12448,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.3",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.5",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.13",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 64,
+          "bytes": 167907,
+          "compile": {
+            "prototype_count": 104,
+            "total_instructions": 22565,
+            "max_jump": 21877,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 21888,
+                "max_jump": 21877,
+                "locals": 15,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.3",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.6",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.7",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              }
+            ]
+          }
+        }
+      ],
+      "failures": [
+        {
+          "start": 2457168,
+          "bytes": 1723630,
+          "error": "[string \"return function() local _T0={}...\"]:3149: control structure too long near '%'",
+          "case_instruction_sum": 228409,
+          "cases": 3
+        },
+        {
+          "start": 1437798,
+          "bytes": 1027410,
+          "error": "[string \"return function() local _T0={}...\"]:1846: control structure too long near 'end'",
+          "case_instruction_sum": 135126,
+          "cases": 4
+        }
+      ],
+      "pre_vm_minified_bytes": 3713167,
+      "compiles": false,
+      "full_build_seconds": null,
+      "execution_seconds": null
+    },
+    "max": {
+      "passes": [
+        {
+          "step": "PRE",
+          "name": "StripInfoPass",
+          "elapsed": 0.00107,
+          "input_bytes": 20,
+          "output_bytes": 20,
+          "delta_bytes": 0
+        },
+        {
+          "step": "PRE",
+          "name": "AntiDebugPass",
+          "elapsed": 0.000319,
+          "input_bytes": 20,
+          "output_bytes": 192,
+          "delta_bytes": 172
+        },
+        {
+          "step": "BASE",
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000966,
+          "input_bytes": 192,
+          "output_bytes": 591,
+          "delta_bytes": 399,
+          "parser": "treesitter",
+          "replacements": 6,
+          "bytecode": {
+            "prototype_count": 1,
+            "total_instructions": 99,
+            "max_jump": 46,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 99,
+                "max_jump": 46,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.001398,
+          "input_bytes": 591,
+          "output_bytes": 619,
+          "delta_bytes": 28,
+          "parser": "treesitter",
+          "replacements": 1,
+          "bytecode": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "TableObfuscationPass",
+          "elapsed": 0.001329,
+          "input_bytes": 619,
+          "output_bytes": 619,
+          "delta_bytes": 0,
+          "parser": "treesitter",
+          "replacements": 0,
+          "bytecode": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "StringObfuscationPass",
+          "elapsed": 0.003579,
+          "input_bytes": 619,
+          "output_bytes": 6825,
+          "delta_bytes": 6206,
+          "parser": "treesitter",
+          "replacements": 4,
+          "bytecode": {
+            "prototype_count": 5,
+            "total_instructions": 625,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 203,
+                "max_jump": 0,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 120,
+                "max_jump": 0,
+                "locals": 10,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 109,
+                "max_jump": 17,
+                "locals": 19,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 106,
+                "max_jump": 48,
+                "locals": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "FunctionObfuscationPass",
+          "elapsed": 1.402859,
+          "input_bytes": 6825,
+          "output_bytes": 382450,
+          "delta_bytes": 375625,
+          "parser": "treesitter",
+          "replacements": 4,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 47379,
+            "max_jump": 22671,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 22682,
+                "max_jump": 22671,
+                "locals": 15,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 12471,
+                "max_jump": 12463,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 7520,
+                "max_jump": 7515,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0",
+                "instructions": 3563,
+                "max_jump": 3560,
+                "locals": 22,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "NumberObfuscationPass",
+          "elapsed": 3.943845,
+          "input_bytes": 382450,
+          "output_bytes": 2190679,
+          "delta_bytes": 1808229,
+          "parser": "treesitter",
+          "replacements": 23185,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 49851,
+            "max_jump": 23831,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 23842,
+                "max_jump": 23831,
+                "locals": 15,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 13055,
+                "max_jump": 13047,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 7957,
+                "max_jump": 7952,
+                "locals": 13,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0",
+                "instructions": 3758,
+                "max_jump": 3755,
+                "locals": 22,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 11.207733,
+          "input_bytes": 2190679,
+          "output_bytes": 2190670,
+          "delta_bytes": -9,
+          "parser": "treesitter",
+          "replacements": 23,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 49803,
+            "max_jump": 23810,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 23821,
+                "max_jump": 23810,
+                "locals": 15,
+                "upvalues": 2
+              },
+              {
+                "path": "0.2",
+                "instructions": 13043,
+                "max_jump": 13035,
+                "locals": 12,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 7942,
+                "max_jump": 7937,
+                "locals": 13,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 3752,
+                "max_jump": 3749,
+                "locals": 22,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "StringEncodePass",
+          "elapsed": 4.865941,
+          "input_bytes": 2190670,
+          "output_bytes": 2193307,
+          "delta_bytes": 2637,
+          "parser": "treesitter",
+          "replacements": 162,
+          "bytecode": {
+            "prototype_count": 164,
+            "total_instructions": 49803,
+            "max_jump": 23810,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 23821,
+                "max_jump": 23810,
+                "locals": 15,
+                "upvalues": 2
+              },
+              {
+                "path": "0.2",
+                "instructions": 13043,
+                "max_jump": 13035,
+                "locals": 12,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 7942,
+                "max_jump": 7937,
+                "locals": 13,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 3752,
+                "max_jump": 3749,
+                "locals": 22,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "step": "BASE",
+          "name": "MemeStringsPass",
+          "elapsed": 5.442653,
+          "input_bytes": 2193307,
+          "output_bytes": 4212828,
+          "delta_bytes": 2019521,
+          "parser": "treesitter",
+          "replacements": 49406,
+          "bytecode": {
+            "error": "[string \"local gc=_ENV local hc=gc[\"\\100\\101\\098\\117\\1...\"]:3635: control structure too long near 'end'"
+          }
+        },
+        {
+          "step": "POST",
+          "name": "OutputSignaturePass",
+          "elapsed": 1.8e-05,
+          "input_bytes": 4212828,
+          "output_bytes": 4212828,
+          "delta_bytes": 0
+        }
+      ],
+      "cff_regions": [
+        {
+          "blocks": 4,
+          "bytes": 5269,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 490,
+            "max_jump": 483,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 487,
+                "max_jump": 483,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 32,
+          "bytes": 42058,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 3566,
+            "max_jump": 3560,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 3563,
+                "max_jump": 3560,
+                "locals": 22,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 4,
+          "bytes": 6054,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 526,
+            "max_jump": 519,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 523,
+                "max_jump": 519,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 4,
+          "bytes": 4959,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 446,
+            "max_jump": 439,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 443,
+                "max_jump": 439,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 4,
+          "bytes": 7534,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 699,
+            "max_jump": 692,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 696,
+                "max_jump": 692,
+                "locals": 11,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 40,
+          "bytes": 74772,
+          "compile": {
+            "prototype_count": 2,
+            "total_instructions": 7523,
+            "max_jump": 7515,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 7520,
+                "max_jump": 7515,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 3,
+                "max_jump": 0,
+                "locals": 2,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 42,
+          "bytes": 97849,
+          "compile": {
+            "prototype_count": 59,
+            "total_instructions": 12837,
+            "max_jump": 12463,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 12471,
+                "max_jump": 12463,
+                "locals": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.3",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.5",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.13",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "blocks": 64,
+          "bytes": 167100,
+          "compile": {
+            "prototype_count": 104,
+            "total_instructions": 23359,
+            "max_jump": 22671,
+            "largest_prototypes": [
+              {
+                "path": "0.0",
+                "instructions": 22682,
+                "max_jump": 22671,
+                "locals": 15,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.3",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.6",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0.7",
+                "instructions": 11,
+                "max_jump": 2,
+                "locals": 3,
+                "upvalues": 1
+              }
+            ]
+          }
+        }
+      ],
+      "failures": [
+        {
+          "start": 2457724,
+          "bytes": 1724386,
+          "error": "[string \"return function() local _T0={}...\"]:3149: control structure too long near '('",
+          "case_instruction_sum": 228676,
+          "cases": 3
+        },
+        {
+          "start": 1437492,
+          "bytes": 1028272,
+          "error": "[string \"return function() local _T0={}...\"]:1846: control structure too long near 'end'",
+          "case_instruction_sum": 135328,
+          "cases": 4
+        }
+      ],
+      "pre_vm_minified_bytes": 3714479,
+      "compiles": false,
+      "full_build_seconds": null,
+      "execution_seconds": null
+    }
+  },
+  "source_after": {
+    "high": {
+      "source_obfuscation_seconds": 3.7571496999589726,
+      "output_bytes": 227905,
+      "passes": [
+        {
+          "name": "StripInfoPass",
+          "elapsed": 0.000472,
+          "input_bytes": 20,
+          "output_bytes": 20
+        },
+        {
+          "name": "AntiDebugPass",
+          "elapsed": 0.001072,
+          "input_bytes": 20,
+          "output_bytes": 192
+        },
+        {
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000622,
+          "input_bytes": 192,
+          "output_bytes": 591,
+          "compiler": {
+            "prototype_count": 1,
+            "total_instructions": 99,
+            "max_jump": 46,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 99,
+                "max_jump": 46,
+                "jump_pc": 51,
+                "jump_line": 3,
+                "source_lines": [
+                  0,
+                  8
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.000859,
+          "input_bytes": 591,
+          "output_bytes": 619,
+          "compiler": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "jump_pc": 51,
+                "jump_line": 3,
+                "source_lines": [
+                  0,
+                  8
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "TableObfuscationPass",
+          "elapsed": 0.001292,
+          "input_bytes": 619,
+          "output_bytes": 619,
+          "compiler": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "jump_pc": 51,
+                "jump_line": 3,
+                "source_lines": [
+                  0,
+                  8
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "StringObfuscationPass",
+          "elapsed": 0.003685,
+          "input_bytes": 619,
+          "output_bytes": 6825,
+          "compiler": {
+            "prototype_count": 5,
+            "total_instructions": 625,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 203,
+                "max_jump": 0,
+                "jump_pc": 0,
+                "jump_line": 129,
+                "source_lines": [
+                  128,
+                  193
+                ],
+                "stack": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 120,
+                "max_jump": 0,
+                "jump_pc": 0,
+                "jump_line": 84,
+                "source_lines": [
+                  83,
+                  126
+                ],
+                "stack": 10,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 109,
+                "max_jump": 17,
+                "jump_pc": 102,
+                "jump_line": 76,
+                "source_lines": [
+                  39,
+                  83
+                ],
+                "stack": 19,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 106,
+                "max_jump": 48,
+                "jump_pc": 56,
+                "jump_line": 193,
+                "source_lines": [
+                  0,
+                  198
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "FunctionObfuscationPass",
+          "elapsed": 2.308466,
+          "input_bytes": 6825,
+          "output_bytes": 196787,
+          "compiler": {
+            "prototype_count": 44,
+            "total_instructions": 10104,
+            "max_jump": 4650,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 4655,
+                "max_jump": 4650,
+                "jump_pc": 4653,
+                "jump_line": 1918,
+                "source_lines": [
+                  1157,
+                  1920
+                ],
+                "stack": 9,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 1591,
+                "max_jump": 1588,
+                "jump_pc": 1589,
+                "jump_line": 602,
+                "source_lines": [
+                  263,
+                  604
+                ],
+                "stack": 22,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0",
+                "instructions": 1164,
+                "max_jump": 1161,
+                "jump_pc": 1162,
+                "jump_line": 261,
+                "source_lines": [
+                  1,
+                  263
+                ],
+                "stack": 22,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2.1",
+                "instructions": 906,
+                "max_jump": 864,
+                "jump_pc": 40,
+                "jump_line": 844,
+                "source_lines": [
+                  837,
+                  1044
+                ],
+                "stack": 7,
+                "upvalues": 3
+              }
+            ]
+          },
+          "details": [
+            {
+              "phase": "function_numbers",
+              "elapsed": 0.0,
+              "generated_numbers": 5029,
+              "source_numbers": 458
+            },
+            {
+              "phase": "function_pass_budget",
+              "elapsed": 0.0,
+              "instruction_budget": 136071,
+              "compiler_instructions": 10104,
+              "compiler_max_jump": 4650,
+              "compact_retry": false,
+              "protection_adjustment": null,
+              "retry_reason": null,
+              "avoid_helper_captures": false
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 14,
+              "source_depth": 0,
+              "input_bytes": 1113,
+              "output_bytes": 31176,
+              "split_helpers": 0,
+              "inline_blocks": 0,
+              "inlined_functions": 0,
+              "split_bodies": 1,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 32,
+              "coalesced_states": 23,
+              "cff_blocks": 9,
+              "compiler_instructions": 1164,
+              "compiler_max_jump": 1161,
+              "projected_instructions": 11964,
+              "style": "_emit_dispatch_flat",
+              "mini_cff_blocks": 3
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 1139,
+              "source_depth": 0,
+              "input_bytes": 1282,
+              "output_bytes": 42736,
+              "split_helpers": 0,
+              "inline_blocks": 0,
+              "inlined_functions": 0,
+              "split_bodies": 1,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 38,
+              "coalesced_states": 27,
+              "cff_blocks": 11,
+              "compiler_instructions": 1591,
+              "compiler_max_jump": 1588,
+              "projected_instructions": 15541,
+              "style": "_emit_dispatch_flat",
+              "mini_cff_blocks": 3
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 2450,
+              "source_depth": 0,
+              "input_bytes": 1472,
+              "output_bytes": 44520,
+              "split_helpers": 3,
+              "inline_blocks": 1,
+              "inlined_functions": 0,
+              "split_bodies": 0,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 42,
+              "coalesced_states": 30,
+              "projected_helper_instructions": 6349,
+              "cff_blocks": 12,
+              "compiler_instructions": 2441,
+              "compiler_max_jump": 864,
+              "projected_instructions": 301,
+              "style": "_emit_dispatch_split",
+              "mini_cff_blocks": 0
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 4146,
+              "source_depth": 0,
+              "input_bytes": 2347,
+              "output_bytes": 77684,
+              "split_helpers": 0,
+              "inline_blocks": 0,
+              "inlined_functions": 0,
+              "split_bodies": 0,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 64,
+              "coalesced_states": 47,
+              "cff_blocks": 17,
+              "compiler_instructions": 4802,
+              "compiler_max_jump": 4650,
+              "projected_instructions": 31955,
+              "style": "_emit_dispatch_nested",
+              "mini_cff_blocks": 0
+            }
+          ]
+        },
+        {
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.237562,
+          "input_bytes": 196787,
+          "output_bytes": 234480,
+          "compiler": {
+            "prototype_count": 44,
+            "total_instructions": 10106,
+            "max_jump": 4650,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 4655,
+                "max_jump": 4650,
+                "jump_pc": 4653,
+                "jump_line": 1918,
+                "source_lines": [
+                  1157,
+                  1920
+                ],
+                "stack": 9,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 1591,
+                "max_jump": 1588,
+                "jump_pc": 1589,
+                "jump_line": 602,
+                "source_lines": [
+                  263,
+                  604
+                ],
+                "stack": 22,
+                "upvalues": 1
+              },
+              {
+                "path": "0.0",
+                "instructions": 1164,
+                "max_jump": 1161,
+                "jump_pc": 1162,
+                "jump_line": 261,
+                "source_lines": [
+                  1,
+                  263
+                ],
+                "stack": 22,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2.1",
+                "instructions": 906,
+                "max_jump": 864,
+                "jump_pc": 40,
+                "jump_line": 844,
+                "source_lines": [
+                  837,
+                  1044
+                ],
+                "stack": 7,
+                "upvalues": 3
+              }
+            ]
+          },
+          "details": [
+            {
+              "phase": "number_origins",
+              "elapsed": 0.0,
+              "protected_generated_numbers": 10126,
+              "source_replacements": 499
+            }
+          ]
+        },
+        {
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 0.659538,
+          "input_bytes": 234480,
+          "output_bytes": 234489,
+          "compiler": {
+            "prototype_count": 44,
+            "total_instructions": 10092,
+            "max_jump": 4639,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 4644,
+                "max_jump": 4639,
+                "jump_pc": 4642,
+                "jump_line": 1918,
+                "source_lines": [
+                  1157,
+                  1920
+                ],
+                "stack": 9,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 1588,
+                "max_jump": 1585,
+                "jump_pc": 1586,
+                "jump_line": 602,
+                "source_lines": [
+                  263,
+                  604
+                ],
+                "stack": 22,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 1162,
+                "max_jump": 1159,
+                "jump_pc": 1160,
+                "jump_line": 261,
+                "source_lines": [
+                  1,
+                  263
+                ],
+                "stack": 22,
+                "upvalues": 3
+              },
+              {
+                "path": "0.2.1",
+                "instructions": 905,
+                "max_jump": 864,
+                "jump_pc": 39,
+                "jump_line": 844,
+                "source_lines": [
+                  837,
+                  1044
+                ],
+                "stack": 7,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "name": "MemeStringsPass",
+          "elapsed": 0.337412,
+          "input_bytes": 234489,
+          "output_bytes": 277220,
+          "compiler": {
+            "prototype_count": 44,
+            "total_instructions": 21176,
+            "max_jump": 8988,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 8993,
+                "max_jump": 8988,
+                "jump_pc": 8991,
+                "jump_line": 1918,
+                "source_lines": [
+                  1157,
+                  1920
+                ],
+                "stack": 12,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 3522,
+                "max_jump": 3519,
+                "jump_pc": 3520,
+                "jump_line": 602,
+                "source_lines": [
+                  263,
+                  604
+                ],
+                "stack": 27,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 2750,
+                "max_jump": 2747,
+                "jump_pc": 2748,
+                "jump_line": 261,
+                "source_lines": [
+                  1,
+                  263
+                ],
+                "stack": 25,
+                "upvalues": 3
+              },
+              {
+                "path": "0.2.1",
+                "instructions": 1890,
+                "max_jump": 1599,
+                "jump_pc": 289,
+                "jump_line": 844,
+                "source_lines": [
+                  837,
+                  1044
+                ],
+                "stack": 10,
+                "upvalues": 3
+              }
+            ]
+          },
+          "details": [
+            {
+              "phase": "meme_origins",
+              "elapsed": 0.0,
+              "protected_generated_numbers": 10126,
+              "source_replacements": 1045
+            }
+          ]
+        },
+        {
+          "name": "MinifyPass",
+          "elapsed": 0.175881,
+          "input_bytes": 277220,
+          "output_bytes": 227905
+        },
+        {
+          "name": "OutputSignaturePass",
+          "elapsed": 9e-06,
+          "input_bytes": 227905,
+          "output_bytes": 227905
+        }
+      ],
+      "final_compiler": {
+        "functions": [
+          {
+            "path": "0",
+            "instructions": 712,
+            "max_jump": 463,
+            "jump_pc": 247,
+            "jump_line": 1,
+            "source_lines": [
+              0,
+              2
+            ],
+            "stack": 25,
+            "upvalues": 1
+          },
+          {
+            "path": "0.0",
+            "instructions": 2750,
+            "max_jump": 2747,
+            "jump_pc": 2748,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 25,
+            "upvalues": 3
+          },
+          {
+            "path": "0.1",
+            "instructions": 3522,
+            "max_jump": 3519,
+            "jump_pc": 3520,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 27,
+            "upvalues": 3
+          },
+          {
+            "path": "0.2",
+            "instructions": 300,
+            "max_jump": 221,
+            "jump_pc": 298,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 4,
+            "upvalues": 2
+          },
+          {
+            "path": "0.2.0",
+            "instructions": 1747,
+            "max_jump": 1415,
+            "jump_pc": 330,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 9,
+            "upvalues": 3
+          },
+          {
+            "path": "0.2.0.0",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.0.1",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.0.2",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.0.3",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.0.4",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.0.5",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.0.6",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.1",
+            "instructions": 1890,
+            "max_jump": 1599,
+            "jump_pc": 289,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 10,
+            "upvalues": 3
+          },
+          {
+            "path": "0.2.1.0",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.1.1",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.1.2",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.1.3",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.1.4",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.1.5",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.1.6",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.1.7",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.2",
+            "instructions": 1010,
+            "max_jump": 697,
+            "jump_pc": 311,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 11,
+            "upvalues": 3
+          },
+          {
+            "path": "0.2.2.0",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.2.1",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.2.2",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.3",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3",
+            "instructions": 8993,
+            "max_jump": 8988,
+            "jump_pc": 8991,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 12,
+            "upvalues": 2
+          },
+          {
+            "path": "0.3.0",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.1",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.2",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.3",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.4",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.5",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.6",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.7",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.8",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.9",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.10",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.11",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.12",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.13",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.14",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.15",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.16",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          }
+        ],
+        "instructions": 712,
+        "max_jump": 463,
+        "total_instructions": 21176
+      }
+    },
+    "max": {
+      "source_obfuscation_seconds": 5.012355100014247,
+      "output_bytes": 256347,
+      "passes": [
+        {
+          "name": "StripInfoPass",
+          "elapsed": 0.000425,
+          "input_bytes": 20,
+          "output_bytes": 20
+        },
+        {
+          "name": "AntiDebugPass",
+          "elapsed": 0.000169,
+          "input_bytes": 20,
+          "output_bytes": 192
+        },
+        {
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000563,
+          "input_bytes": 192,
+          "output_bytes": 591,
+          "compiler": {
+            "prototype_count": 1,
+            "total_instructions": 99,
+            "max_jump": 46,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 99,
+                "max_jump": 46,
+                "jump_pc": 51,
+                "jump_line": 3,
+                "source_lines": [
+                  0,
+                  8
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.000809,
+          "input_bytes": 591,
+          "output_bytes": 619,
+          "compiler": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "jump_pc": 51,
+                "jump_line": 3,
+                "source_lines": [
+                  0,
+                  8
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "TableObfuscationPass",
+          "elapsed": 0.00075,
+          "input_bytes": 619,
+          "output_bytes": 619,
+          "compiler": {
+            "prototype_count": 1,
+            "total_instructions": 101,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0",
+                "instructions": 101,
+                "max_jump": 48,
+                "jump_pc": 51,
+                "jump_line": 3,
+                "source_lines": [
+                  0,
+                  8
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "StringObfuscationPass",
+          "elapsed": 0.002033,
+          "input_bytes": 619,
+          "output_bytes": 6825,
+          "compiler": {
+            "prototype_count": 5,
+            "total_instructions": 625,
+            "max_jump": 48,
+            "largest_prototypes": [
+              {
+                "path": "0.3",
+                "instructions": 203,
+                "max_jump": 0,
+                "jump_pc": 0,
+                "jump_line": 129,
+                "source_lines": [
+                  128,
+                  193
+                ],
+                "stack": 12,
+                "upvalues": 1
+              },
+              {
+                "path": "0.2",
+                "instructions": 120,
+                "max_jump": 0,
+                "jump_pc": 0,
+                "jump_line": 84,
+                "source_lines": [
+                  83,
+                  126
+                ],
+                "stack": 10,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 109,
+                "max_jump": 17,
+                "jump_pc": 102,
+                "jump_line": 76,
+                "source_lines": [
+                  39,
+                  83
+                ],
+                "stack": 19,
+                "upvalues": 1
+              },
+              {
+                "path": "0",
+                "instructions": 106,
+                "max_jump": 48,
+                "jump_pc": 56,
+                "jump_line": 193,
+                "source_lines": [
+                  0,
+                  198
+                ],
+                "stack": 13,
+                "upvalues": 1
+              }
+            ]
+          }
+        },
+        {
+          "name": "FunctionObfuscationPass",
+          "elapsed": 2.863685,
+          "input_bytes": 6825,
+          "output_bytes": 227497,
+          "compiler": {
+            "prototype_count": 50,
+            "total_instructions": 11695,
+            "max_jump": 4313,
+            "largest_prototypes": [
+              {
+                "path": "0.2",
+                "instructions": 4317,
+                "max_jump": 4313,
+                "jump_pc": 4315,
+                "jump_line": 1359,
+                "source_lines": [
+                  659,
+                  1361
+                ],
+                "stack": 9,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 1656,
+                "max_jump": 1652,
+                "jump_pc": 1654,
+                "jump_line": 657,
+                "source_lines": [
+                  306,
+                  659
+                ],
+                "stack": 23,
+                "upvalues": 1
+              },
+              {
+                "path": "0.3.0",
+                "instructions": 1583,
+                "max_jump": 1461,
+                "jump_pc": 120,
+                "jump_line": 1412,
+                "source_lines": [
+                  1387,
+                  1710
+                ],
+                "stack": 8,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 1377,
+                "max_jump": 1374,
+                "jump_pc": 1375,
+                "jump_line": 304,
+                "source_lines": [
+                  1,
+                  306
+                ],
+                "stack": 21,
+                "upvalues": 1
+              }
+            ]
+          },
+          "details": [
+            {
+              "phase": "function_numbers",
+              "elapsed": 0.0,
+              "generated_numbers": 5769,
+              "source_numbers": 458
+            },
+            {
+              "phase": "function_pass_budget",
+              "elapsed": 0.0,
+              "instruction_budget": 136071,
+              "compiler_instructions": 11695,
+              "compiler_max_jump": 4313,
+              "compact_retry": false,
+              "protection_adjustment": null,
+              "retry_reason": null,
+              "avoid_helper_captures": false
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 14,
+              "source_depth": 0,
+              "input_bytes": 1113,
+              "output_bytes": 40102,
+              "split_helpers": 0,
+              "inline_blocks": 0,
+              "inlined_functions": 0,
+              "split_bodies": 1,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 32,
+              "coalesced_states": 23,
+              "cff_blocks": 9,
+              "compiler_instructions": 1377,
+              "compiler_max_jump": 1374,
+              "projected_instructions": 12177,
+              "style": "_emit_dispatch_flat",
+              "mini_cff_blocks": 3
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 1139,
+              "source_depth": 0,
+              "input_bytes": 1282,
+              "output_bytes": 46020,
+              "split_helpers": 0,
+              "inline_blocks": 0,
+              "inlined_functions": 0,
+              "split_bodies": 1,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 38,
+              "coalesced_states": 27,
+              "cff_blocks": 11,
+              "compiler_instructions": 1656,
+              "compiler_max_jump": 1652,
+              "projected_instructions": 15606,
+              "style": "_emit_dispatch_nested",
+              "mini_cff_blocks": 3
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 2450,
+              "source_depth": 0,
+              "input_bytes": 1472,
+              "output_bytes": 70163,
+              "split_helpers": 0,
+              "inline_blocks": 0,
+              "inlined_functions": 0,
+              "split_bodies": 0,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 42,
+              "coalesced_states": 30,
+              "cff_blocks": 12,
+              "compiler_instructions": 4476,
+              "compiler_max_jump": 4313,
+              "projected_instructions": 20967,
+              "style": "_emit_dispatch_flat",
+              "mini_cff_blocks": 0
+            },
+            {
+              "phase": "function_cff",
+              "elapsed": 0.0,
+              "source_start": 4146,
+              "source_depth": 0,
+              "input_bytes": 2347,
+              "output_bytes": 70541,
+              "split_helpers": 3,
+              "inline_blocks": 1,
+              "inlined_functions": 0,
+              "split_bodies": 0,
+              "lowered_loops": 0,
+              "unrolled_loops": 0,
+              "unrolled_iterations": 0,
+              "skipped_unsafe": 0,
+              "budget_fallbacks": 0,
+              "reconstruction_statements": 64,
+              "coalesced_states": 47,
+              "projected_helper_instructions": 9971,
+              "cff_blocks": 17,
+              "compiler_instructions": 4080,
+              "compiler_max_jump": 1461,
+              "projected_instructions": 355,
+              "style": "_emit_dispatch_split",
+              "mini_cff_blocks": 0
+            }
+          ]
+        },
+        {
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.389734,
+          "input_bytes": 227497,
+          "output_bytes": 266372,
+          "compiler": {
+            "prototype_count": 50,
+            "total_instructions": 11695,
+            "max_jump": 4313,
+            "largest_prototypes": [
+              {
+                "path": "0.2",
+                "instructions": 4317,
+                "max_jump": 4313,
+                "jump_pc": 4315,
+                "jump_line": 1359,
+                "source_lines": [
+                  659,
+                  1361
+                ],
+                "stack": 9,
+                "upvalues": 1
+              },
+              {
+                "path": "0.1",
+                "instructions": 1656,
+                "max_jump": 1652,
+                "jump_pc": 1654,
+                "jump_line": 657,
+                "source_lines": [
+                  306,
+                  659
+                ],
+                "stack": 23,
+                "upvalues": 1
+              },
+              {
+                "path": "0.3.0",
+                "instructions": 1583,
+                "max_jump": 1461,
+                "jump_pc": 120,
+                "jump_line": 1412,
+                "source_lines": [
+                  1387,
+                  1710
+                ],
+                "stack": 8,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 1377,
+                "max_jump": 1374,
+                "jump_pc": 1375,
+                "jump_line": 304,
+                "source_lines": [
+                  1,
+                  306
+                ],
+                "stack": 21,
+                "upvalues": 1
+              }
+            ]
+          },
+          "details": [
+            {
+              "phase": "number_origins",
+              "elapsed": 0.0,
+              "protected_generated_numbers": 11634,
+              "source_replacements": 499
+            }
+          ]
+        },
+        {
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 0.791292,
+          "input_bytes": 266372,
+          "output_bytes": 266381,
+          "compiler": {
+            "prototype_count": 50,
+            "total_instructions": 11667,
+            "max_jump": 4301,
+            "largest_prototypes": [
+              {
+                "path": "0.2",
+                "instructions": 4305,
+                "max_jump": 4301,
+                "jump_pc": 4303,
+                "jump_line": 1359,
+                "source_lines": [
+                  659,
+                  1361
+                ],
+                "stack": 9,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 1653,
+                "max_jump": 1649,
+                "jump_pc": 1651,
+                "jump_line": 657,
+                "source_lines": [
+                  306,
+                  659
+                ],
+                "stack": 23,
+                "upvalues": 3
+              },
+              {
+                "path": "0.3.0",
+                "instructions": 1573,
+                "max_jump": 1452,
+                "jump_pc": 119,
+                "jump_line": 1412,
+                "source_lines": [
+                  1387,
+                  1710
+                ],
+                "stack": 8,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 1375,
+                "max_jump": 1372,
+                "jump_pc": 1373,
+                "jump_line": 304,
+                "source_lines": [
+                  1,
+                  306
+                ],
+                "stack": 21,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "name": "StringEncodePass",
+          "elapsed": 0.325753,
+          "input_bytes": 266381,
+          "output_bytes": 267227,
+          "compiler": {
+            "prototype_count": 50,
+            "total_instructions": 11667,
+            "max_jump": 4301,
+            "largest_prototypes": [
+              {
+                "path": "0.2",
+                "instructions": 4305,
+                "max_jump": 4301,
+                "jump_pc": 4303,
+                "jump_line": 1359,
+                "source_lines": [
+                  659,
+                  1361
+                ],
+                "stack": 9,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 1653,
+                "max_jump": 1649,
+                "jump_pc": 1651,
+                "jump_line": 657,
+                "source_lines": [
+                  306,
+                  659
+                ],
+                "stack": 23,
+                "upvalues": 3
+              },
+              {
+                "path": "0.3.0",
+                "instructions": 1573,
+                "max_jump": 1452,
+                "jump_pc": 119,
+                "jump_line": 1412,
+                "source_lines": [
+                  1387,
+                  1710
+                ],
+                "stack": 8,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 1375,
+                "max_jump": 1372,
+                "jump_pc": 1373,
+                "jump_line": 304,
+                "source_lines": [
+                  1,
+                  306
+                ],
+                "stack": 21,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "name": "MemeStringsPass",
+          "elapsed": 0.353059,
+          "input_bytes": 267227,
+          "output_bytes": 310613,
+          "compiler": {
+            "prototype_count": 50,
+            "total_instructions": 23340,
+            "max_jump": 7041,
+            "largest_prototypes": [
+              {
+                "path": "0.2",
+                "instructions": 7045,
+                "max_jump": 7041,
+                "jump_pc": 7043,
+                "jump_line": 1359,
+                "source_lines": [
+                  659,
+                  1361
+                ],
+                "stack": 12,
+                "upvalues": 2
+              },
+              {
+                "path": "0.1",
+                "instructions": 3513,
+                "max_jump": 3509,
+                "jump_pc": 3511,
+                "jump_line": 657,
+                "source_lines": [
+                  306,
+                  659
+                ],
+                "stack": 28,
+                "upvalues": 3
+              },
+              {
+                "path": "0.3.0",
+                "instructions": 3123,
+                "max_jump": 2777,
+                "jump_pc": 344,
+                "jump_line": 1412,
+                "source_lines": [
+                  1387,
+                  1710
+                ],
+                "stack": 11,
+                "upvalues": 3
+              },
+              {
+                "path": "0.0",
+                "instructions": 2983,
+                "max_jump": 2980,
+                "jump_pc": 2981,
+                "jump_line": 304,
+                "source_lines": [
+                  1,
+                  306
+                ],
+                "stack": 25,
+                "upvalues": 3
+              }
+            ]
+          }
+        },
+        {
+          "name": "MinifyPass",
+          "elapsed": 0.244482,
+          "input_bytes": 310613,
+          "output_bytes": 256347
+        },
+        {
+          "name": "OutputSignaturePass",
+          "elapsed": 1.2e-05,
+          "input_bytes": 256347,
+          "output_bytes": 256347
+        }
+      ],
+      "final_compiler": {
+        "functions": [
+          {
+            "path": "0",
+            "instructions": 853,
+            "max_jump": 534,
+            "jump_pc": 317,
+            "jump_line": 1,
+            "source_lines": [
+              0,
+              2
+            ],
+            "stack": 26,
+            "upvalues": 1
+          },
+          {
+            "path": "0.0",
+            "instructions": 2983,
+            "max_jump": 2980,
+            "jump_pc": 2981,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 25,
+            "upvalues": 3
+          },
+          {
+            "path": "0.1",
+            "instructions": 3513,
+            "max_jump": 3509,
+            "jump_pc": 3511,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 28,
+            "upvalues": 3
+          },
+          {
+            "path": "0.2",
+            "instructions": 7045,
+            "max_jump": 7041,
+            "jump_pc": 7043,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 12,
+            "upvalues": 2
+          },
+          {
+            "path": "0.2.0",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.1",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.2",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.3",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.4",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.5",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.6",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.7",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.8",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.9",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.10",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.11",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.12",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.13",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.14",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.15",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.16",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.17",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.18",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.2.19",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.2.20",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3",
+            "instructions": 354,
+            "max_jump": 247,
+            "jump_pc": 352,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 8,
+            "upvalues": 2
+          },
+          {
+            "path": "0.3.0",
+            "instructions": 3123,
+            "max_jump": 2777,
+            "jump_pc": 344,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 11,
+            "upvalues": 3
+          },
+          {
+            "path": "0.3.0.0",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.0.1",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.0.2",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.0.3",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.0.4",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.0.5",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.0.6",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.0.7",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.0.8",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.1",
+            "instructions": 2198,
+            "max_jump": 1714,
+            "jump_pc": 482,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 10,
+            "upvalues": 3
+          },
+          {
+            "path": "0.3.1.0",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.1.1",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.1.2",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.2",
+            "instructions": 2953,
+            "max_jump": 2501,
+            "jump_pc": 450,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 10,
+            "upvalues": 3
+          },
+          {
+            "path": "0.3.2.0",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.2.1",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.2.2",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.2.3",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.2.4",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.2.5",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          },
+          {
+            "path": "0.3.2.6",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.3",
+            "instructions": 3,
+            "max_jump": 0,
+            "jump_pc": 0,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 2,
+            "upvalues": 0
+          },
+          {
+            "path": "0.3.4",
+            "instructions": 11,
+            "max_jump": 2,
+            "jump_pc": 1,
+            "jump_line": 1,
+            "source_lines": [
+              1,
+              1
+            ],
+            "stack": 3,
+            "upvalues": 1
+          }
+        ],
+        "instructions": 853,
+        "max_jump": 534,
+        "total_instructions": 23340
+      }
+    }
+  },
+  "grouping_sweep": [
+    {
+      "group_size": 1,
+      "output_bytes": 644783,
+      "seconds": 10.354369400069118,
+      "real_cff_blocks": 178,
+      "mini_cff_blocks": 16,
+      "coalesced_states": 0,
+      "helpers": 0,
+      "max_native_jump": 22361
+    },
+    {
+      "group_size": 2,
+      "output_bytes": 343671,
+      "seconds": 5.2279627999523655,
+      "real_cff_blocks": 92,
+      "mini_cff_blocks": 6,
+      "coalesced_states": 84,
+      "helpers": 0,
+      "max_native_jump": 15266
+    },
+    {
+      "group_size": 4,
+      "output_bytes": 227840,
+      "seconds": 4.266401799977757,
+      "real_cff_blocks": 49,
+      "mini_cff_blocks": 6,
+      "coalesced_states": 127,
+      "helpers": 3,
+      "max_native_jump": 9004
+    },
+    {
+      "group_size": 8,
+      "output_bytes": 171284,
+      "seconds": 2.4233570999931544,
+      "real_cff_blocks": 27,
+      "mini_cff_blocks": 6,
+      "coalesced_states": 149,
+      "helpers": 0,
+      "max_native_jump": 5239
+    }
+  ],
+  "full_after": {
+    "mov_high": {
+      "input_bytes": 227869,
+      "output_bytes": 4215877,
+      "build_seconds": 18.581078,
+      "vm_seconds": 15.130019,
+      "passes": [
+        {
+          "name": "StripInfoPass",
+          "elapsed": 0.000525,
+          "input_bytes": 20,
+          "output_bytes": 20
+        },
+        {
+          "name": "AntiDebugPass",
+          "elapsed": 0.000194,
+          "input_bytes": 20,
+          "output_bytes": 192
+        },
+        {
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000621,
+          "input_bytes": 192,
+          "output_bytes": 591
+        },
+        {
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.000904,
+          "input_bytes": 591,
+          "output_bytes": 619
+        },
+        {
+          "name": "TableObfuscationPass",
+          "elapsed": 0.000863,
+          "input_bytes": 619,
+          "output_bytes": 619
+        },
+        {
+          "name": "StringObfuscationPass",
+          "elapsed": 0.002415,
+          "input_bytes": 619,
+          "output_bytes": 6825
+        },
+        {
+          "name": "FunctionObfuscationPass",
+          "elapsed": 2.142402,
+          "input_bytes": 6825,
+          "output_bytes": 196751
+        },
+        {
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.228025,
+          "input_bytes": 196751,
+          "output_bytes": 234444
+        },
+        {
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 0.581707,
+          "input_bytes": 234444,
+          "output_bytes": 234453
+        },
+        {
+          "name": "MemeStringsPass",
+          "elapsed": 0.309805,
+          "input_bytes": 234453,
+          "output_bytes": 277184
+        },
+        {
+          "name": "MinifyPass",
+          "elapsed": 0.181565,
+          "input_bytes": 277184,
+          "output_bytes": 227869
+        },
+        {
+          "name": "VMPass",
+          "elapsed": 15.130019,
+          "input_bytes": 227869,
+          "output_bytes": 4215837
+        },
+        {
+          "name": "OutputSignaturePass",
+          "elapsed": 0.002034,
+          "input_bytes": 4215837,
+          "output_bytes": 4215876
+        }
+      ]
+    },
+    "mov_max": {
+      "input_bytes": 256104,
+      "output_bytes": 2445113,
+      "build_seconds": 30.281668,
+      "vm_seconds": 17.215262,
+      "passes": [
+        {
+          "name": "StripInfoPass",
+          "elapsed": 0.000515,
+          "input_bytes": 20,
+          "output_bytes": 20
+        },
+        {
+          "name": "AntiDebugPass",
+          "elapsed": 0.000219,
+          "input_bytes": 20,
+          "output_bytes": 192
+        },
+        {
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000649,
+          "input_bytes": 192,
+          "output_bytes": 591
+        },
+        {
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.000976,
+          "input_bytes": 591,
+          "output_bytes": 619
+        },
+        {
+          "name": "TableObfuscationPass",
+          "elapsed": 0.00093,
+          "input_bytes": 619,
+          "output_bytes": 619
+        },
+        {
+          "name": "StringObfuscationPass",
+          "elapsed": 0.002469,
+          "input_bytes": 619,
+          "output_bytes": 6825
+        },
+        {
+          "name": "FunctionObfuscationPass",
+          "elapsed": 2.631585,
+          "input_bytes": 6825,
+          "output_bytes": 227254
+        },
+        {
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.279588,
+          "input_bytes": 227254,
+          "output_bytes": 266129
+        },
+        {
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 0.685869,
+          "input_bytes": 266129,
+          "output_bytes": 266138
+        },
+        {
+          "name": "StringEncodePass",
+          "elapsed": 0.288621,
+          "input_bytes": 266138,
+          "output_bytes": 266984
+        },
+        {
+          "name": "MemeStringsPass",
+          "elapsed": 0.307144,
+          "input_bytes": 266984,
+          "output_bytes": 310370
+        },
+        {
+          "name": "MinifyPass",
+          "elapsed": 0.210565,
+          "input_bytes": 310370,
+          "output_bytes": 256104
+        },
+        {
+          "name": "VMPass",
+          "elapsed": 17.215262,
+          "input_bytes": 256104,
+          "output_bytes": 5251223
+        },
+        {
+          "name": "PackerPass",
+          "elapsed": 8.655633,
+          "input_bytes": 5251223,
+          "output_bytes": 2445072
+        },
+        {
+          "name": "OutputSignaturePass",
+          "elapsed": 0.00164,
+          "input_bytes": 2445072,
+          "output_bytes": 2445111
+        }
+      ]
+    },
+    "karity_high": {
+      "input_bytes": 228123,
+      "output_bytes": 6129941,
+      "build_seconds": 93.704659,
+      "vm_seconds": 89.673498,
+      "passes": [
+        {
+          "name": "StripInfoPass",
+          "elapsed": 0.000476,
+          "input_bytes": 20,
+          "output_bytes": 20
+        },
+        {
+          "name": "AntiDebugPass",
+          "elapsed": 0.000189,
+          "input_bytes": 20,
+          "output_bytes": 192
+        },
+        {
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000593,
+          "input_bytes": 192,
+          "output_bytes": 591
+        },
+        {
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.000936,
+          "input_bytes": 591,
+          "output_bytes": 619
+        },
+        {
+          "name": "TableObfuscationPass",
+          "elapsed": 0.000926,
+          "input_bytes": 619,
+          "output_bytes": 619
+        },
+        {
+          "name": "StringObfuscationPass",
+          "elapsed": 0.004465,
+          "input_bytes": 619,
+          "output_bytes": 6825
+        },
+        {
+          "name": "FunctionObfuscationPass",
+          "elapsed": 2.269394,
+          "input_bytes": 6825,
+          "output_bytes": 197005
+        },
+        {
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.293236,
+          "input_bytes": 197005,
+          "output_bytes": 234698
+        },
+        {
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 0.817615,
+          "input_bytes": 234698,
+          "output_bytes": 234707
+        },
+        {
+          "name": "MemeStringsPass",
+          "elapsed": 0.373996,
+          "input_bytes": 234707,
+          "output_bytes": 277438
+        },
+        {
+          "name": "MinifyPass",
+          "elapsed": 0.265755,
+          "input_bytes": 277438,
+          "output_bytes": 228123
+        },
+        {
+          "name": "VMPass",
+          "elapsed": 89.673498,
+          "input_bytes": 228123,
+          "output_bytes": 6129901
+        },
+        {
+          "name": "OutputSignaturePass",
+          "elapsed": 0.003578,
+          "input_bytes": 6129901,
+          "output_bytes": 6129940
+        }
+      ]
+    },
+    "karity_max": {
+      "input_bytes": 255691,
+      "output_bytes": 3134807,
+      "build_seconds": 169.818177,
+      "vm_seconds": 156.106733,
+      "passes": [
+        {
+          "name": "StripInfoPass",
+          "elapsed": 0.000504,
+          "input_bytes": 20,
+          "output_bytes": 20
+        },
+        {
+          "name": "AntiDebugPass",
+          "elapsed": 0.000282,
+          "input_bytes": 20,
+          "output_bytes": 192
+        },
+        {
+          "name": "AntiDecompilePass",
+          "elapsed": 0.000763,
+          "input_bytes": 192,
+          "output_bytes": 591
+        },
+        {
+          "name": "BooleanObfuscationPass",
+          "elapsed": 0.000902,
+          "input_bytes": 591,
+          "output_bytes": 619
+        },
+        {
+          "name": "TableObfuscationPass",
+          "elapsed": 0.000976,
+          "input_bytes": 619,
+          "output_bytes": 619
+        },
+        {
+          "name": "StringObfuscationPass",
+          "elapsed": 0.002526,
+          "input_bytes": 619,
+          "output_bytes": 6825
+        },
+        {
+          "name": "FunctionObfuscationPass",
+          "elapsed": 2.429429,
+          "input_bytes": 6825,
+          "output_bytes": 226841
+        },
+        {
+          "name": "NumberObfuscationPass",
+          "elapsed": 0.309917,
+          "input_bytes": 226841,
+          "output_bytes": 265716
+        },
+        {
+          "name": "LocalizeGlobalsPass",
+          "elapsed": 0.717085,
+          "input_bytes": 265716,
+          "output_bytes": 265725
+        },
+        {
+          "name": "StringEncodePass",
+          "elapsed": 0.287976,
+          "input_bytes": 265725,
+          "output_bytes": 266571
+        },
+        {
+          "name": "MemeStringsPass",
+          "elapsed": 0.356653,
+          "input_bytes": 266571,
+          "output_bytes": 309957
+        },
+        {
+          "name": "MinifyPass",
+          "elapsed": 0.201987,
+          "input_bytes": 309957,
+          "output_bytes": 255691
+        },
+        {
+          "name": "VMPass",
+          "elapsed": 156.106733,
+          "input_bytes": 255691,
+          "output_bytes": 8201605
+        },
+        {
+          "name": "PackerPass",
+          "elapsed": 9.400232,
+          "input_bytes": 8201605,
+          "output_bytes": 3134766
+        },
+        {
+          "name": "OutputSignaturePass",
+          "elapsed": 0.002213,
+          "input_bytes": 3134766,
+          "output_bytes": 3134805
+        }
+      ]
+    }
+  },
+  "runtime": [
+    {
+      "path": "test/scripts/01_helloWorld.lua",
+      "bytes": 20,
+      "seconds": 0.026405199896544218,
+      "samples": [
+        0.030092200031504035,
+        0.024193600052967668,
+        0.026405199896544218
+      ],
+      "stdout": "hello world\r\n"
+    },
+    {
+      "path": "temp-ci-high-mov-final.lua",
+      "bytes": 4215877,
+      "seconds": 6.019820499932393,
+      "samples": [
+        5.524552899994887,
+        6.124639099929482,
+        6.019820499932393
+      ],
+      "stdout": "hello world\r\n"
+    },
+    {
+      "path": "temp-ci-max-mov-final.lua",
+      "bytes": 2445113,
+      "seconds": 14.18984140001703,
+      "samples": [
+        14.161571500007994,
+        14.716273900005035,
+        14.18984140001703
+      ],
+      "stdout": "hello world\r\n"
+    },
+    {
+      "path": "temp-ci-high-karity-final.lua",
+      "bytes": 6129941,
+      "seconds": 3.311633500037715,
+      "samples": [
+        3.311633500037715,
+        3.2275374999735504,
+        3.6435610000044107
+      ],
+      "stdout": "hello world\r\n"
+    },
+    {
+      "path": "temp-ci-max-karity-final.lua",
+      "bytes": 3134807,
+      "seconds": 13.655480000074022,
+      "samples": [
+        15.05969769996591,
+        13.196353600011207,
+        13.655480000074022
+      ],
+      "stdout": "hello world\r\n"
+    }
+  ],
+  "target_fix_revisions": [
+    "2de1a1f",
+    "f687f17"
+  ],
+  "verification": {
+    "python312": "shared manifest completed after fixed line-state and remaining commands reran",
+    "python315": "initial full manifest exit 0; latest tail and new regressions exit 0",
+    "native_function_differential_builds": 144,
+    "lua51_pass_matrix_builds": 37,
+    "examples_passed": 18,
+    "mov_high_release_check": {
+      "python312_seconds": 13.37,
+      "python315_seconds": 16.14,
+      "timeout_unchanged": true
+    },
+    "optional_external_lua51_tools": "not configured; native Lupa 5.1 compilation and execution passed",
+    "ci": {
+      "run_id": 38032908467,
+      "revision": "f687f17",
+      "status": "completed",
+      "conclusion": "success",
+      "url": "https://github.com/karity-0/karity-obfuscator/actions/runs/38032908467",
+      "jobs": [
+        {"name": "test (ubuntu-latest, 3.12)", "id": 114157372243, "conclusion": "success"},
+        {"name": "test (windows-latest, 3.12)", "id": 114157372354, "conclusion": "success"},
+        {"name": "test (ubuntu-latest, 3.15)", "id": 114157372485, "conclusion": "success"}
+      ]
+    }
+  }
+}

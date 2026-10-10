@@ -98,3 +98,5 @@ numeric origins, coroutine/error behavior and CFF-protected string macros.
 `tools/profile_cff.py INPUT --profile high --output REPORT.json` records per-pass
 sizes/times and native prototype costs. Full VM timing uses `main.py --profile-report`.
 Implementation: [function_obfuscation.py](../../obfuscator/passes/function_obfuscation.py).
+Measured failure diagnosis, pass costs and protection tradeoffs:
+[CFF compiler cost report](../performance/cff-costs.md).
