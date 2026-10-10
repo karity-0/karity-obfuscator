@@ -659,8 +659,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # Graph banks and blob decoders may introduce target API operations too.
     # Finalize the complete runtime before output passes rename its identifiers.
     vm_func_src = target.finalize_runtime(vm_func_src)
-    from ...passes.function_costs import POLICY, CostPolicy
-    cost_token = POLICY.set(CostPolicy(lua_version=target.lua_version))
+    from ...passes.function_costs import POLICY
+    cost_token = POLICY.set(target.function_cost_policy())
     try:
         vm_func_src, vm_output_details = output_transform(
             vm_func_src,

@@ -82,10 +82,12 @@ class MemeStringsPass(BasePass):
 
     def run(self, script: str, tree) -> list[Replacement]:
         replacements = []
+        self.last_skipped_generated_count = 0
         for node in tree.walk():
             if node.type != "number":
                 continue
             if protected_number(script, tree.cs(node), tree.ce(node)+1):
+                self.last_skipped_generated_count += 1
                 continue
             token = tree.text(node)
             if random.random() >= self.replacement_rate:
@@ -94,4 +96,7 @@ class MemeStringsPass(BasePass):
             replacements.append(Replacement(
                 tree.cs(node), tree.ce(node), self.obfuscate_token(token),
             ))
+        self.last_profile = [{'phase':'meme_origins','elapsed':0.0,
+                              'protected_generated_numbers':self.last_skipped_generated_count,
+                              'source_replacements':len(replacements)}]
         return replacements

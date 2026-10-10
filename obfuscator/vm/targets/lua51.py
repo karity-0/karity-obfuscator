@@ -231,6 +231,10 @@ class Lua51Target:
     capabilities = {"native_bitops": False, "env_model": "function", "integer_semantics": "binary64",
                     "loader_api": "loadstring", "unpack_api": "unpack"}
 
+    def function_cost_policy(self):
+        from ...passes.function_costs import CostPolicy
+        return CostPolicy(lua_version='5.1')
+
     def runtime_template(self, name):
         if name not in ('vm.lua','classic_exec.lua','mov_exec.lua'):
             raise ValueError(f'unknown runtime template: {name}')

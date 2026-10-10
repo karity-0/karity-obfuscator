@@ -4005,6 +4005,15 @@ class FunctionObfuscationPass(BasePass):
             if new_body is None:
                 continue
 
+            transport = CURRENT.get()
+            self.last_function_costs.append({
+                'phase':'function_cff','elapsed':0.0,
+                'source_start':ctx.cs(node),
+                'source_depth':sum(parent.type in _FUNC_NODE_TYPES for parent in _ancestor_nodes(node)),
+                'input_bytes':len(transport.clean(ctx.text(block)).encode()),
+                'output_bytes':len(transport.clean(new_body).encode()),
+                **boundary_stats,
+            })
             self.last_split_helper_count += boundary_stats["split_helpers"]
             self.last_inline_block_count += boundary_stats["inline_blocks"]
             self.last_inlined_function_count += boundary_stats["inlined_functions"]

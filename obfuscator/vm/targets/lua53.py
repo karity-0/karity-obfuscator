@@ -10,6 +10,10 @@ class Lua53Target:
     capabilities = {"native_bitops": True, "env_model": "lexical", "integer_semantics": "int64",
                     "loader_api": "load", "unpack_api": "table.unpack"}
 
+    def function_cost_policy(self):
+        from ...passes.function_costs import CostPolicy
+        return CostPolicy(lua_version='5.3')
+
     def runtime_template(self, name):
         from pathlib import Path
         root=Path(__file__).parents[1]
