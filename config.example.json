@@ -162,11 +162,15 @@
             "vm_output_passes": [
                 "strip_info",
                 "rename_obf",
+                "meme_strings",
+                "number_obf",
                 "minify"
             ],
             "packer_output_passes": [
                 "strip_info",
                 "rename_obf",
+                "meme_strings",
+                "number_obf",
                 "minify"
             ],
             "function_obf_options": {
@@ -231,11 +235,15 @@
             "vm_output_passes": [
                 "strip_info",
                 "rename_obf",
+                "meme_strings",
+                "number_obf",
                 "minify"
             ],
             "packer_output_passes": [
                 "strip_info",
                 "rename_obf",
+                "meme_strings",
+                "number_obf",
                 "minify"
             ],
             "function_obf_options": {

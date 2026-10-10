@@ -4065,10 +4065,105 @@
       "conclusion": "success",
       "url": "https://github.com/karity-0/karity-obfuscator/actions/runs/38032908467",
       "jobs": [
-        {"name": "test (ubuntu-latest, 3.12)", "id": 114157372243, "conclusion": "success"},
-        {"name": "test (windows-latest, 3.12)", "id": 114157372354, "conclusion": "success"},
-        {"name": "test (ubuntu-latest, 3.15)", "id": 114157372485, "conclusion": "success"}
+        {
+          "name": "test (ubuntu-latest, 3.12)",
+          "id": 114157372243,
+          "conclusion": "success"
+        },
+        {
+          "name": "test (windows-latest, 3.12)",
+          "id": 114157372354,
+          "conclusion": "success"
+        },
+        {
+          "name": "test (ubuntu-latest, 3.15)",
+          "id": 114157372485,
+          "conclusion": "success"
+        }
       ]
+    }
+  },
+  "visible_output_style": {
+    "description": "High/max default VM/packer lists restore full MemeStrings then NumberObf; source CFF and numeric provenance retained.",
+    "after_revision": "eeef69c",
+    "output_passes": [
+      "strip_info",
+      "rename_obf",
+      "meme_strings",
+      "number_obf",
+      "minify"
+    ],
+    "fixture": "test/scripts/01_helloWorld.lua",
+    "seed": 9300,
+    "timing_note": "Separate builds during concurrent tests; timings are observations, not controlled comparative results.",
+    "measurements": {
+      "temp-ci-style-mov-high.lua": {
+        "bytes": 4381175,
+        "build_seconds": 13.039552,
+        "runtime_samples": [
+          6.353707999922335,
+          6.932609100011177,
+          6.257414799998514
+        ],
+        "runtime_median_seconds": 6.353707999922335,
+        "meme_length_expressions": 1475,
+        "hex_uppercase_prefixes": 2520,
+        "hex_fraction_notation": 3467,
+        "leading_dot_notation": 337,
+        "stdout": "hello world\n"
+      },
+      "temp-ci-style-mov-max.lua": {
+        "bytes": 2994717,
+        "build_seconds": 28.368177,
+        "runtime_samples": [
+          16.459293599938974,
+          16.69907869992312,
+          17.236362800002098
+        ],
+        "runtime_median_seconds": 16.69907869992312,
+        "meme_length_expressions": 178,
+        "hex_uppercase_prefixes": 699,
+        "hex_fraction_notation": 677,
+        "leading_dot_notation": 64,
+        "stdout": "hello world\n"
+      },
+      "temp-ci-style-karity-high.lua": {
+        "bytes": 12814047,
+        "build_seconds": 137.958193,
+        "runtime_samples": [
+          5.814626100007445,
+          5.681054500048049,
+          6.176671399967745
+        ],
+        "runtime_median_seconds": 5.814626100007445,
+        "meme_length_expressions": 85845,
+        "hex_uppercase_prefixes": 118608,
+        "hex_fraction_notation": 169386,
+        "leading_dot_notation": 17260,
+        "stdout": "hello world\n"
+      },
+      "temp-ci-style-karity-max.lua": {
+        "bytes": 9991669,
+        "build_seconds": 189.233906,
+        "runtime_samples": [
+          25.251804500003345,
+          24.514144400018267,
+          22.316082400036976
+        ],
+        "runtime_median_seconds": 24.514144400018267,
+        "meme_length_expressions": 240,
+        "hex_uppercase_prefixes": 1292,
+        "hex_fraction_notation": 577,
+        "leading_dot_notation": 58,
+        "stdout": "hello world\n"
+      }
+    },
+    "verification": {
+      "python312_emitter_gui": "passed",
+      "python315_emitter_gui": "passed",
+      "mov_high_release_check_seconds": 19.35,
+      "mov_high_release_check_timeout_seconds": 180,
+      "all_four_outputs_native_lua53": "compile and execution passed, three runs per file"
     }
   }
 }
