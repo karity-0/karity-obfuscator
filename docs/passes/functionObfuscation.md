@@ -67,7 +67,8 @@ CFF and in dependency order, with many reconstruction states per string.
 values up to eight are supported. Profiles record both original blocks and
 coalesced states so reduced state granularity is explicit.
 
-The high/max defaults use StripInfo, RenameObf and Minify for VM/packer output.
+The high/max defaults use StripInfo, RenameObf, MemeStrings, NumberObf and Minify
+for VM/packer output.
 Explicit heavy output pass lists still work. VM handler, state and dispatcher
 protection settings are independent and remain enabled.
 
@@ -100,3 +101,9 @@ sizes/times and native prototype costs. Full VM timing uses `main.py --profile-r
 Implementation: [function_obfuscation.py](../../obfuscator/passes/function_obfuscation.py).
 Measured failure diagnosis, pass costs and protection tradeoffs:
 [CFF compiler cost report](../performance/cff-costs.md).
+
+Generated CFF state, transition and junk constants now use the scoped
+[Literal Mosaic service](../literal-mosaic.md) when NumberObf/MemeStrings are
+active in the same pipeline and selected source location. Existing generated
+number budgets still apply; native splitting and compiler probes are unchanged.
+Mosaic-handled operands retain protected provenance through later literal passes.

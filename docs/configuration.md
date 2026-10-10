@@ -4,6 +4,7 @@
 
 ## table of contents
 - [selective protection](#selective-protection)
+- [literal_mosaic](#literal_mosaic)
 - [profiles](#profiles)
 - [target](#target)
 - [signature](#signature)
@@ -56,7 +57,7 @@
 ## selective protection
 Use `selection_modes` to choose `all` (the default for enabled passes) or
 `marked` for `string_obf`, `number_obf`, `boolean_obf`, `table_obf`,
-`function_obf`, and `vm`. Source macros/directives can enable an absent
+`function_obf`, `meme_strings`, and `vm`. Source macros/directives can enable an absent
 pass in marked mode. `selection_profiles` supplies named VM option presets
 in flat configs; named input profiles are also available to VM directives.
 Regions support complete sibling statements, partial function protection,
@@ -65,6 +66,27 @@ Selected VM regions with equal effective options share one runtime initializatio
 See the [selective protection guide](selective-obfuscation.md) and
 `config.selective.example.json` for syntax, precedence and limitations.
 `--selection-report PATH` writes original-line application results as JSON.
+
+## literal_mosaic
+`literal_mosaic` configures the internal shared generator; it is not a pass.
+It reuses NumberObf/MemeStrings only when those passes are enabled in the
+actual source or output pipeline, and respects marked source regions.
+FunctionObf's existing numeric and compiler budgets remain authoritative.
+Source NumberObf and the original MemeStrings replacement rate (0.35) are unchanged.
+
+| Option | Default | Values |
+|---|---|---|
+| `style` | `balanced` | `compact`, `balanced`, `exotic` |
+| `cost` | `auto` | `auto`, `low`, `medium`, `high` |
+| `generated_meme_rate` | `0.15` | 0 through 1, generated constants only |
+| `max_chars` | `192` | 64 through 4096, expression characters |
+| `max_operations` | `12` | 0 through 32, expression operations |
+| `diversity_metrics` | `false` | boolean; profiling also enables metrics |
+
+Style and cost are independent. Hot paths use at most three operations
+with `auto`; each caller can impose a smaller limit. Detailed AST metrics
+sample at most 128 expressions per phase/strategy without consuming random
+state. Counts describe visual variety, not security. See [Literal Mosaic](literal-mosaic.md).
 
 ## profiles
 The default config uses named profiles so test and release builds can switch
