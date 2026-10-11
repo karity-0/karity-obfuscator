@@ -390,7 +390,7 @@ def _capture_registers(function: PhysicalFunction, instruction) -> tuple[int, ..
 
 
 def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
-              open_boxes: frozenset[int]) -> tuple[
+              open_boxes: frozenset[int], *, record: bool = True) -> tuple[
     tuple[RegisterState, ...], tuple[int, ...], tuple[int, ...], tuple[int, ...],
     tuple[RegisterState, ...], tuple[RegisterState, ...], tuple[GraphDependency, ...],
     tuple[int, ...], tuple[RegisterState, ...], tuple[int, ...], frozenset[int]
@@ -400,7 +400,7 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
         register for register in open_boxes
         if transition.close_from is not None and register >= transition.close_from
     ))
-    close_states = tuple(values[register] for register in closed_registers)
+    close_states = tuple(values[register] for register in closed_registers) if record else ()
     close_materialized = tuple(
         register for register in closed_registers
         if values[register].representation in {Representation.PENDING, Representation.MAYBE_PENDING}
@@ -417,8 +417,8 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
                       values[register].producers,
                       values[register].epochs or (values[register].epoch,))
         for register in transition.reads
-    )
-    capture_states = tuple(values[register] for register in transition.captures)
+    ) if record else ()
+    capture_states = tuple(values[register] for register in transition.captures) if record else ()
     graph_dependencies = tuple(
         GraphDependency(
             family, site, seed, state_key, policy,
@@ -427,7 +427,7 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
                   for register in transition.reads),
         )
         for family, site, seed, state_key, policy in transition.graph_descriptors
-    )
+    ) if record else ()
     read_registers = tuple(dict.fromkeys(transition.reads))
     resolved_pending = tuple(
         register for register in read_registers
@@ -551,6 +551,8 @@ def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityF
             stack.append((pc,True))
             stack.extend((target,False) for target in reversed(successors.get(pc,())))
     ranks = {pc:rank for rank,pc in enumerate(reversed(postorder))}
+    defer_records = any(ranks[target] <= ranks[pc]
+                        for pc in ranks for target in successors.get(pc, ()))
     next_wave = set()
     completed = list(transitions)
     transfers = 0
@@ -566,20 +568,15 @@ def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityF
         if pc in internal:
             continue
         transfers += 1
-        (output, resolved_pending, materialized, maybe_materialized, native_inputs,
-         capture_states, graph_dependencies, closed_registers, close_states,
-         close_materialized, boxes_after) = _transfer(
-            completed[pc], incoming[pc], incoming_boxes[pc]
-        )
-        completed[pc] = replace(
-            completed[pc], resolved_pending=resolved_pending,
-            materialized=materialized, maybe_materialized=maybe_materialized,
-            native_inputs=native_inputs,
-            capture_states=capture_states, graph_dependencies=graph_dependencies,
-            open_boxes=tuple(sorted(incoming_boxes[pc])),
-            closed_registers=closed_registers, close_states=close_states,
-            close_materialized=close_materialized, reachable=True,
-        )
+        # Only register/box states participate in convergence. Native inputs,
+        # graph dependencies and transition records are projected once below
+        # from the stable incoming states, instead of discarded at every wave.
+        transferred = _transfer(transitions[pc], incoming[pc], incoming_boxes[pc], record=not defer_records)
+        output, boxes_after = transferred[0], transferred[-1]
+        if not defer_records:
+            # Acyclic functions usually converge in one visit. Keep their
+            # existing eager path instead of paying for a second transfer.
+            completed[pc] = _record_transition(transitions[pc], incoming_boxes[pc], transferred)
         for successor in successors[pc]:
             previous = incoming.get(successor)
             previous_boxes = incoming_boxes.get(successor)
@@ -596,12 +593,35 @@ def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityF
                     next_wave.discard(successor)
                     queued.add(successor)
                     worklist.append(successor)
+    projection_started = time.perf_counter()
+    projections = 0 if defer_records else transfers
+    for pc in incoming if defer_records else ():
+        if pc in internal:
+            continue
+        projections += 1
+        transferred = _transfer(transitions[pc], incoming[pc], incoming_boxes[pc])
+        completed[pc] = _record_transition(transitions[pc], incoming_boxes[pc], transferred)
     if profile is not None:
         profile.append({'phase':'karity_state_function','elapsed':round(time.perf_counter()-started,6),
                         'function':function.source.id,'instructions':len(transitions),
-                        'registers':function.source.max_stack_size,'transfers':transfers,'waves':waves})
+                        'registers':function.source.max_stack_size,'transfers':transfers,'waves':waves,
+                        'projections':projections,
+                        'record_strategy':'stable' if defer_records else 'eager_acyclic',
+                        'projection_elapsed':round(time.perf_counter()-projection_started,6)})
     return KarityFunctionState(
         function.source.id, function.source.max_stack_size, tuple(completed)
+    )
+
+
+def _record_transition(transition, boxes, transferred):
+    (_, resolved, materialized, maybe, native, captures, graphs,
+     closed, closing, close_materialized, _) = transferred
+    return replace(
+        transition, resolved_pending=resolved, materialized=materialized,
+        maybe_materialized=maybe, native_inputs=native, capture_states=captures,
+        graph_dependencies=graphs, open_boxes=tuple(sorted(boxes)),
+        closed_registers=closed, close_states=closing,
+        close_materialized=close_materialized, reachable=True,
     )
 
 
