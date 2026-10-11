@@ -62,11 +62,15 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--seed',type=int,default=9300)
     parser.add_argument('--runtime-repeats',type=int,default=3)
+    parser.add_argument('--work-dir',type=Path,default=ROOT/'temp-mosaic-benchmark',
+                        help='artifact directory under the workspace (keep separate comparisons separate)')
     parser.add_argument('--unprofiled',action='store_true',help='measure ordinary VM builds with diagnostics disabled')
     parser.add_argument('--reuse-before-report',type=Path,
                         help='reuse isolated before rows with the same fixture, interpreter and seed; rerun every after row')
     args = parser.parse_args()
-    work = ROOT/'temp-mosaic-benchmark'
+    work = args.work_dir.resolve()
+    if not work.is_relative_to(ROOT):
+        raise ValueError('--work-dir must be inside the workspace')
     work.mkdir(exist_ok=True)
     fixture = ROOT/'test/scripts/01_helloWorld.lua'
     report = {'fixture':'test/scripts/01_helloWorld.lua','input_bytes':fixture.stat().st_size,

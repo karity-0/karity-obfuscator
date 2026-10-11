@@ -4,11 +4,15 @@ The escape analysis follows local declaration aliases, rejecting rebinding:
 every other reference must be a direct, statically keyed field access.
 """
 import re
+import tree_sitter as ts
 
 from ..names import NameAllocator, RENAME_OPTIONS
 from .base import PrePass
 from .rename_ts import resolve_bindings, rename_script_ts, _apply_replacements_once
-from .ts_utils import parse
+from .ts_utils import _LANG, parse
+
+
+_STRIP_NODES = ts.Query(_LANG, '(comment) @comment (label_statement (identifier) @label) (goto_statement (identifier) @label)')
 
 
 def _string_bytes(text):
@@ -71,24 +75,40 @@ def _unwrap(node):
     return node
 
 
-def _literal_keys(ctx):
-    values = {}
-    for node in reversed(list(ctx.walk())):
-        value = None
-        if node.type == 'string':
-            value = _string_bytes(ctx.text(node))
-        elif node.type == 'parenthesized_expression':
-            value = values.get(_unwrap(node).id)
-        elif node.type == 'binary_expression':
-            operator = node.child_by_field_name('operator')
-            if operator is not None and ctx.text(operator) == '..':
-                left = values.get(node.child_by_field_name('left').id)
-                right = values.get(node.child_by_field_name('right').id)
-                if left is not None and right is not None:
-                    value = left + right
-        if value is not None:
-            values[node.id] = value
-    return values
+class _LiteralKeys:
+    """Decode only candidate field keys; cache success and failure by AST id."""
+    def __init__(self, ctx):
+        self.ctx = ctx
+        self.values = {}
+
+    def get(self, node):
+        stack = [(node, False)]
+        while stack:
+            current, ready = stack.pop()
+            if current.id in self.values:
+                continue
+            value = None
+            if current.type == 'string':
+                value = _string_bytes(self.ctx.plain_text(current))
+            elif current.type == 'parenthesized_expression':
+                child = _unwrap(current)
+                if not ready:
+                    stack.extend(((current, True), (child, False)))
+                    continue
+                value = self.values.get(child.id)
+            elif current.type == 'binary_expression':
+                operator = current.child_by_field_name('operator')
+                if operator is not None and self.ctx.plain_text(operator) == '..':
+                    left = current.child_by_field_name('left')
+                    right = current.child_by_field_name('right')
+                    if not ready:
+                        stack.extend(((current, True), (right, False), (left, False)))
+                        continue
+                    a, b = self.values.get(left.id), self.values.get(right.id)
+                    if a is not None and b is not None:
+                        value = a + b
+            self.values[current.id] = value
+        return self.values[node.id]
 
 
 def _key(ctx, node, literals):
@@ -96,9 +116,9 @@ def _key(ctx, node, literals):
         parent = node.parent
         if (parent.type == 'dot_index_expression' or
                 (parent.type == 'field' and parent.children[0].id == node.id)):
-            return ctx.text(node).encode('utf-8')
+            return ctx.plain_text(node).encode('utf-8')
         return None
-    return literals.get(node.id)
+    return literals.get(node)
 
 
 def _initializers(bindings):
@@ -124,10 +144,11 @@ def _initializers(bindings):
     return initializers
 
 
-def field_replacements(ctx):
-    bindings, _, _, _, _ = resolve_bindings(ctx)
+def field_replacements(ctx, *, bindings=None):
+    if bindings is None:
+        bindings, _, _, _, _ = resolve_bindings(ctx, collect_literals=False)
     initializers = _initializers(bindings)
-    literals = _literal_keys(ctx)
+    literals = _LiteralKeys(ctx)
     owners = {n.id: id(b) for b in bindings for n in b.nodes}
     aliases = {}
     for binding in bindings:
@@ -197,18 +218,36 @@ def field_replacements(ctx):
     return replacements
 
 
-def label_replacements(ctx):
+def _strip_nodes(ctx):
+    captures = ts.QueryCursor(_STRIP_NODES).captures(ctx.root)
+    if isinstance(captures, dict):
+        labels, comments = captures.get('label', []), captures.get('comment', [])
+    else:
+        labels = [n for n, name in captures if name == 'label']
+        comments = [n for n, name in captures if name == 'comment']
+    # Lua grammar extras can expose comment nodes inside quoted strings.
+    # They are literal data, never source comments to erase.
+    def in_string(node):
+        parent = node.parent
+        while parent is not None:
+            if parent.type == 'string':
+                return True
+            parent = parent.parent
+        return False
+    return labels, [node for node in comments if not in_string(node)]
+
+
+def label_replacements(ctx, *, labels=None):
     # A bijection over label spellings preserves Lua's existing block/function
     # visibility rules, including shadowed labels, without moving any token.
-    labels = [n for n in ctx.walk()
-              if n.type == 'identifier' and n.parent.type in
-              {'label_statement', 'goto_statement'}]
-    allocator = NameAllocator({ctx.text(n) for n in labels},
+    if labels is None:
+        labels, _ = _strip_nodes(ctx)
+    allocator = NameAllocator({ctx.plain_text(n) for n in labels},
                               seed=RENAME_OPTIONS.get().get('seed'))
     mapping = {}
     replacements = []
     for node in sorted(labels, key=lambda n: n.start_byte):
-        original = ctx.text(node)
+        original = ctx.plain_text(node)
         if original not in mapping:
             mapping[original] = allocator.allocate()
         replacements.append((ctx.cs(node), ctx.ce(node), mapping[original]))
@@ -219,16 +258,15 @@ class StripInfoPass(PrePass):
     def __init__(self, *, rename_locals=True):
         self.rename_locals = rename_locals
 
-    def run(self, script):
-        ctx = parse(script)
-        replacements = field_replacements(ctx)
-        replacements.extend(label_replacements(ctx))
+    def replacements_with_ctx(self, ctx, *, bindings=None):
+        replacements = field_replacements(ctx, bindings=bindings)
+        labels, comments = _strip_nodes(ctx)
+        replacements.extend(label_replacements(ctx, labels=labels))
         # Whitespace prevents a removed inline comment from joining tokens.
         # Literal-expression replacements can contain comments; do not emit
         # overlapping edits for comments already removed with their expression.
         spans = sorted((start, end) for start, end, _ in replacements)
-        comments = sorted((n for n in ctx.walk() if n.type == 'comment'),
-                          key=lambda n: n.start_byte)
+        comments.sort(key=lambda n: n.start_byte)
         index = 0
         for node in comments:
             start, end = ctx.cs(node), ctx.ce(node)
@@ -236,6 +274,11 @@ class StripInfoPass(PrePass):
                 index += 1
             if index < len(spans) and spans[index][0] <= start and end <= spans[index][1]:
                 continue
-            replacements.append((start, end, '\n' if '\n' in ctx.text(node) else ' '))
+            replacements.append((start, end, '\n' if '\n' in ctx.plain_text(node) else ' '))
+        return replacements
+
+    def run(self, script):
+        ctx = parse(script)
+        replacements = self.replacements_with_ctx(ctx)
         stripped = _apply_replacements_once(script, replacements)
         return rename_script_ts(stripped, readable=False) if self.rename_locals else stripped

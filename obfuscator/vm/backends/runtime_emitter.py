@@ -288,6 +288,51 @@ def _rename_vm_keys(src: str) -> str:
     return src
 
 
+def _finalize_output_identifiers(output: str, *, rename: bool, strip: bool) -> tuple[str, list[dict]]:
+    """Share final syntax/bindings without trusting generator name coverage."""
+    from obfuscator.passes.ts_utils import parse as parse_ts
+    from obfuscator.passes.rename_ts import (
+        resolve_bindings, rename_plan_with_ctx_profiled, _apply_replacements_once,
+    )
+    from obfuscator.passes.strip_info import StripInfoPass
+    details: list[dict] = []
+    stage_start = time.perf_counter()
+    final_ctx = parse_ts(output)
+    details.append({'phase': 'vm_output:final_parse', 'parser': 'treesitter',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'input_bytes': len(output.encode('utf-8')), 'parse_count': 1})
+    stage_start = time.perf_counter()
+    resolution = resolve_bindings(final_ctx, collect_literals=False)
+    details.append({'phase': 'vm_output:final_bindings',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'bindings': len(resolution[0]), 'identifier_count': resolution[4]})
+    edits = []
+    if rename or strip:
+        stage_start = time.perf_counter()
+        options = {} if rename else {'readable': False}
+        names, _, _ = rename_plan_with_ctx_profiled(final_ctx, resolution=resolution, **options)
+        edits.extend((item.start, item.end, item.new_text) for item in names)
+        details.append({'phase': 'vm_output:final_names',
+                        'elapsed': round(time.perf_counter() - stage_start, 6),
+                        'replacements': len(names), 'bindings': len(resolution[0]),
+                        'backend': 'shared_final_context'})
+    if strip:
+        stage_start = time.perf_counter()
+        strip_edits = StripInfoPass(rename_locals=False).replacements_with_ctx(
+            final_ctx, bindings=resolution[0])
+        edits.extend(strip_edits)
+        details.append({'phase': 'vm_output:strip_info', 'class': 'StripInfoPass',
+                        'elapsed': round(time.perf_counter() - stage_start, 6),
+                        'replacements': len(strip_edits),
+                        'backend': 'shared_final_context'})
+    stage_start = time.perf_counter()
+    output = _apply_replacements_once(output, edits)
+    details.append({'phase': 'vm_output:final_render',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'replacements': len(edits)})
+    return output, details
+
+
 def _obfuscate_vm_output(
     script: str, pass_names: list[str], *, compact_globals: bool = False,
     protect_vm_dispatcher: bool = True,
@@ -348,6 +393,17 @@ def _obfuscate_vm_output_scoped(
     output = script
     details: list[dict] = []
     shared_ctx = None
+    from obfuscator.names import RENAME_OPTIONS
+    # Pure literal stages neither read nor rewrite variable names. When no
+    # StringObf allocator or localized-alias plan depends on the early names,
+    # defer naming to the mandatory final analysis instead of assigning twice.
+    # Readable names retain their existing two-stage hint spelling.
+    deferred_names = (
+        'rename_obf' in identifier_names
+        and 'localize_globals' not in identifier_names
+        and 'string_obf' not in emitter_names
+        and not RENAME_OPTIONS.get().get('readable', False)
+    )
 
     def apply_replacements(source: str, replacements) -> str:
         from ...passes.numeric_provenance import join_code
@@ -461,7 +517,7 @@ def _obfuscate_vm_output_scoped(
     if legacy_details:
         shared_ctx = None
 
-    if identifier_names or emitter_names:
+    if emitter_names or identifier_names and not deferred_names:
         from obfuscator.passes.localize_globals import LocalizeGlobalsPass
         from obfuscator.passes.rename_ts import rename_plan_with_ctx_profiled
         if shared_ctx is None:
@@ -482,7 +538,7 @@ def _obfuscate_vm_output_scoped(
         renamed_spans: set[tuple[int, int]] = set()
         literal_nodes = None
         rename_detail = None
-        if "rename_obf" in identifier_names:
+        if "rename_obf" in identifier_names and not deferred_names:
             stage_start = time.perf_counter()
             rename_replacements, literal_nodes, rename_profile = (
                 rename_plan_with_ctx_profiled(shared_ctx)
@@ -550,19 +606,45 @@ def _obfuscate_vm_output_scoped(
             rename_detail["render_backend"] = "shared_identifier_literal_render"
         details.extend(emitter_details)
 
-    if "rename_obf" in identifier_names:
-        from obfuscator.passes.rename_ts import rename_script_ts
-        stage_start = time.perf_counter()
-        output = rename_script_ts(output)
-        details.append({"phase": "vm_output:final_names",
-                        "elapsed": round(time.perf_counter() - stage_start, 6)})
+    # Original nodes are no longer used once fragments have been rendered.
+    # Release that tree before allocating the larger final syntax context.
+    shared_ctx = None
+    literal_nodes = None
+
+    # Keep final naming after every literal/alias generator. Analyze the final
+    # source, so helpers from StringObf/LocalizeGlobals cannot bypass naming.
+    # A single StripInfo pre-pass can share that exact tree and binding graph:
+    # local-name edits cannot affect private fields, labels or comment ranges.
+    # Explicit repeated StripInfo layers retain the legacy sequential path.
+    strip_entries = [entry for entry in after if entry[0] == 'strip_info']
+    fused_strip = len(strip_entries) == 1
+    if "rename_obf" in identifier_names or fused_strip:
+        output, final_details = _finalize_output_identifiers(
+            output, rename="rename_obf" in identifier_names, strip=fused_strip)
+        details.extend(final_details)
+        if deferred_names:
+            names = next(item for item in final_details if item['phase'] == 'vm_output:final_names')
+            bindings = next(item for item in final_details if item['phase'] == 'vm_output:final_bindings')
+            rendered = next(item for item in final_details if item['phase'] == 'vm_output:final_render')
+            details.append({**names, 'phase': 'vm_output:rename_obf',
+                            'class': 'VmIdentifierEmitter', 'backend': 'deferred_final_context',
+                            'collect_elapsed': bindings['elapsed'],
+                            'render_elapsed': rendered['elapsed']})
+        if fused_strip:
+            after = [entry for entry in after if entry[0] != "strip_info"]
 
     output, post_details = run_legacy(output, after)
     details.extend(post_details)
 
     # Never expose build-time dispatcher annotations, even without minify.
-    if protect_vm_dispatcher:
-        output = output.replace("--[[VM_DISPATCH_ENTRY]]", " ")
+    if protect_vm_dispatcher and "--[[VM_DISPATCH_ENTRY]]" in output:
+        from obfuscator.passes.minify import _COMMENT_TOKEN_RE
+        from obfuscator.passes.rename_ts import _apply_replacements_once
+        # Strip only annotation tokens; an identical string literal is data.
+        marker_edits = [(match.start(), match.end()-1, ' ')
+                        for match in _COMMENT_TOKEN_RE.finditer(output)
+                        if match.group('longcmt') == '--[[VM_DISPATCH_ENTRY]]']
+        output = _apply_replacements_once(output, marker_edits)
     return output, details
 
 
