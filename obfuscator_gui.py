@@ -53,6 +53,7 @@ _DEFAULT_PREFERENCES = {
     "editor_font_size": 12,
     "motion": "system",
     "remember_sections": True,
+    "quick_vm_change": False,
     "sections": {},
 }
 
@@ -273,6 +274,8 @@ def _normalize_preferences(value: object) -> dict:
         preferences["editor_font_size"] = max(10, min(18, int(size)))
     if isinstance(source.get("remember_sections"), bool):
         preferences["remember_sections"] = source["remember_sections"]
+    if isinstance(source.get("quick_vm_change"), bool):
+        preferences["quick_vm_change"] = source["quick_vm_change"]
     sections = source.get("sections")
     if isinstance(sections, dict):
         preferences["sections"] = {

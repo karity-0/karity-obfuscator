@@ -111,8 +111,12 @@ Karity supports encoded state, threading, graphs and delayed materialization.
 Classic uses direct handlers; MOV uses lookup microcode and explicit HOST
 boundaries. Karity-only features are not equivalent automatically to either.
 
-The simple GUI uses two matching button groups for strength and backend. A
-short support link opens the explicit unsupported/fallback list in advanced
+The simple GUI uses two matching button groups for strength and backend.
+VM buttons open a translucent full-window chooser with short backend summaries.
+Click a card to apply it, use arrows to move focus, or Escape to cancel.
+Preferences → GUI → Quick VM change restores direct switching; this preference
+is saved independently of protection settings.
+A short support link opens the explicit unsupported/fallback list in advanced
 settings while retaining the requested values. Advanced controls use the same
 capability metadata. Switching backends
 does not replace a tier or its stored parameters. Declared fallbacks are shown
