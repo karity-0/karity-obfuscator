@@ -52,6 +52,7 @@
     ['VM runtime', 'VM 런타임'], ['Dispatcher', '디스패처'], ['Blob representation', '블롭 형식'], ['VM count', 'VM 수'],
     ['Fake handlers', '가짜 핸들러'], ['Handler mutation', '핸들러 변형'], ['Junk instructions', '정크 명령'], ['Junk rate', '정크 비율'],
     ['Integrity constants', '무결성 상수'], ['Integrity constant rate', '무결성 상수 비율'], ['Graph execution rate', '그래프 실행 비율'],
+    ['State dependency limit', '상태 의존성 수 제한'],
     ['Cross-instruction rate', '명령 간 연계 비율'], ['Runtime polymorphism rate', '런타임 다형성 비율'],
     ['Runtime trace diagnostics', '런타임 추적'], ['Block variant rate', '블록 변형 비율'], ['Block variants', '블록 변형 수'],
     ['Block size limit', '블록 크기 제한'], ['Helper variants', '헬퍼 변형 수'], ['Helper diversity rate', '헬퍼 다양성 비율'],
@@ -76,6 +77,10 @@
     ['For either Lua version, a matching library takes priority for compilation and integrity dumps. Leave empty to use executables.', '컴파일과 무결성 덤프는 지정한 Lua 라이브러리를 우선 사용합니다. 비우면 실행 파일을 사용합니다.'],
   ];
   const lookup = new Map();
+  pairs.push(['Unsupported protection (stored values retained)', '미지원 보호 (설정값 유지)'],
+    ['Fallback implementation', '대체 구현'], ['Legacy preset', '기존 프리셋'],
+    ['Selective protection', '선택 보호'], ['Whole-source protection', '전체 보호'],
+    ['Protection strength', '보호 강도'], ['VM backend', 'VM 백엔드'], ['Support limitations', '지원 제한']);
   for (const pair of pairs) for (const text of pair) lookup.set(text, pair);
   const originals = new WeakMap();
   const attributes = new WeakMap();
@@ -84,7 +89,7 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
-      if (node.parentElement.closest('script, style, textarea, pre, code, .filename, #config-source, #profile-summary, #status-msg, #preferences-status, #quick-preset-status, #execution-status, .theme-tile')) continue;
+      if (node.parentElement.closest('script, style, textarea, pre, code, .filename, #config-source, #profile-summary, #status-msg, #preferences-status, #quick-preset-status, #backend-capability-status, #backend-capability-note, #execution-status, .theme-tile')) continue;
       if (!originals.has(node)) originals.set(node, node.nodeValue);
       const original = originals.get(node), trimmed = original.trim();
       if (trimmed) node.nodeValue = original.replace(trimmed, tr(trimmed, language));

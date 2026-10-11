@@ -247,6 +247,7 @@ _OPTION_FEATURES = {
     "integrity_constants": "integrity_constants",
     "integrity_constant_rate": "integrity_constants",
     "graph_execution_rate": "graph_execution",
+    "state_dependency_limit": "graph_execution",
     "cross_instruction_rate": "delayed_materialization",
     "runtime_polymorphism_rate": "runtime_polymorphism",
     "runtime_trace": "runtime_trace",
@@ -261,6 +262,7 @@ _OPTION_FEATURES = {
 _PARAMETER_OPTIONS = frozenset((
     "junk_rate", "integrity_constant_rate", "block_variant_count",
     "block_variant_max_instructions", "helper_variant_count",
+    "state_dependency_limit",
 ))
 
 _DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
@@ -465,7 +467,7 @@ class ProtectionPlanner:
                     arithmetic = instruction.operation in split_operations - {"MOVE", "LOAD_CONST", "LOGICAL_NOT", "LENGTH"}
                     avalanche_rate = 1.0 if arithmetic else 0.25
                     state["avalanche_arity"] = (
-                        rng.randint(1, 3) if instruction.operation not in {"RETURN", "TAIL_CALL"}
+                        rng.randint(1, int(self.options.get('state_dependency_limit', 3))) if instruction.operation not in {"RETURN", "TAIL_CALL"}
                         and not open_register_extent
                         and rng.random() < graph_rate * avalanche_rate else 0
                     )

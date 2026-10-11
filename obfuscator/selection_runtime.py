@@ -56,8 +56,8 @@ class SelectionRuntime:
 
     def function_options(self, options):
         from .registry import _validate_function_obf_options
-        if 'max_pass_instructions' in options:
-            raise SelectionError('max_pass_instructions is a whole-pass setting; configure function_obf_options')
+        if any(key in options for key in ('max_pass_instructions', 'max_pass_expansion_ratio')):
+            raise SelectionError('pass budgets are whole-pass settings; configure function_obf_options')
         _validate_function_obf_options(options)
         return {**self._function_defaults, **self.config.get("function_obf_options", {}), **options}
 
@@ -95,8 +95,9 @@ class SelectionRuntime:
                     validate_pass_target(feature, getattr(self.pipeline, "target_profile", TargetProfile()))
                 except ValueError as error:
                     raise SelectionError(f"line {targets[0].line}: {error}") from error
-                extra.append(PASS_REGISTRY[feature]["cls"](**(self.config.get("function_obf_options", {})
-                                                            if feature == "function_obf" else {})))
+                pass_options = (self.config.get('function_obf_options', {}) if feature == 'function_obf'
+                                else self.config.get('string_obf_options', {}) if feature == 'string_obf' else {})
+                extra.append(PASS_REGISTRY[feature]["cls"](**pass_options))
                 self.names[type(extra[-1])] = feature
                 self.plan.modes.setdefault(feature, "marked")
         # New macro passes precede final renaming; existing pass order is retained.
@@ -170,11 +171,12 @@ class SelectionRuntime:
                 return None
             depth = sum(1 for a in _ancestors(node) if a.type in FUNCTION_TYPES
                         and owners[0].start <= tree.cs(a) and tree.ce(a) < owners[0].end)
-            if depth > options.get("nested_max_depth", 4):
+            if not options.get('all_source_functions', False) and depth > options.get("nested_max_depth", 4):
                 return None
         elif not owners:
             depth = sum(a.type in FUNCTION_TYPES for a in _ancestors(node))
-            if depth and (not options.get("nested", True) or depth > options.get("nested_max_depth", 4)):
+            if depth and (not options.get("nested", True) or
+                          (not options.get('all_source_functions', False) and depth > options.get("nested_max_depth", 4))):
                 return None
         # Replacing an enclosing function destroys the positions of an explicit
         # nested target. Process the nested target and leave its parent intact.
@@ -191,7 +193,7 @@ class SelectionRuntime:
         # dictionary. Those defaults also govern region lowering and nesting.
         self._function_defaults = {
             **pass_.features,
-            **{key: getattr(pass_, key) for key in ("boundary_mode", "nested", "nested_max_depth", "reconstruction_group_size")},
+            **{key: getattr(pass_, key) for key in ("boundary_mode", "nested", "nested_max_depth", "reconstruction_group_size", "all_source_functions")},
             **{"loop_" + key: value for key, value in pass_.compound_options.items()},
         }
         from .statement_regions import lower_region, transport_prelude

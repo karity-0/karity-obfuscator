@@ -19,7 +19,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def run(command, cwd, log):
+def run(command, cwd, log, *, timeout=None):
     started = time.perf_counter()
     peak = None
     handle = None
@@ -47,6 +47,10 @@ def run(command, cwd, log):
                         peak = max(peak or 0,counters.PeakWorkingSetSize)
                 code = process.poll()
                 if code is not None: break
+                if timeout is not None and time.perf_counter()-started > timeout:
+                    process.kill()
+                    process.wait()
+                    raise TimeoutError(f'{command}: exceeded {timeout}s; see {log}')
                 time.sleep(0.05)
         finally:
             if handle: kernel.CloseHandle(handle)

@@ -471,7 +471,14 @@ html[data-gui-version="v2"] .advanced-settings { border: 0; }
 html[data-gui-version="v2"] .advanced-settings > summary { display: none; }
 html[data-gui-version="v2"] .main-stage { width: min(1240px, 100%); flex: 1; margin: 0 auto; padding: 12px 46px 25px; gap: 0; }
 html[data-gui-version="v2"] .workspace-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 0 4px 24px; }
-html[data-gui-version="v2"] .quick-setup { display: flex; align-items: center; gap: 18px; }
+html[data-gui-version="v2"] #preset-toolbar-slot { min-width: 0; }
+html[data-gui-version="v2"] .quick-setup { display: flex; align-items: center; gap: 12px 20px; flex-wrap: wrap; }
+.quick-choice { display: flex; align-items: center; gap: 10px; }
+.quick-choice-label { font-size: 11px; color: var(--muted); white-space: nowrap; }
+#backend-capability-note { overflow-wrap: anywhere; line-height: 1.6; }
+#backend-capability-note:empty { display: none; }
+.capability-link { border: 0; background: transparent; padding: 0; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.capability-link[hidden] { display: none; }
 html[data-gui-version="v2"] .quick-setup > .eyebrow,
 html[data-gui-version="v2"] .quick-setup > h1 { display: none; }
 html[data-gui-version="v2"] .preset-grid { display: flex; gap: 3px; padding: 5px; border: 1px solid var(--line); border-radius: 28px; background: color-mix(in srgb, var(--panel) 70%, transparent); }
@@ -479,6 +486,7 @@ html[data-gui-version="v2"] .preset-button { min-width: 83px; padding: 9px 17px;
 html[data-gui-version="v2"] .preset-button strong { font-size: 12px; font-weight: 500; }
 html[data-gui-version="v2"] .preset-button[aria-pressed="true"] { color: var(--text); background: var(--panel-3); box-shadow: 0 2px 7px #0001; }
 html[data-gui-version="v2"] .preset-button[aria-pressed="true"] strong { color: var(--text); }
+html[data-gui-version="v2"] .backend-grid .preset-button { min-width: 64px; padding-inline: 12px; }
 html[data-gui-version="v2"] .quick-status { font-size: 11px; color: var(--muted); }
 html[data-gui-version="v2"] .quick-status:empty { display: none; }
 html[data-gui-version="v2"] .hero-card { margin: 0; padding: 15px 2px; border: 0; border-radius: 0; background: transparent; box-shadow: none; }

@@ -26,6 +26,7 @@ from obfuscator.registry import (
     get_pass_names,
     get_profile_names,
     resolve_config_profile,
+    validate_deployment_config,
     validate_config,
     config_warnings,
     validate_release_config,
@@ -54,7 +55,7 @@ def parse_args():
     parser.add_argument("-c", "--config", default="config.json", help="config json path")
     parser.add_argument(
         "--profile",
-        help="config profile name; 'max' is experimental and has no build-time or output-size target",
+        help="project/legacy profile or builtin:fast|balanced|strong|maximum; backend is independent",
     )
     parser.add_argument("--passes", help="override top-level passes with a comma-separated list")
     parser.add_argument("--vm-output-passes", help="override vm_output_passes with a comma-separated list")
@@ -75,6 +76,7 @@ def parse_args():
         parser.add_argument("--" + key.replace("_", "-"), help=f"override {key} (path or executable name)")
     parser.add_argument("--print-config", action="store_true", help="print resolved config and exit")
     parser.add_argument("--release-check", action="store_true", help="fail unless the resolved config is suitable for release")
+    parser.add_argument('--deployment-check', action='store_true', help='baseline deployment checks; permits a single VM, unlike the legacy strict --release-check')
     parser.add_argument("--profile-report", help="write pass timing and size profile JSON to this path, or '-' for stdout")
     parser.add_argument("--selection-report", help="write selective protection results as JSON to this path, or '-' for stdout")
     parser.add_argument("--dump-protected-ir", metavar="PATH", help="write normalized IR after protection transforms to PATH")
@@ -222,6 +224,10 @@ def main():
         config = resolve_config_profile(config_root, args.profile)
         config = apply_cli_overrides(config, args)
         validate_config(config)
+        if args.deployment_check:
+            if args.seed is not None:
+                raise ReleaseCheckError('deployment-check rejects reproducible test seeds')
+            validate_deployment_config(config)
         if args.release_check:
             if args.seed is not None:
                 raise ReleaseCheckError("release-check failed:\n- --seed is for reproducible test builds and cannot be used for release")

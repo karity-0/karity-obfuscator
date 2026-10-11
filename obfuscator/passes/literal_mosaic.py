@@ -75,8 +75,43 @@ class LiteralMosaic:
         from .numeric_provenance import CodeText
         return CodeText(expression,origins=[(0,len(expression),'meme_expression')])
 
+    def output_number(self, token, *, origin, hot):
+        """Budget runtime literals, preserving Lua numeric types and bit patterns."""
+        from .number_expressions import _parse_float_token
+        lowered = token.lower()
+        integer = '.' not in lowered and ('p' not in lowered if lowered.startswith('0x') else 'e' not in lowered)
+        try:
+            if integer:
+                value = int(token, 16 if lowered.startswith('0x') else 10)
+                if lowered.startswith('0x') and self.policy.lua_version == '5.3':
+                    value &= (1 << 64)-1
+                    if value >= 1 << 63:
+                        value -= 1 << 64
+                elif self.policy.lua_version == '5.1' or value > (1 << 63)-1:
+                    value = float(value)
+            else:
+                value = _parse_float_token(token)
+        except (ValueError, OverflowError):
+            # Lua accepts overflowing literals whose Python conversion can
+            # fail. Keep the compiler's value instead of approximating it.
+            from .numeric_provenance import CodeText
+            self.metrics.skip(self.policy.phase+':runtime_literal_conversion', 1)
+            return CodeText(token, protected=[(0,len(token))], origins=[(0,len(token),origin)])
+        output = self.options['output_cost']
+        kind = 'hot' if hot else 'cold'
+        operations = output.get(kind+'_operations', 3 if hot else 12)
+        if operations == 0 and isinstance(value,float) and math.isinf(value):
+            # The generic non-finite formatter needs division. The original
+            # overflowing literal is already a zero-operation representation.
+            from .numeric_provenance import CodeText
+            self.metrics.record(token,'number_literal',origin,self.policy.phase,fallback=True)
+            return CodeText(token, protected=[(0,len(token))], origins=[(0,len(token),origin)])
+        return self.number(value, context=origin, hot=hot,
+                           max_operations=operations,
+                           meme_rate=output.get(kind+'_meme_rate', self.policy.generated_meme_rate))
+
     def number(self, value, *, context='function_constant', hot=False,
-               max_chars=None, max_operations=None, fallback=None):
+               max_chars=None, max_operations=None, fallback=None, meme_rate=None):
         policy = self.policy
         self._plain(value)  # Validate before selecting any strategy.
         if isinstance(value,int) and policy.lua_version == '5.3' and not -(1 << 63) <= value < (1 << 63):
@@ -91,7 +126,7 @@ class LiteralMosaic:
 
         strategy = 'number_literal' if number_on else 'mandatory_literal'
         expression = None
-        if meme_on and random.random() < policy.generated_meme_rate:
+        if meme_on and random.random() < (policy.generated_meme_rate if meme_rate is None else meme_rate):
             if isinstance(value,int):
                 expression = self.memes.generated_int(value,lua_version=policy.lua_version,depth=1)
             else:
