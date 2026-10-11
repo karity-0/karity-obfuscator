@@ -28,8 +28,11 @@ class ClassicBackend(VMBackend):
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
+        # The target owns the helper representation; do not rediscover it from
+        # a version string after the frontend has selected the target adapter.
         lowered.backend_data['classic_native_bit_helpers'] = (
-            getattr(context.target, 'lua_version', '5.3') == '5.1')
+            context.target.graph_runtime_options()['private_state_native']
+            if context.target is not None else False)
         from .classic_state import lower_state
         lowered.backend_data["classic_state"] = lower_state(
             lowered.backend_data["layout"], super().runtime_variants(lowered),
