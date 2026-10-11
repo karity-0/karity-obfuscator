@@ -631,7 +631,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const label = document.createElement('label');
         label.className = `toggle-item${enabled ? ' enabled' : ''}`;
         label.dataset.hint = pass.description;
-        label.innerHTML = `<input type="checkbox" ${enabled ? 'checked' : ''}><span class="toggle-dot"></span><span class="toggle-name">${pass.label}</span>`;
+        label.innerHTML = `<input type="checkbox" ${enabled ? 'checked' : ''}><span class="toggle-dot"></span><span class="toggle-name">${tr(pass.label)}</span>`;
         label.querySelector('input').addEventListener('change', event => {
           togglePass(context, pass.name, event.target.checked);
           markPresetCustom(false);
@@ -781,8 +781,8 @@ document.addEventListener('DOMContentLoaded', () => {
     $('quick-preset-status').textContent = state.preset === 'custom' ? tr('커스텀 설정') : '';
     const allPasses = [...state.config.passes, ...state.config.vm_output_passes, ...state.config.packer_output_passes];
     ui.pipelineCount.textContent = allPasses.length;
-    ui.activePreset.textContent = titleCase(state.preset);
-    ui.activeLevel.textContent = titleCase(state.protection_level);
+    ui.activePreset.textContent = tr(titleCase(state.preset));
+    ui.activeLevel.textContent = tr(titleCase(state.protection_level));
     ui.metricPasses.textContent = allPasses.length;
     ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
     ui.metricRuntime.textContent = !bootstrap.vm_options.find(option => option.name === 'runtime_polymorphism_rate').supported_backends.includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
@@ -794,22 +794,22 @@ document.addEventListener('DOMContentLoaded', () => {
     const names = state.config.passes;
     ui.pipeline.innerHTML = '';
     if (!names.length) {
-      ui.pipeline.innerHTML = '<span class="pipeline-empty">No passes selected</span>';
-      ui.pipelineHint.textContent = 'Select at least one main pass';
+      ui.pipeline.innerHTML = `<span class="pipeline-empty">${tr('No passes selected')}</span>`;
+      ui.pipelineHint.textContent = tr('Select at least one main pass');
       return;
     }
     names.forEach((name, index) => {
       const meta = bootstrap.passes.find(pass => pass.name === name);
       const node = document.createElement('span');
       node.className = `pipeline-node${name === 'vm' ? ' vm' : ''}${name === 'pack' ? ' pack' : ''}`;
-      node.textContent = meta?.label || name;
+      node.textContent = tr(meta?.label || name);
       ui.pipeline.appendChild(node);
       if (index < names.length - 1) {
         const arrow = document.createElement('span'); arrow.className = 'pipeline-arrow'; arrow.textContent = '→';
         ui.pipeline.appendChild(arrow);
       }
     });
-    ui.pipelineHint.textContent = `${names.length} main stages · ${state.config.vm_output_passes.length} VM output · ${state.config.packer_output_passes.length} packer output`;
+    ui.pipelineHint.textContent = `${tr('Source & main')}: ${names.length} · ${tr('VM output')}: ${state.config.vm_output_passes.length} · ${tr('Packer output')}: ${state.config.packer_output_passes.length}`;
   }
 
   async function saveConfiguration() {
