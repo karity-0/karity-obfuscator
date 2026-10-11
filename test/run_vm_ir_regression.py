@@ -311,6 +311,7 @@ def check_target_runtime_bindings():
                 'vm_count': 1, 'blob_form': 'numeric', 'integrity_constants': True,
                 'fake_handlers': False, 'mutate_handlers': False,
                 'junk_instructions': False, 'graph_execution_rate': 1.0,
+                'dispatcher_target_hiding': True,
             })
             vm._backend.target = VersionBlindTarget(vm._backend.target)
             output = vm.run(source)
