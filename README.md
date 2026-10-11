@@ -1,577 +1,87 @@
 # Karity Obfuscator
 
-Karity Obfuscator is a Lua 5.3 source obfuscator and custom bytecode VM designed to raise
-the cost of static analysis, dynamic tracing, and generic devirtualization.
-
-It combines conventional source transformations with opcode virtualization,
-encoded value storage, dynamic register mapping, cross-instruction semantics,
-runtime-polymorphic execution, and build-time diversification of hot VM paths.
-
-Karity 1.2.0 replaces the fixed XOR string encoding with per-literal arithmetic
-and bitwise reconstruction programs. Random chunking, interleaved state updates,
-and numeric/partial/mixed strategies produce statements that subsequent function
-obfuscation, NumberObf, renaming and VM stages can protect. The existing
-`STRING_OBF` macros and `selection_modes` settings are unchanged; see
-[String Obfuscation](docs/passes/stringObfuscation.md) for ordering and cost limits.
-
-> Obfuscation is a delay mechanism, not a mathematical guarantee. A determined
-> analyst with full control of the runtime can eventually recover behavior.
-
-![Before and after obfuscation](images/1.png)
+A Lua 5.3 obfuscator with a GUI, selective source protection, and three VM
+backends: **Karity**, **Classic**, and **MOV**.
 
 ## Quick start
 
-Requires Python 3.12 or newer; Python 3.15 also enables lazy processing imports.
+Requires **Python 3.12+**. Python 3.15 uses lazy imports to defer heavy processing
+modules until needed, keeping startup lighter. Python 3.12–3.14 remain supported.
 
-```bash
-pip install -r requirements.txt
-cp config.example.json config.json
-python main.py hello.lua --profile fast-vm
-```
-
-The result is written next to the input as `hello_obfuscated.lua`. Use `-o` to
-choose another path.
-
-Encrypted VM bytecode can also be stored as emoji or Chinese characters:
-
-```bash
-python main.py hello.lua --profile dev --vm-option blob_form=emoji
-python main.py hello.lua --profile dev --vm-option blob_form=chinese
-```
-
-The Blob representation control in the GUI exposes the same choices. `random`
-chooses among `string`, `table`, `numeric`, `emoji`, and `chinese`. Each Unicode
-form uses a fresh byte alphabet and needs no Lua `utf8` library, including on
-Lua 5.1. Generated files use UTF-8; emoji and Chinese forms respectively store
-four and three source bytes per encrypted byte.
-
-> **Obfuscation example:** Compare the [original `print("hello karity")` source](examples/hello.lua)
-> with its [obfuscated output](examples/hello.protected.lua), generated through the GUI using
-> the `obf_gui_config` configuration.
-
-On Windows, compatible Lua binaries are included in `bin/`. On other platforms,
-install Lua 5.3 and `luac` 5.3 and make them available on `PATH`.
-
-Python 3.15 uses `__lazy_modules__` to defer processing imports: CLI help,
-configuration metadata, and GUI startup do not load the Lua parsers or VM emitter.
-Pass implementations load when selected, and parser/emitter modules load when used.
-Python 3.12–3.14 keep ordinary eager import behavior. Older Python versions are
-no longer supported because the source uses modern type aliases and generics.
-To diagnose imports, use `python -X importtime main.py --help`.
-This reduces startup and unused-feature loading, rather than the computation cost
-of a pass after its dependencies have loaded.
-
-## Choose a profile
-
-| Profile | Intended use | VM | Trade-off |
-|---|---|---:|---|
-| `dev` / 빠르게 | StripInfo + Minify, minimal VM protection | One Karity VM | Lowest VM preset overhead |
-| `fast-vm` / 균형 | Adds meme strings, function obfuscation, anti-debug/decompile | One Karity VM | Low-rate runtime diversity |
-| `high` | Strong production-oriented protection | Two diversified VMs | High build and output cost; practical alternative to `max` |
-| `max` | Experimental research and extreme protection combinations | Three diversified VMs | Unbounded build time and output growth; not intended for routine production use |
-
-```bash
-python main.py input.lua --profile dev
-python main.py input.lua --profile fast-vm
-python main.py input.lua --profile high
-python main.py input.lua --profile max --release-check
-```
-
-Every preset applies StripInfo and Minify to source and VM output. All four use
-random blob forms, mixed dispatchers and mixed function boundaries, without a
-fixed seed.
-StripInfo replaces redundant rename/comment-removal passes. `high` adds string,
-number, boolean, table and localization passes, plus all VM protection switches.
-`max` adds string encoding, packing, more variants and heavier output transforms.
-Its VM and packer output apply meme strings before the normal number emitter; other
-configurations keep the existing number-then-meme behavior. This prevents meme
-expansion of generated number expressions without restricting numeric depth or
-random dispatcher choices.
-For packed VM output, generated constant arithmetic and strings stay inside
-the keyed loader and are evaluated once for reuse. The packer decodes bytes in chunks and keeps
-only the 32 KiB DEFLATE history window as individual table entries.
-Trace diagnostics stay off and numeric rates increase without forcing 100%.
-
-`high` uses two diversified VMs without packing; `max` uses three VMs plus packing.
-
-`max` is an experimental research profile. It deliberately combines the most
-aggressive stages and has no build-time or output-size target; very long builds
-are expected. Full packer output transforms also substantially increase startup
-cost for large payloads. Use `high`, `fast-vm`, or a tuned custom profile for routine
-protected builds. `--release-check` validates release-safety constraints, but
-does not turn `max` into the recommended production profile.
-
-The guiding performance rule is: **keep graph generation, execute heavy graphs
-sparsely**. Complex handlers and variants are compiled at build time where
-possible; runtime selection is reserved for paths where trace diversity is
-worth the cost.
-
-## Protection model
-
-The selected profile controls which optional stages run and how aggressively
-the VM stages are compiled.
-
-```mermaid
-flowchart TD
-    A[Lua source] --> B[Source passes]
-    B --> C{VM enabled?}
-    C -->|Yes| D[luac 5.3 and bytecode parsing]
-    D --> E{Backend selection}
-    E -->|karity or default| K[Karity runtime]
-    E -->|classic| L[Classic runtime]
-    E -->|mov| M[MOV lookup runtime]
-    K --> F[Blob serialization and integrity binding]
-    L --> F
-    M --> F
-    F --> G[VM output passes and protected wrapper]
-    G --> H{Packer enabled?}
-    C -->|No| H
-    H -->|Yes| I[Packer and packer output passes]
-    I --> J[Protected Lua]
-    H -->|No| J
-```
-
-See [backend architecture, runtime diagrams and supported options](docs/backends.md).
-Serialization, runtime generation and integrity finalization cooperate during the
-build; the diagram groups those stages rather than prescribing a single pass order.
-
-
-In the Karity runtime, one instruction can take different equivalent routes depending on
-its opcode alias, compiled VM, block variant, execution state, and configured
-rates:
-
-```mermaid
-flowchart TD
-    A[Protected Lua starts] --> B[Integrity checks and blob recovery]
-    B --> C[Read serialized prototype]
-    C --> D[Select prototype's compiled VM]
-    D --> E[Per-VM fetch and inline decode]
-    E --> F[Opcode dispatcher]
-    F --> G[Dynamic logical-to-physical register mapping]
-    G --> H[Affine value and share representation]
-    H --> I{Compiled semantic route}
-    I -->|Direct alias| J[Direct equivalent operation]
-    I -->|Graph-backed alias| K[Sparse handler graph]
-    I -->|Delayed producer| L[Pending encoded result]
-    L --> M[Consumer-triggered materialization]
-    J --> N[Representation and state update]
-    K --> N
-    M --> N
-    N --> O{Control transfer?}
-    O -->|No| E
-    O -->|Call or return| P[Per-VM continuation router]
-    P --> D
-    O -->|Program return| Q[Observable Lua result]
-```
-
-The diagrams show where a protection is applied, but not every instruction
-uses every expensive path. Rates such as `graph_execution_rate`,
-`cross_instruction_rate`, and `block_variant_rate` deliberately keep heavy
-runtime work sparse.
-
-### Source layer
-
-- String, number, boolean, table, and identifier transformations
-- Function control-flow flattening and opaque predicates
-- Global localization, comment removal, and minification
-- Anti-debug and anti-decompile source traps
-
-### Virtual machine layer
-
-- Randomized virtual opcode aliases and multiple dispatcher layouts
-- Handler splitting, fusion, mutation, fake handlers, and junk instructions
-- Multiple independently generated VM interpreters in one output
-- Build-time compiled arithmetic, semantic, control-flow, and occurrence graphs
-- Sparse per-site graph execution with state diffusion and cross-frame coupling
-
-### Value and register layer
-
-- Per-value affine encoding with additive share fragmentation
-- Encoded representations for integers, booleans, nil, floats, strings, and references
-- Representation rotation and encoded-domain `ADD`, `SUB`, and `UNM` paths
-- Independent physical mappings for values, shares, epochs, types, and pending state
-- Dynamic mapping rotation so logical registers do not retain stable physical locations
-
-### Trace and semantic layer
-
-- Consumer-triggered delayed materialization across instructions
-- Per-execution rolling route state and runtime-polymorphic microtraces
-- Runtime-selected physical variants of straight-line bytecode blocks
-- State-coupled dispatcher targets without fixed virtual-opcode comparisons
-- Source-semantic state threaded through value writes, calls, and VM runtime state
-- Shuffled, padded, state-masked argument packets across entry, call, tail-call, and vararg paths
-- Closed-upvalue affine shares and hidden reference-vault handles across closure frames
-- VM-created table lowering into state-keyed split shadow storage until native escape
-- Branch decisions sealed in live-state control packets before target selection
-- Diverse table, upvalue, comparison, closure, and vararg handler implementations
-- Per-VM fetch/decode, register-access, semantic, flow, and continuation-router kits
-- Build-time call-site wiring instead of a single runtime helper selector
-
-### Encryption and integrity
-
-- Encrypted bytecode and constants
-- Per-build instruction layouts and keystream variants
-- Integrity constants, anti-tamper checks, and anti-dump mechanisms
-- Optional compressed loader/packer
-
-For every pass and VM option, see
-[the generated configuration reference](docs/configuration.md).
-
-### Selective protection
-
-Use `STRING_OBF("secret")`, `NUMBER_OBF(123)`, `BOOLEAN_OBF(true)` and
-`TABLE_OBF({1,2,3})` to select individual literals. Function directives select
-source features or function VM boundaries; `-- @VM` selects a whole chunk,
-and `-- @NO_VM` keeps the following function native.
-
-```bash
-python main.py examples/selective.lua -o examples/selective.protected.lua -c config.selective.example.json --seed 1234 --selection-report selections.json
-```
-
-Compare the [selective source](examples/selective.lua) with its
-[protected output](examples/selective.protected.lua), generated with the command above.
-
-The [selective protection guide](docs/selective-obfuscation.md) covers
-`all`/`marked` modes, function options, exclusions, named VM profiles, reports
-and current boundary restrictions. Regions support complete sibling statements,
-live captured locals, partial function protection, and nested native exclusions.
-Selected VM regions with identical effective options share one runtime.
-
-## CLI usage
-
-```bash
-# Input and output
-python main.py input.lua
-python main.py input.lua -o protected.lua
-
-# Profiles and one-off overrides
-python main.py input.lua --profile fast-vm
-python main.py input.lua --profile high
-python main.py input.lua --passes string_obf,number_obf,minify
-python main.py input.lua --vm-option backend=classic
-python main.py input.lua --profile fast-vm --vm-option backend=mov
-python main.py input.lua --profile high --vm-option backend=mov --release-check
-python main.py input.lua --vm-option vm_count=2
-python main.py input.lua --vm-option graph_execution_rate=0.05
-
-# Inspection and diagnostics
-python main.py --list-profiles
-python main.py --list-passes
-python main.py input.lua --profile fast-vm --print-config
-python main.py input.lua -vv --profile-report build-profile.json
-
-# Reproducible test build
-python main.py input.lua --profile fast-vm --seed 1234
-
-# Release validation
-python main.py input.lua --profile max --release-check
-```
-
-`--seed` exists for reproducible testing. Do not use a fixed seed for release
-artifacts. `--release-check` rejects reproducible seeds and weak release
-settings before writing the output. The `max` example above is an experimental
-full-stack validation run, not the recommended routine release workflow.
-
-## GUI
-
-```bash
+```sh
+python -m pip install -r requirements.txt
 python obfuscator_gui.py
 ```
 
-The GUI exposes the same profile-based configuration used by the CLI.
+1. Open a Lua file or paste your code.
+2. Choose a protection preset and VM backend. **Balanced + Karity** is a starting point.
+3. Click **Obfuscate**, then copy or save the result.
 
-The default v2 layout uses a horizontal preset bar, a tabbed code canvas, an
-optional split view, a separate build-settings drawer, and a central run dock.
-Switch between **v1** and **v2** in **Preferences → GUI**; switching keeps the
-current source, output, and build settings.
-
-The **＋ 마커** tool above the source editor inserts literal macros, function
-directives, VM regions, and exclusions around selected code. Optional inline
-arguments support custom function/VM options and named profiles. Markers are
-always recognized in both layouts, including builds without manually enabled
-passes; no marker enable switch is needed.
-
-
-Use **▶** in either editor to execute source (**F5**) or output (**Shift+F5**).
-The console streams stdout/stderr, accepts stdin, and has stop, clear and collapse
-controls. A separate process runs a temporary snapshot, using the opened source
-file's directory as its working directory (otherwise the project directory).
-Source markers are lowered before execution. The configured Lua library takes
-priority over the Lua executable; Lua 5.1 can use the existing Lupa fallback.
-Closing the app stops execution.
+Windows includes Lua tools in `bin/`. On other platforms, install matching
+Lua 5.3 and `luac` 5.3 tools and make them available on `PATH`.
 
 ![GUI](images/5.png)
 
-Choose a complete build preset (`dev`, `fast-vm`, `high`, or `max`) or apply an
-independent VM protection level (`Light` through `Maximum`). Every pass and VM
-option can also be edited directly; manual changes automatically switch the
-affected selector to `<Custom>`. VM controls are generated from the central
-option registry so newly registered options stay in sync with the CLI.
+## Protection presets
 
-Preferences separates **Theme**, **GUI**, **Editor**, and **General**. Theme tiles
-preview the actual palette. Light, Dark, Deep dark, System, and Classic remain
-available alongside Crystal, Ocean, Dracula, Mythic, and Crimson from pyobf.
-The grid starts with System and flows from light to dark across two rows.
-Saved pyobf White/Dark preferences migrate to Light/Dark. The colors
-are bundled in `gui/web/themes.json`; pyobf is not a runtime dependency.
-Korean and English interface languages, layout density, editor font size, motion,
-and section memory save automatically to `obf_gui_preferences.json`.
-
-Both editors include local Lua syntax highlighting and line numbers, including
-compile-time protection markers, long strings, and long comments. Only visible
-rows and columns render, keeping large generated scripts responsive. Source
-text is never persisted automatically, and highlighting never modifies it.
-
-## Configuration
-
-Copy `config.example.json` to `config.json`, then adjust profiles instead of
-editing pass lists for every build. CLI values supplied with `--vm-option`
-override the selected profile for that invocation.
-
-VM runtime architecture is independent from protection level. Karity and classic retain
-the current compiler, serializer/blob protection, dispatcher selection,
-integrity checks, and output pipeline. `backend=karity` selects the hardened
-graph/encoded-register runtime and is used when the option is omitted.
-`backend=classic` selects direct registers and straightforward opcode handlers;
-`backend=default` selects `karity`, just like omitting the option. Older builds
-mapped this alias to `classic`; set `backend=classic` explicitly to preserve
-that runtime when migrating.
-Release checks apply the shared dispatcher, integrity, mutation, and VM-count
-requirements to both modes, and apply graph/variant-rate requirements only to
-the Karity runtime that implements them.
-
-`backend=mov` is a supported release configuration with a hybrid MOV-inspired
-runtime. Full MOV-only execution remains a development target. It lowers integer
-`ADD/SUB/MUL/UNM/MOD/IDIV`, `BAND/BOR/BXOR/SHL/SHR/BNOT`, and integer `EQ/LT/LE` into
-4-bit lookup microcode. Signed floor division and modulo use a 64-step restoring
-division recipe, including minimum-integer overflow and divisor-sign correction.
-Leading zero nibbles skip four bit rounds through moves and counter-table lookup,
-reducing work for small operands without native arithmetic fallback.
-Integer shifts use six lookup/MOV stages for distances 1, 2, 4, 8, 16 and 32.
-Count sign, unsigned magnitude, direction reversal and the 64-bit range check
-are computed in microcode, including minimum-integer counts. HOST preparation
-only supplies encoded operands and the opcode direction; it no longer decodes
-the count or computes digit positions. Integral floats and numeric strings
-still use Lua's coercing shift handlers.
-Float/float `EQ/LT/LE` bitcast binary64 values and compare lookup-generated
-ordering keys; NaN classification and signed-zero equality also use lookup.
-Float `UNM` copies the binary64 payload and toggles its sign nibble through XOR
-lookup. Input/output bitcasts remain host representation boundaries; negation
-does not execute native unary arithmetic.
-Mixed integer/float comparisons build exact 80-bit ordering keys with a shared
-exponent and 63 fraction bits. Integers are normalized through lookup shifts,
-without rounding them to binary64, preserving distinctions beyond `2^53`.
-String equality compares encoded byte lists in lookup microcode. String ordering
-uses that path in C/POSIX collation; other locales or an unavailable locale query
-retain host ordering. This preserves Lua's locale-sensitive comparison rules,
-including embedded NUL bytes. Byte-list construction adds linear allocation per
-comparison; it is an input representation boundary, not the comparison itself.
-String length counts byte-list nodes with lookup carry propagation. Concatenation
-of string operands uses indirect MOV stores to link private operand copies;
-committed lists are immutable and register copies may share them. Length and
-subsequent concatenation consume this encoded storage directly. Native consumers
-materialize the resulting byte stream with `string.char`/`table.concat`; those
-calls do not concatenate the original operands. Numeric coercion and `__concat`
-remain host boundaries, as do table/userdata length operations.
-`NOT` and expected-truth tests use boolean lookup after native-value classification;
-tests and jumps select microcode addresses;
-jumps close captured locals before leaving their scope. Integer results stay in
-encoded digit storage until a host operation needs a Lua value. Binary floating-point arithmetic
-and mixed-type arithmetic, `/`, power, metamethods, tables and
-calls use Lua host handlers. This is a hybrid runtime, not a literal MOV-only Lua
-implementation. The original operand words remain available to host fallbacks.
-MOV-only remains the target; this implementation does not yet meet it. In
-particular, binary floating-point arithmetic, coercing/metamethod concatenation and locale-specific ordering,
-operations and Lua object/call semantics
-still need host execution. Function-table indirection is not counted as MOV
-lowering. Regression tests reject native integer arithmetic, division, comparison
-and boolean fallbacks, plus all numeric comparison fallbacks, to verify that the
-implemented lookup paths really run.
-All host opcodes enter through one function-table call. Each VM shuffles the
-handler table and uses a distinct XOR key for its entries; native arithmetic
-fallbacks also use function lookup instead of slot-comparison chains. These
-tables obscure the ordered opcode dispatcher, but their Lua operations remain
-inspectable. Handler closures are allocated per call frame to preserve recursive
-calls, coroutine suspension, and return/tail-call packets.
-
-Start with `--profile dev --vm-option backend=mov`. The balanced `fast-vm`
-preset also protects source functions and inserts meme arithmetic. MOV lowers
-these added integer operations into lookup recipes, so repeated calls and
-recursion can have substantial additional execution cost. Compare the intended
-workload before selecting a stronger preset. Multiple MOV interpreters
-use distinct instruction IDs and digit codebooks, with prototypes assigned by
-`vm_count` as in the other backends. Calls, shared upvalues and tail-call frame
-transitions preserve Lua values across these representations. Each interpreter
-uses a fixed microcode dispatcher; legacy dispatcher selection/target
-hiding, fake/mutated/split/fused handlers, and Karity graph/representation options
-do not apply. Junk insertion, integrity constants, all blob forms, source/output
-passes and packing remain available. Arithmetic recipes are stored once per VM
-and shared across prototypes, while scratch slots and continuations remain private
-to each call frame. `--profile high --vm-option backend=mov
---release-check` checks the shared source, VM-count, junk, integrity and blob
-requirements; unused legacy dispatcher/handler and Karity graph options are
-excluded from MOV release validation. Profiling records effective VM counts,
-unsupported controls, lowered sites, stored micro-instructions and shared recipe
-counts in `mov_lowering`. Lookup tables and
-microcode increase output size and runtime cost; benchmark the intended workload.
-
-The most important performance controls are:
-
-| Option | Effect |
+| Preset | Use |
 |---|---|
-| `backend` | Runtime model: hardened `karity`, direct-handler `classic`, supported lookup `mov`, or the `default` alias |
-| `graph_execution_rate` | How often heavy compiled handler graphs execute |
-| `dispatcher_target_hiding` | Masks fixed opcode targets and couples equality dispatch to live VM state |
-| `semantic_state_threading` | Couples instruction/value history to register epochs, mappings, and call frames |
-| `argument_virtualization` | Shuffles, pads, and masks VM arguments behind dynamic packet accessors |
-| `upvalue_virtualization` | Stores closed upvalues as affine shares or hidden reference handles |
-| `table_virtualization` | Lowers VM-created tables into split shadow storage until native escape |
-| `branch_virtualization` | Seals comparison results in live-state packets before branching |
-| `cross_instruction_rate` | Frequency of delayed cross-instruction materialization |
-| `runtime_polymorphism_rate` | Frequency of runtime-selected microtrace recipes |
-| `block_variant_rate` | Fraction of eligible blocks emitted with runtime variants |
-| `helper_variant_count` | Number of build-time implementations for hot VM helpers |
-| `helper_diversity_rate` | Fraction of call sites wired to non-baseline helper variants |
-| `semantic_diversity_rate` | Fraction of eligible aliases using alternate semantic lowering |
-| `vm_count` | Number of independent interpreters; strongly affects output and build size |
+| **Fast · 빠르게** | Lightweight VM protection; use markers for heavy source passes. |
+| **Balanced · 균형** | More VM diversity with light source transformations. |
+| **Strong · 강하게** | Full source protection, including StringObf and CFF. |
+| **Maximum · 최대** | Larger protection budgets, more VM variants, and packing. |
 
-Start with `fast-vm`, then use `high` when stronger source and VM protection
-is required. Increase individual option families only after profiling the
-protected program's real workload. A maximum setting in every category is
-rarely the best performance/security balance.
+Every preset keeps NumberObf and MemeStrings on the VM output. Preset and
+backend selections are independent; advanced settings let you customize either.
+Stronger presets increase build time, output size, and runtime cost.
 
-### Custom Lua tools
+Use **＋ Marker** to select sensitive code, VM regions, or exclusions. Run the
+source with **F5** or the result with **Shift+F5**. See the
+[selective protection guide](docs/selective-obfuscation.md) for marker usage.
 
-Set top-level JSON options (shared by profiles, with per-profile overrides), or
-use CLI flags:
+## CLI and JSON
+
+The CLI remains available for scripts and automated builds:
 
 ```sh
-python main.py input.lua --lua-executable "C:/Lua 5.3/lua.exe" --luac-executable "C:/Lua 5.3/luac.exe"
+python main.py input.lua -o protected.lua -c config.example.json --profile builtin:balanced
+python main.py input.lua -c obf_gui_config.json
 ```
 
-- `lua_executable` / `--lua-executable`: interpreter used for VM and packer integrity dumps; also available as `pipeline.toolchain.lua()` for execution/validation.
-- `luac_executable` / `--luac-executable`: bytecode compiler used by all VM backends. Its output must be standard bytecode matching `target.lua_version` (5.3 by default).
-- `lua_library` / `--lua-library`: Matching Lua 5.1 or 5.3 DLL/shared-library path. When set, **takes priority over both executables** for VM bytecode compilation and VM/packer integrity dumps. All VM backends use this path. Missing, incompatible or failing libraries cause an error without executable fallback. Calls run in an isolated Python worker with a 120-second timeout.
+GUI-saved configurations also work with the CLI. Existing `dev`, `fast-vm`,
+`high`, and `max` JSON profiles retain their original meanings; `dev` is for
+development and diagnostics. See [user presets](docs/user-presets.md) and the
+[configuration reference](docs/configuration.md).
 
-Set **Lua library** in the GUI to the desired DLL/shared-library path; the
-executable fields may stay empty. The library must match Python's architecture.
-Lua 5.3 requires 64-bit size_t, 64-bit Lua integers and double numbers.
-Lua 5.1 requires standard binary64 numbers and accepts 32-bit or 64-bit size_t.
+## Documentation
 
-The library host opens standard Lua libraries. Application-specific APIs are
-not generally available, so final scripts should also be tested in their target
-application. Source code is compiled without executing it; integrity dump
-generation executes only the generated wrapper to obtain its function.
-Supported format-2 dumps are decoded into standard Lua 5.3 bytes for stable
-integrity checks without changing the runtime's dump mode.
+- [Presets and backend selection](docs/user-presets.md)
+- [Configuration reference](docs/configuration.md)
+- [Selective protection](docs/selective-obfuscation.md)
+- [Backend architecture and supported options](docs/backends.md)
+- [Lua targets and compatibility](docs/lua-targets.md)
+- [Preset performance measurements](docs/performance/user-presets.md)
 
-Python consumers can call `pipeline.toolchain.run_library(script)` to execute a
-script in the isolated DLL host (Lua errors propagate; no result values are returned).
-The adapter follows the [Lua 5.3 C API](https://www.lua.org/manual/5.3/manual.html#4).
+Pass guides: [Strings](docs/passes/stringObfuscation.md),
+[Functions](docs/passes/functionObfuscation.md),
+[Global localization](docs/passes/localizeGlobals.md),
+[Packer](docs/passes/packer.md), and [Anti-debug](docs/passes/antiDebug.md).
 
-CLI overrides take precedence over the selected profile. Omitted/null executable
-options search `bin/` first, then PATH for Lua 5.3. The experimental Lua 5.1
-build adapter defaults to Lupa when no explicit tools are supplied. Explicit executable values accept file
-paths or command names on PATH; missing explicit tools fail without fallback.
-Relative paths are relative to the process working directory (CLI and GUI), and
-`~` is expanded. Tools are resolved when used, so source-only passes and config
-inspection do not require Lua binaries. GUI settings are under **Lua toolchain**.
+## Examples
 
-Use matching Lua 5.3 interpreter/compiler builds and a matching target runtime:
-VM/packer integrity checks depend on `string.dump` output. Selecting an arbitrary
-executable does not select another Lua version. Choose `--lua-version 5.1`
-for experimental Lua 5.1 VM output with matching 5.1 tools; packing remains
-unavailable. See [Lua targets](docs/lua-targets.md) for current
-limits and external toolchain tests. Lua 5.4 and LuaJIT chunks are unsupported.
+- Hello: [source](examples/hello.lua), [protected output](examples/hello.protected.lua), [comparison](images/1.png).
+- Selective protection: [source](examples/selective.lua), [protected output](examples/selective.protected.lua).
 
 ## Testing
 
-Run the semantic suite against the currently selected config:
-
-```bash
-python test/run_test.py --profile dev
-python test/run_test.py --profile fast-vm --jobs 4
-python test/run_test.py --profile high --jobs 4
-python test/run_test.py 09_table 14_vm_call_machine
-```
-
-Routine CI should test practical profiles and focused, deterministic VM
-regressions. Full `max` builds are research/nightly or pre-release checks; their
-build time and output size are not performance gates, although incorrect output
-is still a bug.
-
-CI and local verification use the same suite manifest in `test/run_ci.py`, including
-MOV, function boundary/loop/nested, GUI, and all focused regressions:
-
-```bash
-pip install -r requirements-dev.txt
+```sh
+python -m pip install -r requirements-dev.txt
 python test/run_ci.py
 ```
 
-Use `python test/run_ci.py --list` to inspect the exact commands. CI runs on
-Linux with Python 3.12 and 3.15, plus Windows with Python 3.12. All jobs
-use Lua 5.3 (system packages on Linux, bundled binaries on Windows). Pushes and
-pull requests targeting `main`, `dev`, and `future` run this matrix.
-
-The suite includes `mypy` checks for configuration schemas, Lua constants,
-profiling values, pipeline factories, and VM backend interfaces. Run
-`python -m mypy` for those checks alone. `test/typing/contracts.py` verifies
-subclass return-type inference; the typing regression also checks that invalid
-option keys, values, constants, and pipeline classes produce diagnostics.
-The remaining implementation modules are outside the current static-check scope.
-Type hints do not replace runtime validation of configuration loaded from JSON.
-
-For a deterministic build during diagnosis, pass `--seed`. Compare the source
-and protected program's exit code, stdout, and stderr; the main test runner does
-this automatically.
-
-## Design references
-
-- [Function transformations and scope boundaries](docs/passes/functionObfuscation.md)
-- [Global localization and environment assumptions](docs/passes/localizeGlobals.md)
-- [Backend architecture and capabilities](docs/backends.md)
-- [Packer and loader requirements](docs/passes/packer.md)
-- [Anti-debug wrapper behavior](docs/passes/antiDebug.md)
-
-## Repository layout
-
-```text
-obfuscator/passes/   source and output transformation passes
-obfuscator/vm/       serializer, VM template, variants, and VM build pipeline
-test/scripts/        Lua semantic fixtures
-test/benchmarks/     repeatable runtime profiling workloads
-test/run_*.py        semantic and subsystem regression runners
-tools/               generated-document utilities
-gui/web/             GUI frontend assets
-```
-
-Regenerate the option reference after changing the registry:
-
-```bash
-python tools/generate_config_docs.py
-python tools/generate_config_docs.py --check
-```
-
-## Compatibility and limitations
-
-- Input and VM semantics target Lua 5.3.
-- Native modules and environment-dependent behavior remain properties of the
-  host Lua runtime.
-- Aggressive profiles increase build time, output size, startup time, and
-  runtime overhead. Benchmark the actual application before release.
-- Anti-debug and anti-tamper checks can conflict with instrumented or modified
-  runtimes; test on the intended deployment environment.
-- The VM increases analysis cost but cannot prevent observation by an attacker
-  who fully controls execution.
-
-## Preview
-
-![Protected output preview 1](images/2.png)
-
-![Protected output preview 2](images/3.png)
+Local verification and CI share the same test manifest. Test protected scripts
+in their intended Lua environment before release.
 
 ## License
 
-Released under the [MIT License](LICENSE).
-
-Use the project only on code you own or are authorized to protect and test.
+[MIT License](LICENSE). Use only on code you own or are authorized to protect.
