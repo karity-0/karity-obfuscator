@@ -35,6 +35,11 @@ SOURCES = (
     'local co=coroutine.create(function(x)coroutine.yield(x,nil);'
     'local ok,e=pcall(function()error("expected")end);return ok,e,x,nil end);'
     'coroutine.resume(co,3);return coroutine.resume(co)',
+    # Upvalue-table indices can exceed the child's register frame. They are
+    # capture operands, not frame reads/writes in the state transfer.
+    ';'.join(f'local t{i}={{v={i}}}' for i in range(12)) +
+    ';local function f() local n=' + '+'.join(f't{i}.v' for i in range(12)) +
+    ';t11.v=n;return t11.v end;return f()',
 )
 
 

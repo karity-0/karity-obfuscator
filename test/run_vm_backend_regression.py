@@ -311,6 +311,10 @@ def main() -> int:
             raise AssertionError(
                 f"{backend}/{dispatcher} semantic mismatch: {stdout!r}"
             )
+        if backend == 'classic':
+            hidden = run_output(source, backend, dispatcher,
+                                vm_options={'dispatcher_target_hiding':True})
+            assert hidden == stdout, (dispatcher, hidden)
 
     # CALL, metamethod dispatch, and protected calls all cross the Karity
     # native-value boundary. Verify coroutine suspension/resumption and error
