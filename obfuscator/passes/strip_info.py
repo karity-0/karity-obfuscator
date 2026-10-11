@@ -144,7 +144,7 @@ def _initializers(bindings):
     return initializers
 
 
-def field_replacements(ctx, *, bindings=None):
+def field_replacements(ctx, *, bindings=None, expanded_number_keys=frozenset()):
     if bindings is None:
         bindings, _, _, _, _ = resolve_bindings(ctx, collect_literals=False)
     initializers = _initializers(bindings)
@@ -174,7 +174,7 @@ def field_replacements(ctx, *, bindings=None):
             if field.type != 'field':
                 continue
             key = field.child_by_field_name('name')
-            if key is None or key.type == 'number':
+            if key is None or (key.type == 'number' and ctx.cs(key) not in expanded_number_keys):
                 continue
             value = _key(ctx, key, literals)
             if value is None:
@@ -195,7 +195,7 @@ def field_replacements(ctx, *, bindings=None):
                 safe = False
                 break
             key = access.child_by_field_name('field')
-            if key.type == 'number':
+            if key.type == 'number' and ctx.cs(key) not in expanded_number_keys:
                 continue
             value = _key(ctx, key, literals)
             if value is None:
@@ -258,8 +258,9 @@ class StripInfoPass(PrePass):
     def __init__(self, *, rename_locals=True):
         self.rename_locals = rename_locals
 
-    def replacements_with_ctx(self, ctx, *, bindings=None):
-        replacements = field_replacements(ctx, bindings=bindings)
+    def replacements_with_ctx(self, ctx, *, bindings=None, expanded_number_keys=frozenset()):
+        replacements = field_replacements(ctx, bindings=bindings,
+                                          expanded_number_keys=expanded_number_keys)
         labels, comments = _strip_nodes(ctx)
         replacements.extend(label_replacements(ctx, labels=labels))
         # Whitespace prevents a removed inline comment from joining tokens.

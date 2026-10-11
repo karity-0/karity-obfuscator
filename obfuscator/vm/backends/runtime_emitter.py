@@ -291,16 +291,28 @@ def _rename_vm_keys(src: str) -> str:
 def _finalize_output_identifiers(output: str, *, rename: bool, strip: bool) -> tuple[str, list[dict]]:
     """Share final syntax/bindings without trusting generator name coverage."""
     from obfuscator.passes.ts_utils import parse as parse_ts
-    from obfuscator.passes.rename_ts import (
-        resolve_bindings, rename_plan_with_ctx_profiled, _apply_replacements_once,
-    )
-    from obfuscator.passes.strip_info import StripInfoPass
+    from obfuscator.passes.rename_ts import _apply_replacements_once
     details: list[dict] = []
     stage_start = time.perf_counter()
     final_ctx = parse_ts(output)
     details.append({'phase': 'vm_output:final_parse', 'parser': 'treesitter',
                     'elapsed': round(time.perf_counter() - stage_start, 6),
                     'input_bytes': len(output.encode('utf-8')), 'parse_count': 1})
+    edits, planned_details = _plan_output_identifiers(final_ctx, rename=rename, strip=strip)
+    details.extend(planned_details)
+    stage_start = time.perf_counter()
+    output = _apply_replacements_once(output, edits)
+    details.append({'phase': 'vm_output:final_render',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'replacements': len(edits)})
+    return output, details
+
+
+def _plan_output_identifiers(final_ctx, *, rename, strip, expanded_number_keys=frozenset(),
+                             backend='shared_final_context'):
+    from obfuscator.passes.rename_ts import resolve_bindings, rename_plan_with_ctx_profiled
+    from obfuscator.passes.strip_info import StripInfoPass
+    details = []
     stage_start = time.perf_counter()
     resolution = resolve_bindings(final_ctx, collect_literals=False)
     details.append({'phase': 'vm_output:final_bindings',
@@ -315,22 +327,17 @@ def _finalize_output_identifiers(output: str, *, rename: bool, strip: bool) -> t
         details.append({'phase': 'vm_output:final_names',
                         'elapsed': round(time.perf_counter() - stage_start, 6),
                         'replacements': len(names), 'bindings': len(resolution[0]),
-                        'backend': 'shared_final_context'})
+                        'backend': backend})
     if strip:
         stage_start = time.perf_counter()
         strip_edits = StripInfoPass(rename_locals=False).replacements_with_ctx(
-            final_ctx, bindings=resolution[0])
+            final_ctx, bindings=resolution[0], expanded_number_keys=expanded_number_keys)
         edits.extend(strip_edits)
         details.append({'phase': 'vm_output:strip_info', 'class': 'StripInfoPass',
                         'elapsed': round(time.perf_counter() - stage_start, 6),
                         'replacements': len(strip_edits),
-                        'backend': 'shared_final_context'})
-    stage_start = time.perf_counter()
-    output = _apply_replacements_once(output, edits)
-    details.append({'phase': 'vm_output:final_render',
-                    'elapsed': round(time.perf_counter() - stage_start, 6),
-                    'replacements': len(edits)})
-    return output, details
+                        'backend': backend})
+    return edits, details
 
 
 def _obfuscate_vm_output(
@@ -404,6 +411,15 @@ def _obfuscate_vm_output_scoped(
         and 'string_obf' not in emitter_names
         and not RENAME_OPTIONS.get().get('readable', False)
     )
+    strip_entries = [entry for entry in after if entry[0] == 'strip_info']
+    fused_strip = len(strip_entries) == 1
+    reuse_scalar_analysis = (
+        (deferred_names or (fused_strip and not identifier_names))
+        and 'string_obf' not in emitter_names
+        and len(strip_entries) <= 1
+        and all(name in {'strip_info', 'minify'} for name, _ in after)
+    )
+    reused_identifiers = False
 
     def apply_replacements(source: str, replacements) -> str:
         from ...passes.numeric_provenance import join_code
@@ -585,13 +601,28 @@ def _obfuscate_vm_output_scoped(
                 "backend": "structured_emitter",
             })
 
+        finalize = None
+        if reuse_scalar_analysis:
+            def finalize(expanded_keys):
+                edits, final_details = _plan_output_identifiers(
+                    shared_ctx, rename='rename_obf' in identifier_names, strip=fused_strip,
+                    expanded_number_keys=expanded_keys, backend='reused_source_context')
+                final_details.insert(0, {'phase': 'vm_output:final_parse', 'elapsed': 0.0,
+                                        'parser': 'treesitter', 'parse_count': 0,
+                                        'backend': 'reused_source_context'})
+                return edits, final_details
         output, emitter_details = emit_vm_literals(
             output,
             emitter_names,
             ctx=shared_ctx,
             replacements=planned_replacements,
             literal_nodes=literal_nodes,
+            finalize=finalize,
         )
+        reused_identifiers = any(item.get('reused') for item in emitter_details
+                                 if item['phase'] == 'vm_output:analysis_reuse')
+        if reused_identifiers:
+            final_details = emitter_details
         if rename_detail is not None:
             render_detail = next(
                 (
@@ -616,18 +647,19 @@ def _obfuscate_vm_output_scoped(
     # A single StripInfo pre-pass can share that exact tree and binding graph:
     # local-name edits cannot affect private fields, labels or comment ranges.
     # Explicit repeated StripInfo layers retain the legacy sequential path.
-    strip_entries = [entry for entry in after if entry[0] == 'strip_info']
-    fused_strip = len(strip_entries) == 1
     if "rename_obf" in identifier_names or fused_strip:
-        output, final_details = _finalize_output_identifiers(
-            output, rename="rename_obf" in identifier_names, strip=fused_strip)
-        details.extend(final_details)
+        if not reused_identifiers:
+            output, final_details = _finalize_output_identifiers(
+                output, rename="rename_obf" in identifier_names, strip=fused_strip)
+            details.extend(final_details)
         if deferred_names:
             names = next(item for item in final_details if item['phase'] == 'vm_output:final_names')
             bindings = next(item for item in final_details if item['phase'] == 'vm_output:final_bindings')
-            rendered = next(item for item in final_details if item['phase'] == 'vm_output:final_render')
+            rendered = next(item for item in final_details if item['phase'] in {
+                'vm_output:final_render', 'vm_output:literal_render'})
             details.append({**names, 'phase': 'vm_output:rename_obf',
-                            'class': 'VmIdentifierEmitter', 'backend': 'deferred_final_context',
+                            'class': 'VmIdentifierEmitter', 'backend': (
+                                'reused_source_context' if reused_identifiers else 'deferred_final_context'),
                             'collect_elapsed': bindings['elapsed'],
                             'render_elapsed': rendered['elapsed']})
         if fused_strip:

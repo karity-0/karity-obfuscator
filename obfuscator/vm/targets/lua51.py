@@ -600,9 +600,10 @@ end
         return normalize_dump(run_tool("\n" * header.count("\n") + source, "dump", toolchain))
 
     def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
-        if not source.startswith("return "):
+        returned = re.match(r'\Areturn\b', source)
+        if returned is None:
             raise ValueError("Lua 5.1 VM source must return its runtime function")
-        body = source[len("return "):]
+        body = source[returned.end():].lstrip()
         # The lowered body is already native Lua 5.1 source. Emitting it as a
         # function literal preserves the same nested prototype used for the
         # normalized integrity dump, without serializing the whole runtime into

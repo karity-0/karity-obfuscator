@@ -53,7 +53,20 @@ class BooleanLiteral:
     value: bool
 
 
-Fragment = str | NumberLiteral | StringLiteral | BooleanLiteral
+@dataclass(frozen=True, slots=True)
+class LiteralRegion:
+    start: int
+    end: int
+    kind: str
+
+
+class _RegionEnd:
+    __slots__ = ()
+
+
+_END_REGION = _RegionEnd()
+
+Fragment = str | NumberLiteral | StringLiteral | BooleanLiteral | LiteralRegion | _RegionEnd
 
 
 _GENERATED_NUMBER_RE = re.compile(
@@ -69,6 +82,15 @@ _GENERATED_NUMBER_RE = re.compile(
 
 _EXACT_HEX64_RE = re.compile(r"0[xX][0-9A-Fa-f]{16}")
 _MEME_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"|' + _GENERATED_NUMBER_RE.pattern)
+# A deliberately restricted scalar grammar: numeric/quoted-string tokens and
+# operators only. No identifiers, declarations, tables or lexical scopes can
+# be introduced. Unknown generated syntax takes the full final-analysis path.
+_SCALAR_NUMBER = re.compile(_GENERATED_NUMBER_RE.pattern)
+_SCALAR_EXPRESSION = re.compile(
+    r'(?:' + _GENERATED_NUMBER_RE.pattern +
+    r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+    r'|[\s()+*/%^&|~<>=#-]+|\.\.)+', re.DOTALL,
+)
 _EXACT_GRAPH_REGION_RE = re.compile(
     r"--\[\[KARITY_EXACT_BEGIN\]\].*?--\[\[KARITY_EXACT_END\]\]",
     re.DOTALL,
@@ -131,6 +153,7 @@ def _parse_fragments(
     ctx,
     replacements: list[Replacement],
     literal_nodes: list | None = None,
+    *, track_regions=False,
 ) -> tuple[list[Fragment], int]:
     exact_graph_ranges = [
         (match.start(), match.end() - 1)
@@ -217,7 +240,7 @@ def _parse_fragments(
             raise RuntimeError(
                 f"overlapping VM output event at {start}:{end}, previous end={pos - 1}"
             )
-        if start > pos:
+        if start > pos and not track_regions:
             parts.append(source[pos:start])
 
         if isinstance(payload, Replacement):
@@ -230,6 +253,8 @@ def _parse_fragments(
             continue
 
         node = payload
+        if track_regions:
+            parts.append(LiteralRegion(start, end + 1, node.type))
         token = source[start:end + 1]
         if node.type == "number":
             parts.append(NumberLiteral(
@@ -244,8 +269,10 @@ def _parse_fragments(
         else:
             parts.append(BooleanLiteral(node.type == "true"))
         captured_count += 1
+        if track_regions:
+            parts.append(_END_REGION)
         pos = end + 1
-    if pos < len(source):
+    if pos < len(source) and not track_regions:
         parts.append(source[pos:])
     return parts, captured_count
 
@@ -268,6 +295,8 @@ def _emit_boolean(value: bool) -> list[Fragment]:
 
 
 def _render(parts: list[Fragment]) -> str:
+    if len(parts) == 1 and isinstance(parts[0], str):
+        return parts[0]
     rendered: list[str] = []
     for part in parts:
         if isinstance(part, str):
@@ -278,13 +307,77 @@ def _render(parts: list[Fragment]) -> str:
         elif isinstance(part, StringLiteral):
             rendered.append(CodeText(part.token,origins=[(0,len(part.token),part.origin)]))
         else:
+            if not isinstance(part, BooleanLiteral):
+                raise TypeError('VM region marker passed to the ordinary renderer')
             rendered.append("true" if part.value else "false")
     return join_code(rendered)
+
+
+def _render_regions(source, parts, finalize):
+    """Keep original coordinates through scalar expansion and render once.
+
+    The binding graph still belongs to the original tree. Literal edits do not
+    overlap identifiers; the finalizer combines both plans in that coordinate
+    system. Private numeric keys require projected syntax: a formerly numeric
+    key expanded to an expression must retain StripInfo's conservative refusal.
+    """
+    from ..passes.rename_ts import _apply_replacements_once
+    started = time.perf_counter()
+    edits, expanded_keys = [], set()
+    safe = True
+    region = None
+    fragments = []
+    for part in parts:
+        if isinstance(part, LiteralRegion):
+            region = part
+            fragments = []
+        elif part is _END_REGION:
+            if region is None:
+                raise RuntimeError('VM literal provenance region ended without a start')
+            expression = _render(fragments)
+            edits.append((region.start, region.end - 1, expression))
+            original = str.__getitem__(source, slice(region.start, region.end))
+            if region.kind != 'string' and expression != original:
+                safe = safe and _SCALAR_EXPRESSION.fullmatch(expression) is not None
+            if region.kind == 'number' and _SCALAR_NUMBER.fullmatch(expression) is None:
+                expanded_keys.add(region.start)
+            region = None
+        else:
+            fragments.append(part)
+    if region is not None:
+        raise RuntimeError('Unclosed VM literal provenance region')
+    details = []
+    projection_elapsed = time.perf_counter() - started
+    if safe:
+        identifier_edits, details = finalize(expanded_keys)
+        # A private field plan may replace a whole concatenated string key.
+        # Its enclosed literal regions are consumed by that structural edit.
+        filter_start = time.perf_counter()
+        ranges = sorted((start, end) for start, end, _ in identifier_edits)
+        filtered = []
+        index = 0
+        for start, end, expression in edits:
+            while index < len(ranges) and ranges[index][1] < start:
+                index += 1
+            if index < len(ranges) and ranges[index][0] <= start and end <= ranges[index][1]:
+                continue
+            filtered.append((start, end, expression))
+        edits = filtered
+        edits.extend(identifier_edits)
+        projection_elapsed += time.perf_counter() - filter_start
+    stage_start = time.perf_counter()
+    output = _apply_replacements_once(source, edits)
+    render_elapsed = time.perf_counter() - stage_start
+    details.append({'phase': 'vm_output:analysis_reuse',
+                    'elapsed': round(projection_elapsed, 6), 'reused': safe,
+                    'fallback_reason': None if safe else 'generated_non_scalar_syntax'})
+    return output, details, render_elapsed
 
 
 def emit_vm_literals(
     source: str, pass_names: list[str], *, ctx=None,
     replacements: list[Replacement] | None = None, literal_nodes: list | None = None,
+    finalize=None,
 ) -> tuple[str,list[dict]]:
     from ..passes.literal_mosaic import ACTIVE, boundary, use_mosaic
     from ..passes.function_costs import POLICY
@@ -293,7 +386,7 @@ def emit_vm_literals(
     service = boundary(pass_names,lua_version=POLICY.get().lua_version,phase=phase)
     with use_mosaic(service):
         return _emit_vm_literals_scoped(source,pass_names,ctx=ctx,
-            replacements=replacements,literal_nodes=literal_nodes)
+            replacements=replacements,literal_nodes=literal_nodes,finalize=finalize)
 
 
 def _emit_vm_literals_scoped(
@@ -303,10 +396,13 @@ def _emit_vm_literals_scoped(
     ctx=None,
     replacements: list[Replacement] | None = None,
     literal_nodes: list | None = None,
+    finalize=None,
 ) -> tuple[str, list[dict]]:
     """Apply identifier plans and literal stages over one syntax context."""
     stages = [name for name in pass_names if name in EMITTER_PASS_NAMES or name == "meme_strings"]
     replacements = replacements or []
+    if finalize is not None and (replacements or 'string_obf' in stages):
+        raise ValueError('Scalar analysis reuse requires unchanged identifiers and string literals')
     if not stages and not replacements:
         return source, []
 
@@ -316,7 +412,7 @@ def _emit_vm_literals_scoped(
         ctx = parse(source)
         parse_count = 1
     parts, literal_count = _parse_fragments(
-        source, ctx, replacements, literal_nodes,
+        source, ctx, replacements, literal_nodes, track_regions=finalize is not None,
     )
     details: list[dict] = [{
         "phase": (
@@ -401,11 +497,16 @@ def _emit_vm_literals_scoped(
         })
 
     render_start = time.perf_counter()
-    rendered = _render(parts)
+    if finalize is None:
+        rendered = _render(parts)
+        render_elapsed = time.perf_counter() - render_start
+    else:
+        rendered, final_details, render_elapsed = _render_regions(source, parts, finalize)
+        details.extend(final_details)
     details.append({
         "phase": "vm_output:literal_render",
         "class": "VmLiteralEmitter",
-        "elapsed": round(time.perf_counter() - render_start, 6),
+        "elapsed": round(render_elapsed, 6),
         "output_bytes": len(rendered.encode("utf-8")),
     })
     return rendered, details
