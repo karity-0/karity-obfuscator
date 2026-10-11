@@ -28,6 +28,11 @@ class ClassicBackend(VMBackend):
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
+        # The target owns the helper representation; do not rediscover it from
+        # a version string after the frontend has selected the target adapter.
+        lowered.backend_data['classic_native_bit_helpers'] = (
+            context.target.graph_runtime_options()['private_state_native']
+            if context.target is not None else False)
         from .classic_state import lower_state
         lowered.backend_data["classic_state"] = lower_state(
             lowered.backend_data["layout"], super().runtime_variants(lowered),
@@ -80,7 +85,8 @@ class ClassicBackend(VMBackend):
                 handler_map=vm.handler_map(), used_ops=set(vm.used_aliases),
             )
             if lowered.policy.get('dispatcher_target_hiding', False):
-                result = apply_dispatch_target_hiding(result, native_state=True)
+                result = apply_dispatch_target_hiding(
+                    result, native_state=lowered.backend_data['classic_native_bit_helpers'])
             return result
         return build_exec_variants(source, count, render) if count > 1 else render(source, 0)
 

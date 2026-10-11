@@ -1,4 +1,5 @@
 """Native Lua 5.3 frontend and output boundary."""
+import re
 from .capabilities import Capability as C, TargetRequirements
 
 
@@ -9,6 +10,10 @@ class Lua53Target:
     requirements = TargetRequirements({C.NATIVE_BITOPS, C.INTEGER_ARITHMETIC, C.ENV_TABLE})
     capabilities = {"native_bitops": True, "env_model": "lexical", "integer_semantics": "int64",
                     "loader_api": "load", "unpack_api": "table.unpack"}
+
+    def function_cost_policy(self):
+        from ...passes.function_costs import CostPolicy
+        return CostPolicy(lua_version='5.3')
 
     def runtime_template(self, name):
         from pathlib import Path
@@ -67,12 +72,14 @@ class Lua53Target:
 
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state
+        passes = context.output_passes if context is not None else ()
+        prefix = context.output_prefix if context is not None else ''
         finalizer = None
-        if "minify" in context.output_passes:
+        if "minify" in passes:
             from ...passes.minify import MinifyPass
             finalizer = MinifyPass().run
-        return apply_line_state(source, context.output_prefix, finalizer=finalizer,
-                                output_passes=context.output_passes,
+        return apply_line_state(source, prefix, finalizer=finalizer,
+                                output_passes=passes,
                                 qualify_globals=getattr(self, "isolate_runtime_globals", False))
 
     def dump_function(self, source, header, decoy_name, decoy_value, toolchain):
@@ -80,7 +87,10 @@ class Lua53Target:
         return _dump_function_stripped(source, header, decoy_name, decoy_value, toolchain)
 
     def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
-        body = source[len("return "):]
+        returned = re.match(r'\Areturn\b', source)
+        if returned is None:
+            raise ValueError('Lua 5.3 VM source must return its runtime function')
+        body = source[returned.end():].lstrip()
         return (f'local {decoy_name}="{decoy_value}"local {vm_name}={body};'
                 f'return ({vm_name}(1032,413,258,104,953,283,120))'
                 f'({blob},"{tail}",{vm_name})')

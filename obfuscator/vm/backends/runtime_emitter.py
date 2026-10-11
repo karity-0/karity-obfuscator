@@ -18,6 +18,7 @@ from obfuscator.vm.backends.handler_codec import (
     patch_integrity_sources,
 )
 from obfuscator.vm.kae_blob import encrypt_blob
+from obfuscator.vm.blob_formats import unicode_blob_codec
 from obfuscator.vm.vm_variants import apply_instr_layout
 from obfuscator.vm.output_emitter import EMITTER_PASS_NAMES, emit_vm_literals
 from obfuscator.vm.runtime_trace import apply_runtime_trace
@@ -287,7 +288,72 @@ def _rename_vm_keys(src: str) -> str:
     return src
 
 
+def _finalize_output_identifiers(output: str, *, rename: bool, strip: bool) -> tuple[str, list[dict]]:
+    """Share final syntax/bindings without trusting generator name coverage."""
+    from obfuscator.passes.ts_utils import parse as parse_ts
+    from obfuscator.passes.rename_ts import _apply_replacements_once
+    details: list[dict] = []
+    stage_start = time.perf_counter()
+    final_ctx = parse_ts(output)
+    details.append({'phase': 'vm_output:final_parse', 'parser': 'treesitter',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'input_bytes': len(output.encode('utf-8')), 'parse_count': 1})
+    edits, planned_details = _plan_output_identifiers(final_ctx, rename=rename, strip=strip)
+    details.extend(planned_details)
+    stage_start = time.perf_counter()
+    output = _apply_replacements_once(output, edits)
+    details.append({'phase': 'vm_output:final_render',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'replacements': len(edits)})
+    return output, details
+
+
+def _plan_output_identifiers(final_ctx, *, rename, strip, expanded_number_keys=frozenset(),
+                             backend='shared_final_context'):
+    from obfuscator.passes.rename_ts import resolve_bindings, rename_plan_with_ctx_profiled
+    from obfuscator.passes.strip_info import StripInfoPass
+    details = []
+    stage_start = time.perf_counter()
+    resolution = resolve_bindings(final_ctx, collect_literals=False)
+    details.append({'phase': 'vm_output:final_bindings',
+                    'elapsed': round(time.perf_counter() - stage_start, 6),
+                    'bindings': len(resolution[0]), 'identifier_count': resolution[4]})
+    edits = []
+    if rename or strip:
+        stage_start = time.perf_counter()
+        options = {} if rename else {'readable': False}
+        names, _, _ = rename_plan_with_ctx_profiled(final_ctx, resolution=resolution, **options)
+        edits.extend((item.start, item.end, item.new_text) for item in names)
+        details.append({'phase': 'vm_output:final_names',
+                        'elapsed': round(time.perf_counter() - stage_start, 6),
+                        'replacements': len(names), 'bindings': len(resolution[0]),
+                        'backend': backend})
+    if strip:
+        stage_start = time.perf_counter()
+        strip_edits = StripInfoPass(rename_locals=False).replacements_with_ctx(
+            final_ctx, bindings=resolution[0], expanded_number_keys=expanded_number_keys)
+        edits.extend(strip_edits)
+        details.append({'phase': 'vm_output:strip_info', 'class': 'StripInfoPass',
+                        'elapsed': round(time.perf_counter() - stage_start, 6),
+                        'replacements': len(strip_edits),
+                        'backend': backend})
+    return edits, details
+
+
 def _obfuscate_vm_output(
+    script: str, pass_names: list[str], *, compact_globals: bool = False,
+    protect_vm_dispatcher: bool = True,
+) -> tuple[str,list[dict]]:
+    from obfuscator.passes.literal_mosaic import boundary, use_mosaic
+    from obfuscator.passes.function_costs import POLICY
+    service = boundary(pass_names,lua_version=POLICY.get().lua_version,
+        phase='vm_output' if protect_vm_dispatcher else 'packer_output')
+    with use_mosaic(service):
+        return _obfuscate_vm_output_scoped(script,pass_names,
+            compact_globals=compact_globals,protect_vm_dispatcher=protect_vm_dispatcher)
+
+
+def _obfuscate_vm_output_scoped(
     script: str,
     pass_names: list[str],
     *,
@@ -334,8 +400,29 @@ def _obfuscate_vm_output(
     output = script
     details: list[dict] = []
     shared_ctx = None
+    from obfuscator.names import RENAME_OPTIONS
+    # Pure literal stages neither read nor rewrite variable names. When no
+    # StringObf allocator or localized-alias plan depends on the early names,
+    # defer naming to the mandatory final analysis instead of assigning twice.
+    # Readable names retain their existing two-stage hint spelling.
+    deferred_names = (
+        'rename_obf' in identifier_names
+        and 'localize_globals' not in identifier_names
+        and 'string_obf' not in emitter_names
+        and not RENAME_OPTIONS.get().get('readable', False)
+    )
+    strip_entries = [entry for entry in after if entry[0] == 'strip_info']
+    fused_strip = len(strip_entries) == 1
+    reuse_scalar_analysis = (
+        (deferred_names or (fused_strip and not identifier_names))
+        and 'string_obf' not in emitter_names
+        and len(strip_entries) <= 1
+        and all(name in {'strip_info', 'minify'} for name, _ in after)
+    )
+    reused_identifiers = False
 
     def apply_replacements(source: str, replacements) -> str:
+        from ...passes.numeric_provenance import join_code
         if not replacements:
             return source
         parts: list[str] = []
@@ -345,7 +432,7 @@ def _obfuscate_vm_output(
             parts.append(replacement.new_text)
             pos = replacement.end + 1
         parts.append(source[pos:])
-        return "".join(parts)
+        return join_code(parts)
 
     def run_legacy(
         source: str,
@@ -355,10 +442,16 @@ def _obfuscate_vm_output(
             return source, []
 
         pipeline = Pipeline(show_header=False)
+        from obfuscator.passes.literal_mosaic import ACTIVE
+        pipeline.mosaic_scope = ACTIVE.get()
         names: list[str] = []
         for configured_name, cls in entries:
             if cls.__name__ == "FunctionObfuscationPass":
                 pipeline.add(cls(skip_vm_dispatcher=protect_vm_dispatcher))
+            elif cls.__name__ == "StripInfoPass":
+                # The shared identifier emitter already renamed locals. Keep
+                # fields/labels/comments stripped without a second rename scan.
+                pipeline.add(cls(rename_locals='rename_obf' not in identifier_names))
             else:
                 pipeline.add(cls())
             names.append(configured_name)
@@ -440,7 +533,7 @@ def _obfuscate_vm_output(
     if legacy_details:
         shared_ctx = None
 
-    if identifier_names or emitter_names:
+    if emitter_names or identifier_names and not deferred_names:
         from obfuscator.passes.localize_globals import LocalizeGlobalsPass
         from obfuscator.passes.rename_ts import rename_plan_with_ctx_profiled
         if shared_ctx is None:
@@ -461,7 +554,7 @@ def _obfuscate_vm_output(
         renamed_spans: set[tuple[int, int]] = set()
         literal_nodes = None
         rename_detail = None
-        if "rename_obf" in identifier_names:
+        if "rename_obf" in identifier_names and not deferred_names:
             stage_start = time.perf_counter()
             rename_replacements, literal_nodes, rename_profile = (
                 rename_plan_with_ctx_profiled(shared_ctx)
@@ -508,13 +601,28 @@ def _obfuscate_vm_output(
                 "backend": "structured_emitter",
             })
 
+        finalize = None
+        if reuse_scalar_analysis:
+            def finalize(expanded_keys):
+                edits, final_details = _plan_output_identifiers(
+                    shared_ctx, rename='rename_obf' in identifier_names, strip=fused_strip,
+                    expanded_number_keys=expanded_keys, backend='reused_source_context')
+                final_details.insert(0, {'phase': 'vm_output:final_parse', 'elapsed': 0.0,
+                                        'parser': 'treesitter', 'parse_count': 0,
+                                        'backend': 'reused_source_context'})
+                return edits, final_details
         output, emitter_details = emit_vm_literals(
             output,
             emitter_names,
             ctx=shared_ctx,
             replacements=planned_replacements,
             literal_nodes=literal_nodes,
+            finalize=finalize,
         )
+        reused_identifiers = any(item.get('reused') for item in emitter_details
+                                 if item['phase'] == 'vm_output:analysis_reuse')
+        if reused_identifiers:
+            final_details = emitter_details
         if rename_detail is not None:
             render_detail = next(
                 (
@@ -529,19 +637,46 @@ def _obfuscate_vm_output(
             rename_detail["render_backend"] = "shared_identifier_literal_render"
         details.extend(emitter_details)
 
-    if "rename_obf" in identifier_names:
-        from obfuscator.passes.rename_ts import rename_script_ts
-        stage_start = time.perf_counter()
-        output = rename_script_ts(output)
-        details.append({"phase": "vm_output:final_names",
-                        "elapsed": round(time.perf_counter() - stage_start, 6)})
+    # Original nodes are no longer used once fragments have been rendered.
+    # Release that tree before allocating the larger final syntax context.
+    shared_ctx = None
+    literal_nodes = None
+
+    # Keep final naming after every literal/alias generator. Analyze the final
+    # source, so helpers from StringObf/LocalizeGlobals cannot bypass naming.
+    # A single StripInfo pre-pass can share that exact tree and binding graph:
+    # local-name edits cannot affect private fields, labels or comment ranges.
+    # Explicit repeated StripInfo layers retain the legacy sequential path.
+    if "rename_obf" in identifier_names or fused_strip:
+        if not reused_identifiers:
+            output, final_details = _finalize_output_identifiers(
+                output, rename="rename_obf" in identifier_names, strip=fused_strip)
+            details.extend(final_details)
+        if deferred_names:
+            names = next(item for item in final_details if item['phase'] == 'vm_output:final_names')
+            bindings = next(item for item in final_details if item['phase'] == 'vm_output:final_bindings')
+            rendered = next(item for item in final_details if item['phase'] in {
+                'vm_output:final_render', 'vm_output:literal_render'})
+            details.append({**names, 'phase': 'vm_output:rename_obf',
+                            'class': 'VmIdentifierEmitter', 'backend': (
+                                'reused_source_context' if reused_identifiers else 'deferred_final_context'),
+                            'collect_elapsed': bindings['elapsed'],
+                            'render_elapsed': rendered['elapsed']})
+        if fused_strip:
+            after = [entry for entry in after if entry[0] != "strip_info"]
 
     output, post_details = run_legacy(output, after)
     details.extend(post_details)
 
     # Never expose build-time dispatcher annotations, even without minify.
-    if protect_vm_dispatcher:
-        output = output.replace("--[[VM_DISPATCH_ENTRY]]", " ")
+    if protect_vm_dispatcher and "--[[VM_DISPATCH_ENTRY]]" in output:
+        from obfuscator.passes.minify import _COMMENT_TOKEN_RE
+        from obfuscator.passes.rename_ts import _apply_replacements_once
+        # Strip only annotation tokens; an identical string literal is data.
+        marker_edits = [(match.start(), match.end()-1, ' ')
+                        for match in _COMMENT_TOKEN_RE.finditer(output)
+                        if match.group('longcmt') == '--[[VM_DISPATCH_ENTRY]]']
+        output = _apply_replacements_once(output, marker_edits)
     return output, details
 
 
@@ -599,10 +734,12 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     #   - string : 단일 base36 문자열 (주입 없음)
     #   - table  : 스크램블 청크 테이블 → table.concat 후 from_base36
     #   - numeric: 32비트 정수 테이블 → base36 우회, 바이트 직접 복원
+    #   - emoji/chinese: 고정 UTF-8 폭의 문자표 → 암호문 바이트 직접 복원
     # 주입은 output_transform(재난독화) 전에 해야 주입한 전역(table.concat/
     # string.char 등)도 함께 localize/rename 된다. 블롭 리터럴 자체는 _vmf
     # 인자라 dump/crc와 무관(컨테이너 형태를 바꿔도 anti-tamper 영향 없음).
     blob_form = root_protection["blob_form"]
+    unicode_codec = unicode_blob_codec(blob_form) if blob_form in {"emoji", "chinese"} else None
     if blob_form == "table":
         vm_code = vm_code.replace("from_base36(blob)",
                                   "from_base36(table.concat(blob))", 1)
@@ -611,6 +748,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         vm_code = vm_code.replace(
             decode_call, target.numeric_blob_decoder(_NUMERIC_DECODE), 1,
         )
+    elif unicode_codec is not None:
+        vm_code = vm_code.replace(target.blob_decode_call(), unicode_codec.decoder(), 1)
 
     # 4. dump 대상 함수 소스 구성 + 재난독화 (이후 텍스트 변경 없음)
     _phase_start = time.perf_counter()
@@ -649,10 +788,25 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # Graph banks and blob decoders may introduce target API operations too.
     # Finalize the complete runtime before output passes rename its identifiers.
     vm_func_src = target.finalize_runtime(vm_func_src)
-    vm_func_src, vm_output_details = output_transform(
-        vm_func_src,
-        context.output_passes,
-    )
+    from ...passes.function_costs import POLICY
+    cost_token = POLICY.set(target.function_cost_policy())
+    try:
+        from ...passes.literal_mosaic import ACTIVE
+        mosaic = ACTIVE.get()
+        if mosaic is not None and 'output_cost' in mosaic.options:
+            from ...passes.numeric_provenance import CodeText
+            # Keep any backend-owned spans. Unknown existing roles remain hot
+            # rather than losing their protection/provenance at this boundary.
+            vm_func_src = CodeText(vm_func_src,
+                protected=getattr(vm_func_src,'protected',()),
+                reconstructions=getattr(vm_func_src,'reconstructions',()),
+                origins=getattr(vm_func_src,'origins',()) or [(0,len(vm_func_src),'vm_entry')])
+        vm_func_src, vm_output_details = output_transform(
+            vm_func_src,
+            context.output_passes,
+        )
+    finally:
+        POLICY.reset(cost_token)
     vm_func_src = vm_func_src.replace(
         "--[[KARITY_EXACT_BEGIN]]", "",
     ).replace("--[[KARITY_EXACT_END]]", "")
@@ -713,6 +867,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         lua_blob = _to_table_blob(encrypted_blob, random.randint(16, 48))
     elif blob_form == "numeric":
         lua_blob = _to_numeric_blob(encrypted_blob)
+    elif unicode_codec is not None:
+        lua_blob = unicode_codec.literal(encrypted_blob)
     else:
         lua_blob = _to_base36(encrypted_blob)
     context.profile.append({"phase": "encrypt_blob", "elapsed": round(time.perf_counter() - _phase_start, 6)})

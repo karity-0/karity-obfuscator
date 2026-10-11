@@ -231,6 +231,10 @@ class Lua51Target:
     capabilities = {"native_bitops": False, "env_model": "function", "integer_semantics": "binary64",
                     "loader_api": "loadstring", "unpack_api": "unpack"}
 
+    def function_cost_policy(self):
+        from ...passes.function_costs import CostPolicy
+        return CostPolicy(lua_version='5.1')
+
     def runtime_template(self, name):
         if name not in ('vm.lua','classic_exec.lua','mov_exec.lua'):
             raise ValueError(f'unknown runtime template: {name}')
@@ -584,18 +588,22 @@ end
         # arithmetic. Emit it in the target-native binary64 domain for every
         # backend so bind_lines never needs the whole-source compatibility
         # translator after backend emission.
-        result, state, lines = apply_line_state(source, "",
+        prefix = context.output_prefix if context is not None else ''
+        result, state, lines = apply_line_state(source, prefix,
                                                output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]",
                                                native_u32=True)
         return result.replace("--[[TARGET51_PRELUDE_END]]", ""), state, lines
 
     def dump_function(self, source, header, decoy_name, decoy_value, toolchain):
-        return normalize_dump(run_tool(source, "dump", toolchain))
+        # Canonical Lua 5.1 dumps retain each function's line boundaries. Match
+        # the final wrapper's prefix without executing its contents at build time.
+        return normalize_dump(run_tool("\n" * header.count("\n") + source, "dump", toolchain))
 
     def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
-        if not source.startswith("return "):
+        returned = re.match(r'\Areturn\b', source)
+        if returned is None:
             raise ValueError("Lua 5.1 VM source must return its runtime function")
-        body = source[len("return "):]
+        body = source[returned.end():].lstrip()
         # The lowered body is already native Lua 5.1 source. Emitting it as a
         # function literal preserves the same nested prototype used for the
         # normalized integrity dump, without serializing the whole runtime into

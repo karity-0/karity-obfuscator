@@ -35,7 +35,19 @@
         <section class="quick-setup v2-only">
           <span class="eyebrow">PROTECTION</span>
           <h1>보호 설정</h1>
-          <div id="quick-presets" class="preset-grid" aria-label="보호 프리셋"></div>
+          <div class="quick-choice">
+            <span class="quick-choice-label">보호 강도</span>
+            <div id="quick-presets" class="preset-grid" role="group" aria-label="보호 강도"></div>
+          </div>
+          <div class="quick-choice">
+            <span class="quick-choice-label">VM</span>
+            <div id="quick-backends" class="preset-grid backend-grid" role="group" aria-label="VM backend">
+              <button type="button" class="preset-button" data-backend="classic"><strong>Classic</strong></button>
+              <button type="button" class="preset-button" data-backend="karity"><strong>Karity</strong></button>
+              <button type="button" class="preset-button" data-backend="mov"><strong>MOV</strong></button>
+            </div>
+          </div>
+          <button id="backend-capability-status" class="quick-status capability-link" type="button" hidden></button>
           <span id="quick-preset-status" class="quick-status"></span>
         </section>
         <details id="advanced-settings" class="advanced-settings">
@@ -48,15 +60,6 @@
 
           <label class="field-label" for="preset-select">Preset</label>
           <select id="preset-select" class="select-control"></select>
-
-          <label class="field-label" for="level-select">Protect level</label>
-          <select id="level-select" class="select-control">
-            <option value="light">Light</option>
-            <option value="balanced">Balanced</option>
-            <option value="strong">Strong</option>
-            <option value="maximum">Maximum</option>
-            <option value="custom">&lt;Custom&gt;</option>
-          </select>
 
           <div class="config-source" id="config-source"></div>
         </section>
@@ -128,7 +131,7 @@
                 <label class="choice-item"><input class="signature-pattern" type="checkbox" value="{name} Lua Protection&#10;Build V{version}"><span>{name} Lua Protection / Build V{version}</span></label>
                 <label class="choice-item"><input class="signature-pattern" type="checkbox" value="Secured by {name}&#10;Version: {version}"><span>Secured by {name} / Version: {version}</span></label>
                 <label class="field-label" for="signature-custom-pattern">Custom pattern</label>
-                <input id="signature-custom-pattern" class="text-control" placeholder="{name} / {version}">
+                <input id="signature-custom-pattern" class="text-control" placeholder="{name} / {version} / {hash}">
               </div>
             </div>
 
@@ -140,6 +143,7 @@
           </div>
         </details>
 
+        <p id="backend-capability-note" class="quick-status" role="status"></p>
         <div id="vm-option-groups"></div>
           </div>
         </details>
@@ -261,6 +265,38 @@ print(&quot;hello, karity&quot;)"></textarea>
 
 <div id="settings-backdrop" class="settings-backdrop hidden"></div>
 <div id="tooltip" class="tooltip"></div>
+<dialog id="backend-picker" class="backend-picker" aria-labelledby="backend-picker-title" aria-describedby="backend-picker-description">
+  <div class="backend-picker-content">
+    <header class="backend-picker-header">
+      <div><span class="eyebrow">VIRTUAL MACHINE</span><h2 id="backend-picker-title">VM 백엔드 선택</h2><p id="backend-picker-description">코드를 실행할 VM을 선택하세요.</p></div>
+      <button id="backend-picker-close" class="button ghost" type="button" aria-label="VM 선택 닫기">닫기 <kbd>Esc</kbd></button>
+    </header>
+    <div class="backend-cards" role="group" aria-label="VM 백엔드">
+      <button type="button" class="backend-card" data-backend-choice="classic" aria-pressed="false">
+        <span class="backend-card-top"><span class="backend-kind">직접 실행</span><span class="backend-current">현재 선택</span></span>
+        <svg class="backend-art" viewBox="0 0 180 110" fill="none" aria-hidden="true"><path d="M30 30H66V66H30zM72 30H108V66H72zM114 30H150V66H114z"/><path d="M48 72v16h84V72M90 72v16"/><circle cx="90" cy="88" r="4"/></svg>
+        <strong class="backend-name">Classic</strong>
+        <span class="backend-description">명령어를 직접 처리하는 단순한 VM.</span>
+        <span class="backend-benefit">비교적 가벼운 실행 구조.</span>
+      </button>
+      <button type="button" class="backend-card" data-backend-choice="karity" aria-pressed="false">
+        <span class="backend-card-top"><span class="backend-kind">상태 기반 보호</span><span class="backend-current">현재 선택</span></span>
+        <svg class="backend-art" viewBox="0 0 180 110" fill="none" aria-hidden="true"><path d="m90 18 48 28v36l-48 18-48-18V46zM42 46l48 26 48-26M90 72v28M90 18v30M42 82l30-17M138 82l-30-17"/><circle cx="90" cy="58" r="13"/><circle cx="90" cy="18" r="4"/><circle cx="42" cy="82" r="4"/><circle cx="138" cy="82" r="4"/></svg>
+        <strong class="backend-name">Karity</strong>
+        <span class="backend-description">값·레지스터·실행 흐름을 상태와 연계.</span>
+        <span class="backend-benefit">기본 추천 · Karity의 핵심 보호 구조.</span>
+      </button>
+      <button type="button" class="backend-card" data-backend-choice="mov" aria-pressed="false">
+        <span class="backend-card-top"><span class="backend-kind">조회 기반 연산</span><span class="backend-current">현재 선택</span></span>
+        <svg class="backend-art" viewBox="0 0 180 110" fill="none" aria-hidden="true"><path d="M26 24h54v54H26zM26 42h54M26 60h54M44 24v54M62 24v54M100 42h54v54h-54zM100 60h54M100 78h54M118 42v54M136 42v54M80 34h47v8M100 88H53V78"/><path d="m123 38 4 4 4-4M49 82l4-4 4 4"/></svg>
+        <strong class="backend-name">MOV</strong>
+        <span class="backend-description">정수 연산을 조회 테이블로 처리.</span>
+        <span class="backend-benefit">독특한 연산 경로 · 추가 실행 비용.</span>
+      </button>
+    </div>
+    <p class="backend-picker-hint">클릭해서 선택 · 방향키로 이동</p>
+  </div>
+</dialog>
 <div id="preferences-overlay" class="preferences-overlay hidden" role="presentation">
   <section class="preferences-panel" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
     <header class="preferences-header">
@@ -287,6 +323,10 @@ print(&quot;hello, karity&quot;)"></textarea>
       <label class="preference-row choice" for="remember-sections">
         <span><strong>설정 그룹 상태 기억</strong></span>
         <input id="remember-sections" type="checkbox">
+      </label>
+      <label class="preference-row choice" for="quick-vm-change">
+        <span><strong>빠른 VM 변경</strong><small>선택 화면 없이 바로 변경</small></span>
+        <input id="quick-vm-change" type="checkbox">
       </label>
     </div>
     <div id="appearance-panel" class="preferences-body" role="tabpanel" aria-labelledby="appearance-tab">
@@ -321,6 +361,7 @@ print(&quot;hello, karity&quot;)"></textarea>
 </div>
 <script src="i18n.js"></script>
 <script src="editor.js"></script>
+<script src="preset_state.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

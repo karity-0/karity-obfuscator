@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import IntEnum
 import struct
 
+from .data_types import LuaConstant, LuaString
+
 
 # ---------------------------------------------------------------------------
 # Lua 5.3 헤더 상수
@@ -37,12 +39,12 @@ class ConstTag(IntEnum):
 class Upvalue:
     instack: int    # 1 = 바로 위 스택, 0 = 상위 upvalue
     idx: int        # 스택 인덱스 or 상위 upvalue 인덱스
-    name: str = ""
+    name: LuaString = ""
 
 
 @dataclass
 class LocVar:
-    name: str
+    name: LuaString
     startpc: int
     endpc: int
 
@@ -50,7 +52,7 @@ class LocVar:
 @dataclass
 class Proto:
     """Function prototype — luaP_Proto 구조 대응."""
-    source: str
+    source: LuaString
     line_defined: int
     last_line_defined: int
     num_params: int
@@ -58,7 +60,7 @@ class Proto:
     max_stack_size: int
 
     code: list[int]                    # 명령어 (32-bit int 목록)
-    constants: list                    # None | bool | int | float | str
+    constants: list[LuaConstant]
     upvalues: list[Upvalue]
     protos: list[Proto]                # 중첩 함수
 
@@ -202,9 +204,9 @@ class Lua53Parser:
             for _ in range(n)
         ]
 
-    def _read_constants(self) -> list:
+    def _read_constants(self) -> list[LuaConstant]:
         n = self._r.read_int()
-        consts = []
+        consts: list[LuaConstant] = []
         for _ in range(n):
             tag = self._r.read_byte()
             if tag == ConstTag.NIL:
@@ -247,7 +249,7 @@ class Lua53Parser:
             for _ in range(n)
         ]
 
-    def _read_upvalue_names(self) -> list[str]:
+    def _read_upvalue_names(self) -> list[LuaString]:
         n = self._r.read_int()
         return [self._r.read_string() or "" for _ in range(n)]
 
@@ -280,8 +282,8 @@ def dump_proto(proto: Proto, indent: int = 0):
         sbx = bx - (0x3FFFF >> 1)
         print(f"{pad}    [{i:3d}]  op={op:2d}  A={a}  B={b}  C={c}  Bx={bx}  sBx={sbx}")
     print(f"{pad}  constants ({len(proto.constants)}):")
-    for i, c in enumerate(proto.constants):
-        print(f"{pad}    [{i}] {type(c).__name__}: {c!r}")
+    for i, constant in enumerate(proto.constants):
+        print(f"{pad}    [{i}] {type(constant).__name__}: {constant!r}")
     print(f"{pad}  upvalues ({len(proto.upvalues)}):")
     for i, u in enumerate(proto.upvalues):
         print(f"{pad}    [{i}] instack={u.instack}  idx={u.idx}  name={u.name!r}")

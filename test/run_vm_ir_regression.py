@@ -311,6 +311,7 @@ def check_target_runtime_bindings():
                 'vm_count': 1, 'blob_form': 'numeric', 'integrity_constants': True,
                 'fake_handlers': False, 'mutate_handlers': False,
                 'junk_instructions': False, 'graph_execution_rate': 1.0,
+                'dispatcher_target_hiding': True,
             })
             vm._backend.target = VersionBlindTarget(vm._backend.target)
             output = vm.run(source)
@@ -342,7 +343,8 @@ def check_alias_planning():
     assert planner.build(ir).dump() == plan.dump()
     assert len(requirements) == 2
     assert len(runtime_variants) == 2
-    assert plan.functions[ir.root.id]['blob_form'] in {'string', 'table', 'numeric'}
+    from obfuscator.vm.blob_formats import BLOB_FORMS
+    assert plan.functions[ir.root.id]['blob_form'] in BLOB_FORMS
     representation_routes = dict(plan.functions[ir.root.id]['representation_routes'])
     assert set(representation_routes) == {'arithmetic', 'semantic'}
     assert all(

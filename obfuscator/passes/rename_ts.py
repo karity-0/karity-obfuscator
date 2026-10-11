@@ -6,10 +6,16 @@ loop variables and implicit method self without Python recursion limits.
 from __future__ import annotations
 
 import time
+from bisect import bisect_left
 from dataclasses import dataclass, field
+import tree_sitter as ts
 from ..names import NameAllocator, RENAME_OPTIONS
 from .base import Replacement
-from .ts_utils import parse as _ts_parse
+from .ts_utils import _LANG, parse as _ts_parse
+
+
+_IDENTIFIERS = ts.Query(_LANG, '(identifier) @identifier')
+_RENAME_NODES = ts.Query(_LANG, '(identifier) @identifier (number) @literal (string) @literal [(true) (false)] @literal')
 
 
 @dataclass
@@ -58,7 +64,7 @@ def _is_reference(node):
     return True
 
 
-def resolve_bindings(ctx, *, free_environments=None):
+def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, sparse=True):
     """Return symbolic bindings, free names, literals and traversal statistics."""
     if ctx.root.has_error:
         raise ValueError('Cannot rename Lua source with syntax errors')
@@ -67,15 +73,38 @@ def resolve_bindings(ctx, *, free_environments=None):
     scopes = 1
     identifiers = 0
     stack = [('walk', ctx.root, Scope())]
+    text = ctx.plain_text
+    # Final naming/field analysis needs identifiers, not the hundreds of
+    # thousands of arithmetic nodes introduced by literal emitters. The C
+    # query finds *all* identifiers, including field names and declarations;
+    # prune only subtrees proven to contain none. Capture requested literals
+    # in that same C traversal and preserve original source order. The full
+    # walk remains available for coverage auditing and conservative callers.
+    identifier_offsets = None
+    if sparse:
+        captures = ts.QueryCursor(_RENAME_NODES if collect_literals else _IDENTIFIERS).captures(ctx.root)
+        if isinstance(captures, dict):
+            nodes = captures.get('identifier', [])
+            literals = captures.get('literal', []) if collect_literals else []
+        else:
+            nodes = [n for n, name in captures if name == 'identifier']
+            literals = [n for n, name in captures if name == 'literal'] if collect_literals else []
+        literals.sort(key=lambda n: n.start_byte)
+        identifier_offsets = sorted(n.start_byte for n in nodes)
+        del captures, nodes
 
     def declare(node, scope):
-        name = ctx.text(node)
+        name = text(node)
         binding = Binding(name, [node])
         bindings.append(binding)
         scope.names[name] = binding
 
     while stack:
         action, node, scope = stack.pop()
+        if identifier_offsets is not None:
+            index = bisect_left(identifier_offsets, node.start_byte)
+            if index == len(identifier_offsets) or identifier_offsets[index] >= node.end_byte:
+                continue
         if action == 'declare':
             declare(node, scope)
             identifiers += 1
@@ -84,7 +113,7 @@ def resolve_bindings(ctx, *, free_environments=None):
         if typ == 'identifier':
             identifiers += 1
             if _is_reference(node):
-                name = ctx.text(node)
+                name = text(node)
                 binding = scope.resolve(name)
                 if binding is None:
                     reserved.add(name)
@@ -94,7 +123,8 @@ def resolve_bindings(ctx, *, free_environments=None):
                     binding.nodes.append(node)
             continue
         if typ in {'string', 'number', 'true', 'false'}:
-            literals.append(node)
+            if collect_literals and not sparse:
+                literals.append(node)
             continue
         if typ in {'comment', 'attribute', 'label_statement', 'goto_statement'}:
             continue
@@ -186,7 +216,8 @@ def _apply_replacements_once(script: str, replacements: list[tuple[int, int, str
         pos = end + 1
 
     parts.append(script[pos:])
-    return "".join(parts)
+    from .numeric_provenance import join_code
+    return join_code(parts)
 
 
 def rename_script_ts(script: str, *, seed=None, readable=None) -> str:
@@ -222,12 +253,14 @@ def rename_plan_with_ctx(ctx, **options):
     return replacements, literals
 
 
-def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=(), keep=None):
+def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=(), keep=None,
+                                 resolution=None, collect_literals=True):
     options = RENAME_OPTIONS.get()
     seed = options.get('seed') if seed is None else seed
     readable = options.get('readable', False) if readable is None else readable
     start = time.perf_counter()
-    bindings, free, literals, scopes, identifiers = resolve_bindings(ctx)
+    bindings, free, literals, scopes, identifiers = (resolution if resolution is not None
+        else resolve_bindings(ctx, collect_literals=collect_literals))
     collected = time.perf_counter()
     kept = {id(b) for b in bindings if keep is not None and keep(b)}
     allocator = NameAllocator(free | set(reserved) | {b.original for b in bindings if id(b) in kept}, seed=seed, readable=readable)

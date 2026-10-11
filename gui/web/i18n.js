@@ -28,6 +28,17 @@
     ['Select code in the editor first.', '코드에서 보호할 부분을 먼저 선택하세요.'], ['Keep options on a single line.', '옵션은 한 줄로 입력하세요.'],
     ['Marker inserted', '마커 삽입됨'], ['Density', '간격'], ['Comfortable', '여유롭게'], ['Compact', '좁게'],
     ['Remember sections', '설정 그룹 상태 기억'], ['Font size', '글자 크기'], ['Motion', '애니메이션'],
+    ['Quick VM change', '빠른 VM 변경'], ['Switch directly without the selection screen', '선택 화면 없이 바로 변경'],
+    ['Choose a VM backend', 'VM 백엔드 선택'], ['Choose the VM that runs your code.', '코드를 실행할 VM을 선택하세요.'],
+    ['Close VM selection', 'VM 선택 닫기'], ['Direct execution', '직접 실행'], ['State-based protection', '상태 기반 보호'],
+    ['Lookup-based operations', '조회 기반 연산'], ['Currently selected', '현재 선택'],
+    ['A straightforward VM that handles instructions directly.', '명령어를 직접 처리하는 단순한 VM.'],
+    ['A comparatively lightweight execution structure.', '비교적 가벼운 실행 구조.'],
+    ['Links values, registers and execution flow to state.', '값·레지스터·실행 흐름을 상태와 연계.'],
+    ['Recommended · Karity’s core protection structure.', '기본 추천 · Karity의 핵심 보호 구조.'],
+    ['Processes integer operations through lookup tables.', '정수 연산을 조회 테이블로 처리.'],
+    ['Distinct operation paths · Extra runtime cost.', '독특한 연산 경로 · 추가 실행 비용.'],
+    ['Click to select · Arrow keys to navigate', '클릭해서 선택 · 방향키로 이동'],
     ['System', '시스템'], ['Reduced', '줄이기'], ['Full', '전체'], ['Changes save automatically', '자동 저장'],
     ['Saved automatically', '저장됨'], ['Saving…', '저장 중…'], ['Reset defaults', '초기화'],
     ['Ready', '준비'], ['Source loaded', '코드 불러옴'], ['Input required', '코드를 입력하세요'],
@@ -52,6 +63,7 @@
     ['VM runtime', 'VM 런타임'], ['Dispatcher', '디스패처'], ['Blob representation', '블롭 형식'], ['VM count', 'VM 수'],
     ['Fake handlers', '가짜 핸들러'], ['Handler mutation', '핸들러 변형'], ['Junk instructions', '정크 명령'], ['Junk rate', '정크 비율'],
     ['Integrity constants', '무결성 상수'], ['Integrity constant rate', '무결성 상수 비율'], ['Graph execution rate', '그래프 실행 비율'],
+    ['State dependency limit', '상태 의존성 수 제한'],
     ['Cross-instruction rate', '명령 간 연계 비율'], ['Runtime polymorphism rate', '런타임 다형성 비율'],
     ['Runtime trace diagnostics', '런타임 추적'], ['Block variant rate', '블록 변형 비율'], ['Block variants', '블록 변형 수'],
     ['Block size limit', '블록 크기 제한'], ['Helper variants', '헬퍼 변형 수'], ['Helper diversity rate', '헬퍼 다양성 비율'],
@@ -76,6 +88,10 @@
     ['For either Lua version, a matching library takes priority for compilation and integrity dumps. Leave empty to use executables.', '컴파일과 무결성 덤프는 지정한 Lua 라이브러리를 우선 사용합니다. 비우면 실행 파일을 사용합니다.'],
   ];
   const lookup = new Map();
+  pairs.push(['Unsupported protection (stored values retained)', '미지원 보호 (설정값 유지)'],
+    ['Fallback implementation', '대체 구현'], ['Legacy preset', '기존 프리셋'],
+    ['Selective protection', '선택 보호'], ['Whole-source protection', '전체 보호'],
+    ['Protection strength', '보호 강도'], ['VM backend', 'VM 백엔드'], ['Support limitations', '지원 제한']);
   for (const pair of pairs) for (const text of pair) lookup.set(text, pair);
   const originals = new WeakMap();
   const attributes = new WeakMap();
@@ -84,7 +100,7 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
-      if (node.parentElement.closest('script, style, textarea, pre, code, .filename, #config-source, #profile-summary, #status-msg, #preferences-status, #quick-preset-status, #execution-status, .theme-tile')) continue;
+      if (node.parentElement.closest('script, style, textarea, pre, code, .filename, #config-source, #profile-summary, #status-msg, #preferences-status, #quick-preset-status, #backend-capability-status, #backend-capability-note, #execution-status, .theme-tile')) continue;
       if (!originals.has(node)) originals.set(node, node.nodeValue);
       const original = originals.get(node), trimmed = original.trim();
       if (trimmed) node.nodeValue = original.replace(trimmed, tr(trimmed, language));

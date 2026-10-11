@@ -1,17 +1,34 @@
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "luaparser",
+    "obfuscator.passes.rename_obfuscation",
+    "obfuscator.toolchain",
+    "obfuscator.vm.targets.profile",
+}
+
 import time
-from typing import Union
+from typing import Self, TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from .passes.literal_mosaic import LiteralMosaic
 
 from luaparser import ast
 
+from .data_types import JSONValue
+from .config_types import ObfuscatorConfig, RenameOptions
+from .toolchain import LuaToolchain
+from .vm.targets.profile import TargetProfile
 from .passes.base import BasePass, PostPass, PrePass, Replacement
 from .passes.output_signature import DEFAULT_SIGNATURE, OutputSignaturePass
 from .profiling import ProfileRecord, Profiler
 from .verbosity import Verbosity
+from .passes.rename_obfuscation import RenameObfuscationPass
+from .passes.numeric_provenance import join_code
 
 
-PassType = Union[BasePass, PrePass, PostPass]
+type PassType = BasePass | PrePass | PostPass
 
 
 def info_message(step: str, p: PassType, message: str):
@@ -39,18 +56,22 @@ class Pipeline:
     HEADER = DEFAULT_SIGNATURE
 
     def __init__(self, show_header: bool = True):
-        self.rename_options = None
+        self.rename_options: RenameOptions | None = None
         self._pre_passes: list[PrePass] = []
         self._passes: list[BasePass] = []
         self._post_passes: list[PostPass] = []
         self.show_header = show_header
-        self.selection_config = {}
-        self.last_selection_report = []
+        self.selection_config: ObfuscatorConfig = {}
+        self.mosaic_scope: LiteralMosaic | None = None
+        self.last_mosaic_metrics: dict[str, Any] = {}
+        self.target_profile: TargetProfile
+        self.toolchain: LuaToolchain
+        self.last_selection_report: list[dict[str, JSONValue]] = []
         self._output_signature: OutputSignaturePass | None = (
             OutputSignaturePass() if show_header else None
         )
 
-    def add(self, pass_: BasePass | PrePass | PostPass) -> Pipeline:
+    def add(self, pass_: PassType) -> Self:
         if isinstance(pass_, OutputSignaturePass):
             self._output_signature = pass_
         elif isinstance(pass_, PrePass):
@@ -68,6 +89,15 @@ class Pipeline:
         profiler: Profiler | None = None,
     ) -> str:
         from .names import RENAME_OPTIONS
+        from .passes.literal_mosaic import LiteralMosaic, use_mosaic
+        from .passes.mosaic_metrics import DiversityMetrics
+
+        mosaic = self.mosaic_scope or LiteralMosaic(
+            lua_version=getattr(getattr(self,'target_profile',None),'lua_version','5.3'),
+            options=self.selection_config.get('literal_mosaic',{}),
+            metrics=DiversityMetrics(profiler is not None or self.selection_config.get('literal_mosaic',{}).get('diversity_metrics',False)))
+        if profiler is not None and mosaic.metrics.enabled:
+            profiler.literal_mosaic = mosaic.metrics
 
         token = (
             RENAME_OPTIONS.set(self.rename_options)
@@ -75,8 +105,10 @@ class Pipeline:
             else None
         )
         try:
-            return self._run(script, verbose, profiler)
+            with use_mosaic(mosaic):
+                return self._run(script, verbose, profiler)
         finally:
+            self.last_mosaic_metrics = mosaic.metrics.report() if mosaic.metrics.enabled else {}
             if token is not None:
                 RENAME_OPTIONS.reset(token)
 
@@ -114,8 +146,6 @@ class Pipeline:
         # Renaming is an emission step: collect every generated base-pass helper
         # before choosing final names. Localization resolves lexical bindings on
         # its own, so it does not need an earlier rename to distinguish globals.
-        from .passes.rename_obfuscation import RenameObfuscationPass
-
         renamers = [
             p
             for p in self._passes
@@ -132,6 +162,17 @@ class Pipeline:
 
         if selection.enabled:
             base_passes = selection.base_passes(base_passes)
+
+        if self.mosaic_scope is None:
+            from dataclasses import replace
+            from .registry import PASS_REGISTRY
+            from .passes.literal_mosaic import ACTIVE
+            service = ACTIVE.get()
+            assert service is not None
+            class_names = {cast(Any,info).class_name:name for name,info in PASS_REGISTRY.items()}
+            service.policy = replace(service.policy, passes=frozenset(
+                class_names.get(type(p).__name__,'') for p in base_passes))
+            service.selection = selection.plan if selection.enabled else None
 
         for pass_ in base_passes:
             before = _size(script)
@@ -163,6 +204,7 @@ class Pipeline:
                 _size(script),
                 parser=parser,
                 replacements=len(replacements),
+                details=getattr(pass_, "last_profile", []),
             )
 
             if profiler:
@@ -289,4 +331,4 @@ class Pipeline:
                 pos = end + 1
 
         parts.append(src[pos:])
-        return "".join(parts)
+        return join_code(parts)

@@ -1,5 +1,7 @@
 """Independent source/runtime version and VM backend dimensions."""
 from dataclasses import dataclass
+from typing import Any, Self
+from ...config_types import ObfuscatorConfig
 from ..backend import normalize_vm_backend
 from .capabilities import (
     Capability, CompatibilityPolicy, TargetEnvironment, TargetRequirements,
@@ -65,7 +67,7 @@ class TargetProfile:
                              f"Lua {self.lua_version}: {', '.join(missing)}")
 
     @classmethod
-    def from_config(cls, config: dict):
+    def from_config(cls, config: ObfuscatorConfig) -> Self:
         options = config.get("target", {})
         if not isinstance(options, dict):
             raise ValueError("target must be an object")
@@ -76,7 +78,10 @@ class TargetProfile:
         disabled = options.get("disabled_capabilities", [])
         if not isinstance(disabled, list) or not all(isinstance(c, str) for c in disabled):
             raise ValueError("target.disabled_capabilities must be a list of names")
-        return cls(backend=config.get("vm_options", {}).get("backend", "karity"), **options)
+        # The constructor normalizes configuration strings and sequences in __post_init__.
+        constructor_options: dict[str, Any] = dict(options)
+        return cls(backend=normalize_vm_backend(config.get("vm_options", {}).get("backend")),
+                   **constructor_options)
 
     def adapter(self):
         from .lua53 import Lua53Target

@@ -138,6 +138,19 @@ def _vm_factories_entry(runtime, template, options, factories, prefix, allocator
     return intro + output + f"\nend)(); return {cell} end)()"
 
 
+def _whole_chunk_excluded(source, exclusions):
+    from .passes.ts_utils import parse
+    ctx = parse(source)
+    if ctx.root.has_error:
+        return False
+    # Check complete top-level statements, not overlapping ranges: excluding
+    # only a function's body must not exclude its declaration or native caller.
+    return all(any(span.start <= ctx.cs(node) and ctx.ce(node) < span.end
+                   for span in exclusions)
+               for node in ctx.root.named_children
+               if node.type not in {"comment", "hash_bang_line", "empty_statement"})
+
+
 def run_selective_vm(runtime, template, source):
     plan = runtime.plan
     template.last_profile = []
@@ -146,14 +159,21 @@ def run_selective_vm(runtime, template, source):
     whole = plan.file_vm or plan.modes.get("vm", "all") == "all"
     vm_spans = [s for s in plan.spans if s.feature == "vm"]
     exclusions = [s for s in plan.spans if s.feature in {"no_vm", "no_obf"}]
-    if not whole and all(any(s.start <= span.start and span.end <= s.end for s in exclusions)
-                         for span in vm_spans):
+    if whole:
+        fully_excluded = bool(exclusions) and _whole_chunk_excluded(source, exclusions)
+    else:
+        fully_excluded = all(any(s.start <= span.start and span.end <= s.end for s in exclusions)
+                             for span in vm_spans)
+    if fully_excluded:
         # No VM/native bridge is needed when every requested region is excluded.
         # Resolve this before checking boundary target support (e.g. Lua 5.1).
         for span in vm_spans:
             plan.record("vm", span, "excluded", "native exclusion")
         for span in exclusions:
             plan.record("vm", span, "excluded", span.feature.upper())
+        if plan.file_vm:
+            plan.record("vm", Span(0, len(source), "vm", line=plan.file_vm_line),
+                        "excluded", "whole chunk has only native statements")
         return source
     if whole and not exclusions and not vm_spans:
         if plan.file_vm:

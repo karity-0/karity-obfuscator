@@ -1,12 +1,21 @@
 """Backend-neutral protection planning and capability resolution."""
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.vm.semantic_ir",
+}
+
 from dataclasses import dataclass, field
 from enum import Enum
+from collections.abc import Mapping
 import random
-from typing import Any
+from typing import Any, cast
+
+from ..config_types import VMOptions
 
 from .semantic_ir import SemanticIR
+from .blob_formats import BLOB_FORMS
 
 
 class RequirementLevel(str, Enum):
@@ -137,7 +146,7 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
                     ) for cycle in routes.values())):
                     raise ValueError("invalid planned runtime variant")
     blob_form = plan.functions.get(ir.root.id, {}).get("blob_form")
-    if blob_form is not None and blob_form not in {"string", "table", "numeric"}:
+    if blob_form is not None and blob_form not in BLOB_FORMS:
         raise ValueError("invalid planned blob representation")
     representation_routes = plan.functions.get(ir.root.id, {}).get(
         "representation_routes"
@@ -238,6 +247,7 @@ _OPTION_FEATURES = {
     "integrity_constants": "integrity_constants",
     "integrity_constant_rate": "integrity_constants",
     "graph_execution_rate": "graph_execution",
+    "state_dependency_limit": "graph_execution",
     "cross_instruction_rate": "delayed_materialization",
     "runtime_polymorphism_rate": "runtime_polymorphism",
     "runtime_trace": "runtime_trace",
@@ -252,6 +262,7 @@ _OPTION_FEATURES = {
 _PARAMETER_OPTIONS = frozenset((
     "junk_rate", "integrity_constant_rate", "block_variant_count",
     "block_variant_max_instructions", "helper_variant_count",
+    "state_dependency_limit",
 ))
 
 _DISPATCH_KINDS = ("split4", "split6", "bsplit4", "bsplit6", "tailcall", "table")
@@ -281,8 +292,9 @@ def _enabled(name: str, value: Any) -> bool:
     return bool(value)
 
 
-def protection_requests(options: dict[str, Any]) -> tuple[ProtectionRequest, ...]:
+def protection_requests(options: VMOptions) -> tuple[ProtectionRequest, ...]:
     """Resolve user intent without requiring a compiled program."""
+    values: Mapping[str, object] = options
     levels = options.get("requirements", {})
     if not isinstance(levels, dict):
         raise ValueError("vm_options.requirements must be an object")
@@ -296,14 +308,14 @@ def protection_requests(options: dict[str, Any]) -> tuple[ProtectionRequest, ...
     for option, feature in _OPTION_FEATURES.items():
         if option in _PARAMETER_OPTIONS:
             continue
-        if option not in options or not _enabled(option, options[option]):
+        if option not in values or not _enabled(option, values[option]):
             continue
-        grouped.setdefault(feature, {})[option] = options[option]
+        grouped.setdefault(feature, {})[option] = values[option]
         sources.setdefault(feature, []).append(option)
     for option in _PARAMETER_OPTIONS:
         feature = _OPTION_FEATURES[option]
-        if feature in grouped and option in options:
-            grouped[feature][option] = options[option]
+        if feature in grouped and option in values:
+            grouped[feature][option] = values[option]
             sources[feature].append(option)
     for feature, level in levels.items():
         if level == "required" and feature not in grouped:
@@ -322,8 +334,8 @@ def protection_features() -> tuple[str, ...]:
 class ProtectionPlanner:
     """Translate user controls into desired semantic protection state."""
 
-    def __init__(self, options: dict[str, Any]):
-        self.options = dict(options)
+    def __init__(self, options: VMOptions):
+        self.options = cast(VMOptions, dict(options))
         self._random_state = random.getstate()
 
     def build(self, ir: SemanticIR) -> ProtectionPlan:
@@ -455,7 +467,7 @@ class ProtectionPlanner:
                     arithmetic = instruction.operation in split_operations - {"MOVE", "LOAD_CONST", "LOGICAL_NOT", "LENGTH"}
                     avalanche_rate = 1.0 if arithmetic else 0.25
                     state["avalanche_arity"] = (
-                        rng.randint(1, 3) if instruction.operation not in {"RETURN", "TAIL_CALL"}
+                        rng.randint(1, int(self.options.get('state_dependency_limit', 3))) if instruction.operation not in {"RETURN", "TAIL_CALL"}
                         and not open_register_extent
                         and rng.random() < graph_rate * avalanche_rate else 0
                     )
@@ -490,7 +502,7 @@ class ProtectionPlanner:
         dispatcher = self.options.get("dispatcher_type") or "ifelseif"
         blob_form = self.options.get("blob_form") or "string"
         root_state["blob_form"] = (
-            rng.choice(("string", "table", "numeric"))
+            rng.choice(BLOB_FORMS)
             if blob_form == "random" else blob_form
         )
         root_state["representation_routes"] = (

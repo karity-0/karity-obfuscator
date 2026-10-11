@@ -9,6 +9,8 @@ import subprocess
 import sys
 import tempfile
 
+from .config_types import ObfuscatorConfig
+
 
 TOOLCHAIN_KEYS = ("lua_executable", "luac_executable", "lua_library")
 _BIN = Path(__file__).resolve().parents[1] / "bin"
@@ -52,8 +54,10 @@ class LuaToolchain:
             raise ValueError("unsupported Lua toolchain version")
 
     @classmethod
-    def from_config(cls, config: dict) -> LuaToolchain:
-        return cls(**{key: config.get(key) for key in TOOLCHAIN_KEYS},
+    def from_config(cls, config: ObfuscatorConfig) -> LuaToolchain:
+        return cls(lua_executable=config.get("lua_executable"),
+                   luac_executable=config.get("luac_executable"),
+                   lua_library=config.get("lua_library"),
                    lua_version=config.get("target", {}).get("lua_version", "5.3"))
 
     def lua(self) -> str:
@@ -102,10 +106,13 @@ class LuaToolchain:
                        library, operation, str(source), str(output)]
             if lua_version != "5.3":
                 command.append(lua_version)
+            creation_flags = 0
+            if sys.platform == "win32":
+                creation_flags = subprocess.CREATE_NO_WINDOW
             try:
                 result = subprocess.run(
                     command, capture_output=True, timeout=120,
-                    creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+                    creationflags=creation_flags,
                 )
             except subprocess.TimeoutExpired as exc:
                 raise RuntimeError("lua_library worker timed out after 120 seconds") from exc

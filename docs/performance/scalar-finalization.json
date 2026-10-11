@@ -1,0 +1,147 @@
+{
+  "fixture": "test/scripts/01_helloWorld.lua",
+  "input_bytes": 20,
+  "seed": 9300,
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.22631-SP0",
+  "pythonhashseed": "0",
+  "memory": "child peak Windows working set, sampled every 50ms; excludes grandchildren",
+  "timing": "serial ordinary VM builds with profiling/metrics disabled; runtime includes native Lua startup",
+  "profiling_enabled": false,
+  "records": [
+    {
+      "revision": "before",
+      "kind": "mov",
+      "profile": "high",
+      "wall_seconds": 23.625538100022823,
+      "peak_working_set_bytes": 254984192,
+      "log": "temp-vm-regions-benchmark\\default-before-mov-high.log",
+      "profiling": {},
+      "output_bytes": 2287884,
+      "runtime_seconds": [
+        6.9482904999749735
+      ],
+      "runtime_median_seconds": 6.9482904999749735
+    },
+    {
+      "revision": "after",
+      "kind": "mov",
+      "profile": "high",
+      "wall_seconds": 17.380774099961855,
+      "peak_working_set_bytes": 252686336,
+      "log": "temp-vm-regions-benchmark\\default-after-mov-high.log",
+      "profiling": {},
+      "output_bytes": 2285910,
+      "runtime_seconds": [
+        6.864896600018255
+      ],
+      "runtime_median_seconds": 6.864896600018255
+    },
+    {
+      "revision": "before",
+      "kind": "mov",
+      "profile": "max",
+      "wall_seconds": 26.84788029990159,
+      "peak_working_set_bytes": 245317632,
+      "log": "temp-vm-regions-benchmark\\default-before-mov-max.log",
+      "profiling": {},
+      "output_bytes": 1384898,
+      "runtime_seconds": [
+        13.4509909999324
+      ],
+      "runtime_median_seconds": 13.4509909999324
+    },
+    {
+      "revision": "after",
+      "kind": "mov",
+      "profile": "max",
+      "wall_seconds": 28.86987430008594,
+      "peak_working_set_bytes": 242606080,
+      "log": "temp-vm-regions-benchmark\\default-after-mov-max.log",
+      "profiling": {},
+      "output_bytes": 1385891,
+      "runtime_seconds": [
+        17.234206499997526
+      ],
+      "runtime_median_seconds": 17.234206499997526
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 150.02732619992457,
+      "peak_working_set_bytes": 1489879040,
+      "log": "temp-vm-regions-benchmark\\default-before-karity-high.log",
+      "profiling": {},
+      "output_bytes": 12382076,
+      "runtime_seconds": [
+        6.00115080003161
+      ],
+      "runtime_median_seconds": 6.00115080003161
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 104.27220969996415,
+      "peak_working_set_bytes": 1041293312,
+      "log": "temp-vm-regions-benchmark\\default-after-karity-high.log",
+      "profiling": {},
+      "output_bytes": 12194847,
+      "runtime_seconds": [
+        4.794631700031459
+      ],
+      "runtime_median_seconds": 4.794631700031459
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 194.5801459000213,
+      "peak_working_set_bytes": 1767030784,
+      "log": "temp-vm-regions-benchmark\\default-before-karity-max.log",
+      "profiling": {},
+      "output_bytes": 8218414,
+      "runtime_seconds": [
+        40.204764600028284
+      ],
+      "runtime_median_seconds": 40.204764600028284
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 144.85618480003905,
+      "peak_working_set_bytes": 1226072064,
+      "log": "temp-vm-regions-benchmark\\default-after-karity-max.log",
+      "profiling": {},
+      "output_bytes": 8195835,
+      "runtime_seconds": [
+        38.88062049995642
+      ],
+      "runtime_median_seconds": 38.88062049995642
+    }
+  ],
+  "before_revision": "4cb0a92",
+  "measurement_note": "Host CPU load was elevated (one overall CPU snapshot was 43%) and absolute wall times differed substantially from the previous report. Retained builds run serially without other local builds. The Karity high pair was repeated to replace a briefly overlapped exploratory pair; all after rows use the final production implementation.",
+  "fixture_sha256": "a84bb1230b2edd73f469afd5aba69b3ca191e6c25b444cf93d23342b64d6af18",
+  "config_sha256": "e4961324a59e6e0ac902afa5b34b27d21a6094f50163317e2f866236fbc56fa4",
+  "before_code_hashes": {
+    "obfuscator/passes/minify.py": "9148a9bc9e1efd741dd6370d319053df9a90c856e1f0c14f73275487bb6686a4",
+    "obfuscator/passes/packer.py": "0dbd6f45fe2bc7af35e2ad0207f7674c47ec27a9d7e66af071a6dc8058ece849",
+    "obfuscator/passes/strip_info.py": "cf8a226d3c5eb32f3711dec9260b3b9a33df8860a2eff447fa667a0731424b92",
+    "obfuscator/vm/output_emitter.py": "e3577fa2d7b312e3913ae4dcb4e8557ad177aa254d9958b6c3fc575e5931f0b3",
+    "obfuscator/vm/backends/runtime_emitter.py": "f1934a2cd2771b1551cacdcd230e29bfcfdab8a9a3dc429c053a7265b3318ea6",
+    "obfuscator/vm/targets/lua51.py": "fc1fa6ed116193b55c5bc204755913dca87761ce7d8222d8e176c33ebb7409bc",
+    "obfuscator/vm/targets/lua53.py": "a494a17f339ddf2844dbee93ac4a24a468beaad0d2013608be23c04ec3bae7f4"
+  },
+  "after_code_hashes": {
+    "obfuscator/passes/minify.py": "e29c267fd2bb6fc01e95b0b9c5cafb6866a637d11e93141cca57465dbcff01d1",
+    "obfuscator/passes/packer.py": "9d25a0dd2659223c03d56af4eeb5c05336b9756c0cd4a79588f9f17cb22b4082",
+    "obfuscator/passes/strip_info.py": "e12466a6500fd544a5d0c2dfd4b7c9cdb9a852a1f258a4a531f266ec5153c8a5",
+    "obfuscator/vm/output_emitter.py": "75c1e48e50951a514524d6d89c0578c858853561face3dd9ef29dfc8b3bc148c",
+    "obfuscator/vm/backends/runtime_emitter.py": "6cc9520249717d4bd0b6099164cecf36fbfd0da1fb106a25b688809d0cb43325",
+    "obfuscator/vm/targets/lua51.py": "7d36541f563c7666745dd65c2259ff7d2715fbe3d6abcb7712cd7a9744ba6ddb",
+    "obfuscator/vm/targets/lua53.py": "51c2dd4ba0163fa10b7e5e0482037169e404d934130a516460b469bdc0e4d859"
+  }
+}

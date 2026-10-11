@@ -20,8 +20,10 @@ from ..passes.boolean_obfuscation import generate_rand_xor
 from ..passes.base import Replacement
 from ..passes.number_obfuscation import NumberObfuscationPass
 from ..passes.meme_strings import MemeStringsPass
-from ..passes.string_obfuscation import _CHUNK_SIZE, parse_lua_string
+from ..passes.string_obfuscation import _encode, parse_lua_string
+from ..names import NameAllocator
 from ..passes.ts_utils import _LANG, parse
+from ..passes.numeric_provenance import CodeText, protected_number, number_origin, join_code
 
 
 EMITTER_PASS_NAMES = frozenset({"number_obf", "string_obf", "boolean_obf"})
@@ -36,11 +38,15 @@ _LITERAL_QUERY = ts.Query(
 class NumberLiteral:
     token: str
     eligible: bool = True
+    protected: bool = False
+    origin: str = 'vm_constant'
+    hot: bool = True
 
 
 @dataclass(frozen=True, slots=True)
 class StringLiteral:
     token: str
+    origin: str = 'source_string'
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,7 +54,20 @@ class BooleanLiteral:
     value: bool
 
 
-Fragment = str | NumberLiteral | StringLiteral | BooleanLiteral
+@dataclass(frozen=True, slots=True)
+class LiteralRegion:
+    start: int
+    end: int
+    kind: str
+
+
+class _RegionEnd:
+    __slots__ = ()
+
+
+_END_REGION = _RegionEnd()
+
+Fragment = str | NumberLiteral | StringLiteral | BooleanLiteral | LiteralRegion | _RegionEnd
 
 
 _GENERATED_NUMBER_RE = re.compile(
@@ -64,6 +83,15 @@ _GENERATED_NUMBER_RE = re.compile(
 
 _EXACT_HEX64_RE = re.compile(r"0[xX][0-9A-Fa-f]{16}")
 _MEME_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"|' + _GENERATED_NUMBER_RE.pattern)
+# A deliberately restricted scalar grammar: numeric/quoted-string tokens and
+# operators only. No identifiers, declarations, tables or lexical scopes can
+# be introduced. Unknown generated syntax takes the full final-analysis path.
+_SCALAR_NUMBER = re.compile(_GENERATED_NUMBER_RE.pattern)
+_SCALAR_EXPRESSION = re.compile(
+    r'(?:' + _GENERATED_NUMBER_RE.pattern +
+    r'|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\''
+    r'|[\s()+*/%^&|~<>=#-]+|\.\.)+', re.DOTALL,
+)
 _EXACT_GRAPH_REGION_RE = re.compile(
     r"--\[\[KARITY_EXACT_BEGIN\]\].*?--\[\[KARITY_EXACT_END\]\]",
     re.DOTALL,
@@ -81,7 +109,7 @@ def _append_raw(parts: list[Fragment], text: str) -> None:
         and isinstance(parts[-1], str)
         and len(parts[-1]) + len(text) <= 4096
     ):
-        parts[-1] += text
+        parts[-1] = join_code((parts[-1], text))
     else:
         parts.append(text)
 
@@ -97,7 +125,8 @@ def _split_generated_numbers(expr: str) -> list[Fragment]:
     pos = 0
     for match in _GENERATED_NUMBER_RE.finditer(expr):
         _append_raw(parts, expr[pos:match.start()])
-        parts.append(NumberLiteral(match.group(0)))
+        parts.append(NumberLiteral(match.group(0),protected=protected_number(expr,match.start(),match.end()),
+            origin=number_origin(expr,match.start(),match.end(),'vm_constant')))
         pos = match.end()
     _append_raw(parts, expr[pos:])
     return parts
@@ -111,40 +140,13 @@ def _split_meme_literals(expr: str, eligible: bool) -> list[Fragment]:
         _append_raw(parts, expr[pos:match.start()])
         token = match.group(0)
         parts.append(
-            StringLiteral(token) if token.startswith('"')
-            else NumberLiteral(token, eligible and _EXACT_HEX64_RE.fullmatch(token) is None)
+            StringLiteral(token,'meme_expression') if token.startswith('"')
+            else NumberLiteral(token, eligible and _EXACT_HEX64_RE.fullmatch(token) is None,
+                               origin='meme_expression')
         )
         pos = match.end()
     _append_raw(parts, expr[pos:])
     return parts
-
-
-def _inside_string_char(node, ctx, cache: dict[int, bool]) -> bool:
-    visited: list[int] = []
-    current = node.parent
-    while current is not None:
-        cached = cache.get(current.id)
-        if cached is not None:
-            for node_id in visited:
-                cache[node_id] = cached
-            return cached
-        visited.append(current.id)
-        if current.type == "function_call":
-            result = bool(
-                current.children
-                and ctx.text(current.children[0]) == "string.char"
-            )
-            for node_id in visited:
-                cache[node_id] = result
-            return result
-        if current.type in ("assignment_statement", "return_statement"):
-            for node_id in visited:
-                cache[node_id] = False
-            return False
-        current = current.parent
-    for node_id in visited:
-        cache[node_id] = False
-    return False
 
 
 def _parse_fragments(
@@ -152,12 +154,32 @@ def _parse_fragments(
     ctx,
     replacements: list[Replacement],
     literal_nodes: list | None = None,
+    *, track_regions=False, budgeted=False,
 ) -> tuple[list[Fragment], int]:
     exact_graph_ranges = [
         (match.start(), match.end() - 1)
         for match in _EXACT_GRAPH_REGION_RE.finditer(source)
     ]
     exact_graph_index = 0
+    path_cache = {}
+
+    def numeric_path(node, start, end):
+        # The emitter marks the outer, once-entered runtime. Every nested
+        # callable and loop is conservatively hot, irrespective of its name.
+        # Memoize shared ancestors on the existing tree, without another parse.
+        parent = node.parent
+        pending = []
+        while parent is not None and parent.id not in path_cache:
+            pending.append(parent)
+            parent = parent.parent
+        functions, loop = path_cache[parent.id] if parent is not None else (0, False)
+        for ancestor in reversed(pending):
+            functions += ancestor.type in {'function_definition', 'function_declaration'}
+            loop = loop or ancestor.type in {'for_statement', 'while_statement', 'repeat_statement'}
+            path_cache[ancestor.id] = (functions, loop)
+        entry = number_origin(source, start, end, 'vm_constant') == 'vm_entry'
+        hot = loop or functions > (1 if entry else 0)
+        return ('vm_constant/hot' if hot else 'vm_constant/initialization'), hot
 
     def in_exact_graph(start: int, end: int) -> bool:
         nonlocal exact_graph_index
@@ -193,7 +215,6 @@ def _parse_fragments(
     parts: list[Fragment] = []
     pos = 0
     captured_count = 0
-    string_char_cache: dict[int, bool] = {}
     replacement_index = 0
     literal_index = 0
     literal_event = None
@@ -239,7 +260,7 @@ def _parse_fragments(
             raise RuntimeError(
                 f"overlapping VM output event at {start}:{end}, previous end={pos - 1}"
             )
-        if start > pos:
+        if start > pos and not track_regions:
             parts.append(source[pos:start])
 
         if isinstance(payload, Replacement):
@@ -252,47 +273,37 @@ def _parse_fragments(
             continue
 
         node = payload
+        if track_regions:
+            parts.append(LiteralRegion(start, end + 1, node.type))
         token = source[start:end + 1]
         if node.type == "number":
+            origin, hot = (numeric_path(node, start, end+1) if budgeted else
+                           (number_origin(source,start,end+1,'vm_constant'), True))
             parts.append(NumberLiteral(
                 token,
-                not _inside_string_char(node, ctx, string_char_cache)
-                and _EXACT_HEX64_RE.fullmatch(token) is None
+                _EXACT_HEX64_RE.fullmatch(token) is None
                 and not in_exact_graph(start, end),
+                protected_number(source, start, end + 1),
+                origin, hot,
             ))
         elif node.type == "string":
             parts.append(StringLiteral(token))
         else:
             parts.append(BooleanLiteral(node.type == "true"))
         captured_count += 1
+        if track_regions:
+            parts.append(_END_REGION)
         pos = end + 1
-    if pos < len(source):
+    if pos < len(source) and not track_regions:
         parts.append(source[pos:])
     return parts, captured_count
 
 
-def _emit_string(token: str) -> list[Fragment]:
-    data = parse_lua_string(token)
-    if not data:
-        return [StringLiteral('""')]
-
-    parts: list[Fragment] = []
-    for chunk_index, offset in enumerate(range(0, len(data), _CHUNK_SIZE)):
-        if chunk_index:
-            _append_raw(parts, "..")
-        _append_raw(parts, "string.char(")
-        chunk = data[offset:offset + _CHUNK_SIZE]
-        for index, value in enumerate(chunk):
-            if index:
-                _append_raw(parts, ",")
-            first = random.randint(10_000, 9_999_999)
-            _append_raw(parts, "(")
-            parts.append(NumberLiteral(str(first)))
-            _append_raw(parts, "~")
-            parts.append(NumberLiteral(str(first ^ value)))
-            _append_raw(parts, ")")
-        _append_raw(parts, ")")
-    return parts
+def _emit_string(token: str, allocator: NameAllocator) -> list[Fragment]:
+    # The shared generator emits no quoted literals or comments. Keep every
+    # numeric leaf eligible for later NumberObf/Meme stages, without reparsing
+    # the complete VM. Its identifiers are reserved from the input/plans.
+    return _split_generated_numbers(_encode(parse_lua_string(token), allocator))
 
 
 def _emit_boolean(value: bool) -> list[Fragment]:
@@ -306,40 +317,129 @@ def _emit_boolean(value: bool) -> list[Fragment]:
 
 
 def _render(parts: list[Fragment]) -> str:
+    if len(parts) == 1 and isinstance(parts[0], str):
+        return parts[0]
     rendered: list[str] = []
     for part in parts:
         if isinstance(part, str):
             rendered.append(part)
         elif isinstance(part, NumberLiteral):
-            rendered.append(part.token)
+            rendered.append(CodeText(part.token,[(0,len(part.token))] if part.protected else (),
+                                      origins=[(0,len(part.token),part.origin)]))
         elif isinstance(part, StringLiteral):
-            rendered.append(part.token)
+            rendered.append(CodeText(part.token,origins=[(0,len(part.token),part.origin)]))
         else:
+            if not isinstance(part, BooleanLiteral):
+                raise TypeError('VM region marker passed to the ordinary renderer')
             rendered.append("true" if part.value else "false")
-    return "".join(rendered)
+    return join_code(rendered)
+
+
+def _render_regions(source, parts, finalize):
+    """Keep original coordinates through scalar expansion and render once.
+
+    The binding graph still belongs to the original tree. Literal edits do not
+    overlap identifiers; the finalizer combines both plans in that coordinate
+    system. Private numeric keys require projected syntax: a formerly numeric
+    key expanded to an expression must retain StripInfo's conservative refusal.
+    """
+    from ..passes.rename_ts import _apply_replacements_once
+    started = time.perf_counter()
+    edits, expanded_keys = [], set()
+    safe = True
+    region = None
+    fragments = []
+    for part in parts:
+        if isinstance(part, LiteralRegion):
+            region = part
+            fragments = []
+        elif part is _END_REGION:
+            if region is None:
+                raise RuntimeError('VM literal provenance region ended without a start')
+            expression = _render(fragments)
+            edits.append((region.start, region.end - 1, expression))
+            original = str.__getitem__(source, slice(region.start, region.end))
+            if region.kind != 'string' and expression != original:
+                safe = safe and _SCALAR_EXPRESSION.fullmatch(expression) is not None
+            if region.kind == 'number' and _SCALAR_NUMBER.fullmatch(expression) is None:
+                expanded_keys.add(region.start)
+            region = None
+        else:
+            fragments.append(part)
+    if region is not None:
+        raise RuntimeError('Unclosed VM literal provenance region')
+    details = []
+    projection_elapsed = time.perf_counter() - started
+    if safe:
+        identifier_edits, details = finalize(expanded_keys)
+        # A private field plan may replace a whole concatenated string key.
+        # Its enclosed literal regions are consumed by that structural edit.
+        filter_start = time.perf_counter()
+        ranges = sorted((start, end) for start, end, _ in identifier_edits)
+        filtered = []
+        index = 0
+        for start, end, expression in edits:
+            while index < len(ranges) and ranges[index][1] < start:
+                index += 1
+            if index < len(ranges) and ranges[index][0] <= start and end <= ranges[index][1]:
+                continue
+            filtered.append((start, end, expression))
+        edits = filtered
+        edits.extend(identifier_edits)
+        projection_elapsed += time.perf_counter() - filter_start
+    stage_start = time.perf_counter()
+    output = _apply_replacements_once(source, edits)
+    render_elapsed = time.perf_counter() - stage_start
+    details.append({'phase': 'vm_output:analysis_reuse',
+                    'elapsed': round(projection_elapsed, 6), 'reused': safe,
+                    'fallback_reason': None if safe else 'generated_non_scalar_syntax'})
+    return output, details, render_elapsed
 
 
 def emit_vm_literals(
+    source: str, pass_names: list[str], *, ctx=None,
+    replacements: list[Replacement] | None = None, literal_nodes: list | None = None,
+    finalize=None,
+) -> tuple[str,list[dict]]:
+    from ..passes.literal_mosaic import ACTIVE, boundary, use_mosaic
+    from ..passes.function_costs import POLICY
+    parent = ACTIVE.get()
+    phase = parent.policy.phase if parent is not None and parent.policy.phase in ('vm_output','packer_output') else 'vm_internal'
+    service = boundary(pass_names,lua_version=POLICY.get().lua_version,phase=phase)
+    with use_mosaic(service):
+        return _emit_vm_literals_scoped(source,pass_names,ctx=ctx,
+            replacements=replacements,literal_nodes=literal_nodes,finalize=finalize)
+
+
+def _emit_vm_literals_scoped(
     source: str,
     pass_names: list[str],
     *,
     ctx=None,
     replacements: list[Replacement] | None = None,
     literal_nodes: list | None = None,
+    finalize=None,
 ) -> tuple[str, list[dict]]:
     """Apply identifier plans and literal stages over one syntax context."""
     stages = [name for name in pass_names if name in EMITTER_PASS_NAMES or name == "meme_strings"]
     replacements = replacements or []
+    if finalize is not None and (replacements or 'string_obf' in stages):
+        raise ValueError('Scalar analysis reuse requires unchanged identifiers and string literals')
     if not stages and not replacements:
         return source, []
 
     parse_start = time.perf_counter()
+    from ..passes.literal_mosaic import ACTIVE
+    mosaic = ACTIVE.get()
+    budgeted = bool(mosaic is not None and mosaic.policy.phase in ('vm_output','packer_output')
+                    and 'output_cost' in mosaic.options)
     parse_count = 0
     if ctx is None:
         ctx = parse(source)
         parse_count = 1
     parts, literal_count = _parse_fragments(
-        source, ctx, replacements, literal_nodes,
+        source, ctx, replacements, literal_nodes, track_regions=finalize is not None,
+        budgeted=budgeted,
     )
     details: list[dict] = [{
         "phase": (
@@ -356,10 +456,20 @@ def emit_vm_literals(
         "capture_source": "rename_traversal" if literal_nodes is not None else "query",
     }]
 
+    allocator = None
+    if "string_obf" in stages:
+        allocator = NameAllocator.for_source(source, seed=random.getrandbits(64))
+        for replacement in replacements:
+            allocator.used.update(re.findall(r"[A-Za-z_][A-Za-z_0-9]*", replacement.new_text))
     number_emitter = NumberObfuscationPass()
     meme_emitter = MemeStringsPass()
+    from ..passes.literal_mosaic import ACTIVE
+    mosaic = ACTIVE.get()
     for stage_index, name in enumerate(stages):
         stage_start = time.perf_counter()
+        if name in {'number_obf','meme_strings'}:
+            skipped = sum(isinstance(part,NumberLiteral) and part.protected for part in parts)
+            mosaic.metrics.skip(mosaic.policy.phase+':'+name,skipped)
         output: list[Fragment] = []
         replacements = 0
         retokenize_generated_numbers = (
@@ -368,15 +478,21 @@ def emit_vm_literals(
         )
 
         for part in parts:
-            if name == "string_obf" and isinstance(part, StringLiteral):
-                output.extend(_emit_string(part.token))
+            if (budgeted and name in {'number_obf','meme_strings'}
+                    and isinstance(part, NumberLiteral) and part.eligible and not part.protected):
+                # One generation owns both selected styles; its numeric leaves
+                # are protected, preventing Meme -> Number amplification.
+                _append_raw(output, mosaic.output_number(part.token, origin=part.origin, hot=part.hot))
+                replacements += 1
+            elif name == "string_obf" and isinstance(part, StringLiteral):
+                output.extend(_emit_string(part.token, allocator))
                 replacements += 1
             elif name == "boolean_obf" and isinstance(part, BooleanLiteral):
                 output.extend(_emit_boolean(part.value))
                 replacements += 1
-            elif name == "meme_strings" and isinstance(part, NumberLiteral):
+            elif name == "meme_strings" and isinstance(part, NumberLiteral) and not part.protected:
                 if random.random() < meme_emitter.replacement_rate:
-                    output.extend(_split_meme_literals(meme_emitter.obfuscate_token(part.token), part.eligible))
+                    output.extend(_split_meme_literals(mosaic.original_meme(part.token,engine=meme_emitter,origin=part.origin), part.eligible))
                     replacements += 1
                 else:
                     output.append(part)
@@ -384,8 +500,9 @@ def emit_vm_literals(
                 name == "number_obf"
                 and isinstance(part, NumberLiteral)
                 and part.eligible
+                and not part.protected
             ):
-                expression = number_emitter.obfuscate_token(part.token)
+                expression = mosaic.original_number(part.token,engine=number_emitter,origin=part.origin)
                 if retokenize_generated_numbers:
                     output.extend(_split_generated_numbers(expression))
                 else:
@@ -399,6 +516,8 @@ def emit_vm_literals(
                 output.append(part)
 
         parts = output
+        if budgeted and name in {'number_obf', 'meme_strings'} and replacements:
+            mosaic.metrics.skip(mosaic.policy.phase+':budgeted_expression_rewrap_avoided', replacements)
         details.append({
             "phase": f"vm_output:{name}",
             "class": "VmLiteralEmitter",
@@ -413,11 +532,16 @@ def emit_vm_literals(
         })
 
     render_start = time.perf_counter()
-    rendered = _render(parts)
+    if finalize is None:
+        rendered = _render(parts)
+        render_elapsed = time.perf_counter() - render_start
+    else:
+        rendered, final_details, render_elapsed = _render_regions(source, parts, finalize)
+        details.extend(final_details)
     details.append({
         "phase": "vm_output:literal_render",
         "class": "VmLiteralEmitter",
-        "elapsed": round(time.perf_counter() - render_start, 6),
+        "elapsed": round(render_elapsed, 6),
         "output_bytes": len(rendered.encode("utf-8")),
     })
     return rendered, details

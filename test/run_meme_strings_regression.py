@@ -69,6 +69,23 @@ for i=1,3 do print(i) end
             assert execute(converted) == execute(original), (seed, token, converted)
     for phrase in MEME_STRINGS:
         assert int(execute('print(' + full._length(phrase) + ')')) == len(phrase.encode('utf-8'))
+        if phrase.startswith('\u202e'):
+            assert phrase.endswith('\u202c')
+            size = len(phrase.encode('utf-8'))
+            probe = f'print({size})'
+            # Force each direction-controlled phrase through actual Lua
+            # parsing, minification, and the VM/packer numeric emitters.
+            with patch.dict(STRINGS_BY_LENGTH, {size: (phrase,)}), \
+                    patch.object(MemeStringsPass, 'replacement_rate', 1.0):
+                converted = Pipeline(show_header=False).add(full).add(MinifyPass()).run(probe)
+                assert phrase in converted
+                assert execute(converted) == execute(probe)
+                for transform in (_obfuscate_vm_output, _obfuscate_packer_output):
+                    result = transform(probe, ['meme_strings', 'number_obf', 'minify'])
+                    if isinstance(result, tuple):
+                        result = result[0]
+                    assert phrase in result
+                    assert execute(result) == execute(probe)
     # The integer-wrapping construction is intentionally unavailable on
     # binary64-only Lua 5.1: its rounded residual can change the value.
     try:
@@ -77,8 +94,10 @@ for i=1,3 do print(i) end
         pass
     else:
         lua51 = LuaRuntime(encoding=None)
-        random.seed(2)
-        transformed_integer = full.obfuscate_token('9007199254740991')
+        # Force a wrapped hexadecimal residual instead of depending on the
+        # phrase pool and a seed happening to produce one.
+        with patch('obfuscator.passes.meme_strings.random.choice', side_effect=['lol', '-']):
+            transformed_integer = full._integer(9007199254740991, depth=1)
         assert lua51.eval(transformed_integer.encode()) != lua51.eval(b'9007199254740991')
     escaped = 'quote" slash\\ newline\n한글'
     assert int(execute('print(' + full._length(escaped) + ')')) == len(escaped.encode('utf-8'))

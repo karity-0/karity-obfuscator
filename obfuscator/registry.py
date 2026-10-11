@@ -11,11 +11,23 @@ main.py / GUI / vm_pass.py 의 _obfuscate_vm_output 에서
 모두에서 자동으로 사용 가능해진다.
 """
 from __future__ import annotations
+
+__lazy_modules__ = {
+    "obfuscator",
+    "obfuscator.passes",
+    "obfuscator.pipeline",
+    "obfuscator.vm",
+}
+
+from collections.abc import Mapping
+from typing import Any, cast
+
+from .config_types import ObfuscatorConfig, VMOptions
+from .pipeline import Pipeline
 from .toolchain import LuaToolchain, TOOLCHAIN_KEYS
 
 import re
 
-from .vm import VMPass
 from .vm.backends import backend_choices, backend_capabilities
 from .vm.backend import normalize_vm_backend, unsupported_vm_options, vm_option_resolution
 from .vm.targets.profile import TargetProfile
@@ -28,112 +40,121 @@ from .passes.output_signature import (
     strip_comment_tokens,
 )
 
-from .passes import (
-    StringEncodePass,
-    StringObfuscationPass,
-    NumberObfuscationPass,
-    MemeStringsPass,
-    BooleanObfuscationPass,
-    TableObfuscationPass,
-    FunctionObfuscationPass,
-    RenameObfuscationPass,
-    StripInfoPass,
-    LocalizeGlobalsPass,
-    RemoveCommentPass,
-    MinifyPass,
-    AntiDebugPass,
-    AntiDecompilePass,
-    PackerPass,
-    OutputSignaturePass,
-)
+from . import passes
+from .vm import VMPass
+from .passes import OutputSignaturePass
 
 
-PASS_REGISTRY: dict[str, dict] = {
+class _PassInfo(Mapping):
+    """Expose pass metadata without loading its implementation until cls is read."""
+
+    def __init__(self, metadata):
+        self._metadata = metadata
+        self.class_name = metadata["cls"]
+        self._cls = None
+
+    def __getitem__(self, key):
+        if key == "cls":
+            if self._cls is None:
+                self._cls = (VMPass if self.class_name == "VMPass"
+                             else getattr(passes, self.class_name))
+            return self._cls
+        return self._metadata[key]
+
+    def __iter__(self):
+        return iter(self._metadata)
+
+    def __len__(self):
+        return len(self._metadata)
+
+
+PASS_REGISTRY: dict[str, Mapping] = {
     "strip_info": {
-        "cls": StripInfoPass,
+        "cls": "StripInfoPass",
         "label": "Strip Info",
         "group": "pre",
         "docs": "passes/stripInfo.md",
     },
     "remove_comment": {
-        "cls": RemoveCommentPass,
+        "cls": "RemoveCommentPass",
         "label": "Remove Comment",
         "group": "pre",
     },
     "string_encode": {
-        "cls": StringEncodePass,
+        "cls": "StringEncodePass",
         "label": "Encode String",
         "group": "base",
     },
     "string_obf": {
-        "cls": StringObfuscationPass,
+        "cls": "StringObfuscationPass",
         "label": "String Obfuscation",
         "group": "base",
+        "docs": "passes/stringObfuscation.md",
     },
     "boolean_obf": {
-        "cls": BooleanObfuscationPass,
+        "cls": "BooleanObfuscationPass",
         "label": "Boolean Obfuscation",
         "group": "base",
     },
     "number_obf": {
-        "cls": NumberObfuscationPass,
+        "cls": "NumberObfuscationPass",
         "label": "Number Obfuscation",
         "group": "base",
         "docs": "passes/numberObfuscation.md"
     },
     "meme_strings": {
-        "cls": MemeStringsPass,
+        "cls": "MemeStringsPass",
         "label": "Meme / Fun Strings",
         "group": "base",
         "docs": "passes/memeStrings.md",
     },
     "table_obf": {
-        "cls": TableObfuscationPass,
+        "cls": "TableObfuscationPass",
         "label": "Table Obfuscation",
         "group": "base",
     },
     "function_obf": {
-        "cls": FunctionObfuscationPass,
+        "cls": "FunctionObfuscationPass",
         "label": "Function Obfuscation",
         "group": "base",
         "docs": "passes/functionObfuscation.md",
     },
     "rename_obf": {
-        "cls": RenameObfuscationPass,
+        "cls": "RenameObfuscationPass",
         "label": "Rename Obfuscation",
         "group": "base",
         "docs": "passes/renameObfuscation.md",
     },
     "localize_globals": {
-        "cls": LocalizeGlobalsPass,
+        "cls": "LocalizeGlobalsPass",
         "label": "Localize Globals",
         "group": "base",
         "docs": "passes/localizeGlobals.md",
     },
     "minify": {
-        "cls": MinifyPass,
+        "cls": "MinifyPass",
         "label": "Minify",
         "group": "post",
     },
     "vm": {
-        "cls": VMPass,
+        "cls": "VMPass",
         "label": "VM",
         "group": "post",
         "docs": "backends.md",
     },
     "anti_debug": {
-        "cls": AntiDebugPass,
+        "cls": "AntiDebugPass",
         "label": "Anti-Debug Wrapper",
         "group": "pre",
         "docs": "passes/antiDebug.md",
     },
     "anti_decompile": {
-        "cls": AntiDecompilePass,
+        "cls": "AntiDecompilePass",
         "label": "Anti-Decompile (unluac trap)",
         "group": "base",
     },
     "pack": {
-        "cls": PackerPass,
+        "cls": "PackerPass",
         "label": "Packer (deflate + load)",
         "group": "post",
         "docs": "passes/packer.md",
@@ -141,9 +162,11 @@ PASS_REGISTRY: dict[str, dict] = {
 }
 
 
+PASS_REGISTRY = {name: _PassInfo(info) for name, info in PASS_REGISTRY.items()}
+
 CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
-VALID_BLOB_FORMS = {"string", "table", "numeric", "random"}
+VALID_BLOB_FORMS = {"string", "table", "numeric", "emoji", "chinese", "random"}
 OUTPUT_PASS_EXCLUDES = {"vm", "pack"}
 VALID_SIGNATURE_MODES = {"default", "none", "fake", "generated", "custom"}
 VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
@@ -152,7 +175,7 @@ PASS_DESCRIPTIONS = {
     "strip_info": "Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.",
     "remove_comment": "Removes comments from the source code before AST parsing.",
     "string_encode": "Encodes string literals.",
-    "string_obf": "Obfuscates string literals.",
+    "string_obf": "Reconstructs strings through randomized, interleaved arithmetic and bitwise statements.",
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
     "meme_strings": "Replaces some numeric literals with meme string lengths and arithmetic corrections.",
@@ -167,7 +190,11 @@ PASS_DESCRIPTIONS = {
     "pack": "Compresses and wraps the final output in a self-extracting loader.",
 }
 
-VM_OPTION_DOCS = {
+VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    'state_dependency_limit': {
+        'default': 3, 'range': '1-3',
+        'description': 'Maximum graph-selected instruction state dependency arity. Karity only; changing density alone does not change this limit.',
+    },
     "requirements": {
         "description": "Protection feature requirements: map feature names to optional or required. Required features must be enabled and supported by the selected backend or an explicitly declared fallback; otherwise the build fails.",
         "default": {},
@@ -221,6 +248,8 @@ VM_OPTION_DOCS = {
             ("string", "single base36 string literal"),
             ("table", "base36 blob split into scrambled string-table chunks"),
             ("numeric", "scrambled table of 32-bit integers rebuilt at runtime"),
+            ("emoji", "UTF-8 emoji string with a randomized byte alphabet"),
+            ("chinese", "UTF-8 Chinese character string with a randomized byte alphabet"),
             ("random", "randomly choose per obfuscation run"),
         ],
     },
@@ -327,17 +356,41 @@ def get_pass_contexts(name: str) -> list[str]:
     return list(CONFIG_PASS_LISTS)
 
 
-def get_profile_names(config: dict) -> list[str]:
+def get_profile_names(config: Mapping[str, Any]) -> list[str]:
+    from .presets import PREFIX, USER_PRESETS
     profiles = config.get("profiles")
-    if not isinstance(profiles, dict):
-        return []
-    return list(profiles.keys())
+    project_names = list(profiles) if isinstance(profiles, dict) else []
+    return list(dict.fromkeys([*project_names, *(PREFIX + name for name in USER_PRESETS)]))
 
 
-def resolve_config_profile(config: dict, profile_name: str | None = None) -> dict:
+def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None = None) -> ObfuscatorConfig:
     """Return the selected profile config. Legacy flat configs still work."""
     if not isinstance(config, dict):
         raise ConfigError("config root must be an object")
+
+    if isinstance(config.get('config'), dict) and 'preset' in config:
+        # GUI files are resolved snapshots. Loading one must not reapply a
+        # newer catalog revision or erase advanced customizations.
+        snapshot = resolve_config_profile(config['config'], profile_name)
+        if profile_name is None:
+            snapshot['_profile'] = str(config.get('preset', 'custom'))
+        return snapshot
+
+    from .presets import PREFIX, canonical_name, resolve_user_preset, selection_profiles
+    selected = profile_name or config.get('profile')
+    profiles = config.get('profiles')
+    if profiles is not None and not isinstance(profiles, dict):
+        raise ConfigError("'profiles' must be an object")
+    if canonical_name(selected) and (str(selected).startswith(PREFIX)
+                                    or selected not in (profiles or {})):
+        # A project owns existing unqualified names. A qualified builtin is an
+        # explicit opt-in and inherits only environment/selection settings.
+        if not isinstance(config.get('vm_options', {}), dict):
+            raise ConfigError("'vm_options' must be an object")
+        resolved = resolve_user_preset(selected, config)
+        resolved['_selection_profiles'] = selection_profiles(profiles)
+        validate_config(resolved)
+        return cast(ObfuscatorConfig, resolved)
 
     profiles = config.get("profiles")
     if profiles is None:
@@ -345,7 +398,7 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
             raise ConfigError("--profile was given, but this config has no profiles")
         resolved = dict(config)
         validate_config(resolved)
-        return resolved
+        return cast(ObfuscatorConfig, resolved)
 
     if not isinstance(profiles, dict) or not profiles:
         raise ConfigError("'profiles' must be a non-empty object")
@@ -365,13 +418,13 @@ def resolve_config_profile(config: dict, profile_name: str | None = None) -> dic
         if key not in ("profile", "profiles")
     }
     resolved = {**common, **profiles[selected]}
-    resolved["_selection_profiles"] = profiles
+    resolved["_selection_profiles"] = selection_profiles(profiles)
     resolved["_profile"] = selected
     validate_config(resolved)
-    return resolved
+    return cast(ObfuscatorConfig, resolved)
 
 
-def config_warnings(config: dict) -> list[str]:
+def config_warnings(config: Mapping[str, Any]) -> list[str]:
     """Valid but unsupported controls are retained and ignored, never coerced.
 
     Report once at the UI/CLI boundary, rather than during repeated validation.
@@ -392,7 +445,9 @@ def config_warnings(config: dict) -> list[str]:
     return [f"backend={backend}: " + "; ".join(messages)] if messages else []
 
 
-def validate_config(config: dict) -> None:
+def validate_config(config: object) -> None:
+    if not isinstance(config, dict):
+        raise ConfigError("config root must be an object")
     from .selection import validate_modes
     try:
         validate_modes(config.get("selection_modes", {}))
@@ -419,12 +474,14 @@ def validate_config(config: dict) -> None:
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
     _validate_rename_options(config.get("rename_obf_options", {}))
+    _validate_literal_mosaic(config.get('literal_mosaic',{}))
+    _validate_string_obf_options(config.get('string_obf_options', {}))
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
     try:
-        target = TargetProfile.from_config(config)
+        target = TargetProfile.from_config(cast(ObfuscatorConfig, config))
         if target.host_images and "vm" not in config.get("passes", []):
             raise ValueError("target.host_images requires the VM materialization stage")
         for name in config.get("passes", []):
@@ -440,7 +497,64 @@ def validate_config(config: dict) -> None:
         raise ConfigError(str(error)) from error
 
 
-def validate_release_config(config: dict) -> None:
+def _validate_literal_mosaic(options):
+    if not isinstance(options,dict): raise ConfigError('literal_mosaic must be an object')
+    allowed = {'style','cost','diversity_metrics','generated_meme_rate','max_chars','max_operations','output_cost'}
+    if set(options)-allowed: raise ConfigError('unknown literal_mosaic options: '+', '.join(sorted(set(options)-allowed)))
+    for key,values in (('style',('compact','balanced','exotic')),('cost',('auto','low','medium','high'))):
+        if key in options and options[key] not in values: raise ConfigError('invalid literal_mosaic.'+key)
+    if 'diversity_metrics' in options and not isinstance(options['diversity_metrics'],bool):
+        raise ConfigError('literal_mosaic.diversity_metrics must be boolean')
+    rate=options.get('generated_meme_rate',0.15)
+    if isinstance(rate,bool) or not isinstance(rate,(int,float)) or not 0 <= rate <= 1:
+        raise ConfigError('literal_mosaic.generated_meme_rate must be between 0 and 1')
+    for key,default,lo,hi in (('max_chars',192,64,4096),('max_operations',12,0,32)):
+        value=options.get(key,default)
+        if isinstance(value,bool) or not isinstance(value,int) or not lo <= value <= hi:
+            raise ConfigError(f'literal_mosaic.{key} must be between {lo} and {hi}')
+    output = options.get('output_cost', {})
+    if not isinstance(output, dict) or set(output) - {
+        'hot_operations', 'cold_operations', 'hot_meme_rate', 'cold_meme_rate',
+    }:
+        raise ConfigError('invalid literal_mosaic.output_cost')
+    for key, value in output.items():
+        if key.endswith('_operations'):
+            valid = isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 32
+        else:
+            valid = isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+        if not valid:
+            raise ConfigError('invalid literal_mosaic.output_cost.' + key)
+
+
+def _validate_string_obf_options(options):
+    from .passes.string_reconstruction import validate_options
+    try:
+        validate_options(options)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+
+
+def validate_deployment_config(config: Mapping[str, Any]) -> None:
+    """Baseline deployment checks, distinct from legacy strict release policy."""
+    validate_config(config)
+    errors = []
+    for name in ('vm', 'anti_debug', 'anti_decompile'):
+        if name not in config.get('passes', []):
+            errors.append('passes must include '+name)
+    output = config.get('vm_output_passes', [])
+    for name in ('number_obf', 'meme_strings'):
+        if name not in output:
+            errors.append('vm_output_passes must include '+name)
+    options = config.get('vm_options', {})
+    if options.get('runtime_trace', False):
+        errors.append('runtime_trace must be false')
+    if not options.get('integrity_constants') or options.get('integrity_constant_rate', 0) <= 0:
+        errors.append('constant integrity protection must be enabled')
+    if errors:
+        raise ReleaseCheckError('deployment-check failed:\n- '+'\n- '.join(errors))
+
+
+def validate_release_config(config: Mapping[str, Any]) -> None:
     validate_config(config)
     errors: list[str] = []
     passes = config.get("passes", [])
@@ -495,7 +609,7 @@ def validate_release_config(config: dict) -> None:
         raise ReleaseCheckError("release-check failed:\n- " + "\n- ".join(errors))
 
 
-def _reject_nested_output_passes(config: dict, key: str) -> None:
+def _reject_nested_output_passes(config: Mapping[str, Any], key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
         raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
@@ -517,11 +631,16 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError("'function_obf_options' must be an object")
     allowed = {
         "cff", "junk", "inline", "wrapper",
+        "all_source_functions",
+        "max_pass_expansion_ratio",
         "boundary_mode", "nested", "nested_max_depth",
         "loop_split", "loop_unroll", "loop_unroll_max_iterations",
         "loop_unroll_rate",
         "loop_max_generated_blocks", "loop_max_expansion_ratio",
         "loop_max_depth",
+        "max_jump_instructions", "max_function_instructions", "max_pass_instructions",
+        "generated_number_max_chars", "generated_number_max_operations",
+        "reconstruction_group_size",
     }
     unknown = sorted(set(options) - allowed)
     if unknown:
@@ -546,7 +665,7 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError(
             "function_obf_options.nested_max_depth must be an integer between 0 and 16"
         )
-    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper"):
+    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper", "all_source_functions"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"function_obf_options.{key} must be a boolean")
@@ -554,6 +673,12 @@ def _validate_function_obf_options(options: dict) -> None:
         ("loop_unroll_max_iterations", 0, 32),
         ("loop_max_generated_blocks", 1, 1024),
         ("loop_max_depth", 0, 16),
+        ("max_jump_instructions", 32, 65535),
+        ("max_function_instructions", 256, 131071),
+        ("max_pass_instructions", 256, float('inf')),
+        ("generated_number_max_chars", 64, 4096),
+        ("generated_number_max_operations", 1, 3),
+        ("reconstruction_group_size", 1, 8),
     ):
         value = options.get(key)
         if value is not None and (
@@ -566,6 +691,10 @@ def _validate_function_obf_options(options: dict) -> None:
                 f"{minimum} and {maximum}"
             )
     ratio = options.get("loop_max_expansion_ratio")
+    pass_ratio = options.get('max_pass_expansion_ratio')
+    if pass_ratio is not None and (isinstance(pass_ratio, bool) or not isinstance(pass_ratio, (int, float))
+                                   or not 2 <= pass_ratio <= 64):
+        raise ConfigError('function_obf_options.max_pass_expansion_ratio must be between 2 and 64')
     if ratio is not None and (
         not isinstance(ratio, (int, float))
         or isinstance(ratio, bool)
@@ -638,6 +767,7 @@ def _validate_vm_options(options: dict) -> None:
         ("block_variant_count", 2, 4),
         ("block_variant_max_instructions", 2, 32),
         ("helper_variant_count", 1, 4),
+        ("state_dependency_limit", 1, 3),
     ):
         value = options.get(key)
         if value is not None:
@@ -653,7 +783,7 @@ def _validate_vm_options(options: dict) -> None:
     try:
         effective = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
         effective.update(options)
-        resolve_capabilities(protection_requests(effective),
+        resolve_capabilities(protection_requests(cast(VMOptions, effective)),
                              backend_capabilities(normalize_vm_backend(options.get("backend"))))
     except ValueError as exc:
         raise ConfigError(str(exc)) from exc
@@ -709,7 +839,9 @@ def _validate_signature(signature: dict) -> None:
         raise ConfigError("generated signatures require a generator pattern or custom pattern")
 
 
-def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = True):
+def build_pipeline_from_config[P: Pipeline](
+    config: ObfuscatorConfig, pipeline_cls: type[P], show_header: bool = True,
+) -> P:
     """
     config 예시:
         {
@@ -750,10 +882,10 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
             protected_output = len(stages) - 1
 
     for name, finalizers in stages:
-        info = PASS_REGISTRY.get(name)
+        info = PASS_REGISTRY[name]
 
         cls = info["cls"]
-        if cls is VMPass:
+        if name == "vm":
             pipeline.add(cls(
                 target=pipeline.target_profile,
                 toolchain=pipeline.toolchain,
@@ -765,7 +897,7 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 debug_dumps=config.get("debug_dumps", {}),
                 output_prefix="" if has_packer else signature_pass.prefix,
             ))
-        elif cls is PackerPass:
+        elif name == "pack":
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
                 packer_output_passes=packer_output_passes + [
@@ -774,8 +906,12 @@ def build_pipeline_from_config(config: dict, pipeline_cls, show_header: bool = T
                 ],
                 output_prefix=signature_pass.prefix,
             ))
-        elif cls is FunctionObfuscationPass:
-            pipeline.add(cls(**function_obf_options))
+        elif name == "function_obf":
+            function_pass = cls(**function_obf_options)
+            function_pass.lua_version = pipeline.target_profile.lua_version
+            pipeline.add(function_pass)
+        elif name == 'string_obf':
+            pipeline.add(cls(**config.get('string_obf_options', {})))
         else:
             pipeline.add(cls())
 

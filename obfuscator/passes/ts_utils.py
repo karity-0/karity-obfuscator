@@ -12,21 +12,29 @@ from __future__ import annotations
 
 import tree_sitter as ts
 import tree_sitter_lua as tsl
+from array import array
+import re
 
 _LANG = ts.Language(tsl.language())
 _PARSER = ts.Parser(_LANG)
 
 
-def _build_b2c(script: str, nbytes: int) -> list[int]:
+def _build_b2c(script: str, nbytes: int) -> array:
     """byte offset → char offset 매핑."""
-    b2c = [0] * (nbytes + 1)
-    b = 0
-    for ci, ch in enumerate(script):
-        nb = b + len(ch.encode("utf-8"))
-        while b < nb:
-            b2c[b] = ci
-            b += 1
-    b2c[nbytes] = len(script)
+    # Unicode memes make otherwise large ASCII-generated chunks need this
+    # mapping too. Store offsets compactly rather than keeping a Python int
+    # object per character plus a pointer per byte. Retain large-input support.
+    kind = 'I' if len(script) <= (1 << (array('I').itemsize*8))-1 else 'Q'
+    b2c = array(kind)
+    previous = 0
+    # Bulk ASCII runs are built inside array.extend rather than encoding and
+    # assigning every ASCII byte in Python. Only Unicode codepoints repeat.
+    for match in re.finditer(r'[^\x00-\x7f]',script):
+        ci = match.start()
+        b2c.extend(range(previous,ci))
+        b2c.extend([ci]*len(match.group().encode('utf-8')))
+        previous = ci+1
+    b2c.extend(range(previous,len(script)+1))
     return b2c
 
 
@@ -39,7 +47,13 @@ class TSContext:
     def __init__(self, script: str):
         self.script = script
         data = script.encode("utf-8")
-        self.tree = _PARSER.parse(data)
+        # The grammar accepts escaped LF but rejects Lua's escaped CR/CRLF
+        # continuations. Normalize only the parser buffer, preserving its byte
+        # length so literal decoding and replacements still use the exact source.
+        parser_data = (data.replace(b"\\\r\n", b"\\\n ")
+                       .replace(b"\\\n\r", b"\\\n ")
+                       .replace(b"\\\r", b"\\\n"))
+        self.tree = _PARSER.parse(parser_data)
         self.root = self.tree.root_node
         # Generated VM/packer sources are ASCII. In that common multi-MB
         # case, byte and character coordinates are identical, so building an
@@ -63,6 +77,17 @@ class TSContext:
         if self.b2c is None:
             return self.script[node.start_byte:node.end_byte]
         return self.script[self.b2c[node.start_byte]:self.b2c[node.end_byte]]
+
+    def plain_text(self, node) -> str:
+        """Read spelling without constructing provenance slices for analysis.
+
+        Code emitters retain ``text``/``script`` and their structural metadata.
+        Binding names and decoded field keys only need the immutable spelling.
+        """
+        start, end = node.start_byte, node.end_byte
+        if self.b2c is not None:
+            start, end = self.b2c[start], self.b2c[end]
+        return str.__getitem__(self.script, slice(start, end))
 
     def walk(self):
         """모든 노드를 DFS로 순회 (luaparser ast.walk 대체)."""
