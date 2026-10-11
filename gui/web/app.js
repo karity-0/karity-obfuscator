@@ -23,6 +23,7 @@ document.addEventListener('DOMContentLoaded', () => {
     preferencesStatus: $('preferences-status'), density: $('density-select'),
     editorFontSize: $('editor-font-size'), editorFontValue: $('editor-font-value'),
     motion: $('motion-select'), rememberSections: $('remember-sections'),
+    quickVmChange: $('quick-vm-change'), backendPicker: $('backend-picker'),
   };
 
   let api = null;
@@ -49,6 +50,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const refreshEditors = () => editors.forEach(editor => editor.refresh());
   let preferenceOpener = null;
   let settingsOpener = null;
+  let backendOpener = null;
   let editorView = 'source';
 
   $('win-min').addEventListener('click', () => window.pywebview?.api?.window_minimize());
@@ -149,7 +151,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', event => {
       if (event.key !== 'F5' || event.ctrlKey || event.altKey || event.metaKey) return;
       event.preventDefault();
-      if (!$('preferences-overlay').classList.contains('hidden')) return;
+      if (!$('preferences-overlay').classList.contains('hidden') || ui.backendPicker.open) return;
       executeCode(event.shiftKey ? 'output' : 'source');
     });
     ui.preset.addEventListener('change', () => applyPreset(ui.preset.value));
@@ -194,9 +196,30 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('[data-backend]').forEach(button => {
       button.addEventListener('click', () => {
-        state = window.PresetState.setBackend(state, button.dataset.backend);
-        renderAll();
+        if (preferences.quick_vm_change) setVmOption('backend', button.dataset.backend);
+        else openBackendPicker(button);
       });
+    });
+    document.querySelectorAll('[data-backend-choice]').forEach(button => {
+      button.addEventListener('click', () => {
+        setVmOption('backend', button.dataset.backendChoice);
+        ui.backendPicker.close();
+      });
+    });
+    $('backend-picker-close').addEventListener('click', () => ui.backendPicker.close());
+    ui.backendPicker.addEventListener('click', event => {
+      if (event.target === ui.backendPicker) ui.backendPicker.close();
+    });
+    ui.backendPicker.addEventListener('close', () => { backendOpener?.focus(); backendOpener = null; });
+    ui.backendPicker.addEventListener('keydown', event => {
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+      const cards = [...ui.backendPicker.querySelectorAll('[data-backend-choice]')];
+      const index = cards.indexOf(document.activeElement);
+      if (index < 0) return;
+      event.preventDefault();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? cards.length - 1
+        : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + cards.length) % cards.length;
+      cards[next].focus();
     });
     $('backend-capability-status').addEventListener('click', () => {
       toggleSettings(true);
@@ -220,6 +243,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.target === ui.preferencesOverlay) closePreferences();
     });
     document.addEventListener('keydown', event => {
+      if (ui.backendPicker.open) return; // Native dialog owns Escape and focus trapping.
       if (event.key === 'Escape' && !ui.preferencesOverlay.classList.contains('hidden')) closePreferences();
       if (event.key === 'Escape') $('marker-tools').open = false;
       if (event.key === 'Escape' && ui.preferencesOverlay.classList.contains('hidden')) toggleSettings(false);
@@ -238,6 +262,10 @@ document.addEventListener('DOMContentLoaded', () => {
       schedulePreferenceSave();
     });
     ui.motion.addEventListener('change', event => updatePreference('motion', event.target.value));
+    ui.quickVmChange.addEventListener('change', event => {
+      updatePreference('quick_vm_change', event.target.checked);
+      updateOverview();
+    });
     ui.rememberSections.addEventListener('change', event => {
       preferences.remember_sections = event.target.checked;
       if (!event.target.checked) preferences.sections = {};
@@ -359,6 +387,7 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.editorFontValue.textContent = preferences.editor_font_size;
     ui.motion.value = preferences.motion;
     ui.rememberSections.checked = Boolean(preferences.remember_sections);
+    ui.quickVmChange.checked = Boolean(preferences.quick_vm_change);
     ui.preferencesStatus.textContent = tr(ui.preferencesStatus.textContent);
     $('console-input').placeholder = tr('Type and press Enter');
     if (executionStatusParts.length) setExecutionStatus(...executionStatusParts);
@@ -377,6 +406,12 @@ document.addEventListener('DOMContentLoaded', () => {
     applyPreferences();
     ui.preferencesOverlay.classList.remove('hidden');
     document.querySelector('.preference-tabs [aria-selected="true"]').focus();
+  }
+
+  function openBackendPicker(opener) {
+    backendOpener = opener;
+    ui.backendPicker.showModal();
+    ui.backendPicker.querySelector('[aria-pressed="true"]')?.focus();
   }
 
   function closePreferences() {
@@ -764,6 +799,11 @@ document.addEventListener('DOMContentLoaded', () => {
     const backend = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
     document.querySelectorAll('[data-backend]').forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.backend === backend));
+      button.setAttribute('aria-haspopup', preferences.quick_vm_change ? 'false' : 'dialog');
+      button.setAttribute('aria-controls', 'backend-picker');
+    });
+    document.querySelectorAll('[data-backend-choice]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.backendChoice === backend));
     });
     const unused = bootstrap.vm_options.filter(option => option.resolution[backend]?.outcome === 'disable' && state.config.vm_options[option.name]);
     const fallbacks = bootstrap.vm_options.filter(option => option.resolution[backend]?.outcome === 'fallback' && state.config.vm_options[option.name]);
