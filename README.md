@@ -20,7 +20,7 @@ python obfuscator_gui.py
 Windows includes Lua tools in `bin/`. On other platforms, install matching
 Lua 5.3 and `luac` 5.3 tools and make them available on `PATH`.
 
-![GUI](images/5.png)
+![GUI](images/6.png)
 
 ## Protection presets
 
