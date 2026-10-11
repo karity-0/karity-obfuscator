@@ -246,7 +246,9 @@ def _cache_loader_meme_constants(source: str) -> str:
         if state and state[1]:
             expression = ctx.text(node)
             index = expressions.setdefault(expression, len(expressions) + 1)
-            edits.append((ctx.cs(node), ctx.ce(node) + 1, f"{pool}[{index}]"))
+            # A compact expression can touch a keyword, e.g. return(#"gg").
+            # Replacing its delimiters with an identifier needs token gaps.
+            edits.append((ctx.cs(node), ctx.ce(node) + 1, f" {pool}[{index}] "))
         else:
             stack.extend(reversed(node.named_children))
     if not edits:
@@ -332,9 +334,12 @@ def _loader_binding(loader_src: str) -> str:
     so the loader function's enclosing source position stays identical between
     build-time dumping and runtime execution.
     """
-    if loader_src.startswith("return "):
-        return f"local _P={loader_src[len('return '):]};"
-    return f"local _P=(function(){loader_src}end)();"
+    returned = re.match(r'\Areturn\b', loader_src)
+    if returned is not None:
+        return f"local _P={loader_src[returned.end():].lstrip()};"
+    # Explicit boundaries also protect a chunk ending in a keyword or line
+    # comment. Both dumping and runtime rendering use this same outer scope.
+    return f"local _P=(function()\n{loader_src}\nend)();"
 
 
 

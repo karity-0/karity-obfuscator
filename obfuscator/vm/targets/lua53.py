@@ -1,4 +1,5 @@
 """Native Lua 5.3 frontend and output boundary."""
+import re
 from .capabilities import Capability as C, TargetRequirements
 
 
@@ -86,7 +87,10 @@ class Lua53Target:
         return _dump_function_stripped(source, header, decoy_name, decoy_value, toolchain)
 
     def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
-        body = source[len("return "):]
+        returned = re.match(r'\Areturn\b', source)
+        if returned is None:
+            raise ValueError('Lua 5.3 VM source must return its runtime function')
+        body = source[returned.end():].lstrip()
         return (f'local {decoy_name}="{decoy_value}"local {vm_name}={body};'
                 f'return ({vm_name}(1032,413,258,104,953,283,120))'
                 f'({blob},"{tail}",{vm_name})')

@@ -2,6 +2,7 @@
 from pathlib import Path
 import random
 import sys
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -15,6 +16,11 @@ from obfuscator.passes.ts_utils import parse
 from obfuscator.vm.backends.runtime_emitter import _finalize_output_identifiers, _obfuscate_vm_output
 from obfuscator.vm.output_emitter import emit_vm_literals
 from obfuscator.passes.numeric_provenance import CodeText, protected_number, number_origin
+from obfuscator.passes.number_obfuscation import NumberObfuscationPass
+from obfuscator.passes.packer import _loader_binding, _dump_loader_stripped, _cache_loader_meme_constants
+from obfuscator.passes.minify import MinifyPass
+from obfuscator.vm.targets.lua51 import Lua51Target
+from obfuscator.vm.targets.lua53 import Lua53Target
 
 
 CORPUS = [
@@ -32,6 +38,8 @@ CORPUS = [
     'local private--[[separator]]={secret=1};return private.secret -- tail',
     'local marker="--[[VM_DISPATCH_ENTRY]]";local unicode="한글🍤";return marker,unicode',
     'local function empty() end;local function f(x)return x end;return f(3)',
+    'local private={secret=9,[1]=8};return private.secret,private[1]',
+    'local private={["secret"]=8};return private.secret',
 ]
 LUA53_ONLY = [
     'local _ENV=setmetatable({x=7},{__index=_ENV});local function f()return x end;return f()',
@@ -46,6 +54,24 @@ def signature(resolution):
 
 def main():
     cases = 0
+    # Minify may place a delimiter directly after return. Loader extraction
+    # and generic chunk wrapping must preserve lexical boundaries in either
+    # form, in the same context used for native dumping and runtime loading.
+    for loader in ('return(function()return 7 end)', 'return function()return 7 end',
+                   'local returner=function()return 7 end;return returner',
+                   'local f=function()return 7 end;return f -- trailing comment'):
+        wrapped = _loader_binding(loader) + 'return _P()'
+        for runtime in (Lua51, Lua53):
+            assert runtime().execute(wrapped) == 7, wrapped
+        assert _dump_loader_stripped(loader).startswith(b'\x1bLua')
+    loader = MinifyPass().run('return function() return (#"gg"+3) end')
+    cached = _cache_loader_meme_constants(loader)
+    assert Lua53().execute(_loader_binding(cached) + 'return _P()') == 5
+    assert _dump_loader_stripped(cached).startswith(b'\x1bLua')
+    source = 'return(function(...)return function(blob,tail,self)return 7,nil end end)'
+    for target, runtime in ((Lua51Target(), Lua51), (Lua53Target(), Lua53)):
+        wrapped = target.wrap(source, 'decoy', 'data', 'vmfn', '"blob"', 'abcdefghijklmnop')
+        assert runtime(unpack_returned_tuples=True).execute(wrapped) == (7, None)
     source = 'local secret=7;return secret'
     start = source.index('7')
     annotated = CodeText(source, [(start, start+1)], origins=[(start, start+1, 'function_constant')])
@@ -54,6 +80,12 @@ def main():
     assert type(ctx.plain_text(number)) is str and isinstance(ctx.text(number), CodeText)
     assert ctx.script is annotated
     output, _ = _finalize_output_identifiers(annotated, rename=True, strip=True)
+    final = parse(output)
+    number = next(n for n in final.walk() if n.type == 'number')
+    assert protected_number(output, final.cs(number), final.ce(number)+1)
+    assert number_origin(output, final.cs(number), final.ce(number)+1) == 'function_constant'
+    output, details = _obfuscate_vm_output(annotated, ['rename_obf', 'meme_strings', 'number_obf', 'strip_info'])
+    assert any(d.get('reused') for d in details if d['phase'] == 'vm_output:analysis_reuse')
     final = parse(output)
     number = next(n for n in final.walk() if n.type == 'number')
     assert protected_number(output, final.cs(number), final.ce(number)+1)
@@ -112,11 +144,23 @@ def main():
         if passes.count('strip_info') == 2:
             assert len(strips) == 2 and all(d.get('backend') != 'shared_final_context' for d in strips)
         else:
-            assert len(strips) == 1 and strips[0]['backend'] == 'shared_final_context'
+            assert len(strips) == 1 and strips[0]['backend'] in {'shared_final_context', 'reused_source_context'}
     for passes in ([], ['rename_obf'], ['strip_info', 'minify']):
         source = 'local marker="--[[VM_DISPATCH_ENTRY]]"; --[[VM_DISPATCH_ENTRY]]\nreturn marker'
         output, _ = _obfuscate_vm_output(source, passes)
         assert Lua53().execute(output) == '--[[VM_DISPATCH_ENTRY]]'
+    # A future number strategy introducing helpers/references must trigger the
+    # complete final analysis, not silently leave its new bindings unrenamed.
+    def with_helper(self, token):
+        return '(function(generated_helper)return generated_helper+external-external end)(' + token + ')'
+    with patch.object(NumberObfuscationPass, 'obfuscate_token', with_helper):
+        output, details = _obfuscate_vm_output('local external=tonumber("4");return 8',
+            ['rename_obf', 'number_obf', 'strip_info'])
+    assert Lua53().execute(output) == 8
+    assert 'generated_helper' not in output and 'external' not in output
+    reuse = next(d for d in details if d['phase'] == 'vm_output:analysis_reuse')
+    assert not reuse['reused'] and reuse['fallback_reason'] == 'generated_non_scalar_syntax'
+    assert next(d for d in details if d['phase'] == 'vm_output:final_parse')['parse_count'] == 1
     # Removing the early assignment must not change ordinary names, literal
     # PRNG use or protection coverage. Readable-name hint spelling keeps the
     # previous two assignments; alias/string generation also retains it.
@@ -132,7 +176,7 @@ def main():
                 actual, details = _obfuscate_vm_output(source, ['rename_obf', 'meme_strings', 'number_obf', 'strip_info'])
                 assert actual == expected, (source, readable)
                 named = next(d for d in details if d['phase'] == 'vm_output:rename_obf')
-                assert (named['backend'] == 'deferred_final_context') == (not readable)
+                assert (named['backend'] == 'reused_source_context') == (not readable)
             finally:
                 RENAME_OPTIONS.reset(token)
     print(f'vm-finalize-ok: {cases} exact-output cases, Lua 5.1/5.3, sparse coverage, late helpers, repeated passes')
