@@ -290,7 +290,7 @@ html[data-motion="reduced"] * { animation: none !important; transition: none !im
 .preferences-overlay { position: fixed; z-index: 2000; inset: 0; display: grid; place-items: center; padding: 24px; background: rgba(0,0,0,.52); backdrop-filter: blur(4px); }
 .preferences-overlay.hidden { display: none; }
 .backend-picker { position: fixed; inset: 0; margin: 0; width: 100vw; height: 100vh; height: 100dvh; max-width: none; max-height: none; padding: clamp(26px, 6vw, 76px); border: 0; color: var(--text); background: radial-gradient(ellipse at 50% 50%, color-mix(in srgb, var(--violet) 8%, transparent), transparent 70%); overflow: auto; }
-.backend-picker::backdrop { background: rgba(7,10,18,.24); background: color-mix(in srgb, var(--bg) 24%, transparent); backdrop-filter: blur(1px); }
+.backend-picker::backdrop { background: rgba(7,10,18,.36); background: color-mix(in srgb, var(--bg) 36%, transparent); backdrop-filter: blur(6px); }
 .backend-picker[open] { display: flex; align-items: center; justify-content: center; animation: backend-reveal .24s ease-out; }
 .backend-picker-content { width: min(1100px, 100%); margin: auto; }
 .backend-picker-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; margin-bottom: 32px; }
@@ -299,7 +299,7 @@ html[data-motion="reduced"] * { animation: none !important; transition: none !im
 .backend-picker-header .button { color: var(--muted); gap: 10px; }
 .backend-picker kbd { font: 10px var(--sans); padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; }
 .backend-cards { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 18px; }
-.backend-card { --backend-card-color: var(--panel); position: relative; display: flex; flex-direction: column; align-items: flex-start; min-height: 360px; padding: 28px; text-align: left; color: var(--text); background: color-mix(in srgb, var(--backend-card-color) 58%, transparent); backdrop-filter: blur(3px); border: 1px solid color-mix(in srgb, var(--text) 12%, transparent); border-radius: 22px; cursor: pointer; transition: transform .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease; }
+.backend-card { --backend-card-color: var(--panel); position: relative; display: flex; flex-direction: column; align-items: flex-start; min-height: 360px; padding: 28px; text-align: left; color: var(--text); background: color-mix(in srgb, var(--backend-card-color) 68%, transparent); backdrop-filter: blur(3px); border: 1px solid color-mix(in srgb, var(--text) 12%, transparent); border-radius: 22px; cursor: pointer; transition: transform .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease; }
 .backend-card-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; width: 100%; min-height: 22px; }
 .backend-kind { color: var(--muted); font-size: 11px; }
 .backend-current { color: var(--violet); font-size: 10px; visibility: hidden; }
