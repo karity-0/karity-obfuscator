@@ -191,6 +191,10 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    'state_dependency_limit': {
+        'default': 3, 'range': '1-3',
+        'description': 'Maximum graph-selected instruction state dependency arity. Karity only; changing density alone does not change this limit.',
+    },
     "requirements": {
         "description": "Protection feature requirements: map feature names to optional or required. Required features must be enabled and supported by the selected backend or an explicitly declared fallback; otherwise the build fails.",
         "default": {},
@@ -353,16 +357,40 @@ def get_pass_contexts(name: str) -> list[str]:
 
 
 def get_profile_names(config: Mapping[str, Any]) -> list[str]:
+    from .presets import PREFIX, USER_PRESETS
     profiles = config.get("profiles")
-    if not isinstance(profiles, dict):
-        return []
-    return list(profiles.keys())
+    project_names = list(profiles) if isinstance(profiles, dict) else []
+    return list(dict.fromkeys([*project_names, *(PREFIX + name for name in USER_PRESETS)]))
 
 
 def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None = None) -> ObfuscatorConfig:
     """Return the selected profile config. Legacy flat configs still work."""
     if not isinstance(config, dict):
         raise ConfigError("config root must be an object")
+
+    if isinstance(config.get('config'), dict) and 'preset' in config:
+        # GUI files are resolved snapshots. Loading one must not reapply a
+        # newer catalog revision or erase advanced customizations.
+        snapshot = resolve_config_profile(config['config'], profile_name)
+        if profile_name is None:
+            snapshot['_profile'] = str(config.get('preset', 'custom'))
+        return snapshot
+
+    from .presets import PREFIX, canonical_name, resolve_user_preset, selection_profiles
+    selected = profile_name or config.get('profile')
+    profiles = config.get('profiles')
+    if profiles is not None and not isinstance(profiles, dict):
+        raise ConfigError("'profiles' must be an object")
+    if canonical_name(selected) and (str(selected).startswith(PREFIX)
+                                    or selected not in (profiles or {})):
+        # A project owns existing unqualified names. A qualified builtin is an
+        # explicit opt-in and inherits only environment/selection settings.
+        if not isinstance(config.get('vm_options', {}), dict):
+            raise ConfigError("'vm_options' must be an object")
+        resolved = resolve_user_preset(selected, config)
+        resolved['_selection_profiles'] = selection_profiles(profiles)
+        validate_config(resolved)
+        return cast(ObfuscatorConfig, resolved)
 
     profiles = config.get("profiles")
     if profiles is None:
@@ -390,7 +418,7 @@ def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None =
         if key not in ("profile", "profiles")
     }
     resolved = {**common, **profiles[selected]}
-    resolved["_selection_profiles"] = profiles
+    resolved["_selection_profiles"] = selection_profiles(profiles)
     resolved["_profile"] = selected
     validate_config(resolved)
     return cast(ObfuscatorConfig, resolved)
@@ -447,6 +475,7 @@ def validate_config(config: object) -> None:
     _reject_nested_output_passes(config, "packer_output_passes")
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_literal_mosaic(config.get('literal_mosaic',{}))
+    _validate_string_obf_options(config.get('string_obf_options', {}))
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_debug_dumps(config.get("debug_dumps", {}))
@@ -470,7 +499,7 @@ def validate_config(config: object) -> None:
 
 def _validate_literal_mosaic(options):
     if not isinstance(options,dict): raise ConfigError('literal_mosaic must be an object')
-    allowed = {'style','cost','diversity_metrics','generated_meme_rate','max_chars','max_operations'}
+    allowed = {'style','cost','diversity_metrics','generated_meme_rate','max_chars','max_operations','output_cost'}
     if set(options)-allowed: raise ConfigError('unknown literal_mosaic options: '+', '.join(sorted(set(options)-allowed)))
     for key,values in (('style',('compact','balanced','exotic')),('cost',('auto','low','medium','high'))):
         if key in options and options[key] not in values: raise ConfigError('invalid literal_mosaic.'+key)
@@ -483,6 +512,46 @@ def _validate_literal_mosaic(options):
         value=options.get(key,default)
         if isinstance(value,bool) or not isinstance(value,int) or not lo <= value <= hi:
             raise ConfigError(f'literal_mosaic.{key} must be between {lo} and {hi}')
+    output = options.get('output_cost', {})
+    if not isinstance(output, dict) or set(output) - {
+        'hot_operations', 'cold_operations', 'hot_meme_rate', 'cold_meme_rate',
+    }:
+        raise ConfigError('invalid literal_mosaic.output_cost')
+    for key, value in output.items():
+        if key.endswith('_operations'):
+            valid = isinstance(value, int) and not isinstance(value, bool) and 0 <= value <= 32
+        else:
+            valid = isinstance(value, (int, float)) and not isinstance(value, bool) and 0 <= value <= 1
+        if not valid:
+            raise ConfigError('invalid literal_mosaic.output_cost.' + key)
+
+
+def _validate_string_obf_options(options):
+    from .passes.string_reconstruction import validate_options
+    try:
+        validate_options(options)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+
+
+def validate_deployment_config(config: Mapping[str, Any]) -> None:
+    """Baseline deployment checks, distinct from legacy strict release policy."""
+    validate_config(config)
+    errors = []
+    for name in ('vm', 'anti_debug', 'anti_decompile'):
+        if name not in config.get('passes', []):
+            errors.append('passes must include '+name)
+    output = config.get('vm_output_passes', [])
+    for name in ('number_obf', 'meme_strings'):
+        if name not in output:
+            errors.append('vm_output_passes must include '+name)
+    options = config.get('vm_options', {})
+    if options.get('runtime_trace', False):
+        errors.append('runtime_trace must be false')
+    if not options.get('integrity_constants') or options.get('integrity_constant_rate', 0) <= 0:
+        errors.append('constant integrity protection must be enabled')
+    if errors:
+        raise ReleaseCheckError('deployment-check failed:\n- '+'\n- '.join(errors))
 
 
 def validate_release_config(config: Mapping[str, Any]) -> None:
@@ -562,6 +631,8 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError("'function_obf_options' must be an object")
     allowed = {
         "cff", "junk", "inline", "wrapper",
+        "all_source_functions",
+        "max_pass_expansion_ratio",
         "boundary_mode", "nested", "nested_max_depth",
         "loop_split", "loop_unroll", "loop_unroll_max_iterations",
         "loop_unroll_rate",
@@ -594,7 +665,7 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError(
             "function_obf_options.nested_max_depth must be an integer between 0 and 16"
         )
-    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper"):
+    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper", "all_source_functions"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"function_obf_options.{key} must be a boolean")
@@ -620,6 +691,10 @@ def _validate_function_obf_options(options: dict) -> None:
                 f"{minimum} and {maximum}"
             )
     ratio = options.get("loop_max_expansion_ratio")
+    pass_ratio = options.get('max_pass_expansion_ratio')
+    if pass_ratio is not None and (isinstance(pass_ratio, bool) or not isinstance(pass_ratio, (int, float))
+                                   or not 2 <= pass_ratio <= 64):
+        raise ConfigError('function_obf_options.max_pass_expansion_ratio must be between 2 and 64')
     if ratio is not None and (
         not isinstance(ratio, (int, float))
         or isinstance(ratio, bool)
@@ -692,6 +767,7 @@ def _validate_vm_options(options: dict) -> None:
         ("block_variant_count", 2, 4),
         ("block_variant_max_instructions", 2, 32),
         ("helper_variant_count", 1, 4),
+        ("state_dependency_limit", 1, 3),
     ):
         value = options.get(key)
         if value is not None:
@@ -834,6 +910,8 @@ def build_pipeline_from_config[P: Pipeline](
             function_pass = cls(**function_obf_options)
             function_pass.lua_version = pipeline.target_profile.lua_version
             pipeline.add(function_pass)
+        elif name == 'string_obf':
+            pipeline.add(cls(**config.get('string_obf_options', {})))
         else:
             pipeline.add(cls())
 

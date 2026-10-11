@@ -113,8 +113,25 @@ def _seeds(targets: list[int], plan: list[_Step], shared: int) -> tuple[list[int
     return [value ^ initial for value in values], shared ^ targets[-1]
 
 
-def reconstruct(data: bytes, allocator: NameAllocator | None = None) -> str:
+def validate_options(options):
+    if not isinstance(options, dict):
+        raise ValueError('string_obf_options must be an object')
+    bounds = {'steps_min': (2, 5), 'steps_max': (2, 5),
+              'slots_min': (2, 4), 'slots_max': (2, 4), 'unroll_bytes': (0, 16)}
+    if set(options) - bounds.keys():
+        raise ValueError('unknown string_obf_options')
+    for key, value in options.items():
+        low, high = bounds[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ValueError(f'string_obf_options.{key} must be between {low} and {high}')
+    for kind, default in (('steps', (2, 3)), ('slots', (2, 4))):
+        if options.get(kind+'_min', default[0]) > options.get(kind+'_max', default[1]):
+            raise ValueError(f'string_obf_options.{kind}_min exceeds maximum')
+
+
+def reconstruct(data: bytes, allocator: NameAllocator | None = None, options=None) -> str:
     """Return a single-valued Lua expression containing a fresh local program."""
+    options = options or {}
     if not data:
         return "(string.char())"
     allocator = allocator or NameAllocator(seed=random.getrandbits(64))
@@ -122,7 +139,8 @@ def reconstruct(data: bytes, allocator: NameAllocator | None = None) -> str:
     fresh = allocator.allocate
     shared, key, scratch = fresh(), fresh(), fresh()
     pieces, numbers, lengths = fresh(), fresh(), fresh()
-    slots = min(random.randint(2, 4), len(data))
+    slots = min(random.randint(options.get('slots_min', 2), options.get('slots_max', 4)), len(data))
+    steps = (options.get('steps_min', 2), options.get('steps_max', 3))
     states = [fresh() for _ in range(slots)]
     strategy = random.choice(("numeric", "partial", "mixed"))
     early = [strategy == "partial" or (strategy == "mixed" and bool(random.getrandbits(1)))
@@ -154,9 +172,9 @@ def reconstruct(data: bytes, allocator: NameAllocator | None = None) -> str:
         return [f"{pieces}[{index}]=string.char({value} & 255,"
                 f"({value} >> 8) & 255,({value} >> 16) & 255):sub(1,{size})"]
 
-    if len(data) <= _UNROLL_LIMIT and len(chunks) <= _UNROLL_CHUNKS:
+    if len(data) <= options.get('unroll_bytes', _UNROLL_LIMIT) and len(chunks) <= _UNROLL_CHUNKS:
         for group in groups:
-            plan = _schedule(len(group), (2, 3))
+            plan = _schedule(len(group), steps)
             targets = [int.from_bytes(chunk, "little") for _, chunk in group]
             seeds, next_shared = _seeds(targets, plan, shared_value)
             lines.extend(f"{states[i]}={_constant(seed)} ~ {shared}"
@@ -177,7 +195,7 @@ def reconstruct(data: bytes, allocator: NameAllocator | None = None) -> str:
     else:
         # A new schedule and record layout per literal, reused only within that
         # literal. Control-flow/VM expansion is bounded independently of length.
-        plan = _schedule(slots, (2, 3))
+        plan = _schedule(slots, steps)
         fields = list(range(slots * 3))
         random.shuffle(fields)
         seed_fields, index_fields, size_fields = fields[:slots], fields[slots:2 * slots], fields[2 * slots:]

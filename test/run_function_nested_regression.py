@@ -252,6 +252,16 @@ def main() -> int:
     if limited_pass.last_depth_limited_count < 1:
         raise AssertionError("depth-limited SOURCE function was not reported")
 
+    # Full user coverage removes the depth cap without overriding an explicit
+    # nested=false choice. Generated helpers never count as source functions.
+    for nested, expected in ((True, 3), (False, 1)):
+        random.seed(92019)
+        coverage = FunctionObfuscationPass(all_source_functions=True,
+                                          nested=nested, nested_max_depth=0, inline=False)
+        covered = Pipeline(show_header=False).add(coverage).run(DEPTH_LIMIT_SOURCE)
+        assert coverage.last_processed_source_count == expected
+        assert run_lua(covered).stdout == run_lua(DEPTH_LIMIT_SOURCE).stdout
+
     # Original semantic helper names and full recursive body must not survive as a
     # directly extractable island after lexical rewrite + independent nested CFF.
     for leaked in (

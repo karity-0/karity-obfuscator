@@ -791,6 +791,16 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     from ...passes.function_costs import POLICY
     cost_token = POLICY.set(target.function_cost_policy())
     try:
+        from ...passes.literal_mosaic import ACTIVE
+        mosaic = ACTIVE.get()
+        if mosaic is not None and 'output_cost' in mosaic.options:
+            from ...passes.numeric_provenance import CodeText
+            # Keep any backend-owned spans. Unknown existing roles remain hot
+            # rather than losing their protection/provenance at this boundary.
+            vm_func_src = CodeText(vm_func_src,
+                protected=getattr(vm_func_src,'protected',()),
+                reconstructions=getattr(vm_func_src,'reconstructions',()),
+                origins=getattr(vm_func_src,'origins',()) or [(0,len(vm_func_src),'vm_entry')])
         vm_func_src, vm_output_details = output_transform(
             vm_func_src,
             context.output_passes,

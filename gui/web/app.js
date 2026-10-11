@@ -1,7 +1,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   const $ = (id) => document.getElementById(id);
   const ui = {
-    preset: $('preset-select'), level: $('level-select'), source: $('config-source'),
+    preset: $('preset-select'), source: $('config-source'),
     passLists: { passes: $('passes-list'), vm_output_passes: $('vm-output-list'), packer_output_passes: $('packer-output-list') },
     optionGroups: $('vm-option-groups'), pipelineCount: $('pipeline-count'),
     activePreset: $('active-preset'), activeLevel: $('active-level'),
@@ -42,7 +42,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const titleCase = (value) => String(value || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   const formatPercent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
-  const presetLabels = { dev: ['빠르게', '가벼운 보호'], 'fast-vm': ['균형', '기본 추천'], high: ['강하게', '높은 보호'], max: ['최대', '실험적'] };
+  const presetLabels = { 'builtin:fast': ['빠르게', '선택 보호'], 'builtin:balanced': ['균형', '선택 보호'], 'builtin:strong': ['강하게', '전체 보호'], 'builtin:maximum': ['최대', '전체 보호'] };
   const preferenceTabs = ['appearance', 'gui', 'editor', 'general'];
   const editors = [window.LuaCodeEditor.attach(ui.input), window.LuaCodeEditor.attach(ui.output)];
   const tr = text => window.GuiI18n.tr(text, preferences?.language || 'ko');
@@ -111,12 +111,11 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.preset.add(new Option('<Custom>', 'custom'));
     const container = $('quick-presets');
     container.replaceChildren();
-    Object.keys(bootstrap.profiles).forEach(name => {
+    bootstrap.user_presets.forEach(name => {
       const button = document.createElement('button');
       button.className = 'preset-button';
       button.dataset.preset = name;
-      const config = bootstrap.profiles[name];
-      button.title = `${name} · ${config.vm_options.vm_count} VM\n${config.passes.join(' → ')}\nVM: ${config.vm_output_passes.join(' → ')}`;
+      button.title = presetLabels[name]?.[1] || titleCase(name);
       const [label] = presetLabels[name] || [titleCase(name)];
       const title = document.createElement('strong'); title.textContent = label;
       button.append(title);
@@ -131,17 +130,8 @@ document.addEventListener('DOMContentLoaded', () => {
       updateOverview();
       return;
     }
-    const retained = { target: clone(state.config.target || {}) };
-    ['selection_modes', 'selection_profiles', 'signature'].forEach(key => {
-      if (state.config[key]) retained[key] = clone(state.config[key]);
-    });
-    ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
-      if (state.config[key]) retained[key] = state.config[key];
-    });
-    state.config = { ...clone(bootstrap.profiles[name]), ...retained };
-    state.preset = name;
-    state.protection_level = ({ dev: 'light', 'fast-vm': 'balanced', high: 'strong', max: 'maximum' })[name] || inferLevel();
-    state.release_check = name === 'max';
+    state = window.PresetState.applyPreset(state, name, bootstrap.profiles[name],
+      bootstrap.user_presets.includes(name) ? bootstrap.preset_revision : null);
     ensureConfigShape();
     renderAll();
   }
@@ -202,21 +192,15 @@ document.addEventListener('DOMContentLoaded', () => {
     });
     $('split-view').addEventListener('click', () => setEditorView(editorView === 'split' ? 'source' : 'split'));
 
-    ui.level.addEventListener('change', () => {
-      const name = ui.level.value;
-      if (name === 'custom') {
-        state.protection_level = 'custom';
-        updateOverview();
-        return;
-      }
-      const backend = state.config.vm_options.backend ?? 'karity';
-      const requirements = clone(state.config.vm_options.requirements ?? {});
-      state.config.vm_options = clone(bootstrap.protection_levels[name]);
-      state.config.vm_options.backend = backend;
-      state.config.vm_options.requirements = requirements;
-      state.protection_level = name;
-      state.preset = 'custom';
-      renderAll();
+    document.querySelectorAll('[data-backend]').forEach(button => {
+      button.addEventListener('click', () => {
+        state = window.PresetState.setBackend(state, button.dataset.backend);
+        renderAll();
+      });
+    });
+    $('backend-capability-status').addEventListener('click', () => {
+      toggleSettings(true);
+      $('backend-capability-note').scrollIntoView({block: 'center'});
     });
 
     ui.releaseCheck.addEventListener('change', () => {
@@ -277,24 +261,24 @@ document.addEventListener('DOMContentLoaded', () => {
     ['lua_version', 'environment', 'compatibility'].forEach(key => {
       $(`target-${key}`).addEventListener('change', event => {
         state.config.target[key] = event.target.value;
-        markPresetCustom(false);
+        markPresetCustom();
       });
     });
     $('target-host_images').addEventListener('input', event => {
       state.config.target.host_images = event.target.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
-      markPresetCustom(false);
+      markPresetCustom();
     });
     ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
       $(key).addEventListener('input', event => {
         state.config[key] = event.target.value.trim() || null;
-        markPresetCustom(false);
+        markPresetCustom();
       });
     });
 
     document.querySelectorAll('input[name="signature-mode"]').forEach(input => {
       input.addEventListener('change', event => {
         state.config.signature.mode = event.target.value;
-        markPresetCustom(false);
+        markPresetCustom();
         renderSignature();
       });
     });
@@ -306,12 +290,12 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.signatureCustomPattern.addEventListener('input', event => {
       event.target.value = stripCommentTokens(event.target.value);
       state.config.signature.fake.custom_pattern = event.target.value;
-      markPresetCustom(false);
+      markPresetCustom();
     });
     ui.signatureCustom.addEventListener('input', event => {
       event.target.value = stripCommentTokens(event.target.value);
       state.config.signature.custom = event.target.value;
-      markPresetCustom(false);
+      markPresetCustom();
     });
 
     document.addEventListener('mouseover', showTooltip);
@@ -329,7 +313,6 @@ document.addEventListener('DOMContentLoaded', () => {
       $(key).value = state.config[key] || '';
     });
     ui.preset.value = bootstrap.profiles[state.preset] ? state.preset : 'custom';
-    ui.level.value = bootstrap.protection_levels[state.protection_level] ? state.protection_level : 'custom';
     ui.releaseCheck.checked = Boolean(state.release_check);
     ui.source.textContent = bootstrap.profile_source ? `profiles: ${bootstrap.profile_source}` : 'profiles unavailable';
     renderPasses();
@@ -611,7 +594,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!sources.length) {
       sources.push(source === 'well_known' ? 'generated' : 'well_known');
     }
-    markPresetCustom(false);
+    markPresetCustom();
     renderSignature();
   }
 
@@ -620,7 +603,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const index = patterns.indexOf(pattern);
     if (enabled && index < 0) patterns.push(pattern);
     if (!enabled && index >= 0) patterns.splice(index, 1);
-    markPresetCustom(false);
+    markPresetCustom();
   }
 
   function renderPasses() {
@@ -634,7 +617,7 @@ document.addEventListener('DOMContentLoaded', () => {
         label.innerHTML = `<input type="checkbox" ${enabled ? 'checked' : ''}><span class="toggle-dot"></span><span class="toggle-name">${tr(pass.label)}</span>`;
         label.querySelector('input').addEventListener('change', event => {
           togglePass(context, pass.name, event.target.checked);
-          markPresetCustom(false);
+          markPresetCustom();
           renderPasses();
           updateOverview();
         });
@@ -750,43 +733,47 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function setVmOption(name, value, rerender = true) {
-    state.config.vm_options[name] = value;
-    markPresetCustom(name !== 'backend');
+    if (name === 'backend') state = window.PresetState.setBackend(state, value);
+    else { state.config.vm_options[name] = value; markPresetCustom(); }
     if (rerender) renderAll();
     else updateOverview();
   }
 
-  function markPresetCustom(vmChanged) {
-    state.preset = 'custom';
-    if (vmChanged) state.protection_level = 'custom';
-    ui.preset.value = 'custom';
-    if (vmChanged) ui.level.value = 'custom';
+  function markPresetCustom() {
+    if (bootstrap.user_presets.includes(state.preset)) state.preset_custom = true;
+    else state.preset = 'custom';
+    ui.preset.value = state.preset;
     updateOverview();
-  }
-
-  function inferLevel() {
-    const comparable = options => {
-      const result = clone(options);
-      delete result.backend;
-      return JSON.stringify(result);
-    };
-    const options = comparable(state.config.vm_options);
-    return Object.keys(bootstrap.protection_levels).find(name => comparable(bootstrap.protection_levels[name]) === options) || 'custom';
   }
 
   function updateOverview() {
     document.querySelectorAll('[data-preset]').forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.preset === state.preset));
     });
-    $('quick-preset-status').textContent = state.preset === 'custom' ? tr('커스텀 설정') : '';
+    $('quick-preset-status').textContent = state.preset === 'custom' || state.preset_custom
+      ? tr('커스텀 설정') : bootstrap.user_presets.includes(state.preset)
+      ? '' : `${tr('기존 프리셋')} · ${titleCase(state.preset)}`;
     const allPasses = [...state.config.passes, ...state.config.vm_output_passes, ...state.config.packer_output_passes];
     ui.pipelineCount.textContent = allPasses.length;
-    ui.activePreset.textContent = tr(titleCase(state.preset));
-    ui.activeLevel.textContent = tr(titleCase(state.protection_level));
+    ui.activePreset.textContent = tr(presetLabels[state.preset]?.[0] || titleCase(state.preset));
+    ui.activeLevel.textContent = ({karity:'Karity', classic:'Classic', mov:'MOV'})[bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity'];
     ui.metricPasses.textContent = allPasses.length;
     ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
     ui.metricRuntime.textContent = !bootstrap.vm_options.find(option => option.name === 'runtime_polymorphism_rate').supported_backends.includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
       ? 'N/A' : formatPercent(state.config.vm_options.runtime_polymorphism_rate);
+    const backend = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
+    document.querySelectorAll('[data-backend]').forEach(button => {
+      button.setAttribute('aria-pressed', String(button.dataset.backend === backend));
+    });
+    const unused = bootstrap.vm_options.filter(option => option.resolution[backend]?.outcome === 'disable' && state.config.vm_options[option.name]);
+    const fallbacks = bootstrap.vm_options.filter(option => option.resolution[backend]?.outcome === 'fallback' && state.config.vm_options[option.name]);
+    const capabilityStatus = $('backend-capability-status');
+    capabilityStatus.hidden = !unused.length && !fallbacks.length;
+    capabilityStatus.textContent = tr(unused.length ? '지원 제한' : '대체 구현');
+    $('backend-capability-note').textContent = [
+      unused.length ? `${backend}: ${tr('미지원 보호 (설정값 유지)')}: ${unused.map(option => tr(option.label)).join(', ')}` : '',
+      ...fallbacks.map(option => `${tr('대체 구현')}: ${option.name} → ${option.resolution[backend].target}`),
+    ].filter(Boolean).join(' · ');
     renderPipeline();
   }
 
@@ -862,12 +849,13 @@ document.addEventListener('DOMContentLoaded', () => {
   async function runObfuscation() {
     if (!ui.input.value.trim()) return setStatus('Input required', 'error', 'Paste Lua source or open a file.');
     ui.run.disabled = true;
-    setStatus('Protecting…', 'running', `${titleCase(state.preset)} / ${titleCase(state.protection_level)}`);
+    setStatus('Protecting…', 'running', `${ui.activePreset.textContent} / ${ui.activeLevel.textContent}`);
     try {
       const result = await api.run_obfuscation({
         script: ui.input.value,
         config: state.config,
-        release_check: Boolean(state.release_check),
+        release_check: Boolean(state.release_check) && !bootstrap.user_presets.includes(state.preset),
+        deployment_check: Boolean(state.release_check) && bootstrap.user_presets.includes(state.preset),
       });
       if (!result.ok) {
         ui.output.value = result.error;

@@ -35,7 +35,19 @@
         <section class="quick-setup v2-only">
           <span class="eyebrow">PROTECTION</span>
           <h1>보호 설정</h1>
-          <div id="quick-presets" class="preset-grid" aria-label="보호 프리셋"></div>
+          <div class="quick-choice">
+            <span class="quick-choice-label">보호 강도</span>
+            <div id="quick-presets" class="preset-grid" role="group" aria-label="보호 강도"></div>
+          </div>
+          <div class="quick-choice">
+            <span class="quick-choice-label">VM</span>
+            <div id="quick-backends" class="preset-grid backend-grid" role="group" aria-label="VM backend">
+              <button type="button" class="preset-button" data-backend="classic"><strong>Classic</strong></button>
+              <button type="button" class="preset-button" data-backend="karity"><strong>Karity</strong></button>
+              <button type="button" class="preset-button" data-backend="mov"><strong>MOV</strong></button>
+            </div>
+          </div>
+          <button id="backend-capability-status" class="quick-status capability-link" type="button" hidden></button>
           <span id="quick-preset-status" class="quick-status"></span>
         </section>
         <details id="advanced-settings" class="advanced-settings">
@@ -48,15 +60,6 @@
 
           <label class="field-label" for="preset-select">Preset</label>
           <select id="preset-select" class="select-control"></select>
-
-          <label class="field-label" for="level-select">Protect level</label>
-          <select id="level-select" class="select-control">
-            <option value="light">Light</option>
-            <option value="balanced">Balanced</option>
-            <option value="strong">Strong</option>
-            <option value="maximum">Maximum</option>
-            <option value="custom">&lt;Custom&gt;</option>
-          </select>
 
           <div class="config-source" id="config-source"></div>
         </section>
@@ -140,6 +143,7 @@
           </div>
         </details>
 
+        <p id="backend-capability-note" class="quick-status" role="status"></p>
         <div id="vm-option-groups"></div>
           </div>
         </details>
@@ -321,6 +325,7 @@ print(&quot;hello, karity&quot;)"></textarea>
 </div>
 <script src="i18n.js"></script>
 <script src="editor.js"></script>
+<script src="preset_state.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

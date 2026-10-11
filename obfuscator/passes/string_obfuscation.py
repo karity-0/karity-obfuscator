@@ -101,10 +101,10 @@ def parse_lua_string(raw: str) -> bytes:
     return bytes(out)
 
 
-def _encode(data: bytes, allocator: NameAllocator | None = None) -> str:
+def _encode(data: bytes, allocator: NameAllocator | None = None, options=None) -> str:
     from .numeric_provenance import CodeText
     from .literal_mosaic import ACTIVE
-    expression = reconstruct(data, allocator)
+    expression = reconstruct(data, allocator, options)
     mosaic = ACTIVE.get()
     if mosaic is not None:
         expression = mosaic.transform_generated(expression)
@@ -118,6 +118,11 @@ class StringObfuscationPass(BasePass):
 
     parser = "treesitter"
 
+    def __init__(self, **options):
+        from .string_reconstruction import validate_options
+        validate_options(options)
+        self.options = options
+
     def run(self, script: str, tree) -> list[Replacement]:
         from .literal_mosaic import ACTIVE
         replacements: list[Replacement] = []
@@ -129,7 +134,7 @@ class StringObfuscationPass(BasePass):
                 continue
 
             with mosaic.at(tree.cs(node),tree.ce(node)+1) if mosaic is not None else nullcontext():
-                expression = _encode(parse_lua_string(tree.text(node)),allocator)
+                expression = _encode(parse_lua_string(tree.text(node)),allocator,self.options)
             replacements.append(Replacement(
                 start    = tree.cs(node),
                 end      = tree.ce(node),

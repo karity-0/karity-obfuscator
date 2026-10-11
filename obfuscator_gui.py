@@ -13,6 +13,7 @@ import re
 import time
 import traceback
 from pathlib import Path
+from obfuscator.presets import PREFIX, REVISION, USER_PRESETS, resolve_user_preset, selection_profiles
 
 import webview
 
@@ -31,6 +32,7 @@ from obfuscator.registry import (
     validate_config,
     config_warnings,
     validate_release_config,
+    validate_deployment_config,
 )
 
 
@@ -61,6 +63,7 @@ _OPTION_GROUPS = {
     "junk_instructions": "Handlers", "junk_rate": "Handlers",
     "integrity_constants": "Integrity", "integrity_constant_rate": "Integrity",
     "graph_execution_rate": "Semantic routing", "cross_instruction_rate": "Semantic routing",
+    "state_dependency_limit": "Semantic routing",
     "runtime_polymorphism_rate": "Runtime diversity", "runtime_trace": "Runtime diversity",
     "block_variant_rate": "Runtime diversity", "block_variant_count": "Runtime diversity",
     "block_variant_max_instructions": "Runtime diversity",
@@ -77,6 +80,7 @@ _OPTION_LABELS = {
     "integrity_constants": "Integrity constants",
     "integrity_constant_rate": "Integrity constant rate",
     "graph_execution_rate": "Graph execution rate",
+    "state_dependency_limit": "State dependency limit",
     "cross_instruction_rate": "Cross-instruction rate",
     "runtime_polymorphism_rate": "Runtime polymorphism rate",
     "runtime_trace": "Runtime trace diagnostics", "block_variant_rate": "Block variant rate",
@@ -134,6 +138,8 @@ def _resolved_profiles(root: dict) -> dict[str, dict]:
             profiles[name] = _complete_config(resolve_config_profile(root, name))
         except Exception:
             continue
+    for name in USER_PRESETS:
+        profiles[PREFIX + name] = _complete_config(resolve_user_preset(name, root))
     return profiles
 
 
@@ -299,6 +305,10 @@ class Api:
         profiles = _resolved_profiles(root)
         levels = _protection_levels(profiles)
         state = _initial_state(profiles, root.get("profile"))
+        if source == str(EXAMPLE_CONFIG_PATH):
+            state = {'preset': PREFIX+'balanced', 'protection_level': 'balanced',
+                     'release_check': False, 'preset_revision': REVISION,
+                     'config': copy.deepcopy(profiles[PREFIX+'balanced'])}
         if CONFIG_PATH.exists():
             try:
                 saved = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
@@ -310,11 +320,16 @@ class Api:
                              "release_check": False, "config": _complete_config(saved)}
             except Exception:
                 pass
-        state["config"].setdefault("_selection_profiles", copy.deepcopy(root.get("profiles", {})))
+        # Extend macro lookup without replacing a user's saved definitions.
+        state['config']['_selection_profiles'] = {
+            **selection_profiles(root.get('profiles', {})),
+            **state['config'].get('_selection_profiles', {}),
+        }
         return {
             "state": state, "profiles": profiles, "protection_levels": levels,
             "passes": _pass_meta(), "vm_options": _vm_option_meta(),
             "profile_source": source, "backend_aliases": dict(VM_BACKEND_ALIASES),
+            'user_presets': [PREFIX+name for name in USER_PRESETS], 'preset_revision': REVISION,
             "preferences": _load_preferences(),
             "preference_defaults": _normalize_preferences({}),
             "themes": copy.deepcopy(THEME_CATALOG),
@@ -334,6 +349,9 @@ class Api:
             "protection_level": state.get("protection_level", "custom"),
             "release_check": bool(state.get("release_check", False)),
             "config": config,
+            'preset_revision': state.get('preset_revision'),
+            'preset_custom': bool(state.get('preset_custom', False)),
+            'preset_snapshots': copy.deepcopy(state.get('preset_snapshots', {})),
         }
         CONFIG_PATH.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
         return {"ok": True, "path": str(CONFIG_PATH)}
@@ -371,6 +389,8 @@ class Api:
             validate_config(config)
             if payload.get("release_check"):
                 validate_release_config(config)
+            if payload.get('deployment_check'):
+                validate_deployment_config(config)
             pipeline = build_pipeline_from_config(config, Pipeline)
             profiler = Profiler()
             start = time.perf_counter()

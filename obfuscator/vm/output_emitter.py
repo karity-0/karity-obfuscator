@@ -40,6 +40,7 @@ class NumberLiteral:
     eligible: bool = True
     protected: bool = False
     origin: str = 'vm_constant'
+    hot: bool = True
 
 
 @dataclass(frozen=True, slots=True)
@@ -153,13 +154,32 @@ def _parse_fragments(
     ctx,
     replacements: list[Replacement],
     literal_nodes: list | None = None,
-    *, track_regions=False,
+    *, track_regions=False, budgeted=False,
 ) -> tuple[list[Fragment], int]:
     exact_graph_ranges = [
         (match.start(), match.end() - 1)
         for match in _EXACT_GRAPH_REGION_RE.finditer(source)
     ]
     exact_graph_index = 0
+    path_cache = {}
+
+    def numeric_path(node, start, end):
+        # The emitter marks the outer, once-entered runtime. Every nested
+        # callable and loop is conservatively hot, irrespective of its name.
+        # Memoize shared ancestors on the existing tree, without another parse.
+        parent = node.parent
+        pending = []
+        while parent is not None and parent.id not in path_cache:
+            pending.append(parent)
+            parent = parent.parent
+        functions, loop = path_cache[parent.id] if parent is not None else (0, False)
+        for ancestor in reversed(pending):
+            functions += ancestor.type in {'function_definition', 'function_declaration'}
+            loop = loop or ancestor.type in {'for_statement', 'while_statement', 'repeat_statement'}
+            path_cache[ancestor.id] = (functions, loop)
+        entry = number_origin(source, start, end, 'vm_constant') == 'vm_entry'
+        hot = loop or functions > (1 if entry else 0)
+        return ('vm_constant/hot' if hot else 'vm_constant/initialization'), hot
 
     def in_exact_graph(start: int, end: int) -> bool:
         nonlocal exact_graph_index
@@ -257,12 +277,14 @@ def _parse_fragments(
             parts.append(LiteralRegion(start, end + 1, node.type))
         token = source[start:end + 1]
         if node.type == "number":
+            origin, hot = (numeric_path(node, start, end+1) if budgeted else
+                           (number_origin(source,start,end+1,'vm_constant'), True))
             parts.append(NumberLiteral(
                 token,
                 _EXACT_HEX64_RE.fullmatch(token) is None
                 and not in_exact_graph(start, end),
                 protected_number(source, start, end + 1),
-                number_origin(source,start,end+1,'vm_constant'),
+                origin, hot,
             ))
         elif node.type == "string":
             parts.append(StringLiteral(token))
@@ -407,12 +429,17 @@ def _emit_vm_literals_scoped(
         return source, []
 
     parse_start = time.perf_counter()
+    from ..passes.literal_mosaic import ACTIVE
+    mosaic = ACTIVE.get()
+    budgeted = bool(mosaic is not None and mosaic.policy.phase in ('vm_output','packer_output')
+                    and 'output_cost' in mosaic.options)
     parse_count = 0
     if ctx is None:
         ctx = parse(source)
         parse_count = 1
     parts, literal_count = _parse_fragments(
         source, ctx, replacements, literal_nodes, track_regions=finalize is not None,
+        budgeted=budgeted,
     )
     details: list[dict] = [{
         "phase": (
@@ -451,7 +478,13 @@ def _emit_vm_literals_scoped(
         )
 
         for part in parts:
-            if name == "string_obf" and isinstance(part, StringLiteral):
+            if (budgeted and name in {'number_obf','meme_strings'}
+                    and isinstance(part, NumberLiteral) and part.eligible and not part.protected):
+                # One generation owns both selected styles; its numeric leaves
+                # are protected, preventing Meme -> Number amplification.
+                _append_raw(output, mosaic.output_number(part.token, origin=part.origin, hot=part.hot))
+                replacements += 1
+            elif name == "string_obf" and isinstance(part, StringLiteral):
                 output.extend(_emit_string(part.token, allocator))
                 replacements += 1
             elif name == "boolean_obf" and isinstance(part, BooleanLiteral):
@@ -483,6 +516,8 @@ def _emit_vm_literals_scoped(
                 output.append(part)
 
         parts = output
+        if budgeted and name in {'number_obf', 'meme_strings'} and replacements:
+            mosaic.metrics.skip(mosaic.policy.phase+':budgeted_expression_rewrap_avoided', replacements)
         details.append({
             "phase": f"vm_output:{name}",
             "class": "VmLiteralEmitter",

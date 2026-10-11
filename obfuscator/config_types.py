@@ -14,6 +14,7 @@ type SelectablePass = Literal["string_obf", "number_obf", "meme_strings", "boole
 
 
 class LiteralMosaicOptions(TypedDict, total=False):
+    output_cost: dict[str, int | float]
     style: Literal['compact','balanced','exotic']
     cost: Literal['auto','low','medium','high']
     diversity_metrics: bool
@@ -47,6 +48,7 @@ class ProtectionOptions(TypedDict, total=False):
 
 
 class VMOptions(ProtectionOptions, total=False):
+    state_dependency_limit: int
     backend: str | None
     graph_execution_rate: float
     cross_instruction_rate: float
@@ -70,6 +72,8 @@ class RenameOptions(TypedDict, total=False):
 
 
 class FunctionOptions(TypedDict, total=False):
+    max_pass_expansion_ratio: float
+    all_source_functions: bool
     reconstruction_group_size: int
     max_jump_instructions: int
     max_function_instructions: int
@@ -122,6 +126,7 @@ class DebugDumps(TypedDict, total=False):
 
 
 class ObfuscatorConfig(TypedDict, total=False):
+    string_obf_options: dict[str, int]
     literal_mosaic: LiteralMosaicOptions
     passes: list[str]
     vm_output_passes: list[str]

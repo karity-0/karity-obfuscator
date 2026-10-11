@@ -3449,7 +3449,9 @@ class FunctionObfuscationPass(BasePass):
                  max_pass_instructions: int | None = None,
                  generated_number_max_chars: int = 192,
                  generated_number_max_operations: int = 3,
-                 reconstruction_group_size: int = 4):
+                 reconstruction_group_size: int = 4,
+                 all_source_functions: bool = False,
+                 max_pass_expansion_ratio: float | None = None):
         if boundary_mode not in {"mixed", "split", "cff"}:
             raise ValueError(
                 "boundary_mode must be 'mixed', 'split', or 'cff'"
@@ -3475,6 +3477,13 @@ class FunctionObfuscationPass(BasePass):
         self.selection_resolver = None
         self.boundary_mode = boundary_mode
         self.nested = bool(nested)
+        self.all_source_functions = all_source_functions
+        if max_pass_expansion_ratio is not None and (
+                isinstance(max_pass_expansion_ratio, bool)
+                or not isinstance(max_pass_expansion_ratio, (int, float))
+                or not 2 <= max_pass_expansion_ratio <= 64):
+            raise ValueError('max_pass_expansion_ratio must be between 2 and 64')
+        self.max_pass_expansion_ratio = max_pass_expansion_ratio
         if (not isinstance(nested_max_depth, int)
                 or isinstance(nested_max_depth, bool)
                 or nested_max_depth < 0):
@@ -3569,7 +3578,8 @@ class FunctionObfuscationPass(BasePass):
         reconstruction = (0, len(fragment)) in getattr(fragment, 'reconstructions', ())
         child_replacements: list[Replacement] = []
 
-        can_descend = self.selection_resolver is not None or (self.nested and record.depth < self.nested_max_depth)
+        can_descend = self.selection_resolver is not None or (self.nested and
+                        (self.all_source_functions or record.depth < self.nested_max_depth))
         for child in children_by_id.get(source_id, []):
             child_record = provenance[child.id]
             if not can_descend:
@@ -3755,6 +3765,8 @@ class FunctionObfuscationPass(BasePass):
         # A full depth-three binary expression has eight leaves. Keep room for
         # one compiler jump domain plus that expansion of the input prototypes.
         pass_budget = self.max_pass_instructions or MAX_JUMP + original['total_instructions'] * (2**3)
+        if self.max_pass_expansion_ratio is not None:
+            pass_budget = min(pass_budget, max(256, int(original['total_instructions'] * self.max_pass_expansion_ratio)))
         avoid_helper_captures = False
         retry_reason = None
         for compact in (False, True):
@@ -3927,7 +3939,7 @@ class FunctionObfuscationPass(BasePass):
 
             self.last_nested_candidate_count = sum(
                 1 for record in provenance.values()
-                if 0 < record.depth <= self.nested_max_depth
+                if record.depth > 0 and (self.all_source_functions or record.depth <= self.nested_max_depth)
             ) if self.nested else 0
 
             processed_ids: set[int] = set()
@@ -3949,9 +3961,8 @@ class FunctionObfuscationPass(BasePass):
             self.last_processed_source_count = len(processed_ids)
             expected_processed = {
                 node_id for node_id, record in provenance.items()
-                if self.selection_resolver is not None or (record.depth <= self.nested_max_depth
-                and (self.nested or record.depth == 0)
-                )
+                if self.selection_resolver is not None or record.depth == 0 or
+                (self.nested and (self.all_source_functions or record.depth <= self.nested_max_depth))
             }
             if processed_ids != expected_processed:
                 raise RuntimeError(
