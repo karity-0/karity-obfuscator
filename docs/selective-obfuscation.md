@@ -7,7 +7,15 @@ retain their existing behavior.
 ## Configuration and precedence
 
 `selection_modes` selects `all` or `marked` independently for `string_obf`,
-`number_obf`, `boolean_obf`, `table_obf`, `function_obf`, and `vm`.
+`number_obf`, `boolean_obf`, `table_obf`, `function_obf`, `meme_strings`, and `vm`.
+
+`--@NUMBER_OBF_START` / `--@NUMBER_OBF_END` and
+`--@MEME_STRINGS_START` / `--@MEME_STRINGS_END` select complete statement regions.
+They accept no options. In marked mode the shared Literal Mosaic generator uses
+only the strategies selected at the StringObf literal or FunctionObf function
+being transformed. An enclosing function without Number/Meme selection does
+not borrow activation from a marked child; selected children keep their own
+scope. See [Literal Mosaic](literal-mosaic.md).
 
 ```json
 {
@@ -233,6 +241,11 @@ domains. Nested native exclusions work both in whole-chunk mode and inside
 independently selected VM regions/functions. Exclusions remain stronger than
 inner VM selections. Whole VM execution without selective boundaries continues
 to support existing targets.
+
+If every top-level statement is covered by `NO_VM` or `NO_OBF`, the chunk stays
+native without generating a VM runtime or host factory bank. Source passes
+still apply inside `NO_VM`. Comments and empty statements outside the excluded
+regions do not require a VM runtime.
 
 Generated VM output is emitted at its final line position and is not rewritten
 after integrity binding. Use `vm_output_passes` for output minification. In a

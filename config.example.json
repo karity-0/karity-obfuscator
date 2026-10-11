@@ -149,10 +149,10 @@
                 "strip_info",
                 "anti_debug",
                 "anti_decompile",
-                "function_obf",
                 "boolean_obf",
                 "table_obf",
                 "string_obf",
+                "function_obf",
                 "number_obf",
                 "localize_globals",
                 "meme_strings",
@@ -161,12 +161,16 @@
             ],
             "vm_output_passes": [
                 "strip_info",
-                "function_obf",
+                "rename_obf",
                 "meme_strings",
+                "number_obf",
                 "minify"
             ],
             "packer_output_passes": [
                 "strip_info",
+                "rename_obf",
+                "meme_strings",
+                "number_obf",
                 "minify"
             ],
             "function_obf_options": {
@@ -216,10 +220,10 @@
                 "strip_info",
                 "anti_debug",
                 "anti_decompile",
-                "function_obf",
                 "boolean_obf",
                 "table_obf",
                 "string_obf",
+                "function_obf",
                 "number_obf",
                 "localize_globals",
                 "string_encode",
@@ -230,24 +234,16 @@
             ],
             "vm_output_passes": [
                 "strip_info",
-                "function_obf",
-                "boolean_obf",
-                "table_obf",
-                "string_obf",
+                "rename_obf",
                 "meme_strings",
                 "number_obf",
-                "localize_globals",
                 "minify"
             ],
             "packer_output_passes": [
                 "strip_info",
-                "function_obf",
-                "boolean_obf",
-                "table_obf",
-                "string_obf",
+                "rename_obf",
                 "meme_strings",
                 "number_obf",
-                "localize_globals",
                 "minify"
             ],
             "function_obf_options": {

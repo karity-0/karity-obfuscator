@@ -26,8 +26,6 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local _split_tmp
     local _S={[611]=(proto.vm_id~#code)&-1}
     local _MJ={}
-    _MJ._c_u32=_c_u32;_MJ._c_xor=_c_xor;_MJ._c_and=_c_and;_MJ._c_or=_c_or
-    _MJ._c_not=_c_not;_MJ._c_shl=_c_shl;_MJ._c_shr=_c_shr
     local _XF={0,0}
     local _PR={0,0}
     local _SS={0,0}

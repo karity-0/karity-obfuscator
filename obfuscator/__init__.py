@@ -1,3 +1,11 @@
+# Python 3.15 defers these exports until first use; older versions import normally.
+__lazy_modules__ = {
+    'obfuscator.pipeline',
+    'obfuscator.registry',
+    'obfuscator.vm',
+    'obfuscator.passes',
+}
+
 from .pipeline import Pipeline
 from .registry import build_pipeline_from_config
 from .vm import VMPass
@@ -17,4 +25,4 @@ from .passes import (
     SignatureOptions,
 )
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"

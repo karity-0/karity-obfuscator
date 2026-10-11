@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import random
 import re
 import subprocess
@@ -143,6 +144,25 @@ print(call(3))
                      '0x1p-1074,1.25,1e300};for _,v in ipairs(values) do '
                      'print(math.type(v),string.format("%a",v)) end')
     expected_probe = run_source(numeric_probe)
+    # Shipped final-output defaults keep visible memes and the full NumberObf
+    # formatter, without letting MemeStrings expand NumberObf's new leaves.
+    profiles = json.loads((ROOT_DIR / 'config.example.json').read_text(encoding='utf-8'))['profiles']
+    style_probe = 'local t={' + ','.join(str(i) for i in range(1, 201)) + '};print(t[1],t[200],1.25)'
+    for profile in ('high', 'max'):
+        passes = profiles[profile]['vm_output_passes']
+        random.seed(261010)
+        styled, style_details = _obfuscate_vm_output(style_probe, passes)
+        assert run_source(styled) == run_source(style_probe), profile
+        assert re.search(r'#"', styled), profile
+        assert re.search(r'0[xX][0-9a-fA-F]*\.', styled), profile
+        assert re.search(r'(?<![\w.])\.\d', styled), profile
+        style_numbers = next(d for d in style_details if d['phase'] == 'vm_output:number_obf')
+        assert style_numbers['retokenized_generated_numbers'] is False, style_numbers
+        assert style_numbers['replacements'] > 100, style_numbers
+        random.seed(261010)
+        styled_loader = PackerPass(packer_output_passes=profiles[profile]['packer_output_passes']).run(style_probe)
+        assert '#"' in styled_loader, profile
+        assert run_source(styled_loader) == run_source(style_probe), profile
     for seed in range(16):
         random.seed(seed)
         combined_probe, probe_details = _obfuscate_vm_output(numeric_probe, ["number_obf", "meme_strings"])
@@ -239,8 +259,8 @@ print(call(3))
         "print(string.char(65))", ["number_obf"],
     )
     char_number = next(d for d in char_details if d["phase"] == "vm_output:number_obf")
-    if char_number["replacements"] != 0 or run_source(char_source) != (0, b"A\n", b""):
-        raise AssertionError("original string.char byte-domain exclusion regressed")
+    if char_number["replacements"] != 1 or run_source(char_source) != (0, b"A\n", b""):
+        raise AssertionError("number emitter did not layer existing string.char operands")
 
     random.seed(260829)
     profiler = Profiler()
@@ -279,12 +299,21 @@ print(call(3))
         for record in profiler.records
         for detail in walk_details(record.details)
     ]
+    # Literal/identifier planning still shares its original context. Final
+    # naming now explicitly reports its own parse, previously hidden inside
+    # Rename and StripInfo share the final tree, or reuse the source context
+    # when generated scalar syntax has no new identifiers or scopes.
     parse_count = sum(
         detail.get("parse_count", 0)
         for detail in vm_details
+        if detail.get('phase') != 'vm_output:final_parse'
     )
     if parse_count not in (1, 2):
         raise AssertionError(f"VM output shared parse count mismatch: {parse_count}")
+    final_parses = [d for d in vm_details if d.get('phase') == 'vm_output:final_parse']
+    assert len(final_parses) == 1 and final_parses[0]['parse_count'] in (0, 1), final_parses
+    if final_parses[0]['parse_count'] == 0:
+        assert any(d.get('reused') for d in vm_details if d.get('phase') == 'vm_output:analysis_reuse')
     identifier_phases = {
         detail.get("phase")
         for detail in vm_details

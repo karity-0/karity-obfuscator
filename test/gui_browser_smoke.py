@@ -49,6 +49,26 @@ def check_editor_scrollbars(page):
         editor.evaluate('''(el,value)=>{el.value=value;el.dispatchEvent(new Event('input',{bubbles:true}));el.scrollTop=0;el.scrollLeft=0;}''', original)
 
 
+def check_build_language(page, bootstrap):
+    language = page.locator('html').get_attribute('lang')
+    expected = page.evaluate('''({passes, language}) => Object.fromEntries(
+        passes.map(pass => [pass.name, window.GuiI18n.tr(pass.label, language)]))''',
+        {"passes": bootstrap["passes"], "language": language})
+    for context, selector in [("passes", "#passes-list"),
+                              ("vm_output_passes", "#vm-output-list"),
+                              ("packer_output_passes", "#packer-output-list")]:
+        for _ in range(2):
+            page.locator(f'{selector} input').first.evaluate('''input => {
+                input.checked = !input.checked;
+                input.dispatchEvent(new Event('change', {bubbles: true}));
+            }''')
+            assert page.locator(f'{selector} .toggle-name').all_text_contents() == [
+                expected[meta["name"]] for meta in bootstrap["passes"] if context in meta["contexts"]
+            ]
+            assert all(label in expected.values() for label in page.locator('.pipeline-node').all_text_contents())
+            assert page.locator('html').get_attribute('lang') == language
+
+
 def main() -> int:
     api = Api()
     bootstrap = api.get_bootstrap()
@@ -84,6 +104,7 @@ def main() -> int:
         assert page.locator(".quick-setup").is_visible()
         assert not page.locator("#preset-select").is_visible()
         assert page.locator("#run-btn").inner_text().startswith("난독화")
+        check_build_language(page, bootstrap)
         page.locator('[data-preset="fast-vm"]').click()
         assert page.locator('[data-preset="fast-vm"]').get_attribute("aria-pressed") == "true"
         page.locator("#input-script").fill('print("marker")')
@@ -191,8 +212,10 @@ def main() -> int:
         assert page.locator("#run-btn").inner_text().startswith("Obfuscate")
         assert page.locator("#editor-tab").inner_text() == "Editor"
         assert page.locator("html").get_attribute("lang") == "en"
+        check_build_language(page, bootstrap)
         assert page.locator("#input-script").input_value() == expected
         page.locator("#language-select").select_option("ko")
+        check_build_language(page, bootstrap)
         page.locator("#editor-tab").click()
         page.locator("#editor-font-size").fill("16")
         page.locator("#editor-font-size").dispatch_event("input")

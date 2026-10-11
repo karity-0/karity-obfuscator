@@ -128,6 +128,12 @@ class ContextPlan:
 
 
 def _obfuscate_packer_output(script: str, pass_names: list[str], *, cache_literals: bool = False) -> str:
+    from .literal_mosaic import boundary, use_mosaic
+    with use_mosaic(boundary(pass_names,phase='packer_output')):
+        return _obfuscate_packer_output_scoped(script,pass_names,cache_literals=cache_literals)
+
+
+def _obfuscate_packer_output_scoped(script: str, pass_names: list[str], *, cache_literals: bool = False) -> str:
     if ("meme_strings" in pass_names and "number_obf" in pass_names
             and pass_names.index("meme_strings") < pass_names.index("number_obf")):
         # Share literal lowering so negative meme residuals keep their exact
@@ -139,6 +145,8 @@ def _obfuscate_packer_output(script: str, pass_names: list[str], *, cache_litera
     from ..registry import PASS_REGISTRY
 
     pipeline = Pipeline(show_header=False)
+    from .literal_mosaic import ACTIVE
+    pipeline.mosaic_scope = ACTIVE.get()
     for name in pass_names:
         info = PASS_REGISTRY.get(name)
         if info is None:
@@ -238,7 +246,9 @@ def _cache_loader_meme_constants(source: str) -> str:
         if state and state[1]:
             expression = ctx.text(node)
             index = expressions.setdefault(expression, len(expressions) + 1)
-            edits.append((ctx.cs(node), ctx.ce(node) + 1, f"{pool}[{index}]"))
+            # A compact expression can touch a keyword, e.g. return(#"gg").
+            # Replacing its delimiters with an identifier needs token gaps.
+            edits.append((ctx.cs(node), ctx.ce(node) + 1, f" {pool}[{index}] "))
         else:
             stack.extend(reversed(node.named_children))
     if not edits:
@@ -324,9 +334,12 @@ def _loader_binding(loader_src: str) -> str:
     so the loader function's enclosing source position stays identical between
     build-time dumping and runtime execution.
     """
-    if loader_src.startswith("return "):
-        return f"local _P={loader_src[len('return '):]};"
-    return f"local _P=(function(){loader_src}end)();"
+    returned = re.match(r'\Areturn\b', loader_src)
+    if returned is not None:
+        return f"local _P={loader_src[returned.end():].lstrip()};"
+    # Explicit boundaries also protect a chunk ending in a keyword or line
+    # comment. Both dumping and runtime rendering use this same outer scope.
+    return f"local _P=(function()\n{loader_src}\nend)();"
 
 
 

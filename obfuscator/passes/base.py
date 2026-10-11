@@ -1,3 +1,8 @@
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "luaparser",
+}
+
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from luaparser import ast

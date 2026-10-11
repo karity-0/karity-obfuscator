@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import random
+import re
 import subprocess
 import sys
 import tempfile
@@ -72,6 +74,52 @@ def main() -> int:
 
     if strip_comment_tokens("-- alpha --[[beta]] --[=[gamma]=]") != "alpha beta gamma":
         raise AssertionError("comment token stripping failed")
+
+    for pattern in (
+        "{unknown}", "{hash", "{hash:invalid}", "{hash!z}",
+        "{name:{missing}}", "{name:{hash}}",
+    ):
+        if output_signature.sanitize_generator_pattern(pattern):
+            raise AssertionError(f"invalid generator pattern accepted: {pattern}")
+
+    hash_options = {
+        "mode": "generated",
+        "fake": {"generator_patterns": ["{{literal}} {hash} {hash}"]},
+    }
+    validate_config(config([], hash_options))
+    state = random.getstate()
+    try:
+        random.seed(42)
+        first = OutputSignaturePass(hash_options)
+        random.seed(42)
+        if OutputSignaturePass(hash_options).prefix != first.prefix:
+            raise AssertionError("hash signature did not respect the random seed")
+        random.seed(43)
+        if OutputSignaturePass(hash_options).prefix == first.prefix:
+            raise AssertionError("different seeds produced the same hash signature")
+    finally:
+        random.setstate(state)
+    hashes = re.findall(r"\b[0-9a-f]{64}\b", first.prefix)
+    if len(hashes) != 2 or hashes[0] != hashes[1] or "{literal}" not in first.prefix:
+        raise AssertionError("hash placeholders or escaped braces were rendered incorrectly")
+    rendered = first.run("print(42)")
+    if first.run(rendered) != rendered or first.run("print(42)") != rendered:
+        raise AssertionError("selected hash signature changed or was duplicated")
+    if OutputSignaturePass({"mode": "custom", "custom": "{hash}"}).prefix != "-- {hash}\n":
+        raise AssertionError("plain custom text was interpolated")
+
+    fake = {"mode": "fake", "fake": {"sources": ["well_known"]}}
+    for entry in output_signature.WELL_KNOWN_SIGNATURES:
+        with patch.object(output_signature, "WELL_KNOWN_SIGNATURES", (entry,)):
+            output = assert_runtime([], fake)
+        if "{hash}" in output:
+            raise AssertionError("well-known signature retained a hash placeholder")
+        if entry[0].startswith("Synapse"):
+            if not re.search(r"VM Hash: [0-9a-f]{64}\n", output):
+                raise AssertionError("Synapse hash was not generated as 64 hex characters")
+            with patch.object(output_signature, "WELL_KNOWN_SIGNATURES", (entry,)):
+                for passes in (["vm"], ["pack"], ["vm", "pack"]):
+                    assert_runtime(passes, fake)
 
     if OutputSignaturePass({"mode": "none"}).run("print(1)") != "print(1)":
         raise AssertionError("none mode changed output")

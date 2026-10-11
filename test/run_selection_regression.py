@@ -859,6 +859,49 @@ print(f(3));print(g(4))
                     self.assertEqual(1, len(report))
                     self.assertEqual("excluded", report[0]["status"])
 
+    def test_fully_excluded_whole_vm_skips_runtime(self):
+        sources = ('--@NO_VM_START\nprint("hi")\n--@NO_VM_END\n',
+                   '-- outside\n@NO_OBF_START\nprint("한글")\n@NO_OBF_END\n; -- end\n',
+                   '@NO_VM_START\nlocal n=2\n@NO_VM_END\n'
+                   '@NO_OBF_START\nprint(n)\n@NO_OBF_END\n',
+                   '@NO_VM\nlocal function f() return 2 end\n'
+                   '@NO_VM_START\nprint(f())\n@NO_VM_END\n',
+                   '@VM\n@NO_VM_START\n@VM_START\nprint(2)\n@VM_END\n@NO_VM_END\n')
+        for source in sources:
+            for version in ("5.1", "5.3"):
+                with self.subTest(source=source, version=version), patch(
+                        "obfuscator.selective_vm._vm_build", side_effect=AssertionError("unexpected VM build")):
+                    output, report = self.equivalent(source, passes=["vm"], vm_options=VM,
+                                                     target={"lua_version": version})
+                    self.assertEqual(SelectionPlan(source).source, output)
+                    self.assertTrue(report)
+                    self.assertTrue(all(r["status"] == "excluded" for r in report))
+
+    def test_fully_native_whole_vm_preserves_source_passes_and_minification(self):
+        source = '--@NO_VM_START\nprint("hi")\n--@NO_VM_END\n'
+        with patch("obfuscator.selective_vm._vm_build", side_effect=AssertionError("unexpected VM build")):
+            output, report = self.equivalent(source, passes=["string_obf", "number_obf", "vm"], vm_options=VM)
+            self.assertNotIn('"hi"', output)
+            self.assertEqual("excluded", next(r["status"] for r in report if r["feature"] == "vm"))
+            from obfuscator.vm.vm_pass import VMPass
+            from obfuscator.passes.minify import MinifyPass
+            vm = VMPass(vm_options=VM)
+            pipeline = Pipeline().add(vm).add(MinifyPass())
+            output = pipeline.run(source)
+            self.assertEqual(run(SelectionPlan(source).source), run(output))
+            self.assertEqual([], vm.last_profile)
+
+    def test_partial_exclusions_still_build_whole_vm(self):
+        sources = ('@NO_VM_START\nprint("hi")\n@NO_VM_END\nprint("outside")\n',
+                   'local function f()\n@NO_VM_START\nreturn "hi"\n@NO_VM_END\nend\nprint(f())\n',
+                   '@NO_VM\nlocal function f() return "hi" end\nprint(f())\n')
+        from obfuscator import selective_vm
+        for source in sources:
+            with self.subTest(source=source), patch.object(
+                    selective_vm, "_vm_build", wraps=selective_vm._vm_build) as compile_vm:
+                self.equivalent(source, passes=["vm"], vm_options=VM)
+                self.assertEqual(1, compile_vm.call_count)
+
     def test_manual_function_pass_defaults_apply_to_regions_and_nesting(self):
         from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
         source = '''local function f(n)

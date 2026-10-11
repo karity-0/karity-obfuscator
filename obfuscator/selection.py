@@ -5,6 +5,11 @@ through the pipeline; it is never rediscovered in generated Lua helpers.
 """
 from __future__ import annotations
 
+# Load processing dependencies only when the corresponding feature is used.
+__lazy_modules__ = {
+    "obfuscator.passes.ts_utils",
+}
+
 import ast
 from dataclasses import dataclass, field
 import difflib
@@ -16,7 +21,9 @@ from .passes.ts_utils import parse
 MACROS = {"STRING_OBF": "string_obf", "NUMBER_OBF": "number_obf",
           "BOOLEAN_OBF": "boolean_obf", "TABLE_OBF": "table_obf"}
 FUNCTION_TYPES = {"function_declaration", "function_definition"}
-SELECTABLE = frozenset((*MACROS.values(), "function_obf", "vm"))
+SELECTABLE = frozenset((*MACROS.values(), "function_obf", "meme_strings", "vm"))
+_REGION_FEATURES = {'VM':'vm','FUNCTION_OBF':'function_obf','NO_VM':'no_vm',
+                    'NO_OBF':'no_obf','NUMBER_OBF':'number_obf','MEME_STRINGS':'meme_strings'}
 _TOKEN = re.compile(
     r"(?P<longcomment>--\[(?P<ceq>=*)\[.*?\](?P=ceq)\])"
     r"|(?P<comment>--[^\r\n]*)"
@@ -183,14 +190,14 @@ class SelectionPlan:
                     _error(source, start, "@NO_VM accepts no options")
                 self.spans.append(Span(ctx.cs(node), ctx.ce(node) + 1, feature, opts,
                                        source.count("\n", 0, start) + 1, "function"))
-            elif name.endswith("_START") and name[:-6] in {"VM", "FUNCTION_OBF", "NO_VM", "NO_OBF"}:
+            elif name.endswith("_START") and name[:-6] in _REGION_FEATURES:
                 base = name[:-6]
-                feature = {"VM": "vm", "FUNCTION_OBF": "function_obf", "NO_VM": "no_vm", "NO_OBF": "no_obf"}[base]
+                feature = _REGION_FEATURES[base]
                 opts = _options(source, start, tail, feature)
-                if feature.startswith("no_") and opts:
+                if (feature.startswith("no_") or feature in {'number_obf','meme_strings'}) and opts:
                     _error(source, start, f"@{name} accepts no options")
                 stack.append((start, end, base, feature, opts))
-            elif name.endswith("_END") and name[:-4] in {"VM", "FUNCTION_OBF", "NO_VM", "NO_OBF"}:
+            elif name.endswith("_END") and name[:-4] in _REGION_FEATURES:
                 if tail.strip() or not stack or stack[-1][2] != name[:-4]:
                     _error(source, start, f"unmatched @{name}")
                 opening, body_start, _, feature, opts = stack.pop()
@@ -332,6 +339,7 @@ def _walk(node):
 
 
 def _apply(source, replacements):
+    from .passes.numeric_provenance import join_code
     parts, position = [], 0
     for r in sorted(replacements, key=lambda r: (r.start, r.end)):
         if not (0 <= r.start <= len(source) and r.start - 1 <= r.end < len(source)):
@@ -340,4 +348,4 @@ def _apply(source, replacements):
             raise SelectionError("overlapping selection replacements")
         parts.extend((source[position:r.start], r.new_text))
         position = r.end + 1
-    return "".join((*parts, source[position:]))
+    return join_code((*parts, source[position:]))

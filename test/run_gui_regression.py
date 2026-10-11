@@ -125,8 +125,13 @@ def main() -> int:
     assert {"anti_debug", "anti_decompile", "function_obf", "meme_strings"} <= set(shipped_profiles["fast-vm"]["passes"])
     assert "pack" not in shipped_profiles["high"]["passes"] and "pack" in shipped_profiles["max"]["passes"]
     for context in ("vm_output_passes", "packer_output_passes"):
-        stages = shipped_profiles["max"][context]
-        assert stages.index("string_obf") < stages.index("meme_strings") < stages.index("number_obf")
+        for name in ("high", "max"):
+            assert shipped_profiles[name][context] == [
+                "strip_info", "rename_obf", "meme_strings", "number_obf", "minify",
+            ]
+    for name in ("high", "max"):
+        stages=shipped_profiles[name]['passes']
+        assert stages.index('string_obf') < stages.index('function_obf') < stages.index('number_obf')
     if "max" in profiles:
         validate_release_config(profiles["max"])
 
@@ -145,9 +150,12 @@ def main() -> int:
         "language": "ko",
         "theme": "system", "density": "compact", "editor_font_size": 18,
         "motion": "reduced", "remember_sections": True,
+        "quick_vm_change": False,
         "sections": {"pipeline": False},
     }
     assert _normalize_preferences({"gui_version": "invalid"})["gui_version"] == "v2"
+    assert _normalize_preferences({"quick_vm_change": True})["quick_vm_change"] is True
+    assert _normalize_preferences({"quick_vm_change": "true"})["quick_vm_change"] is False
     assert _normalize_preferences({"gui_version": "v1"})["gui_version"] == "v1"
     assert _normalize_preferences({"language": "en", "theme": "crystal"})["language"] == "en"
     assert _normalize_preferences({"language": "invalid"})["language"] == "ko"
@@ -202,6 +210,7 @@ def main() -> int:
                 "theme": "classic", "editor_font_size": 9,
                 "gui_version": "v1",
                 "language": "en",
+                "quick_vm_change": True,
                 "sections": {"signature": False},
             })
             assert saved_preferences["ok"]
@@ -209,6 +218,8 @@ def main() -> int:
             assert persisted["theme"] == "classic"
             assert persisted["gui_version"] == "v1"
             assert persisted["language"] == "en"
+            assert persisted["quick_vm_change"] is True
+            assert Api().get_bootstrap()["preferences"]["quick_vm_change"] is True
             assert persisted["editor_font_size"] == 10
             assert persisted["sections"] == {"signature": False}
         finally:
