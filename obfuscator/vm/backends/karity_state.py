@@ -252,10 +252,14 @@ def _operation_accesses(instruction, maximum: int) -> tuple[tuple[int, ...], tup
     if operation == "LOAD_NIL":
         return (), _register_range(a, b - a + 1, maximum)
     if operation == "GET_UPVALUE": return (), _register(a)
-    if operation in {"GET_UPVALUE_TABLE", "GET_TABLE"}:
+    if operation == 'GET_UPVALUE_TABLE':
+        # B indexes an upvalue, not this frame's register bank. RK C may read
+        # a register. Large closure capture sets can put B above maxstack.
+        return _register(c), _register(a)
+    if operation == "GET_TABLE":
         return _register(b) + _register(c), _register(a)
     if operation == "SET_UPVALUE_TABLE":
-        return _register(a) + _register(b) + _register(c), ()
+        return _register(b) + _register(c), ()
     if operation in {"SET_UPVALUE", "GLOBAL_SET"}: return _register(a), ()
     if operation == "SET_TABLE": return _register(a) + _register(b) + _register(c), ()
     if operation == "SELF": return _register(b) + _register(c), _register(a) + _register(a + 1)
