@@ -1,0 +1,826 @@
+{
+  "baseline_commit": "8fad8cf",
+  "branch": "future",
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "state_repeats": 7,
+  "state": {
+    "before": {
+      "straight": {
+        "samples": [
+          {
+            "wall_seconds": 0.05790770007297397,
+            "cpu_seconds": 0.078125
+          },
+          {
+            "wall_seconds": 0.0583113000029698,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.057761100004427135,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.053125099977478385,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.050320700043812394,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.053400900098495185,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.03928019991144538,
+            "cpu_seconds": 0.03125
+          }
+        ],
+        "digest": "aff9306119d9bf49ab3a3523ef26c4fcd51f57aba36ce9087f07f6747a5b7311",
+        "wall_median": 0.053400900098495185,
+        "cpu_median": 0.015625,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.038137,
+            "function": "f0",
+            "instructions": 1349,
+            "registers": 4,
+            "transfers": 1356,
+            "waves": 1
+          }
+        ],
+        "source_bytes": 2184
+      },
+      "loop": {
+        "samples": [
+          {
+            "wall_seconds": 0.036864800029434264,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.03601579996757209,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.04015439993236214,
+            "cpu_seconds": 0.03125
+          },
+          {
+            "wall_seconds": 0.029054899932816625,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.026971700019203126,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.028413299936801195,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.026504900073632598,
+            "cpu_seconds": 0.03125
+          }
+        ],
+        "digest": "60f3b02fb9f3e5efcdd74ef0eef9e2107106d0e48e36c6e59eec256496f903a4",
+        "wall_median": 0.029054899932816625,
+        "cpu_median": 0.0,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.02621,
+            "function": "f0",
+            "instructions": 358,
+            "registers": 7,
+            "transfers": 1007,
+            "waves": 2
+          }
+        ],
+        "source_bytes": 557
+      },
+      "closures": {
+        "samples": [
+          {
+            "wall_seconds": 0.00402110000140965,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.00439310004003346,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.004067300003953278,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.004036400001496077,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.00433809997048229,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.003941199975088239,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.004060799954459071,
+            "cpu_seconds": 0.0
+          }
+        ],
+        "digest": "222608eeff5cee2b2dd207072926a8f9b44f02e41b1bc1a6ec39be9c27cbfe54",
+        "wall_median": 0.004060799954459071,
+        "cpu_median": 0.0,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.003455,
+            "function": "f0",
+            "instructions": 65,
+            "registers": 8,
+            "transfers": 141,
+            "waves": 2
+          },
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.000538,
+            "function": "f0.0",
+            "instructions": 24,
+            "registers": 2,
+            "transfers": 23,
+            "waves": 1
+          }
+        ],
+        "source_bytes": 113
+      },
+      "cff_string": {
+        "samples": [
+          {
+            "wall_seconds": 4.30386870005168,
+            "cpu_seconds": 1.578125
+          },
+          {
+            "wall_seconds": 4.133350000018254,
+            "cpu_seconds": 2.25
+          },
+          {
+            "wall_seconds": 5.085103599936701,
+            "cpu_seconds": 1.953125
+          },
+          {
+            "wall_seconds": 4.125571200042032,
+            "cpu_seconds": 1.921875
+          },
+          {
+            "wall_seconds": 4.20631629996933,
+            "cpu_seconds": 2.0
+          },
+          {
+            "wall_seconds": 5.516806600033306,
+            "cpu_seconds": 1.75
+          },
+          {
+            "wall_seconds": 4.346802299958654,
+            "cpu_seconds": 1.890625
+          }
+        ],
+        "digest": "f0afc938f7d682cc9aceb9f95a6e6920c81ae9612b6b30f360166d870a017e90",
+        "wall_median": 4.30386870005168,
+        "cpu_median": 1.921875,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.000904,
+            "function": "f0",
+            "instructions": 22,
+            "registers": 3,
+            "transfers": 21,
+            "waves": 1
+          },
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.725721,
+            "function": "f0.0",
+            "instructions": 2895,
+            "registers": 13,
+            "transfers": 18815,
+            "waves": 3
+          },
+          {
+            "phase": "karity_state_function",
+            "elapsed": 3.581104,
+            "function": "f0.0.0",
+            "instructions": 7214,
+            "registers": 23,
+            "transfers": 64202,
+            "waves": 3
+          }
+        ],
+        "source_bytes": 75873
+      }
+    },
+    "after": {
+      "straight": {
+        "samples": [
+          {
+            "wall_seconds": 0.04900969995651394,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.0447649999987334,
+            "cpu_seconds": 0.0625
+          },
+          {
+            "wall_seconds": 0.04507900006137788,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.03994700009934604,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.0697059000376612,
+            "cpu_seconds": 0.0625
+          },
+          {
+            "wall_seconds": 0.07019650004804134,
+            "cpu_seconds": 0.046875
+          },
+          {
+            "wall_seconds": 0.057799399946816266,
+            "cpu_seconds": 0.03125
+          }
+        ],
+        "digest": "aff9306119d9bf49ab3a3523ef26c4fcd51f57aba36ce9087f07f6747a5b7311",
+        "wall_median": 0.04900969995651394,
+        "cpu_median": 0.03125,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.056057,
+            "function": "f0",
+            "instructions": 1349,
+            "registers": 4,
+            "transfers": 1356,
+            "waves": 1,
+            "projections": 1356,
+            "record_strategy": "eager_acyclic",
+            "projection_elapsed": 4.6e-05
+          }
+        ],
+        "source_bytes": 2184
+      },
+      "loop": {
+        "samples": [
+          {
+            "wall_seconds": 0.027474000002257526,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.0312737999483943,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.030607699998654425,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.037842099904082716,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.02693099994212389,
+            "cpu_seconds": 0.046875
+          },
+          {
+            "wall_seconds": 0.04418909992091358,
+            "cpu_seconds": 0.046875
+          },
+          {
+            "wall_seconds": 0.02220950007904321,
+            "cpu_seconds": 0.0
+          }
+        ],
+        "digest": "60f3b02fb9f3e5efcdd74ef0eef9e2107106d0e48e36c6e59eec256496f903a4",
+        "wall_median": 0.030607699998654425,
+        "cpu_median": 0.015625,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.021673,
+            "function": "f0",
+            "instructions": 358,
+            "registers": 7,
+            "transfers": 1007,
+            "waves": 2,
+            "projections": 357,
+            "record_strategy": "stable",
+            "projection_elapsed": 0.005954
+          }
+        ],
+        "source_bytes": 557
+      },
+      "closures": {
+        "samples": [
+          {
+            "wall_seconds": 0.006086600013077259,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.005355400033295155,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.0068564999382942915,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.0048244999488815665,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.003753200056962669,
+            "cpu_seconds": 0.0
+          },
+          {
+            "wall_seconds": 0.004687499953433871,
+            "cpu_seconds": 0.015625
+          },
+          {
+            "wall_seconds": 0.00428340001963079,
+            "cpu_seconds": 0.0
+          }
+        ],
+        "digest": "222608eeff5cee2b2dd207072926a8f9b44f02e41b1bc1a6ec39be9c27cbfe54",
+        "wall_median": 0.0048244999488815665,
+        "cpu_median": 0.0,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.003591,
+            "function": "f0",
+            "instructions": 65,
+            "registers": 8,
+            "transfers": 141,
+            "waves": 2,
+            "projections": 64,
+            "record_strategy": "stable",
+            "projection_elapsed": 0.000961
+          },
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.000611,
+            "function": "f0.0",
+            "instructions": 24,
+            "registers": 2,
+            "transfers": 23,
+            "waves": 1,
+            "projections": 23,
+            "record_strategy": "eager_acyclic",
+            "projection_elapsed": 2e-06
+          }
+        ],
+        "source_bytes": 113
+      },
+      "cff_string": {
+        "samples": [
+          {
+            "wall_seconds": 3.153372700093314,
+            "cpu_seconds": 1.40625
+          },
+          {
+            "wall_seconds": 3.096692100050859,
+            "cpu_seconds": 1.40625
+          },
+          {
+            "wall_seconds": 3.083252399927005,
+            "cpu_seconds": 1.390625
+          },
+          {
+            "wall_seconds": 2.9547275999793783,
+            "cpu_seconds": 1.21875
+          },
+          {
+            "wall_seconds": 3.0220611999975517,
+            "cpu_seconds": 1.515625
+          },
+          {
+            "wall_seconds": 3.028373899986036,
+            "cpu_seconds": 1.5
+          },
+          {
+            "wall_seconds": 3.842449999996461,
+            "cpu_seconds": 1.4375
+          }
+        ],
+        "digest": "f0afc938f7d682cc9aceb9f95a6e6920c81ae9612b6b30f360166d870a017e90",
+        "wall_median": 3.083252399927005,
+        "cpu_median": 1.40625,
+        "profile": [
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.00088,
+            "function": "f0",
+            "instructions": 22,
+            "registers": 3,
+            "transfers": 21,
+            "waves": 1,
+            "projections": 21,
+            "record_strategy": "eager_acyclic",
+            "projection_elapsed": 1.2e-05
+          },
+          {
+            "phase": "karity_state_function",
+            "elapsed": 0.710828,
+            "function": "f0.0",
+            "instructions": 2895,
+            "registers": 13,
+            "transfers": 18815,
+            "waves": 3,
+            "projections": 2894,
+            "record_strategy": "stable",
+            "projection_elapsed": 0.053574
+          },
+          {
+            "phase": "karity_state_function",
+            "elapsed": 3.091502,
+            "function": "f0.0.0",
+            "instructions": 7214,
+            "registers": 23,
+            "transfers": 64202,
+            "waves": 3,
+            "projections": 7212,
+            "record_strategy": "stable",
+            "projection_elapsed": 0.123789
+          }
+        ],
+        "source_bytes": 75873
+      }
+    }
+  },
+  "rejected_number_candidate": {
+    "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+    "checkout": "X:\\# LOCAL\\# karity\\repo\\lua-obfuscator",
+    "repeats": 9,
+    "state": {},
+    "number": {
+      "native": {
+        "before": {
+          "samples": [
+            {
+              "wall_seconds": 0.4387679999927059,
+              "cpu_seconds": 0.21875
+            },
+            {
+              "wall_seconds": 0.4093379999976605,
+              "cpu_seconds": 0.15625
+            },
+            {
+              "wall_seconds": 0.42216580000240356,
+              "cpu_seconds": 0.203125
+            },
+            {
+              "wall_seconds": 0.4127920001046732,
+              "cpu_seconds": 0.140625
+            },
+            {
+              "wall_seconds": 0.44804789999034256,
+              "cpu_seconds": 0.140625
+            },
+            {
+              "wall_seconds": 0.49289539991877973,
+              "cpu_seconds": 0.09375
+            },
+            {
+              "wall_seconds": 0.5700971999904141,
+              "cpu_seconds": 0.125
+            },
+            {
+              "wall_seconds": 0.49734270002227277,
+              "cpu_seconds": 0.21875
+            },
+            {
+              "wall_seconds": 0.5078404999803752,
+              "cpu_seconds": 0.28125
+            }
+          ],
+          "digest": "a163dec540a8308b5e387aed74d467a32afcb86cf68c6295bde885046d583f4a",
+          "wall_median": 0.44804789999034256,
+          "cpu_median": 0.15625
+        },
+        "after": {
+          "samples": [
+            {
+              "wall_seconds": 0.41881259996443987,
+              "cpu_seconds": 0.265625
+            },
+            {
+              "wall_seconds": 0.38668720005080104,
+              "cpu_seconds": 0.28125
+            },
+            {
+              "wall_seconds": 0.4091800000751391,
+              "cpu_seconds": 0.1875
+            },
+            {
+              "wall_seconds": 0.4074643000494689,
+              "cpu_seconds": 0.109375
+            },
+            {
+              "wall_seconds": 0.4537024999735877,
+              "cpu_seconds": 0.21875
+            },
+            {
+              "wall_seconds": 0.4568238001083955,
+              "cpu_seconds": 0.21875
+            },
+            {
+              "wall_seconds": 0.46297809993848205,
+              "cpu_seconds": 0.265625
+            },
+            {
+              "wall_seconds": 0.44972879998385906,
+              "cpu_seconds": 0.140625
+            },
+            {
+              "wall_seconds": 0.45668879989534616,
+              "cpu_seconds": 0.203125
+            }
+          ],
+          "digest": "a163dec540a8308b5e387aed74d467a32afcb86cf68c6295bde885046d583f4a",
+          "wall_median": 0.44972879998385906,
+          "cpu_median": 0.21875
+        }
+      },
+      "portable": {
+        "before": {
+          "samples": [
+            {
+              "wall_seconds": 0.5113262000959367,
+              "cpu_seconds": 0.21875
+            },
+            {
+              "wall_seconds": 0.4827373999869451,
+              "cpu_seconds": 0.125
+            },
+            {
+              "wall_seconds": 0.48596780002117157,
+              "cpu_seconds": 0.265625
+            },
+            {
+              "wall_seconds": 0.5145055999746546,
+              "cpu_seconds": 0.234375
+            },
+            {
+              "wall_seconds": 0.5068790999939665,
+              "cpu_seconds": 0.328125
+            },
+            {
+              "wall_seconds": 0.5215732998913154,
+              "cpu_seconds": 0.25
+            },
+            {
+              "wall_seconds": 0.485631600022316,
+              "cpu_seconds": 0.203125
+            },
+            {
+              "wall_seconds": 0.48069989995565265,
+              "cpu_seconds": 0.1875
+            },
+            {
+              "wall_seconds": 0.48423540010116994,
+              "cpu_seconds": 0.296875
+            }
+          ],
+          "digest": "09a546d857fc4a3651e822cc37c367c2d2f4b09e9a2603901c0b0bb682dc47a6",
+          "wall_median": 0.48596780002117157,
+          "cpu_median": 0.234375
+        },
+        "after": {
+          "samples": [
+            {
+              "wall_seconds": 0.4707627999596298,
+              "cpu_seconds": 0.171875
+            },
+            {
+              "wall_seconds": 0.48883799999020994,
+              "cpu_seconds": 0.390625
+            },
+            {
+              "wall_seconds": 0.7845453999470919,
+              "cpu_seconds": 0.375
+            },
+            {
+              "wall_seconds": 0.5602221000008285,
+              "cpu_seconds": 0.171875
+            },
+            {
+              "wall_seconds": 0.5792842999799177,
+              "cpu_seconds": 0.359375
+            },
+            {
+              "wall_seconds": 0.5418083999538794,
+              "cpu_seconds": 0.109375
+            },
+            {
+              "wall_seconds": 0.48309790005441755,
+              "cpu_seconds": 0.203125
+            },
+            {
+              "wall_seconds": 0.4579455000348389,
+              "cpu_seconds": 0.296875
+            },
+            {
+              "wall_seconds": 0.4642939999466762,
+              "cpu_seconds": 0.265625
+            }
+          ],
+          "digest": "09a546d857fc4a3651e822cc37c367c2d2f4b09e9a2603901c0b0bb682dc47a6",
+          "wall_median": 0.48883799999020994,
+          "cpu_median": 0.265625
+        }
+      }
+    },
+    "number_reference": "temp-state-number-baseline"
+  },
+  "number_candidate_description": "Combine hex-case character checks and bypass exponent-case traversal when no e/E is present. Rejected: actual baseline engine paired medians showed no stable improvement. Final numeric engine is unchanged.",
+  "ordinary_builds": [
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 43.69751189998351,
+      "peak_working_set_bytes": 1040949248,
+      "log": "temp-state-build-hello-high-final\\default-before-karity-high.log",
+      "profiling": {},
+      "output_bytes": 12194847,
+      "runtime_seconds": [
+        2.072365799918771
+      ],
+      "runtime_median_seconds": 2.072365799918771,
+      "fixture": "test/scripts/01_helloWorld.lua",
+      "seed": 9300
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 42.36640449997503,
+      "peak_working_set_bytes": 1039114240,
+      "log": "temp-state-build-hello-high-final\\default-after-karity-high.log",
+      "profiling": {},
+      "output_bytes": 12194847,
+      "runtime_seconds": [
+        2.057922000065446
+      ],
+      "runtime_median_seconds": 2.057922000065446,
+      "fixture": "test/scripts/01_helloWorld.lua",
+      "seed": 9300
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 64.16161629999988,
+      "peak_working_set_bytes": 1225035776,
+      "log": "temp-state-build-hello\\default-before-karity-max.log",
+      "profiling": {},
+      "output_bytes": 8195799,
+      "runtime_seconds": [
+        17.73490659997333
+      ],
+      "runtime_median_seconds": 17.73490659997333,
+      "fixture": "test/scripts/01_helloWorld.lua",
+      "seed": 9300
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 55.626924799988046,
+      "peak_working_set_bytes": 1224835072,
+      "log": "temp-state-build-hello\\default-after-karity-max.log",
+      "profiling": {},
+      "output_bytes": 8196023,
+      "runtime_seconds": [
+        16.448311600019224
+      ],
+      "runtime_median_seconds": 16.448311600019224,
+      "fixture": "test/scripts/01_helloWorld.lua",
+      "seed": 9300
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 25.701753900037147,
+      "peak_working_set_bytes": 657739776,
+      "log": "temp-state-build-numbers\\default-before-karity-high.log",
+      "profiling": {},
+      "output_bytes": 7098542,
+      "runtime_seconds": [
+        1.1861548000015318
+      ],
+      "runtime_median_seconds": 1.1861548000015318,
+      "fixture": "test/scripts/02_numbers.lua",
+      "seed": 9301
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 22.803114900016226,
+      "peak_working_set_bytes": 650280960,
+      "log": "temp-state-build-numbers\\default-after-karity-high.log",
+      "profiling": {},
+      "output_bytes": 7098542,
+      "runtime_seconds": [
+        1.4228706000139937
+      ],
+      "runtime_median_seconds": 1.4228706000139937,
+      "fixture": "test/scripts/02_numbers.lua",
+      "seed": 9301
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 43.882838399964385,
+      "peak_working_set_bytes": 994140160,
+      "log": "temp-state-build-numbers\\default-before-karity-max.log",
+      "profiling": {},
+      "output_bytes": 7007860,
+      "runtime_seconds": [
+        13.900165600003675
+      ],
+      "runtime_median_seconds": 13.900165600003675,
+      "fixture": "test/scripts/02_numbers.lua",
+      "seed": 9301
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 45.5892650000751,
+      "peak_working_set_bytes": 988344320,
+      "log": "temp-state-build-numbers\\default-after-karity-max.log",
+      "profiling": {},
+      "output_bytes": 7007439,
+      "runtime_seconds": [
+        14.40425379993394
+      ],
+      "runtime_median_seconds": 14.40425379993394,
+      "fixture": "test/scripts/02_numbers.lua",
+      "seed": 9301
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 43.82453850004822,
+      "peak_working_set_bytes": 995495936,
+      "log": "temp-state-build-numbers-max-repeat\\default-before-karity-max.log",
+      "profiling": {},
+      "output_bytes": 7007234,
+      "runtime_seconds": [
+        11.844936900073662
+      ],
+      "runtime_median_seconds": 11.844936900073662,
+      "repeat": 2,
+      "fixture": "test/scripts/02_numbers.lua",
+      "seed": 9301
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 42.6405805000104,
+      "peak_working_set_bytes": 988430336,
+      "log": "temp-state-build-numbers-max-repeat\\default-after-karity-max.log",
+      "profiling": {},
+      "output_bytes": 7006715,
+      "runtime_seconds": [
+        11.872075999970548
+      ],
+      "runtime_median_seconds": 11.872075999970548,
+      "repeat": 2,
+      "fixture": "test/scripts/02_numbers.lua",
+      "seed": 9301
+    }
+  ],
+  "measurement_note": "Serial builds without other local builds. Diagnostics disabled. One pair per input/preset, except numbers max repeated after its first slower sample. Both max pairs retained. Exploratory hello high used a subsequently rejected number candidate and is excluded. Current host absolute times differ from the previous report; compare only these paired revisions.",
+  "state_timing_note": "State timing excludes digest/JSON serialization; includes syntax-independent function analysis and profile records. Digests cover every dataclass field. Small function sub-millisecond differences and Windows CPU timer quantization limit conclusions.",
+  "hash_encoding": "UTF-8 with LF newlines",
+  "before_hashes": {
+    "obfuscator/vm/backends/karity_state.py": "06938714303cd246d4f7ce2e202f7b36fc854c56d0e7eea9a0817302c883368a",
+    "obfuscator/passes/number_expressions.py": "6d532f08f92dd86ac974e671b8c62f62b2f1b15a0979f8f9a88365ff67478447",
+    "config.example.json": "45b216e486ecdcf207d61db608426eb4c8d9e5a0cc6670e95b864a8352a60610"
+  },
+  "after_hashes": {
+    "obfuscator/vm/backends/karity_state.py": "6cd58570f47095c64c676c67aba7a970435fc2f9f83312997c694ce6c56bb7f9",
+    "obfuscator/passes/number_expressions.py": "6d532f08f92dd86ac974e671b8c62f62b2f1b15a0979f8f9a88365ff67478447",
+    "config.example.json": "45b216e486ecdcf207d61db608426eb4c8d9e5a0cc6670e95b864a8352a60610"
+  }
+}

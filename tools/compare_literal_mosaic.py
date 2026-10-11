@@ -62,6 +62,10 @@ def main():
     parser.add_argument('--output',type=Path,required=True)
     parser.add_argument('--seed',type=int,default=9300)
     parser.add_argument('--runtime-repeats',type=int,default=3)
+    parser.add_argument('--backends',nargs='+',choices=('source','mov','karity'),
+                        help='measure selected backends only')
+    parser.add_argument('--profiles',nargs='+',choices=('high','max'),default=('high','max'))
+    parser.add_argument('--fixture',type=Path,default=ROOT/'test/scripts/01_helloWorld.lua')
     parser.add_argument('--work-dir',type=Path,default=ROOT/'temp-mosaic-benchmark',
                         help='artifact directory under the workspace (keep separate comparisons separate)')
     parser.add_argument('--unprofiled',action='store_true',help='measure ordinary VM builds with diagnostics disabled')
@@ -72,8 +76,12 @@ def main():
     if not work.is_relative_to(ROOT):
         raise ValueError('--work-dir must be inside the workspace')
     work.mkdir(exist_ok=True)
-    fixture = ROOT/'test/scripts/01_helloWorld.lua'
-    report = {'fixture':'test/scripts/01_helloWorld.lua','input_bytes':fixture.stat().st_size,
+    fixture = args.fixture.resolve()
+    if not fixture.is_relative_to(ROOT):
+        raise ValueError('--fixture must be inside the workspace')
+    if args.unprofiled and args.backends and 'source' in args.backends:
+        raise ValueError('source-only builds require profiling')
+    report = {'fixture':fixture.relative_to(ROOT).as_posix(),'input_bytes':fixture.stat().st_size,
         'seed':args.seed,'python':sys.version,'platform':platform.platform(),'pythonhashseed':'0',
         'memory':'child peak Windows working set, sampled every 50ms; excludes grandchildren',
         'timing':'serial processes; profiling on both revisions; runtime includes native Lua startup',
@@ -92,8 +100,8 @@ def main():
         report['reused_baseline_note']='Before rows from an earlier isolated serial run on the identical environment; every after row rerun.'
     def save():
         args.output.write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf-8')
-    for kind in (('mov','karity') if args.unprofiled else ('source','mov','karity')):
-        for profile in ('high','max'):
+    for kind in args.backends or (('mov','karity') if args.unprofiled else ('source','mov','karity')):
+        for profile in args.profiles:
             for revision,checkout in (('before',args.before.resolve()),('after',ROOT)):
                 if revision=='before' and (kind,profile) in before_rows:
                     report['records'].append(before_rows[kind,profile])
