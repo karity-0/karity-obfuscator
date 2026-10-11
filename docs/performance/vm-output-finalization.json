@@ -1,0 +1,141 @@
+{
+  "fixture": "test/scripts/01_helloWorld.lua",
+  "input_bytes": 20,
+  "seed": 9300,
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "platform": "Windows-11-10.0.22631-SP0",
+  "pythonhashseed": "0",
+  "memory": "child peak Windows working set, sampled every 50ms; excludes grandchildren",
+  "timing": "serial ordinary VM builds with profiling/metrics disabled; runtime includes native Lua startup",
+  "profiling_enabled": false,
+  "records": [
+    {
+      "revision": "before",
+      "kind": "mov",
+      "profile": "high",
+      "wall_seconds": 10.364552800077945,
+      "peak_working_set_bytes": 254431232,
+      "log": "temp-vm-finalize-benchmark\\default-before-mov-high.log",
+      "profiling": {},
+      "output_bytes": 2287884,
+      "runtime_seconds": [
+        3.0169559000059962
+      ],
+      "runtime_median_seconds": 3.0169559000059962
+    },
+    {
+      "revision": "after",
+      "kind": "mov",
+      "profile": "high",
+      "wall_seconds": 7.928894000011496,
+      "peak_working_set_bytes": 253468672,
+      "log": "temp-vm-finalize-benchmark\\default-after-mov-high.log",
+      "profiling": {},
+      "output_bytes": 2287884,
+      "runtime_seconds": [
+        2.8955360000254586
+      ],
+      "runtime_median_seconds": 2.8955360000254586
+    },
+    {
+      "revision": "before",
+      "kind": "mov",
+      "profile": "max",
+      "wall_seconds": 11.658290999941528,
+      "peak_working_set_bytes": 263122944,
+      "log": "temp-vm-finalize-benchmark\\default-before-mov-max.log",
+      "profiling": {},
+      "output_bytes": 1384677,
+      "runtime_seconds": [
+        5.986145899980329
+      ],
+      "runtime_median_seconds": 5.986145899980329
+    },
+    {
+      "revision": "after",
+      "kind": "mov",
+      "profile": "max",
+      "wall_seconds": 10.60488679993432,
+      "peak_working_set_bytes": 246202368,
+      "log": "temp-vm-finalize-benchmark\\default-after-mov-max.log",
+      "profiling": {},
+      "output_bytes": 1384843,
+      "runtime_seconds": [
+        5.770166200003587
+      ],
+      "runtime_median_seconds": 5.770166200003587
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 90.6789579000324,
+      "peak_working_set_bytes": 2655793152,
+      "log": "temp-vm-finalize-benchmark\\default-before-karity-high.log",
+      "profiling": {},
+      "output_bytes": 12382076,
+      "runtime_seconds": [
+        2.1787903000367805
+      ],
+      "runtime_median_seconds": 2.1787903000367805
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "high",
+      "wall_seconds": 55.157969099935144,
+      "peak_working_set_bytes": 1492574208,
+      "log": "temp-vm-finalize-benchmark\\default-after-karity-high.log",
+      "profiling": {},
+      "output_bytes": 12382076,
+      "runtime_seconds": [
+        2.1924628000706434
+      ],
+      "runtime_median_seconds": 2.1924628000706434
+    },
+    {
+      "revision": "before",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 122.56752230005804,
+      "peak_working_set_bytes": 3160506368,
+      "log": "temp-vm-finalize-benchmark\\default-before-karity-max.log",
+      "profiling": {},
+      "output_bytes": 8217588,
+      "runtime_seconds": [
+        16.564705799915828
+      ],
+      "runtime_median_seconds": 16.564705799915828
+    },
+    {
+      "revision": "after",
+      "kind": "karity",
+      "profile": "max",
+      "wall_seconds": 76.57999230001587,
+      "peak_working_set_bytes": 1768087552,
+      "log": "temp-vm-finalize-benchmark\\default-after-karity-max.log",
+      "profiling": {},
+      "output_bytes": 8217790,
+      "runtime_seconds": [
+        15.922670700005256
+      ],
+      "runtime_median_seconds": 15.922670700005256
+    }
+  ],
+  "reused_baseline_note": "Before rows from an earlier isolated serial run on the identical environment; every after row rerun.",
+  "before_revision": "5118d82",
+  "fixture_sha256": "a84bb1230b2edd73f469afd5aba69b3ca191e6c25b444cf93d23342b64d6af18",
+  "config_sha256": "e4961324a59e6e0ac902afa5b34b27d21a6094f50163317e2f866236fbc56fa4",
+  "after_code_hashes": {
+    "obfuscator/passes/rename_ts.py": "e1cc420c395b9258917f8b89e06ae15ee704ad0413bd5d85dd8e7472afa34f46",
+    "obfuscator/passes/strip_info.py": "69dc6d8aa40874ca9b5a9246510fe094d06d9cec14b22afd4a074d9950e33947",
+    "obfuscator/passes/ts_utils.py": "44896b92ec45068abc80d055f56c1f0f83f730be14b21aa8145e93faf2da7db0",
+    "obfuscator/vm/backends/runtime_emitter.py": "e6e8ad8209a2ad4589d8f26170b782ba79e58f74878bc363aed5b711bd8f1356"
+  },
+  "before_code_hashes": {
+    "obfuscator/passes/rename_ts.py": "01992373f42e5b36d5a70c7f3651f6a844161d58e564e93ebf3db4ec50c9eb9c",
+    "obfuscator/passes/strip_info.py": "923cac2ea480286be9e1db20e62b143200c6122316268a1574bcd003bfa283f1",
+    "obfuscator/passes/ts_utils.py": "11d819fa17ef628cd9d1d859e4600a27028e0c896cdd3883a798a6ffdb9f8862",
+    "obfuscator/vm/backends/runtime_emitter.py": "1933523d16a8427ded954aa43ab6dc40e4311a0b3ae347c0cdcb99d50ea31c55"
+  }
+}

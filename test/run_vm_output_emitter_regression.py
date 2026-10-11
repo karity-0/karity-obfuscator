@@ -299,12 +299,18 @@ print(call(3))
         for record in profiler.records
         for detail in walk_details(record.details)
     ]
+    # Literal/identifier planning still shares its original context. Final
+    # naming now explicitly reports its own parse, previously hidden inside
+    # Rename and StripInfo; the two final passes share that one extra tree.
     parse_count = sum(
         detail.get("parse_count", 0)
         for detail in vm_details
+        if detail.get('phase') != 'vm_output:final_parse'
     )
     if parse_count not in (1, 2):
         raise AssertionError(f"VM output shared parse count mismatch: {parse_count}")
+    final_parses = [d for d in vm_details if d.get('phase') == 'vm_output:final_parse']
+    assert len(final_parses) == 1 and final_parses[0]['parse_count'] == 1, final_parses
     identifier_phases = {
         detail.get("phase")
         for detail in vm_details

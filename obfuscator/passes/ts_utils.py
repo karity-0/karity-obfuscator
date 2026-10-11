@@ -78,6 +78,17 @@ class TSContext:
             return self.script[node.start_byte:node.end_byte]
         return self.script[self.b2c[node.start_byte]:self.b2c[node.end_byte]]
 
+    def plain_text(self, node) -> str:
+        """Read spelling without constructing provenance slices for analysis.
+
+        Code emitters retain ``text``/``script`` and their structural metadata.
+        Binding names and decoded field keys only need the immutable spelling.
+        """
+        start, end = node.start_byte, node.end_byte
+        if self.b2c is not None:
+            start, end = self.b2c[start], self.b2c[end]
+        return str.__getitem__(self.script, slice(start, end))
+
     def walk(self):
         """모든 노드를 DFS로 순회 (luaparser ast.walk 대체)."""
         stack = [self.root]
