@@ -11,7 +11,12 @@
     for (const match of text.matchAll(pattern)) {
       const value = match[0];
       let kind = '';
-      if (value.startsWith('--')) kind = 'comment';
+      if (value.startsWith('--')) {
+        kind = 'comment';
+        if (/^--\s*@(?:VM|FUNCTION_OBF|NO_VM|NO_OBF|NUMBER_OBF|MEME_STRINGS)_(?:START|END)\b/.test(value)
+            && !text.slice(text.lastIndexOf('\n', match.index - 1) + 1, match.index).trim())
+          kind = /_START\b/.test(value) ? 'marker-start' : 'marker-end';
+      }
       else if (/^["'\[]/.test(value)) kind = 'string';
       else if (/^[\d.]/.test(value) && value !== '..') kind = 'number';
       else if (keywords.has(value)) kind = 'keyword';
@@ -209,7 +214,9 @@
         html += escape(this.text.slice(position, end));
         const y = paddingTop + line * lineHeight - this.input.scrollTop;
         lines.push(`<pre style="top:${y}px;left:${paddingLeft + offset - this.input.scrollLeft}px">${html || ' '}</pre>`);
-        numbers.push(`<span style="top:${y}px">${line + 1}</span>`);
+        const marker = this.tokens[lowerBound(this.tokens, lineStart)];
+        const markerClass = marker?.start < lineEnd && ['marker-start', 'marker-end'].includes(marker.kind) ? ` class="${marker.kind}-line"` : '';
+        numbers.push(`<span${markerClass} style="top:${y}px">${line + 1}</span>`);
       }
       this.layer.innerHTML = lines.join('');
       this.gutter.innerHTML = numbers.join('');

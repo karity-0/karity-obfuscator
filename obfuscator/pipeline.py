@@ -22,7 +22,7 @@ from .toolchain import LuaToolchain
 from .vm.targets.profile import TargetProfile
 from .passes.base import BasePass, PostPass, PrePass, Replacement
 from .passes.output_signature import DEFAULT_SIGNATURE, OutputSignaturePass
-from .profiling import ProfileRecord, Profiler
+from .profiling import ProfileRecord, Profiler, phase_scope, run_phase
 from .verbosity import Verbosity
 from .passes.rename_obfuscation import RenameObfuscationPass
 from .passes.numeric_provenance import join_code
@@ -120,28 +120,29 @@ class Pipeline:
     ) -> str:
         from .selection_runtime import SelectionRuntime
 
-        selection = SelectionRuntime(self, script)
+        selection = run_phase('selection', SelectionRuntime, self, script)
         script = selection.plan.source if selection.enabled else script
         self.last_selection_report = selection.plan.report
         for pre in self._pre_passes:
-            before = _size(script)
-            start = time.perf_counter()
-            script = selection.run_pre(pre, script) if selection.enabled else pre.run(script)
-            elapsed = time.perf_counter() - start
+            with phase_scope('source:' + pre.__class__.__name__):
+                before = _size(script)
+                start = time.perf_counter()
+                script = selection.run_pre(pre, script) if selection.enabled else pre.run(script)
+                elapsed = time.perf_counter() - start
 
-            record = ProfileRecord(
-                "PRE",
-                pre.__class__.__name__,
-                elapsed,
-                before,
-                _size(script),
-            )
+                record = ProfileRecord(
+                    "PRE",
+                    pre.__class__.__name__,
+                    elapsed,
+                    before,
+                    _size(script),
+                )
 
-            if profiler:
-                profiler.add(record)
+                if profiler:
+                    profiler.add(record)
 
-            if verbose >= Verbosity.NORMAL:
-                info_message("PRE", pre, _format_record(record))
+                if verbose >= Verbosity.NORMAL:
+                    info_message("PRE", pre, _format_record(record))
 
         # Renaming is an emission step: collect every generated base-pass helper
         # before choosing final names. Localization resolves lexical bindings on
@@ -175,79 +176,81 @@ class Pipeline:
             service.selection = selection.plan if selection.enabled else None
 
         for pass_ in base_passes:
-            before = _size(script)
-            start = time.perf_counter()
-            if selection.enabled:
-                script = selection.prepare_base(pass_, script)
+            with phase_scope('source:' + pass_.__class__.__name__):
+                before = _size(script)
+                start = time.perf_counter()
+                if selection.enabled:
+                    script = selection.prepare_base(pass_, script)
 
-            parser = getattr(pass_, "parser", "luaparser")
+                parser = getattr(pass_, "parser", "luaparser")
 
-            if parser == "treesitter":
-                from .passes.ts_utils import parse as _ts_parse
+                if parser == "treesitter":
+                    from .passes.ts_utils import parse as _ts_parse
 
-                tree = _ts_parse(script)
-            else:
-                tree = ast.parse(script)
+                    tree = run_phase('source:parse_treesitter', _ts_parse, script)
+                else:
+                    tree = run_phase('source:parse_lua', ast.parse, script)
 
-            replacements = (selection.run_base(pass_, script, tree) if selection.enabled
-                            else pass_.run(script, tree))
-            script = (selection.plan.apply(script, replacements) if selection.enabled
-                      else self._apply(script, replacements))
+                replacements = (selection.run_base(pass_, script, tree) if selection.enabled
+                                else pass_.run(script, tree))
+                script = (selection.plan.apply(script, replacements) if selection.enabled
+                          else self._apply(script, replacements))
 
-            elapsed = time.perf_counter() - start
+                elapsed = time.perf_counter() - start
 
-            record = ProfileRecord(
-                "BASE",
-                pass_.__class__.__name__,
-                elapsed,
-                before,
-                _size(script),
-                parser=parser,
-                replacements=len(replacements),
-                details=getattr(pass_, "last_profile", []),
-            )
+                record = ProfileRecord(
+                    "BASE",
+                    pass_.__class__.__name__,
+                    elapsed,
+                    before,
+                    _size(script),
+                    parser=parser,
+                    replacements=len(replacements),
+                    details=getattr(pass_, "last_profile", []),
+                )
 
-            if profiler:
-                profiler.add(record)
+                if profiler:
+                    profiler.add(record)
 
-            if verbose >= Verbosity.NORMAL:
-                info_message("BASE", pass_, _format_record(record))
+                if verbose >= Verbosity.NORMAL:
+                    info_message("BASE", pass_, _format_record(record))
 
-            if verbose > Verbosity.DEBUG:
-                new_tree = ast.parse(script)
-                print(ast.to_pretty_str(new_tree))
+                if verbose > Verbosity.DEBUG:
+                    new_tree = ast.parse(script)
+                    print(ast.to_pretty_str(new_tree))
 
         post_passes = selection.post_passes(self._post_passes) if selection.enabled else self._post_passes
         for post in post_passes:
-            before = _size(script)
-            start = time.perf_counter()
+            with phase_scope('post:' + post.__class__.__name__):
+                before = _size(script)
+                start = time.perf_counter()
 
-            script = selection.run_post(post, script) if selection.enabled else post.run(script)
+                script = selection.run_post(post, script) if selection.enabled else post.run(script)
 
-            elapsed = time.perf_counter() - start
-            details = getattr(post, "last_profile", [])
+                elapsed = time.perf_counter() - start
+                details = getattr(post, "last_profile", [])
 
-            record = ProfileRecord(
-                "POST",
-                post.__class__.__name__,
-                elapsed,
-                before,
-                _size(script),
-                details=details,
-            )
+                record = ProfileRecord(
+                    "POST",
+                    post.__class__.__name__,
+                    elapsed,
+                    before,
+                    _size(script),
+                    details=details,
+                )
 
-            if profiler:
-                profiler.add(record)
+                if profiler:
+                    profiler.add(record)
 
-            if verbose >= Verbosity.NORMAL:
-                info_message("POST", post, _format_record(record))
+                if verbose >= Verbosity.NORMAL:
+                    info_message("POST", post, _format_record(record))
 
-                if verbose >= Verbosity.DEBUG:
-                    for detail in details:
-                        print(
-                            f"  - {detail['phase']}: "
-                            f"{detail['elapsed']:.3f}s"
-                        )
+                    if verbose >= Verbosity.DEBUG:
+                        for detail in details:
+                            print(
+                                f"  - {detail['phase']}: "
+                                f"{detail['elapsed']:.3f}s"
+                            )
 
         if self._output_signature is None:
             return script
@@ -255,7 +258,7 @@ class Pipeline:
         before = _size(script)
         start = time.perf_counter()
 
-        script = self._output_signature.run(script)
+        script = run_phase('finalization:signature', self._output_signature.run, script)
 
         record = ProfileRecord(
             "POST",

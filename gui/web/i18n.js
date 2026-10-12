@@ -1,5 +1,36 @@
 (() => {
   const pairs = [
+    ['Protection preset details', '프리셋 상세 선택'], ['VM backend details', 'VM 백엔드 상세 선택'],
+    ['Choose a protection preset', '보호 프리셋 선택'], ['Your VM backend and target stay unchanged.', '선택한 VM 백엔드와 Lua 대상은 유지됩니다.'],
+    ['Left click: apply · Right click: details', '좌클릭: 바로 적용 · 우클릭: 상세 선택'],
+    ['VM protection with source protection selected by markers.', 'VM 보호 중심. 소스 보호는 마커로 선택합니다.'],
+    ['Light source transformations; choose heavier protection with markers.', '가벼운 소스 변환을 적용하고, 무거운 보호는 마커로 선택합니다.'],
+    ['Whole-source string reconstruction and control-flow protection.', '소스 전체에 문자열 재구성과 제어 흐름 보호를 적용합니다.'],
+    ['Whole-source protection, deeper variants and packing.', '소스 전체 보호에 더 깊은 변형과 패킹을 더합니다.'],
+    ['Restores your saved custom settings.', '저장한 커스텀 설정을 복원합니다.'],
+    ['Changes', '변경 내용'], ['Details & changes', '상세 및 변경 내용'], ['No configuration changes.', '설정 변경 없음'],
+    ['Advanced options', '고급 옵션'], ['Marker preview', '마커 미리보기'], ['Inherit', '상속'], ['On', '켜기'], ['Off', '끄기'],
+    ['Junk', '정크'], ['Inline helpers', '헬퍼 인라인'], ['Wrapper', '래퍼'], ['Loop splitting', '루프 분할'],
+    ['Loop unrolling', '루프 펼치기'], ['Nested functions', '중첩 함수'], ['Boundary mode', '분할 방식'], ['Nested depth', '중첩 깊이'], ['Loop unroll rate', '루프 펼치기 비율'],
+    ['Not used by this backend; stored value retained.', '이 백엔드에서 미지원 · 입력값 유지'], ['Invalid marker options', '잘못된 마커 옵션'],
+    ['Effective VM backend', '마커에 적용되는 VM'],
+    ['Result inspector', '결과 분석'], ['Previous result', '이전 결과'], ['Build status', '빌드 상태'], ['Build details', '빌드 상세'], ['Details', '상세'],
+    ['Build stages', '빌드 단계'],
+    ['Original source size', '원본 크기'], ['Obfuscated output size', '결과 크기'], ['Size ratio', '크기 배율'], ['Build elapsed time', '빌드 시간'],
+    ['Lua target', 'Lua 대상'], ['Characters', '문자 수'], ['Previous successful result', '이전 성공 결과'],
+    ['Previous build comparison', '직전 빌드 비교'], ['Same input and settings', '같은 입력과 설정'], ['Different build conditions', '빌드 조건이 다릅니다'],
+    ['Profiling details', '프로파일 상세'], ['Profiled pass time', '패스 시간 합계'],
+    ['Configuration validation', '설정 검증'], ['Protection markers', '보호 마커 해석'], ['Source protection', '소스 보호'], ['Finalization', '마무리'],
+    ['Source parsing', '소스 파싱'], ['Output parsing', '출력 파싱'],
+    ['Lua compilation', 'Lua 컴파일'], ['VM intermediate representation', 'VM 중간 표현 구성'], ['VM optimization', 'VM 최적화'],
+    ['VM protection', 'VM 보호'], ['Backend lowering', '백엔드 변환'], ['VM generation', 'VM 생성'], ['Serialization', '직렬화'],
+    ['Runtime graphs', '런타임 그래프 생성'], ['Integrity finalization', '무결성 처리'], ['Output transformations', '출력 후처리'], ['Output signature', '출력 서명'],
+    ['Bytecode encryption', '바이트코드 암호화'],
+    ['Search commands', '명령 검색'], ['Search commands (Ctrl+K)', '명령 검색 (Ctrl+K)'],
+    ['Change protection preset', '보호 프리셋 변경'], ['Choose VM backend', 'VM 백엔드 선택'], ['Insert Marker', '마커 삽입'],
+    ['Open GUI Preferences', '환경설정 열기'], ['Change Theme', '테마 변경'], ['Run Source', '원본 실행'], ['Run Output', '결과 실행'],
+    ['Save Configuration', '설정 저장'], ['Copy Output', '결과 복사'], ['Show Result Inspector', '결과 분석 열기'],
+    ['Unavailable in the current state', '현재 상태에서 사용할 수 없습니다'], ['↑ ↓ Navigate · Enter Select · Esc Close', '↑ ↓ 이동 · Enter 선택 · Esc 닫기'], ['No matching commands', '검색 결과 없음'],
     ['Console', '콘솔'], ['Run source (F5)', '원본 실행 (F5)'], ['Run output (Shift+F5)', '결과 실행 (Shift+F5)'],
     ['Stop execution', '실행 중지'], ['Clear console', '콘솔 지우기'], ['Hide console', '콘솔 접기'],
     ['Execution console', '실행 콘솔'], ['Execution output', '실행 출력'], ['Execution input', '실행 입력'],
@@ -100,12 +131,14 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
+      if (node.parentElement.closest('[data-live-ui]')) continue;
       if (node.parentElement.closest('script, style, textarea, pre, code, .filename, #config-source, #profile-summary, #status-msg, #preferences-status, #quick-preset-status, #backend-capability-status, #backend-capability-note, #execution-status, .theme-tile')) continue;
       if (!originals.has(node)) originals.set(node, node.nodeValue);
       const original = originals.get(node), trimmed = original.trim();
       if (trimmed) node.nodeValue = original.replace(trimmed, tr(trimmed, language));
     }
     root.querySelectorAll('[title], [aria-label]').forEach(element => {
+      if (element.closest('[data-live-ui]')) return;
       if (!attributes.has(element)) attributes.set(element, {title: element.title, label: element.getAttribute('aria-label')});
       const original = attributes.get(element);
       if (original.title) element.title = tr(original.title, language);

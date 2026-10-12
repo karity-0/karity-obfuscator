@@ -10,6 +10,7 @@ __lazy_modules__ = {
 }
 
 from functools import partial
+from ..profiling import run_phase
 from typing import Callable, cast
 
 from pathlib import Path
@@ -134,10 +135,10 @@ class VMBuildPipeline(PostPass):
             constant_provider=constant_provider,
         )
         started = time.perf_counter()
-        bytecode = self.target.compile(script, self.toolchain)
+        bytecode = run_phase('vm:compile', self.target.compile, script, self.toolchain)
         self.last_profile.append({"phase": "compile_luac", "elapsed": round(time.perf_counter() - started, 6)})
         started = time.perf_counter()
-        source_ir = self.target.build_ir(bytecode)
+        source_ir = run_phase('vm:ir', self.target.build_ir, bytecode)
         self.last_source_ir = source_ir
         self.last_profile.append({
             "phase": "build_semantic_ir", "elapsed": round(time.perf_counter() - started, 6),
@@ -146,7 +147,7 @@ class VMBuildPipeline(PostPass):
         })
         planner = ProtectionPlanner(self.vm_options)
         optimize_started = time.perf_counter()
-        optimized_ir = optimize_semantic_ir(source_ir)
+        optimized_ir = run_phase('vm:optimize', optimize_semantic_ir, source_ir)
         self.last_optimized_ir = optimized_ir
         self.last_profile.append({
             "phase": "optimize_semantic_ir", "elapsed": round(time.perf_counter() - optimize_started, 6),
@@ -164,11 +165,11 @@ class VMBuildPipeline(PostPass):
             "disabled": [request.feature for request in resolution.disabled],
         })
         started = time.perf_counter()
-        semantic_ir = apply_protection(optimized_ir, initial_plan, resolution)
+        semantic_ir = run_phase('vm:protection', apply_protection, optimized_ir, initial_plan, resolution)
         self.last_profile.append({"phase": "apply_semantic_protection", "elapsed": round(time.perf_counter() - started, 6)})
         started = time.perf_counter()
         plan = planner.build(semantic_ir)
-        lowered = backend.optimize(backend.lower(protect(semantic_ir, plan), context), context)
+        lowered = run_phase('vm:lowering', lambda: backend.optimize(backend.lower(protect(semantic_ir, plan), context), context))
         self.last_semantic_ir = semantic_ir
         self.last_protected_ir = lowered.protected_ir
         self.last_protection_plan = plan
@@ -178,7 +179,7 @@ class VMBuildPipeline(PostPass):
             "backend": backend.name, "kind": lowered.kind,
         })
         started = time.perf_counter()
-        output = backend.emit(lowered, context)
+        output = run_phase('vm:generation', backend.emit, lowered, context)
         self.last_profile.append({
             "phase": "backend_emit", "elapsed": round(time.perf_counter() - started, 6),
             "backend": backend.name,
