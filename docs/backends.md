@@ -17,6 +17,8 @@ encrypted blob forms, and configured output passes. The backend declares its
 capabilities and selects instruction lowering and runtime generation. Packing is
 a separate outer pass and also works without a VM. See the
 [IR architecture and migration map](vm-ir-architecture.md).
+Shared blob layout and measured storage costs are described in the
+[compact prototype storage report](performance/serialization.md).
 
 ```mermaid
 flowchart TD

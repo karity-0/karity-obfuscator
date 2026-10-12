@@ -79,7 +79,7 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         family = targets["graph_families"].get(index, 0) if graph_execution_rate > 0 else 0
         return family, site, selector_seed, state_key, policy
 
-    # 명령어: u64 커스텀 포맷으로 emit (alias 중 랜덤 선택 + 롤링 acc 인코딩)
+    # 명령어: 48비트 커스텀 포맷으로 저장 (alias 선택 + 롤링 acc 인코딩)
     def emit_unit(unit: tuple, physical: int) -> int:
         i = unit[1]
         raw = _adjust_jump_at(code[i], i, physical, canonical, total)

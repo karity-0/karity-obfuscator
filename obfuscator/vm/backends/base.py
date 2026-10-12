@@ -238,12 +238,14 @@ class VMBackend:
         layout = lowered.backend_data['layout']
         materialization = lowered.backend_data.get('materialization')
         started = time.perf_counter()
+        storage_stats: dict[str, Any] = {}
         blob = serialize(materialization.functions if materialization else layout.functions,
                          layout=layout.instruction_layout, constant_tags=layout.constant_tags,
                          vm_count=layout.vm_count,
-                         integrity_options={'enabled': lowered.policy.get('integrity_constants', False)})
+                         integrity_options={'enabled': lowered.policy.get('integrity_constants', False)},
+                         stats=storage_stats)
         context.profile.append({'phase': 'serialize_blob',
-                                'elapsed': round(time.perf_counter() - started, 6)})
+                                'elapsed': round(time.perf_counter() - started, 6), **storage_stats})
         return blob
 
     def emit(self, lowered: LoweredIR, context: BackendContext) -> str:

@@ -9,6 +9,7 @@ REGRESSIONS = (
     "typing",
     "import",
     "blob_form",
+    "serialization",
     "selection",
     "strip_info",
     "minify",

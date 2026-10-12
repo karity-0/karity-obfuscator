@@ -1,0 +1,123 @@
+{
+  "seed": 9450,
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "notes": "One build per preset/format, three native Lua 5.3 runs. Concurrent with CI; wall/build timings are descriptive, not reliable paired speedups. Maximum retains its full packing and output passes.",
+  "records": [
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "fast",
+      "before": {
+        "build_wall_seconds": 6.119604599894956,
+        "build_cpu_seconds": 3.65625,
+        "output_bytes": 870483,
+        "runtime_wall_seconds_samples": [
+          0.17851320002228022,
+          0.16532539995387197,
+          0.12551579996943474
+        ],
+        "stdout_matches": true,
+        "sha256": "603555afc0d8fb52a4cae27328d1e859ba66ce015948f05107e2bc19f9438e1c"
+      },
+      "after": {
+        "build_wall_seconds": 6.679769600043073,
+        "build_cpu_seconds": 4.140625,
+        "output_bytes": 873268,
+        "runtime_wall_seconds_samples": [
+          0.12987080006860197,
+          0.14997130003757775,
+          0.11036309995688498
+        ],
+        "stdout_matches": true,
+        "sha256": "2e4aeba2d214ecdba80981e721ff8eea9464afdbace13a53cc9e2efbbf366e4b"
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "balanced",
+      "after": {
+        "build_wall_seconds": 5.717269900022075,
+        "build_cpu_seconds": 3.484375,
+        "output_bytes": 893436,
+        "runtime_wall_seconds_samples": [
+          0.12866839999333024,
+          0.1107288000639528,
+          0.11906299996189773
+        ],
+        "stdout_matches": true,
+        "sha256": "be229a2ea9209326670e1dceb6dfa44802bc7f0ce6bece371b639cc752f806c7"
+      },
+      "before": {
+        "build_wall_seconds": 6.209716900018975,
+        "build_cpu_seconds": 3.9375,
+        "output_bytes": 893627,
+        "runtime_wall_seconds_samples": [
+          0.19755439995788038,
+          0.14920590003021061,
+          0.11747299996204674
+        ],
+        "stdout_matches": true,
+        "sha256": "40d0eae922670ccae02fd7b7e83de488c2c339c4602a9948f43c80261f15ac6c"
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "strong",
+      "before": {
+        "build_wall_seconds": 36.56446049991064,
+        "build_cpu_seconds": 26.203125,
+        "output_bytes": 4584275,
+        "runtime_wall_seconds_samples": [
+          1.382101999828592,
+          1.2760695000179112,
+          1.2323850998654962
+        ],
+        "stdout_matches": true,
+        "sha256": "01df3aa1852984a8f99ff3fe49b9b1ace5c86570616e911c5c11f897b9699bde"
+      },
+      "after": {
+        "build_wall_seconds": 36.059024300193414,
+        "build_cpu_seconds": 25.0625,
+        "output_bytes": 4462076,
+        "runtime_wall_seconds_samples": [
+          1.1158787999302149,
+          1.080874500097707,
+          1.1662125999573618
+        ],
+        "stdout_matches": true,
+        "sha256": "db8d0f8615f1d790953e94930992af5d0ad889581fdd616cb927be9592b73be1"
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "maximum",
+      "after": {
+        "build_wall_seconds": 39.72334480006248,
+        "build_cpu_seconds": 27.625,
+        "output_bytes": 2132890,
+        "runtime_wall_seconds_samples": [
+          3.879699100041762,
+          4.565016099950299,
+          4.68695030012168
+        ],
+        "stdout_matches": true,
+        "sha256": "d281d40e76ef8a080a1b6e59b2b34935370db7320faa8e4f7dbaa38bcca967ca"
+      },
+      "before": {
+        "build_wall_seconds": 41.16521929996088,
+        "build_cpu_seconds": 27.203125,
+        "output_bytes": 2190448,
+        "runtime_wall_seconds_samples": [
+          3.991620199987665,
+          3.9900370000395924,
+          4.00837010005489
+        ],
+        "stdout_matches": true,
+        "sha256": "8f2b1cce0a9006650a78ae30529526f1b531cc2997e4e89c377b8cd6c702bf7d"
+      }
+    }
+  ]
+}

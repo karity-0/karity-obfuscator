@@ -1,0 +1,2727 @@
+{
+  "baseline_ref": "abdee71",
+  "python": "3.12.14 (main, Aug 25 2026, 14:01:42) [MSC v.1944 64 bit (AMD64)]",
+  "seed": 9450,
+  "repeats": 5,
+  "scope": "Same source-protected physical programs; native storage readers omit encryption/key generation/string masking/execution setup. CPU medians are not whole-build or startup timings.",
+  "records": [
+    {
+      "fixture": "small",
+      "backend": "classic",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "97b14fd0fcf2a99233e2d3e0781707ec3867479a4874557b06cf9d663da266b4",
+      "physical_instructions": 171,
+      "graph_descriptors": 39,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 2893,
+        "total_bytes": 2893,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 255,
+          "proto_headers": 8,
+          "instructions": 1368,
+          "avalanche": 171,
+          "graph_sites": 639,
+          "routes": 2,
+          "constants": 432,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.000248015873015873,
+        "serialize_wall_seconds_median": 0.0004401047629052921,
+        "serialize_batch": 126,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.00041118421052631577,
+          "5.3": 0.00012112403100775194
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0010855140331969188,
+          "5.3": 0.0003134325587067955
+        }
+      },
+      "after": {
+        "shared_bytes": 2202,
+        "total_bytes": 2202,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 204,
+          "proto_headers": 6,
+          "instructions": 1026,
+          "avalanche": 1,
+          "graph_sites": 546,
+          "routes": 1,
+          "constants": 402,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2202,
+        "serialize_cpu_seconds_median": 0.000248015873015873,
+        "serialize_wall_seconds_median": 0.0005039706334678663,
+        "serialize_batch": 126,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0006853070175438596,
+          "5.3": 0.00012112403100775194
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0010993921038645663,
+          "5.3": 0.0002868437982532521
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "classic",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "1a1e71d7dc37b9f8b55272e4da721d8ae5eef0d19407cf6f44f572d2511e6603",
+      "physical_instructions": 229,
+      "graph_descriptors": 42,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 3,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 3534,
+        "total_bytes": 3534,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 223,
+          "proto_headers": 8,
+          "instructions": 1832,
+          "avalanche": 229,
+          "graph_sites": 733,
+          "routes": 2,
+          "constants": 489,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0005859375,
+        "serialize_wall_seconds_median": 0.0009119931259192526,
+        "serialize_batch": 160,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.001220703125,
+          "5.3": 0.0002403846153846154
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0018940234403999057,
+          "5.3": 0.00036689076859217426
+        }
+      },
+      "after": {
+        "shared_bytes": 2633,
+        "total_bytes": 2633,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 190,
+          "proto_headers": 6,
+          "instructions": 1374,
+          "avalanche": 1,
+          "graph_sites": 586,
+          "routes": 1,
+          "constants": 459,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2633,
+        "serialize_cpu_seconds_median": 0.0005859375,
+        "serialize_wall_seconds_median": 0.0008848562501952983,
+        "serialize_batch": 160,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0009765625,
+          "5.3": 0.0002403846153846154
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.002252825001050951,
+          "5.3": 0.00034796646151405116
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "classic",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "c98589e1f97dc2c7f8bc5299bbf3ffa06623a1f203bed097d273d685d2e2e2f2",
+      "physical_instructions": 15796,
+      "graph_descriptors": 5418,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 228,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 246565,
+        "total_bytes": 246565,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 192,
+          "proto_headers": 32,
+          "instructions": 126368,
+          "avalanche": 15796,
+          "graph_sites": 80812,
+          "routes": 8,
+          "constants": 23297,
+          "upvalues": 36,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.04493799991905689,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.046875,
+          "5.3": 0.01171875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.1026947998907417,
+          "5.3": 0.023652525036595762
+        }
+      },
+      "after": {
+        "shared_bytes": 192987,
+        "total_bytes": 192987,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 153,
+          "proto_headers": 24,
+          "instructions": 94776,
+          "avalanche": 4,
+          "graph_sites": 75576,
+          "routes": 4,
+          "constants": 22410,
+          "upvalues": 24,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 4
+        },
+        "bytes": 192987,
+        "serialize_cpu_seconds_median": 0.0625,
+        "serialize_wall_seconds_median": 0.03935940004885197,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.078125,
+          "5.3": 0.01171875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.11438699997961521,
+          "5.3": 0.02420072496170178
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "classic",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "f07e6c88c07b41f96cc7c90671abe791db595d66eb650eee7f7cade28d4a85de",
+      "physical_instructions": 7168,
+      "graph_descriptors": 2814,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 254,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 125837,
+        "total_bytes": 125837,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 237,
+          "proto_headers": 32,
+          "instructions": 57344,
+          "avalanche": 7168,
+          "graph_sites": 40936,
+          "routes": 8,
+          "constants": 20058,
+          "upvalues": 30,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.0234375,
+        "serialize_wall_seconds_median": 0.026169324992224574,
+        "serialize_batch": 4,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.03125,
+          "5.3": 0.0125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.04924600012600422,
+          "5.3": 0.014605099987238645
+        }
+      },
+      "after": {
+        "shared_bytes": 101858,
+        "total_bytes": 101858,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 189,
+          "proto_headers": 24,
+          "instructions": 43008,
+          "avalanche": 4,
+          "graph_sites": 39166,
+          "routes": 4,
+          "constants": 19429,
+          "upvalues": 18,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 4
+        },
+        "bytes": 101858,
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.024130874953698367,
+        "serialize_batch": 4,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.003125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.05756619991734624,
+          "5.3": 0.011926480010151863
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "97b14fd0fcf2a99233e2d3e0781707ec3867479a4874557b06cf9d663da266b4",
+      "physical_instructions": 178,
+      "graph_descriptors": 39,
+      "avalanche_slots": 1,
+      "prototypes": 1,
+      "integrity_constants": 2,
+      "block_routes": 1,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 2972,
+        "total_bytes": 2972,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 254,
+          "proto_headers": 8,
+          "instructions": 1424,
+          "avalanche": 179,
+          "graph_sites": 646,
+          "routes": 11,
+          "constants": 432,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.00037560096153846156,
+        "serialize_wall_seconds_median": 0.0005783653849413475,
+        "serialize_batch": 208,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0006648936170212766,
+          "5.3": 0.00014988009592326138
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.001337093618163403,
+          "5.3": 0.00021691103153180876
+        }
+      },
+      "after": {
+        "shared_bytes": 2244,
+        "total_bytes": 2244,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 197,
+          "proto_headers": 6,
+          "instructions": 1068,
+          "avalanche": 5,
+          "graph_sites": 546,
+          "routes": 4,
+          "constants": 402,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:sparse": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2244,
+        "serialize_cpu_seconds_median": 0.00030048076923076925,
+        "serialize_wall_seconds_median": 0.0005406182686923645,
+        "serialize_batch": 208,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0006648936170212766,
+          "5.3": 0.00018735011990407674
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.001139321275293193,
+          "5.3": 0.00020395083926903973
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "1a1e71d7dc37b9f8b55272e4da721d8ae5eef0d19407cf6f44f572d2511e6603",
+      "physical_instructions": 229,
+      "graph_descriptors": 42,
+      "avalanche_slots": 1,
+      "prototypes": 1,
+      "integrity_constants": 3,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 3535,
+        "total_bytes": 3535,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 223,
+          "proto_headers": 8,
+          "instructions": 1832,
+          "avalanche": 230,
+          "graph_sites": 733,
+          "routes": 2,
+          "constants": 489,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0003780241935483871,
+        "serialize_wall_seconds_median": 0.0005351814512734211,
+        "serialize_batch": 124,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0013020833333333333,
+          "5.3": 0.00015743073047858942
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.001539588886468361,
+          "5.3": 0.0002437403023252334
+        }
+      },
+      "after": {
+        "shared_bytes": 2638,
+        "total_bytes": 2638,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 190,
+          "proto_headers": 6,
+          "instructions": 1374,
+          "avalanche": 6,
+          "graph_sites": 586,
+          "routes": 1,
+          "constants": 459,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:sparse": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2638,
+        "serialize_cpu_seconds_median": 0.0003780241935483871,
+        "serialize_wall_seconds_median": 0.0004667282262216172,
+        "serialize_batch": 124,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0010850694444444445,
+          "5.3": 0.00019678841309823678
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0014405444445502427,
+          "5.3": 0.00023348841309472356
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "c98589e1f97dc2c7f8bc5299bbf3ffa06623a1f203bed097d273d685d2e2e2f2",
+      "physical_instructions": 19644,
+      "graph_descriptors": 6494,
+      "avalanche_slots": 222,
+      "prototypes": 4,
+      "integrity_constants": 228,
+      "block_routes": 172,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 300218,
+        "total_bytes": 300218,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 205,
+          "proto_headers": 32,
+          "instructions": 157152,
+          "avalanche": 19866,
+          "graph_sites": 97572,
+          "routes": 2244,
+          "constants": 23087,
+          "upvalues": 36,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.04584755003452301,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.078125,
+          "5.3": 0.01171875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.11291310004889965,
+          "5.3": 0.024221649975515902
+        }
+      },
+      "after": {
+        "shared_bytes": 232539,
+        "total_bytes": 232539,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 163,
+          "proto_headers": 24,
+          "instructions": 117864,
+          "avalanche": 514,
+          "graph_sites": 90538,
+          "routes": 1196,
+          "constants": 22200,
+          "upvalues": 24,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:sparse": 1,
+          "graph_sites:sparse": 4,
+          "avalanche:absent": 3
+        },
+        "bytes": 232539,
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.040115749929100275,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.09375,
+          "5.3": 0.01953125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.11152469995431602,
+          "5.3": 0.02498635003576055
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "karity",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "f07e6c88c07b41f96cc7c90671abe791db595d66eb650eee7f7cade28d4a85de",
+      "physical_instructions": 10999,
+      "graph_descriptors": 4327,
+      "avalanche_slots": 654,
+      "prototypes": 4,
+      "integrity_constants": 254,
+      "block_routes": 96,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 184485,
+        "total_bytes": 184485,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 211,
+          "proto_headers": 32,
+          "instructions": 87992,
+          "avalanche": 11653,
+          "graph_sites": 62923,
+          "routes": 1640,
+          "constants": 19980,
+          "upvalues": 30,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.032358199978868164,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.015625
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0639172000810504,
+          "5.3": 0.0155971166677773
+        }
+      },
+      "after": {
+        "shared_bytes": 147913,
+        "total_bytes": 147913,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 172,
+          "proto_headers": 24,
+          "instructions": 65994,
+          "avalanche": 1332,
+          "graph_sites": 60156,
+          "routes": 850,
+          "constants": 19351,
+          "upvalues": 18,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:sparse": 1,
+          "graph_sites:sparse": 4,
+          "avalanche:absent": 3
+        },
+        "bytes": 147913,
+        "serialize_cpu_seconds_median": 0.026041666666666668,
+        "serialize_wall_seconds_median": 0.031048433389514685,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.03125,
+          "5.3": 0.0078125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06561410007998347,
+          "5.3": 0.015059116684521237
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "mov",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "97b14fd0fcf2a99233e2d3e0781707ec3867479a4874557b06cf9d663da266b4",
+      "physical_instructions": 136,
+      "graph_descriptors": 32,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 57636,
+      "before": {
+        "shared_bytes": 2434,
+        "total_bytes": 60070,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 230,
+          "proto_headers": 8,
+          "instructions": 1088,
+          "avalanche": 136,
+          "graph_sites": 520,
+          "routes": 2,
+          "constants": 432,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0002731643356643357,
+        "serialize_wall_seconds_median": 0.0003860891606150703,
+        "serialize_batch": 286,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0004921259842519685,
+          "5.3": 0.0001306438127090301
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0007734889765893381,
+          "5.3": 0.00016986989972172273
+        }
+      },
+      "after": {
+        "shared_bytes": 1874,
+        "total_bytes": 59510,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 182,
+          "proto_headers": 6,
+          "instructions": 816,
+          "avalanche": 1,
+          "graph_sites": 450,
+          "routes": 1,
+          "constants": 402,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 1874,
+        "serialize_cpu_seconds_median": 0.0001638986013986014,
+        "serialize_wall_seconds_median": 0.0003823447554092203,
+        "serialize_batch": 286,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0004921259842519685,
+          "5.3": 0.00015677257525083612
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0007483944879830118,
+          "5.3": 0.00017257157189889895
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "mov",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "1a1e71d7dc37b9f8b55272e4da721d8ae5eef0d19407cf6f44f572d2511e6603",
+      "physical_instructions": 183,
+      "graph_descriptors": 35,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 3,
+      "block_routes": 0,
+      "mov_extension_bytes": 58162,
+      "before": {
+        "shared_bytes": 2985,
+        "total_bytes": 61147,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 218,
+          "proto_headers": 8,
+          "instructions": 1464,
+          "avalanche": 183,
+          "graph_sites": 603,
+          "routes": 2,
+          "constants": 489,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.00027901785714285713,
+        "serialize_wall_seconds_median": 0.0004323714279702732,
+        "serialize_batch": 112,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.000992063492063492,
+          "5.3": 0.0001584685598377282
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0011096571439078876,
+          "5.3": 0.00021288661252231192
+        }
+      },
+      "after": {
+        "shared_bytes": 2240,
+        "total_bytes": 60402,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 167,
+          "proto_headers": 6,
+          "instructions": 1098,
+          "avalanche": 1,
+          "graph_sites": 492,
+          "routes": 1,
+          "constants": 459,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2240,
+        "serialize_cpu_seconds_median": 0.00027901785714285713,
+        "serialize_wall_seconds_median": 0.0003699919637126316,
+        "serialize_batch": 112,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.000992063492063492,
+          "5.3": 0.00012677484787018255
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0012091619058674763,
+          "5.3": 0.00019078782965517915
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "mov",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "c98589e1f97dc2c7f8bc5299bbf3ffa06623a1f203bed097d273d685d2e2e2f2",
+      "physical_instructions": 10973,
+      "graph_descriptors": 3836,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 228,
+      "block_routes": 0,
+      "mov_extension_bytes": 338025,
+      "before": {
+        "shared_bytes": 179172,
+        "total_bytes": 517197,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 151,
+          "proto_headers": 32,
+          "instructions": 87784,
+          "avalanche": 10973,
+          "graph_sites": 57005,
+          "routes": 8,
+          "constants": 23159,
+          "upvalues": 36,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.026041666666666668,
+        "serialize_wall_seconds_median": 0.02899466664530337,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.0078125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.07225259998813272,
+          "5.3": 0.015325983326571683
+        }
+      },
+      "after": {
+        "shared_bytes": 142022,
+        "total_bytes": 480047,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 124,
+          "proto_headers": 24,
+          "instructions": 65838,
+          "avalanche": 4,
+          "graph_sites": 53716,
+          "routes": 4,
+          "constants": 22272,
+          "upvalues": 24,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 4
+        },
+        "bytes": 142022,
+        "serialize_cpu_seconds_median": 0.020833333333333332,
+        "serialize_wall_seconds_median": 0.02476470001662771,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.010416666666666666
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06846190011128783,
+          "5.3": 0.01378591665221999
+        }
+      }
+    },
+    {
+      "fixture": "small",
+      "backend": "mov",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "f07e6c88c07b41f96cc7c90671abe791db595d66eb650eee7f7cade28d4a85de",
+      "physical_instructions": 4970,
+      "graph_descriptors": 2003,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 254,
+      "block_routes": 0,
+      "mov_extension_bytes": 278612,
+      "before": {
+        "shared_bytes": 93934,
+        "total_bytes": 372546,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 190,
+          "proto_headers": 32,
+          "instructions": 39760,
+          "avalanche": 4970,
+          "graph_sites": 29006,
+          "routes": 8,
+          "constants": 19914,
+          "upvalues": 30,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.016349049983546138,
+        "serialize_batch": 6,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.020833333333333332,
+          "5.3": 0.0078125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.03032776666805148,
+          "5.3": 0.008593537495471537
+        }
+      },
+      "after": {
+        "shared_bytes": 77388,
+        "total_bytes": 356000,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 163,
+          "proto_headers": 24,
+          "instructions": 29820,
+          "avalanche": 4,
+          "graph_sites": 28054,
+          "routes": 4,
+          "constants": 19285,
+          "upvalues": 18,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 4
+        },
+        "bytes": 77388,
+        "serialize_cpu_seconds_median": 0.0078125,
+        "serialize_wall_seconds_median": 0.015058533327343563,
+        "serialize_batch": 6,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.026041666666666668,
+          "5.3": 0.0078125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.030366466691096623,
+          "5.3": 0.008075049991020933
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "classic",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "d5bbada5a20f0a4dbe8ec43806f68c6cc089e1cc090049445defc7d7302641ea",
+      "physical_instructions": 187,
+      "graph_descriptors": 38,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 3204,
+        "total_bytes": 3204,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 294,
+          "proto_headers": 8,
+          "instructions": 1496,
+          "avalanche": 187,
+          "graph_sites": 643,
+          "routes": 2,
+          "constants": 556,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0002962085308056872,
+        "serialize_wall_seconds_median": 0.0005243791463692182,
+        "serialize_batch": 211,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0005151098901098901,
+          "5.3": 0.00019654088050314466
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0010851945057716015,
+          "5.3": 0.00022133312381382257
+        }
+      },
+      "after": {
+        "shared_bytes": 2420,
+        "total_bytes": 2420,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 234,
+          "proto_headers": 6,
+          "instructions": 1122,
+          "avalanche": 1,
+          "graph_sites": 532,
+          "routes": 1,
+          "constants": 508,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2420,
+        "serialize_cpu_seconds_median": 0.0002962085308056872,
+        "serialize_wall_seconds_median": 0.000470274881684879,
+        "serialize_batch": 211,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0006868131868131869,
+          "5.3": 9.827044025157233e-05
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0010465340647887397,
+          "5.3": 0.00019722620554393316
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "classic",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "1b4b1496959596e6809b9b8325424c6af23a6db13047eed342a4a2a2d430b1fb",
+      "physical_instructions": 219,
+      "graph_descriptors": 44,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 3,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 3650,
+        "total_bytes": 3650,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 256,
+          "proto_headers": 8,
+          "instructions": 1752,
+          "avalanche": 219,
+          "graph_sites": 747,
+          "routes": 2,
+          "constants": 648,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0005296610169491525,
+        "serialize_wall_seconds_median": 0.0005687073446641871,
+        "serialize_batch": 177,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0009527439024390244,
+          "5.3": 0.00024287564766839378
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.001363680487862084,
+          "5.3": 0.000259447150376331
+        }
+      },
+      "after": {
+        "shared_bytes": 2759,
+        "total_bytes": 2759,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 205,
+          "proto_headers": 6,
+          "instructions": 1314,
+          "avalanche": 1,
+          "graph_sites": 616,
+          "routes": 1,
+          "constants": 600,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2759,
+        "serialize_cpu_seconds_median": 0.00044138418079096045,
+        "serialize_wall_seconds_median": 0.0004901242926506336,
+        "serialize_batch": 177,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0009527439024390244,
+          "5.3": 0.0002023963730569948
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0012933317083501962,
+          "5.3": 0.00022958730554951287
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "classic",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "65d0c6888f24e5e9aad0a5ea1e4284c7549cba0d160c0ef1d3f7c8473493c140",
+      "physical_instructions": 11276,
+      "graph_descriptors": 4839,
+      "avalanche_slots": 0,
+      "prototypes": 10,
+      "integrity_constants": 342,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 201946,
+        "total_bytes": 201946,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 184,
+          "proto_headers": 80,
+          "instructions": 90208,
+          "avalanche": 11276,
+          "graph_sites": 69344,
+          "routes": 20,
+          "constants": 30664,
+          "upvalues": 122,
+          "children": 40
+        },
+        "serialize_cpu_seconds_median": 0.0234375,
+        "serialize_wall_seconds_median": 0.032855500001460314,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.01875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06460670009255409,
+          "5.3": 0.018745259987190364
+        }
+      },
+      "after": {
+        "shared_bytes": 165008,
+        "total_bytes": 165008,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 151,
+          "proto_headers": 60,
+          "instructions": 67656,
+          "avalanche": 10,
+          "graph_sites": 67345,
+          "routes": 10,
+          "constants": 29662,
+          "upvalues": 92,
+          "children": 10
+        },
+        "metadata_modes": {
+          "avalanche:absent": 10,
+          "graph_sites:sparse": 10
+        },
+        "bytes": 165008,
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.030430200044065714,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.046875,
+          "5.3": 0.0125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06645609997212887,
+          "5.3": 0.01766834002919495
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "classic",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "6ca35c42a3292cf4612d57b57b8ccadf918ffbcda54953731ce335e3cb6bd306",
+      "physical_instructions": 13582,
+      "graph_descriptors": 5198,
+      "avalanche_slots": 0,
+      "prototypes": 16,
+      "integrity_constants": 519,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 236273,
+        "total_bytes": 236273,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 209,
+          "proto_headers": 128,
+          "instructions": 108656,
+          "avalanche": 13582,
+          "graph_sites": 75958,
+          "routes": 32,
+          "constants": 37418,
+          "upvalues": 218,
+          "children": 64
+        },
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.038807750097475946,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.03125,
+          "5.3": 0.01171875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.08315220009535551,
+          "5.3": 0.02275052497861907
+        }
+      },
+      "after": {
+        "shared_bytes": 190562,
+        "total_bytes": 190562,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 173,
+          "proto_headers": 93,
+          "instructions": 81492,
+          "avalanche": 16,
+          "graph_sites": 72411,
+          "routes": 16,
+          "constants": 36163,
+          "upvalues": 170,
+          "children": 16
+        },
+        "metadata_modes": {
+          "avalanche:absent": 16,
+          "graph_sites:sparse": 15,
+          "graph_sites:dense": 1
+        },
+        "bytes": 190562,
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.03828940005041659,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.0078125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0811157999560237,
+          "5.3": 0.02101477497490123
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "karity",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "d5bbada5a20f0a4dbe8ec43806f68c6cc089e1cc090049445defc7d7302641ea",
+      "physical_instructions": 187,
+      "graph_descriptors": 38,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 3172,
+        "total_bytes": 3172,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 262,
+          "proto_headers": 8,
+          "instructions": 1496,
+          "avalanche": 187,
+          "graph_sites": 643,
+          "routes": 2,
+          "constants": 556,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0004320276497695853,
+        "serialize_wall_seconds_median": 0.00050243271905328,
+        "serialize_batch": 217,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0007891414141414141,
+          "5.3": 0.0001687365010799136
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.00104978585832122,
+          "5.3": 0.0002315520519113116
+        }
+      },
+      "after": {
+        "shared_bytes": 2405,
+        "total_bytes": 2405,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 217,
+          "proto_headers": 6,
+          "instructions": 1122,
+          "avalanche": 1,
+          "graph_sites": 534,
+          "routes": 1,
+          "constants": 508,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2405,
+        "serialize_cpu_seconds_median": 0.0002880184331797235,
+        "serialize_wall_seconds_median": 0.00041502764907747097,
+        "serialize_batch": 217,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.000946969696969697,
+          "5.3": 0.0001349892008639309
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.001108541414423874,
+          "5.3": 0.00021743498939707007
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "karity",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "1b4b1496959596e6809b9b8325424c6af23a6db13047eed342a4a2a2d430b1fb",
+      "physical_instructions": 226,
+      "graph_descriptors": 45,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 3,
+      "block_routes": 1,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 3739,
+        "total_bytes": 3739,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 254,
+          "proto_headers": 8,
+          "instructions": 1808,
+          "avalanche": 226,
+          "graph_sites": 766,
+          "routes": 11,
+          "constants": 648,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0004622781065088757,
+        "serialize_wall_seconds_median": 0.0005657390537038004,
+        "serialize_batch": 169,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0009645061728395061,
+          "5.3": 0.00019580200501253132
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0012426185162944926,
+          "5.3": 0.00030138897231049404
+        }
+      },
+      "after": {
+        "shared_bytes": 2821,
+        "total_bytes": 2821,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 206,
+          "proto_headers": 6,
+          "instructions": 1356,
+          "avalanche": 1,
+          "graph_sites": 630,
+          "routes": 6,
+          "constants": 600,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2821,
+        "serialize_cpu_seconds_median": 0.0003698224852071006,
+        "serialize_wall_seconds_median": 0.0005795071011728789,
+        "serialize_batch": 169,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0009645061728395061,
+          "5.3": 0.00019580200501253132
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0013531271603970248,
+          "5.3": 0.00024249799547245479
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "karity",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "65d0c6888f24e5e9aad0a5ea1e4284c7549cba0d160c0ef1d3f7c8473493c140",
+      "physical_instructions": 13975,
+      "graph_descriptors": 5852,
+      "avalanche_slots": 150,
+      "prototypes": 10,
+      "integrity_constants": 342,
+      "block_routes": 118,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 242699,
+        "total_bytes": 242699,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 203,
+          "proto_headers": 80,
+          "instructions": 111800,
+          "avalanche": 14125,
+          "graph_sites": 84199,
+          "routes": 1554,
+          "constants": 30568,
+          "upvalues": 122,
+          "children": 40
+        },
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.03829775005578995,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.046875,
+          "5.3": 0.01171875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.08792970003560185,
+          "5.3": 0.021364025014918298
+        }
+      },
+      "after": {
+        "shared_bytes": 196362,
+        "total_bytes": 196362,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 170,
+          "proto_headers": 60,
+          "instructions": 83850,
+          "avalanche": 387,
+          "graph_sites": 81399,
+          "routes": 816,
+          "constants": 29566,
+          "upvalues": 92,
+          "children": 10
+        },
+        "metadata_modes": {
+          "avalanche:absent": 7,
+          "graph_sites:sparse": 10,
+          "avalanche:sparse": 3
+        },
+        "bytes": 196362,
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.03526169992983341,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.078125,
+          "5.3": 0.015625
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.07806580001488328,
+          "5.3": 0.020926550030708313
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "karity",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "6ca35c42a3292cf4612d57b57b8ccadf918ffbcda54953731ce335e3cb6bd306",
+      "physical_instructions": 20264,
+      "graph_descriptors": 7555,
+      "avalanche_slots": 1267,
+      "prototypes": 16,
+      "integrity_constants": 519,
+      "block_routes": 186,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 335951,
+        "total_bytes": 335951,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 300,
+          "proto_headers": 128,
+          "instructions": 162112,
+          "avalanche": 21531,
+          "graph_sites": 110924,
+          "routes": 3194,
+          "constants": 37472,
+          "upvalues": 218,
+          "children": 64
+        },
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.052545399870723486,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.109375,
+          "5.3": 0.026041666666666668
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.1376177000347525,
+          "5.3": 0.029499199939891696
+        }
+      },
+      "after": {
+        "shared_bytes": 267696,
+        "total_bytes": 267696,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 240,
+          "proto_headers": 93,
+          "instructions": 121584,
+          "avalanche": 2590,
+          "graph_sites": 105146,
+          "routes": 1628,
+          "constants": 36217,
+          "upvalues": 170,
+          "children": 16
+        },
+        "metadata_modes": {
+          "avalanche:absent": 9,
+          "graph_sites:sparse": 15,
+          "avalanche:sparse": 7,
+          "graph_sites:dense": 1
+        },
+        "bytes": 267696,
+        "serialize_cpu_seconds_median": 0.046875,
+        "serialize_wall_seconds_median": 0.04824959998950362,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.078125,
+          "5.3": 0.015625
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.12707339995540679,
+          "5.3": 0.027946500030035775
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "mov",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "d5bbada5a20f0a4dbe8ec43806f68c6cc089e1cc090049445defc7d7302641ea",
+      "physical_instructions": 144,
+      "graph_descriptors": 33,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 58703,
+      "before": {
+        "shared_bytes": 2650,
+        "total_bytes": 61353,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 230,
+          "proto_headers": 8,
+          "instructions": 1152,
+          "avalanche": 144,
+          "graph_sites": 540,
+          "routes": 2,
+          "constants": 556,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.00024606299212598425,
+        "serialize_wall_seconds_median": 0.0004962173228218095,
+        "serialize_batch": 127,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0005530973451327434,
+          "5.3": 0.000198502722323049
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0008997274336067185,
+          "5.3": 0.00020315898362608008
+        }
+      },
+      "after": {
+        "shared_bytes": 2042,
+        "total_bytes": 60745,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 182,
+          "proto_headers": 6,
+          "instructions": 864,
+          "avalanche": 1,
+          "graph_sites": 464,
+          "routes": 1,
+          "constants": 508,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2042,
+        "serialize_cpu_seconds_median": 0.00024606299212598425,
+        "serialize_wall_seconds_median": 0.00047800078892743024,
+        "serialize_batch": 127,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0006913716814159292,
+          "5.3": 8.507259528130671e-05
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0008124654857128595,
+          "5.3": 0.00018281415620389414
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "mov",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "1b4b1496959596e6809b9b8325424c6af23a6db13047eed342a4a2a2d430b1fb",
+      "physical_instructions": 171,
+      "graph_descriptors": 37,
+      "avalanche_slots": 0,
+      "prototypes": 1,
+      "integrity_constants": 3,
+      "block_routes": 0,
+      "mov_extension_bytes": 59053,
+      "before": {
+        "shared_bytes": 3060,
+        "total_bytes": 62113,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 218,
+          "proto_headers": 8,
+          "instructions": 1368,
+          "avalanche": 171,
+          "graph_sites": 615,
+          "routes": 2,
+          "constants": 660,
+          "upvalues": 6,
+          "children": 4
+        },
+        "serialize_cpu_seconds_median": 0.0002221563981042654,
+        "serialize_wall_seconds_median": 0.0005191374400198036,
+        "serialize_batch": 211,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0008680555555555555,
+          "5.3": 0.00020248380129589633
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0009735175925824377,
+          "5.3": 0.00023959827213095538
+        }
+      },
+      "after": {
+        "shared_bytes": 2349,
+        "total_bytes": 61402,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 167,
+          "proto_headers": 6,
+          "instructions": 1026,
+          "avalanche": 1,
+          "graph_sites": 520,
+          "routes": 1,
+          "constants": 612,
+          "upvalues": 3,
+          "children": 1
+        },
+        "metadata_modes": {
+          "avalanche:absent": 1,
+          "graph_sites:sparse": 1
+        },
+        "bytes": 2349,
+        "serialize_cpu_seconds_median": 0.0004443127962085308,
+        "serialize_wall_seconds_median": 0.0004279056875149927,
+        "serialize_batch": 211,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0005787037037037037,
+          "5.3": 0.00010124190064794816
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0009714444448171114,
+          "5.3": 0.0002192922246282353
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "mov",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "65d0c6888f24e5e9aad0a5ea1e4284c7549cba0d160c0ef1d3f7c8473493c140",
+      "physical_instructions": 7813,
+      "graph_descriptors": 3343,
+      "avalanche_slots": 0,
+      "prototypes": 10,
+      "integrity_constants": 342,
+      "block_routes": 0,
+      "mov_extension_bytes": 273146,
+      "before": {
+        "shared_bytes": 149498,
+        "total_bytes": 422644,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 216,
+          "proto_headers": 80,
+          "instructions": 62504,
+          "avalanche": 7813,
+          "graph_sites": 47929,
+          "routes": 20,
+          "constants": 30766,
+          "upvalues": 122,
+          "children": 40
+        },
+        "serialize_cpu_seconds_median": 0.026041666666666668,
+        "serialize_wall_seconds_median": 0.03500533329012493,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.046875,
+          "5.3": 0.011160714285714286
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.04722820012830198,
+          "5.3": 0.013591342838481069
+        }
+      },
+      "after": {
+        "shared_bytes": 123847,
+        "total_bytes": 396993,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 180,
+          "proto_headers": 60,
+          "instructions": 46878,
+          "avalanche": 10,
+          "graph_sites": 46831,
+          "routes": 10,
+          "constants": 29764,
+          "upvalues": 92,
+          "children": 10
+        },
+        "metadata_modes": {
+          "avalanche:absent": 10,
+          "graph_sites:sparse": 10
+        },
+        "bytes": 123847,
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.030776900006458163,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.046875,
+          "5.3": 0.011160714285714286
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.04745479999110103,
+          "5.3": 0.01327564287930727
+        }
+      }
+    },
+    {
+      "fixture": "strings",
+      "backend": "mov",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "6ca35c42a3292cf4612d57b57b8ccadf918ffbcda54953731ce335e3cb6bd306",
+      "physical_instructions": 9617,
+      "graph_descriptors": 3699,
+      "avalanche_slots": 0,
+      "prototypes": 16,
+      "integrity_constants": 519,
+      "block_routes": 0,
+      "mov_extension_bytes": 367195,
+      "before": {
+        "shared_bytes": 178561,
+        "total_bytes": 545756,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 255,
+          "proto_headers": 128,
+          "instructions": 76936,
+          "avalanche": 9617,
+          "graph_sites": 54005,
+          "routes": 32,
+          "constants": 37298,
+          "upvalues": 218,
+          "children": 64
+        },
+        "serialize_cpu_seconds_median": 0.020833333333333332,
+        "serialize_wall_seconds_median": 0.031206833353887003,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.0125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.062287099892273545,
+          "5.3": 0.017156280018389224
+        }
+      },
+      "after": {
+        "shared_bytes": 146092,
+        "total_bytes": 513287,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 195,
+          "proto_headers": 93,
+          "instructions": 57702,
+          "avalanche": 16,
+          "graph_sites": 51829,
+          "routes": 16,
+          "constants": 36043,
+          "upvalues": 170,
+          "children": 16
+        },
+        "metadata_modes": {
+          "avalanche:absent": 16,
+          "graph_sites:sparse": 15,
+          "graph_sites:dense": 1
+        },
+        "bytes": 146092,
+        "serialize_cpu_seconds_median": 0.020833333333333332,
+        "serialize_wall_seconds_median": 0.027894999987135332,
+        "serialize_batch": 3,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.015625,
+          "5.3": 0.015625
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06384979980066419,
+          "5.3": 0.015635500010102988
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "classic",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "91925e8d74f90c20dfc2b659815407c0483be3d1fb25c68bafedbc84a0c0f72c",
+      "physical_instructions": 299,
+      "graph_descriptors": 59,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 4668,
+        "total_bytes": 4668,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 194,
+          "proto_headers": 32,
+          "instructions": 2392,
+          "avalanche": 299,
+          "graph_sites": 1007,
+          "routes": 8,
+          "constants": 686,
+          "upvalues": 26,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.0004310344827586207,
+        "serialize_wall_seconds_median": 0.0007181579311346186,
+        "serialize_batch": 145,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0011363636363636363,
+          "5.3": 0.0003324468085106383
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0016662836371159012,
+          "5.3": 0.00043911205733472363
+        }
+      },
+      "after": {
+        "shared_bytes": 3453,
+        "total_bytes": 3453,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 158,
+          "proto_headers": 21,
+          "instructions": 1794,
+          "avalanche": 4,
+          "graph_sites": 828,
+          "routes": 4,
+          "constants": 614,
+          "upvalues": 14,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 2,
+          "graph_sites:absent": 2
+        },
+        "bytes": 3453,
+        "serialize_cpu_seconds_median": 0.0005387931034482759,
+        "serialize_wall_seconds_median": 0.0006572131035399848,
+        "serialize_batch": 145,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0011363636363636363,
+          "5.3": 0.00022163120567375886
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0018095436378974805,
+          "5.3": 0.0003851833340467502
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "classic",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "a30a01338628b3f4bb9b4686174ae609278b61b22a886c55f9aad1720473f188",
+      "physical_instructions": 320,
+      "graph_descriptors": 56,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 4883,
+        "total_bytes": 4883,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 214,
+          "proto_headers": 32,
+          "instructions": 2560,
+          "avalanche": 320,
+          "graph_sites": 992,
+          "routes": 8,
+          "constants": 707,
+          "upvalues": 26,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.000625,
+        "serialize_wall_seconds_median": 0.0011331559997051954,
+        "serialize_batch": 125,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0010901162790697674,
+          "5.3": 0.00025614754098360657
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0028311279115028854,
+          "5.3": 0.0004992928964090966
+        }
+      },
+      "after": {
+        "shared_bytes": 3579,
+        "total_bytes": 3579,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 178,
+          "proto_headers": 21,
+          "instructions": 1920,
+          "avalanche": 4,
+          "graph_sites": 784,
+          "routes": 4,
+          "constants": 638,
+          "upvalues": 14,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 2,
+          "graph_sites:absent": 2
+        },
+        "bytes": 3579,
+        "serialize_cpu_seconds_median": 0.000375,
+        "serialize_wall_seconds_median": 0.0009532456006854773,
+        "serialize_batch": 125,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0007267441860465116,
+          "5.3": 0.00017076502732240437
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.002096969764246497,
+          "5.3": 0.0003977748628990735
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "classic",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "fc07804167e0eb37ba84e44ec6f6654182f4c1e202c0adc2ca37dcbcd0b061b2",
+      "physical_instructions": 30745,
+      "graph_descriptors": 9858,
+      "avalanche_slots": 0,
+      "prototypes": 49,
+      "integrity_constants": 543,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 478131,
+        "total_bytes": 478131,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 257,
+          "proto_headers": 392,
+          "instructions": 245960,
+          "avalanche": 30745,
+          "graph_sites": 149041,
+          "routes": 98,
+          "constants": 51138,
+          "upvalues": 296,
+          "children": 196
+        },
+        "serialize_cpu_seconds_median": 0.078125,
+        "serialize_wall_seconds_median": 0.10043239989317954,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.15625,
+          "5.3": 0.03125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.23538399999961257,
+          "5.3": 0.04966479993890971
+        }
+      },
+      "after": {
+        "shared_bytes": 371140,
+        "total_bytes": 371140,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 206,
+          "proto_headers": 256,
+          "instructions": 184470,
+          "avalanche": 49,
+          "graph_sites": 137587,
+          "routes": 49,
+          "constants": 48313,
+          "upvalues": 149,
+          "children": 49
+        },
+        "metadata_modes": {
+          "avalanche:absent": 49,
+          "graph_sites:sparse": 34,
+          "graph_sites:dense": 15
+        },
+        "bytes": 371140,
+        "serialize_cpu_seconds_median": 0.078125,
+        "serialize_wall_seconds_median": 0.08936830004677176,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.15625,
+          "5.3": 0.0234375
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.24145269999280572,
+          "5.3": 0.04941420000977814
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "classic",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "80bf0e71cd45d8c179c840648d8e208bc7c8c9ce27e25f46b6d2ea87467a0ad0",
+      "physical_instructions": 9686,
+      "graph_descriptors": 3648,
+      "avalanche_slots": 0,
+      "prototypes": 14,
+      "integrity_constants": 331,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 169132,
+        "total_bytes": 169132,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 277,
+          "proto_headers": 112,
+          "instructions": 77488,
+          "avalanche": 9686,
+          "graph_sites": 53462,
+          "routes": 28,
+          "constants": 27867,
+          "upvalues": 148,
+          "children": 56
+        },
+        "serialize_cpu_seconds_median": 0.0234375,
+        "serialize_wall_seconds_median": 0.027982949977740645,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.046875,
+          "5.3": 0.0078125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06277909991331398,
+          "5.3": 0.015263300001000365
+        }
+      },
+      "after": {
+        "shared_bytes": 136282,
+        "total_bytes": 136282,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 217,
+          "proto_headers": 80,
+          "instructions": 58116,
+          "avalanche": 14,
+          "graph_sites": 50855,
+          "routes": 14,
+          "constants": 26854,
+          "upvalues": 106,
+          "children": 14
+        },
+        "metadata_modes": {
+          "avalanche:absent": 14,
+          "graph_sites:sparse": 14
+        },
+        "bytes": 136282,
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.025115399970673025,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.03125,
+          "5.3": 0.013020833333333334
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.06192159978672862,
+          "5.3": 0.014365483347016076
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "karity",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "91925e8d74f90c20dfc2b659815407c0483be3d1fb25c68bafedbc84a0c0f72c",
+      "physical_instructions": 299,
+      "graph_descriptors": 59,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 4668,
+        "total_bytes": 4668,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 194,
+          "proto_headers": 32,
+          "instructions": 2392,
+          "avalanche": 299,
+          "graph_sites": 1007,
+          "routes": 8,
+          "constants": 686,
+          "upvalues": 26,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.0005540780141843972,
+        "serialize_wall_seconds_median": 0.0007101624101030488,
+        "serialize_batch": 141,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.001065340909090909,
+          "5.3": 0.00021404109589041095
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0016618227236904204,
+          "5.3": 0.00034211643840734884
+        }
+      },
+      "after": {
+        "shared_bytes": 3457,
+        "total_bytes": 3457,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 158,
+          "proto_headers": 21,
+          "instructions": 1794,
+          "avalanche": 4,
+          "graph_sites": 832,
+          "routes": 4,
+          "constants": 614,
+          "upvalues": 14,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 2,
+          "graph_sites:absent": 2
+        },
+        "bytes": 3457,
+        "serialize_cpu_seconds_median": 0.0004432624113475177,
+        "serialize_wall_seconds_median": 0.0006179205680279233,
+        "serialize_batch": 141,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0014204545454545455,
+          "5.3": 0.00021404109589041095
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0016613454579121687,
+          "5.3": 0.0003227599312819234
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "karity",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "a30a01338628b3f4bb9b4686174ae609278b61b22a886c55f9aad1720473f188",
+      "physical_instructions": 327,
+      "graph_descriptors": 57,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 2,
+      "block_routes": 1,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 4986,
+        "total_bytes": 4986,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 214,
+          "proto_headers": 32,
+          "instructions": 2616,
+          "avalanche": 327,
+          "graph_sites": 1011,
+          "routes": 17,
+          "constants": 719,
+          "upvalues": 26,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.00036909448818897637,
+        "serialize_wall_seconds_median": 0.0007856858263569554,
+        "serialize_batch": 127,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0017045454545454545,
+          "5.3": 0.00022007042253521127
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0018840036397291856,
+          "5.3": 0.0003607623233184428
+        }
+      },
+      "after": {
+        "shared_bytes": 3652,
+        "total_bytes": 3652,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 178,
+          "proto_headers": 21,
+          "instructions": 1962,
+          "avalanche": 4,
+          "graph_sites": 798,
+          "routes": 9,
+          "constants": 650,
+          "upvalues": 14,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 2,
+          "graph_sites:absent": 2
+        },
+        "bytes": 3652,
+        "serialize_cpu_seconds_median": 0.00036909448818897637,
+        "serialize_wall_seconds_median": 0.0007422685029175808,
+        "serialize_batch": 127,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0011363636363636363,
+          "5.3": 0.0002750880281690141
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0017450818199325692,
+          "5.3": 0.0003018591546414184
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "karity",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "fc07804167e0eb37ba84e44ec6f6654182f4c1e202c0adc2ca37dcbcd0b061b2",
+      "physical_instructions": 37924,
+      "graph_descriptors": 11899,
+      "avalanche_slots": 735,
+      "prototypes": 49,
+      "integrity_constants": 543,
+      "block_routes": 337,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 579614,
+        "total_bytes": 579614,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 192,
+          "proto_headers": 392,
+          "instructions": 303392,
+          "avalanche": 38659,
+          "graph_sites": 180712,
+          "routes": 4479,
+          "constants": 51288,
+          "upvalues": 296,
+          "children": 196
+        },
+        "serialize_cpu_seconds_median": 0.09375,
+        "serialize_wall_seconds_median": 0.09225609991699457,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.140625,
+          "5.3": 0.03125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.2442068001255393,
+          "5.3": 0.044820599956437945
+        }
+      },
+      "after": {
+        "shared_bytes": 446784,
+        "total_bytes": 446784,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 147,
+          "proto_headers": 256,
+          "instructions": 227544,
+          "avalanche": 1781,
+          "graph_sites": 166019,
+          "routes": 2364,
+          "constants": 48463,
+          "upvalues": 149,
+          "children": 49
+        },
+        "metadata_modes": {
+          "avalanche:absent": 38,
+          "graph_sites:sparse": 34,
+          "avalanche:sparse": 11,
+          "graph_sites:dense": 15
+        },
+        "bytes": 446784,
+        "serialize_cpu_seconds_median": 0.078125,
+        "serialize_wall_seconds_median": 0.08658059989102185,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.125,
+          "5.3": 0.03125
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.21935169980861247,
+          "5.3": 0.04565760004334152
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "karity",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "80bf0e71cd45d8c179c840648d8e208bc7c8c9ce27e25f46b6d2ea87467a0ad0",
+      "physical_instructions": 14807,
+      "graph_descriptors": 5389,
+      "avalanche_slots": 376,
+      "prototypes": 14,
+      "integrity_constants": 331,
+      "block_routes": 126,
+      "mov_extension_bytes": 0,
+      "before": {
+        "shared_bytes": 243572,
+        "total_bytes": 243572,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 277,
+          "proto_headers": 112,
+          "instructions": 118456,
+          "avalanche": 15183,
+          "graph_sites": 79475,
+          "routes": 2170,
+          "constants": 27687,
+          "upvalues": 148,
+          "children": 56
+        },
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.04554269998334348,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.078125,
+          "5.3": 0.015625
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.09259469993412495,
+          "5.3": 0.02087117498740554
+        }
+      },
+      "after": {
+        "shared_bytes": 192813,
+        "total_bytes": 192813,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 217,
+          "proto_headers": 80,
+          "instructions": 88842,
+          "avalanche": 766,
+          "graph_sites": 75013,
+          "routes": 1089,
+          "constants": 26674,
+          "upvalues": 106,
+          "children": 14
+        },
+        "metadata_modes": {
+          "avalanche:absent": 7,
+          "graph_sites:sparse": 14,
+          "avalanche:sparse": 7
+        },
+        "bytes": 192813,
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.04276495007798076,
+        "serialize_batch": 2,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0625,
+          "5.3": 0.01171875
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.09620820009149611,
+          "5.3": 0.02096107497345656
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "mov",
+      "preset": "fast",
+      "snapshot": 0,
+      "plan_sha256": "91925e8d74f90c20dfc2b659815407c0483be3d1fb25c68bafedbc84a0c0f72c",
+      "physical_instructions": 220,
+      "graph_descriptors": 49,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 58739,
+      "before": {
+        "shared_bytes": 3850,
+        "total_bytes": 62589,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 298,
+          "proto_headers": 32,
+          "instructions": 1760,
+          "avalanche": 220,
+          "graph_sites": 808,
+          "routes": 8,
+          "constants": 674,
+          "upvalues": 26,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.0003551136363636364,
+        "serialize_wall_seconds_median": 0.0005631590902339667,
+        "serialize_batch": 176,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0015625,
+          "5.3": 0.00018221574344023323
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0013897875032853335,
+          "5.3": 0.0002801571429622938
+        }
+      },
+      "after": {
+        "shared_bytes": 2911,
+        "total_bytes": 61650,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 238,
+          "proto_headers": 21,
+          "instructions": 1320,
+          "avalanche": 4,
+          "graph_sites": 692,
+          "routes": 4,
+          "constants": 602,
+          "upvalues": 14,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 2,
+          "graph_sites:absent": 2
+        },
+        "bytes": 2911,
+        "serialize_cpu_seconds_median": 0.00044389204545454544,
+        "serialize_wall_seconds_median": 0.0005212954552420838,
+        "serialize_batch": 176,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0015625,
+          "5.3": 0.00018221574344023323
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.001505417498992756,
+          "5.3": 0.0002855839650350305
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "mov",
+      "preset": "balanced",
+      "snapshot": 0,
+      "plan_sha256": "a30a01338628b3f4bb9b4686174ae609278b61b22a886c55f9aad1720473f188",
+      "physical_instructions": 244,
+      "graph_descriptors": 52,
+      "avalanche_slots": 0,
+      "prototypes": 4,
+      "integrity_constants": 2,
+      "block_routes": 0,
+      "mov_extension_bytes": 59032,
+      "before": {
+        "shared_bytes": 4183,
+        "total_bytes": 63215,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 334,
+          "proto_headers": 32,
+          "instructions": 1952,
+          "avalanche": 244,
+          "graph_sites": 868,
+          "routes": 8,
+          "constants": 695,
+          "upvalues": 26,
+          "children": 16
+        },
+        "serialize_cpu_seconds_median": 0.0003720238095238095,
+        "serialize_wall_seconds_median": 0.0007132708325072946,
+        "serialize_batch": 168,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0011660447761194029,
+          "5.3": 0.00024319066147859923
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0013673701497323033,
+          "5.3": 0.0003201805439266713
+        }
+      },
+      "after": {
+        "shared_bytes": 3154,
+        "total_bytes": 62186,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 271,
+          "proto_headers": 21,
+          "instructions": 1464,
+          "avalanche": 4,
+          "graph_sites": 734,
+          "routes": 4,
+          "constants": 626,
+          "upvalues": 14,
+          "children": 4
+        },
+        "metadata_modes": {
+          "avalanche:absent": 4,
+          "graph_sites:sparse": 2,
+          "graph_sites:absent": 2
+        },
+        "bytes": 3154,
+        "serialize_cpu_seconds_median": 0.0004650297619047619,
+        "serialize_wall_seconds_median": 0.0005670053568402571,
+        "serialize_batch": 168,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0006996268656716418,
+          "5.3": 0.00018239299610894942
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.0013349776142346326,
+          "5.3": 0.00029414046668096045
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "mov",
+      "preset": "strong",
+      "snapshot": 0,
+      "plan_sha256": "fc07804167e0eb37ba84e44ec6f6654182f4c1e202c0adc2ca37dcbcd0b061b2",
+      "physical_instructions": 21853,
+      "graph_descriptors": 7035,
+      "avalanche_slots": 0,
+      "prototypes": 49,
+      "integrity_constants": 543,
+      "block_routes": 0,
+      "mov_extension_bytes": 546279,
+      "before": {
+        "shared_bytes": 355424,
+        "total_bytes": 901703,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 274,
+          "proto_headers": 392,
+          "instructions": 174824,
+          "avalanche": 21853,
+          "graph_sites": 106273,
+          "routes": 98,
+          "constants": 51210,
+          "upvalues": 296,
+          "children": 196
+        },
+        "serialize_cpu_seconds_median": 0.015625,
+        "serialize_wall_seconds_median": 0.05908400006592274,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.078125,
+          "5.3": 0.026041666666666668
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.12786450004205108,
+          "5.3": 0.03133380001721283
+        }
+      },
+      "after": {
+        "shared_bytes": 278881,
+        "total_bytes": 825160,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 217,
+          "proto_headers": 256,
+          "instructions": 131118,
+          "avalanche": 49,
+          "graph_sites": 98597,
+          "routes": 49,
+          "constants": 48385,
+          "upvalues": 149,
+          "children": 49
+        },
+        "metadata_modes": {
+          "avalanche:absent": 49,
+          "graph_sites:sparse": 35,
+          "graph_sites:dense": 14
+        },
+        "bytes": 278881,
+        "serialize_cpu_seconds_median": 0.03125,
+        "serialize_wall_seconds_median": 0.05234099994413555,
+        "serialize_batch": 1,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.09375,
+          "5.3": 0.020833333333333332
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.1321042999625206,
+          "5.3": 0.02925506668786208
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "backend": "mov",
+      "preset": "maximum",
+      "snapshot": 0,
+      "plan_sha256": "80bf0e71cd45d8c179c840648d8e208bc7c8c9ce27e25f46b6d2ea87467a0ad0",
+      "physical_instructions": 6811,
+      "graph_descriptors": 2621,
+      "avalanche_slots": 0,
+      "prototypes": 14,
+      "integrity_constants": 331,
+      "block_routes": 0,
+      "mov_extension_bytes": 311018,
+      "before": {
+        "shared_bytes": 127661,
+        "total_bytes": 438679,
+        "section_bytes": {
+          "header": 8,
+          "fake_constants": 216,
+          "proto_headers": 112,
+          "instructions": 54488,
+          "avalanche": 6811,
+          "graph_sites": 38263,
+          "routes": 28,
+          "constants": 27531,
+          "upvalues": 148,
+          "children": 56
+        },
+        "serialize_cpu_seconds_median": 0.01171875,
+        "serialize_wall_seconds_median": 0.021481324976775795,
+        "serialize_batch": 4,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0234375,
+          "5.3": 0.006944444444444444
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.04035340005066246,
+          "5.3": 0.01196374444084035
+        }
+      },
+      "after": {
+        "shared_bytes": 104522,
+        "total_bytes": 415540,
+        "format_version": 2,
+        "instruction_width": 6,
+        "section_bytes": {
+          "header": 12,
+          "fake_constants": 171,
+          "proto_headers": 80,
+          "instructions": 40866,
+          "avalanche": 14,
+          "graph_sites": 36727,
+          "routes": 14,
+          "constants": 26518,
+          "upvalues": 106,
+          "children": 14
+        },
+        "metadata_modes": {
+          "avalanche:absent": 14,
+          "graph_sites:sparse": 14
+        },
+        "bytes": 104522,
+        "serialize_cpu_seconds_median": 0.00390625,
+        "serialize_wall_seconds_median": 0.01970915001584217,
+        "serialize_batch": 4,
+        "reader_cpu_seconds_median": {
+          "5.1": 0.0234375,
+          "5.3": 0.005208333333333333
+        },
+        "reader_wall_seconds_median": {
+          "5.1": 0.04310610005632043,
+          "5.3": 0.011208400000921555
+        }
+      }
+    }
+  ]
+}
