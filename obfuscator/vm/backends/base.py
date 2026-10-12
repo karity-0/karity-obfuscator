@@ -140,6 +140,7 @@ class RuntimeBody:
     backend: str
     graph_sites: int = 0
     graph_families: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 class VMBackend:

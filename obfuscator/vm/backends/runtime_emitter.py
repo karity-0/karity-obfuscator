@@ -783,6 +783,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         "graph_sites": runtime_body.graph_sites,
         "graph_families": runtime_body.graph_families,
         "backend": runtime_body.backend,
+        "runtime_emission": runtime_body.details,
     }
 
     # Graph banks and blob decoders may introduce target API operations too.

@@ -14,6 +14,15 @@ from obfuscator.passes.minify import MinifyPass
 from obfuscator.passes.remove_comment import RemoveCommentPass
 
 
+def check_emitted_helpers(asset, region, runtime, helpers):
+    for helper in helpers:
+        # Keep auditing the authored target contract, and separately verify
+        # that pruning never leaves callers of a missing declaration.
+        assert f'function {helper}(' in asset, helper
+        if f'function {helper}(' not in region:
+            assert not re.search(rf'\b{helper}\s*\(', runtime), helper
+
+
 def check_native_marker_probe():
     from lupa.lua51 import LuaRuntime
     # Type recognition is not a user table read. Probe the actual asset, not
@@ -61,6 +70,34 @@ return exec({}, {})
                                             'function mutable() return 9 end')
     assert runtime.execute(_compact_executor_captures(declaration_assignment)) == (
         sum(range(70)) + 100, 9)
+    # A split dispatcher can exceed 60 captures while its executor captures
+    # almost nothing from the outer scope. Forward routes and reassigned
+    # functions must keep their original mutable cells.
+    dispatch = '''local function exec(proto,upvals,args)
+local pc=0
+local function mutable() return 1 end
+''' + helpers + '''
+local group
+local function step(...) return group(...) end
+group=function(...)
+    local op,A,B,C,Bx,sBx=...
+    pc=pc+1
+    if op==1 then return step(0,A,B,C,Bx,sBx) end
+    return ''' + '+'.join(f'helper{i}()' for i in range(70)) + ''',pc,mutable(),nil,sBx
+end
+mutable=function() return 9 end
+return group(1,2,3,4,nil,nil)
+end
+return exec({}, {})
+'''
+    try:
+        runtime.execute(dispatch)
+    except Exception as error:
+        assert 'more than 60 upvalues' in str(error), str(error)
+    else:
+        raise AssertionError('dispatch stress fixture did not exceed native limit')
+    assert runtime.execute(_compact_executor_captures(dispatch)) == (
+        sum(range(70)), 2, 9, None, None)
 
 
 def main():
@@ -72,6 +109,7 @@ def main():
     assert Lua53Target().value_packet_api() == ('table.pack', 'table.unpack')
     check_native_marker_probe()
     check_executor_capture_bank()
+    karity_asset = Lua51Target().runtime_template('vm.lua')
     assert Lua51Target._check_native_runtime_api(
         'return "math.type table.pack table.unpack" -- table.pack\n'
     ).startswith('return "math.type')
@@ -274,7 +312,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                     control_code = re.sub(
                         r'--<<(?:END)?TARGET_[A-Z0-9_]+>>', '', control[0],
                     )
-                    assert all(f'function {helper}(' in control_code for helper in (
+                    check_emitted_helpers(karity_asset, control_code, runtime, (
                         '_arith2r', '_arith1r', '_call_args', '_return_values',
                         '_native_call', '_jump', '_loop_commit', '_forloop',
                     ))
@@ -317,7 +355,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                     graph_code = re.sub(
                         r'--<<(?:END)?TARGET_[A-Z0-9_]+>>', '', graph[0],
                     )
-                    assert all(f'function {helper}(' in graph_code for helper in (
+                    check_emitted_helpers(karity_asset, graph_code, runtime, (
                         '_int2', '_int1', '_cross', '_flow', '_cf', '_branch',
                         '_sem', '_graph_for', '_couple_direct', '_arith2', '_arith1',
                     ))
@@ -351,7 +389,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                     pending_code = re.sub(
                         r'--<<(?:END)?TARGET_[A-Z0-9_]+>>', '', pending[0],
                     )
-                    assert all(f'function {helper}(' in pending_code for helper in (
+                    check_emitted_helpers(karity_asset, pending_code, runtime, (
                         '_elinear2', '_elinear1', '_pending_snapshot',
                         '_pending_fragment', '_defer2r', '_defer1r',
                     ))
@@ -379,7 +417,7 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
                         runtime, re.S,
                     )
                     assert len(storage) == 1
-                    assert all(f'function {helper}(' in storage[0] for helper in (
+                    check_emitted_helpers(karity_asset, storage[0], runtime, (
                         'get_upvalue', 'set_upvalue', '_tkey', '_tget', '_tset', '_texpose',
                     ))
                     storage_code = re.sub(

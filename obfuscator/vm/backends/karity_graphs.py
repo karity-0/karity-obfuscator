@@ -839,7 +839,18 @@ def _apply_handler_graphs(
     preserve_native_numbers: bool = False,
     private_state_native: bool = False,
     native_graph_control: bool = False,
+    stats: dict | None = None,
+    requirements: tuple[set[str], set[str]] | None = None,
 ) -> str:
+    from .karity_runtime_usage import graph_requirements
+    required_tokens, semantic_tokens = requirements or graph_requirements(vm_code)
+    arithmetic_kinds = {kind for kind, (token, _, _) in _ARITH_SPECS.items()
+                        if token in required_tokens}
+    graph_bytes = {}
+    def emit_bank(token: str, bank: str) -> None:
+        nonlocal vm_code
+        graph_bytes[token] = len(bank.encode('utf-8'))
+        vm_code = vm_code.replace(token, _exact_graph_source(bank))
     name_allocator = NameAllocator(readable=True)
     if representation_routes is None:
         raise ValueError("Karity runtime requires planned representation routes")
@@ -930,8 +941,8 @@ def _apply_handler_graphs(
                         else _target_private_expression(f"{x}{operator}{y}")
                     )
                     native = f"function({x},{y})return {operation} end"
-            native_entries.append(f"{{{native},{native}}}")
-            graph_entries.append(
+            native_entry = f"{{{native},{native}}}"
+            graph_entry = (
                 "{" + ",".join(
                     _compile_integer_graph_func(
                         kind,
@@ -941,6 +952,14 @@ def _apply_handler_graphs(
                     for _ in range(4)
                 ) + "}"
             )
+            # Keep the encoder RNG/name stream unchanged. A live operation
+            # retains both epochs, both native variants and all four DAGs.
+            # Sparse keys preserve the original shuffled representation index.
+            if kind in arithmetic_kinds:
+                key = f'[{dense_index}]=' if len(arithmetic_kinds) < len(kinds) else ''
+                native_entries.append(key + native_entry)
+                if graph_family_count:
+                    graph_entries.append(key + graph_entry)
 
         arithmetic_share_a: list[str] = []
         arithmetic_share_b: list[str] = []
@@ -948,6 +967,8 @@ def _apply_handler_graphs(
             share = random.randint(0x10000, 0x7FFFFFFF)
             slot = slots[kind]
             dense_index = arithmetic_indices[kind]
+            if kind not in arithmetic_kinds:
+                continue
             arithmetic_share_a.append(f'[{slot}]=tonumber("{share}")')
             arithmetic_share_b.append(
                 f'[{slot}]=tonumber("{share ^ dense_index}")'
@@ -964,6 +985,8 @@ def _apply_handler_graphs(
     for kind, slot in slots.items():
         share = random.randint(0x10000, 0x7FFFFFFF)
         route = int(planned_arithmetic[_ARITH_ROUTE_NAMES[kind]])
+        if kind not in arithmetic_kinds:
+            continue
         arithmetic_route_a.append(f'[{slot}]=tonumber("{share}")')
         arithmetic_route_b.append(f'[{slot}]=tonumber("{share ^ route}")')
     bundle = (
@@ -971,9 +994,7 @@ def _apply_handler_graphs(
         + "},{" + ",".join(arithmetic_route_a)
         + "},{" + ",".join(arithmetic_route_b) + "}}"
     )
-    vm_code = vm_code.replace(
-        "__VM_ARITH_BUNDLE__", _exact_graph_source(bundle)
-    )
+    emit_bank("__VM_ARITH_BUNDLE__", bundle)
     affine_pairs = []
     for _ in range(16):
         multiplier = random.getrandbits(64) | 1
@@ -1038,21 +1059,16 @@ def _apply_handler_graphs(
         _compile_control_graph_func(native_control=native_graph_control)
         for _ in range(2)
     ) + "}"
-    vm_code = vm_code.replace(
-        "__VM_CONTROL_GRAPHS__", _exact_graph_source(control_graphs)
-    )
+    emit_bank("__VM_CONTROL_GRAPHS__", control_graphs)
     loop_tags = random.sample(range(0x10000, 0x7FFFFFFF), 3)
-    loop_graphs = (
-        "{[" + str(loop_tags[0]) + "]="
-        + _compile_loop_ir_func("FORLOOP", native_control=native_graph_control)
-        + ",[" + str(loop_tags[1]) + "]="
-        + _compile_loop_ir_func("FORPREP", native_control=native_graph_control)
-        + ",[" + str(loop_tags[2]) + "]="
-        + _compile_loop_ir_func("TFORLOOP", native_control=native_graph_control) + "}"
-    )
-    vm_code = vm_code.replace(
-        "__VM_LOOP_GRAPHS__", _exact_graph_source(loop_graphs)
-    )
+    loop_entries = []
+    loop_kinds = []
+    for kind, tag in zip(('FORLOOP', 'FORPREP', 'TFORLOOP'), loop_tags):
+        entry = _compile_loop_ir_func(kind, native_control=native_graph_control)
+        if f'__VM_LOOP_{kind}__' in required_tokens:
+            loop_entries.append(f'[{tag}]={entry}')
+            loop_kinds.append(kind)
+    emit_bank("__VM_LOOP_GRAPHS__", '{' + ','.join(loop_entries) + '}')
     vm_code = vm_code.replace("__VM_LOOP_FORLOOP__", str(loop_tags[0]))
     vm_code = vm_code.replace("__VM_LOOP_FORPREP__", str(loop_tags[1]))
     vm_code = vm_code.replace("__VM_LOOP_TFORLOOP__", str(loop_tags[2]))
@@ -1062,6 +1078,9 @@ def _apply_handler_graphs(
         "MOD", "POW", "DIV", "IDIV", "NOT", "LEN", "CONCAT",
         "NEWTABLE", "SETLIST", "CLOSURE", "VARARG",
     )
+    from .karity_runtime_usage import _SEMANTIC_TOKENS
+    semantic_used = {kind for kind, token in zip(semantic_kinds, _SEMANTIC_TOKENS)
+                     if token in semantic_tokens}
     def semantic_bank() -> str:
         semantic_order = list(zip(semantic_kinds, data_tags))
         random.shuffle(semantic_order)
@@ -1070,10 +1089,14 @@ def _apply_handler_graphs(
         semantic_share_b: list[str] = []
         for dense_index, (kind, tag) in enumerate(semantic_order, 1):
             share = random.randint(0x10000, 0x7FFFFFFF)
-            semantic_entries.append(_compile_semantic_ir_func(
+            entry = _compile_semantic_ir_func(
                 kind, native_user_arithmetic=preserve_native_numbers,
                 native_control=native_graph_control,
-            ))
+            )
+            if kind not in semantic_used:
+                continue
+            key = f'[{dense_index}]=' if len(semantic_used) < len(semantic_kinds) else ''
+            semantic_entries.append(key + entry)
             semantic_share_a.append(f'[{tag}]=tonumber("{share}")')
             semantic_share_b.append(
                 f'[{tag}]=tonumber("{share ^ dense_index}")'
@@ -1089,6 +1112,8 @@ def _apply_handler_graphs(
     for kind, tag in zip(semantic_kinds, data_tags):
         share = random.randint(0x10000, 0x7FFFFFFF)
         route = int(planned_semantic[_SEMANTIC_ROUTE_NAMES[kind]])
+        if kind not in semantic_used:
+            continue
         semantic_route_a.append(f'[{tag}]=tonumber("{share}")')
         semantic_route_b.append(f'[{tag}]=tonumber("{share ^ route}")')
     semantic_graphs = (
@@ -1096,9 +1121,7 @@ def _apply_handler_graphs(
         + "},{" + ",".join(semantic_route_a)
         + "},{" + ",".join(semantic_route_b) + "}}"
     )
-    vm_code = vm_code.replace(
-        "__VM_SEMANTIC_GRAPHS__", _exact_graph_source(semantic_graphs)
-    )
+    emit_bank("__VM_SEMANTIC_GRAPHS__", semantic_graphs)
     for token, tag in zip((
         "__VM_DATA_VALUE__", "__VM_DATA_GET__", "__VM_DATA_SET__",
         "__VM_CMP_EQ__", "__VM_CMP_LT__", "__VM_CMP_LE__",
@@ -1123,9 +1146,23 @@ def _apply_handler_graphs(
         )
         for _ in range(graph_family_count)
     ) + "}"
-    vm_code = vm_code.replace(
-        "__VM_OCCURRENCE_GRAPHS__", _exact_graph_source(occurrence_graphs)
-    )
+    emit_bank("__VM_OCCURRENCE_GRAPHS__", occurrence_graphs)
+    if stats is not None:
+        stats.update({
+            'arithmetic_kinds': sorted(arithmetic_kinds),
+            'arithmetic_dags_before': 8 * len(_ARITH_SPECS),
+            'arithmetic_dags_generated': 8 * len(_ARITH_SPECS),
+            'arithmetic_dags_after': 8 * len(arithmetic_kinds) if graph_family_count else 0,
+            'native_arithmetic_variants_per_kind': 4,
+            'arithmetic_dags_per_kind': 8 if graph_family_count else 0,
+            'semantic_kinds': sorted(semantic_used),
+            'semantic_variants_before': 4 * len(semantic_kinds),
+            'semantic_variants_generated': 4 * len(semantic_kinds),
+            'semantic_variants_after': 4 * len(semantic_used),
+            'loop_graphs_before': 3, 'loop_graphs_after': len(loop_kinds),
+            'occurrence_families': graph_family_count,
+            'bank_bytes': graph_bytes,
+        })
 
     field_tokens = [
         "__VM_FR_REGS__", "__VM_FR_BOXES__", "__VM_FR_MASK__", "__VM_FR_PC__",

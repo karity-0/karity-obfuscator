@@ -1,0 +1,4248 @@
+{
+  "baseline_ref": "f711103",
+  "seed": 9171,
+  "repeats": 3,
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "lua_version": "5.1",
+  "records": [
+    {
+      "fixture": "hello",
+      "setting": "default",
+      "options": {},
+      "samples": {
+        "before": [
+          {
+            "blob_bytes": 274,
+            "blob_sha256": "c2ead3f7546c2316a47c6093f95faa787d7c07dc1321f300f5e5fa5a8e3ad625",
+            "blob_literal_bytes": 1105,
+            "build_seconds": 12.499379000160843,
+            "build_cpu_seconds": 5.078125,
+            "output_bytes": 668661,
+            "runtime_bytes": 667419,
+            "bank_bytes": {
+              "_DG": 73463,
+              "_FG": 22827,
+              "_CG": 11753,
+              "_LG": 6939,
+              "_GV": 7581,
+              "_AR": 296096,
+              "_OG": 33408
+            },
+            "function_counts": {
+              "total_functions": 914,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "4fe536610df3bc18401765689abec2977e85056a12f5b60f32f66d37c19bde80",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000393
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.010789,
+                "functions": 1,
+                "instructions": 4
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.001271,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000594,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.002271
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000346,
+                "function": "f0",
+                "instructions": 8,
+                "registers": 2,
+                "transfers": 8,
+                "waves": 1,
+                "projections": 8,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 9e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.028116,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000514,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 48,
+                  "avalanche": 1,
+                  "graph_sites": 1,
+                  "routes": 1,
+                  "constants": 21,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 1,
+                  "graph_sites:absent": 1
+                },
+                "bytes": 274
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 0.610719
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.037114,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 11.691711,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.148512,
+                    "input_bytes": 217928,
+                    "output_bytes": 888837,
+                    "delta_bytes": 670909,
+                    "graph_sites": 0,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.148152
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.000436
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 12.455768,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 1.7140000000000004
+          },
+          {
+            "blob_bytes": 274,
+            "blob_sha256": "c2ead3f7546c2316a47c6093f95faa787d7c07dc1321f300f5e5fa5a8e3ad625",
+            "blob_literal_bytes": 1109,
+            "build_seconds": 11.053952399874106,
+            "build_cpu_seconds": 5.03125,
+            "output_bytes": 668665,
+            "runtime_bytes": 667419,
+            "bank_bytes": {
+              "_FG": 22827,
+              "_OG": 33408,
+              "_AR": 296096,
+              "_LG": 6939,
+              "_GV": 7581,
+              "_CG": 11753,
+              "_DG": 73463
+            },
+            "function_counts": {
+              "total_functions": 914,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "4fe536610df3bc18401765689abec2977e85056a12f5b60f32f66d37c19bde80",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000261
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.000337,
+                "functions": 1,
+                "instructions": 4
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 9.7e-05,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000616,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000185
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000363,
+                "function": "f0",
+                "instructions": 8,
+                "registers": 2,
+                "transfers": 8,
+                "waves": 1,
+                "projections": 8,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.002642,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000131,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 48,
+                  "avalanche": 1,
+                  "graph_sites": 1,
+                  "routes": 1,
+                  "constants": 21,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 1,
+                  "graph_sites:absent": 1
+                },
+                "bytes": 274
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 0.386137
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.042486,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 10.509831,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.12111,
+                    "input_bytes": 217928,
+                    "output_bytes": 888837,
+                    "delta_bytes": 670909,
+                    "graph_sites": 0,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.14971
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.000875
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 11.049546,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 1.6920000000000002
+          },
+          {
+            "blob_bytes": 274,
+            "blob_sha256": "c2ead3f7546c2316a47c6093f95faa787d7c07dc1321f300f5e5fa5a8e3ad625",
+            "blob_literal_bytes": 1118,
+            "build_seconds": 11.412018100032583,
+            "build_cpu_seconds": 5.0625,
+            "output_bytes": 668674,
+            "runtime_bytes": 667419,
+            "bank_bytes": {
+              "_FG": 22827,
+              "_OG": 33408,
+              "_AR": 296096,
+              "_LG": 6939,
+              "_GV": 7581,
+              "_CG": 11753,
+              "_DG": 73463
+            },
+            "function_counts": {
+              "total_functions": 914,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "4fe536610df3bc18401765689abec2977e85056a12f5b60f32f66d37c19bde80",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000273
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.000345,
+                "functions": 1,
+                "instructions": 4
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 9.5e-05,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000608,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000187
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000367,
+                "function": "f0",
+                "instructions": 8,
+                "registers": 2,
+                "transfers": 8,
+                "waves": 1,
+                "projections": 8,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 5e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.002634,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000129,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 48,
+                  "avalanche": 1,
+                  "graph_sites": 1,
+                  "routes": 1,
+                  "constants": 21,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 1,
+                  "graph_sites:absent": 1
+                },
+                "bytes": 274
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 0.372221
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.047533,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 10.884493,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.125403,
+                    "input_bytes": 217928,
+                    "output_bytes": 888837,
+                    "delta_bytes": 670909,
+                    "graph_sites": 0,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.146868
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.000817
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 11.407709,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 1.7419999999999973
+          }
+        ],
+        "after": [
+          {
+            "blob_bytes": 274,
+            "blob_sha256": "c2ead3f7546c2316a47c6093f95faa787d7c07dc1321f300f5e5fa5a8e3ad625",
+            "blob_literal_bytes": 1117,
+            "build_seconds": 2.0963735000696033,
+            "build_cpu_seconds": 0.984375,
+            "output_bytes": 285124,
+            "runtime_bytes": 283870,
+            "bank_bytes": {
+              "_GV": 7581,
+              "_DG": 8039,
+              "_OG": 33408,
+              "_FG": 22827,
+              "_CG": 11753,
+              "_LG": 2,
+              "_AR": 37
+            },
+            "function_counts": {
+              "total_functions": 376,
+              "audited_helpers": 15
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.138278,
+              "helper_analysis_input_bytes": 217425,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 15,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "get_box",
+                "make_closure",
+                "_int2",
+                "_int1",
+                "_cf",
+                "_branch",
+                "_graph_for",
+                "_couple_direct",
+                "_seal_result",
+                "_arith2",
+                "_arith1",
+                "_elinear2",
+                "_elinear1",
+                "_pending_snapshot",
+                "_pending_fragment",
+                "_defer2r",
+                "_defer1r",
+                "_arith2r",
+                "_arith1r",
+                "_arith2s",
+                "_arith1s",
+                "_jump",
+                "_loop_commit",
+                "_forloop"
+              ],
+              "helper_bytes_removed": 15147,
+              "arithmetic_kinds": [],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 0,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "GET",
+                "VALUE"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 8,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 0,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 37,
+                "__VM_CONTROL_GRAPHS__": 35743,
+                "__VM_LOOP_GRAPHS__": 2,
+                "__VM_SEMANTIC_GRAPHS__": 10713,
+                "__VM_OCCURRENCE_GRAPHS__": 43883
+              }
+            },
+            "plan_sha256": "4fe536610df3bc18401765689abec2977e85056a12f5b60f32f66d37c19bde80",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000261
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.000347,
+                "functions": 1,
+                "instructions": 4
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 9.2e-05,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000412,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000123
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000221,
+                "function": "f0",
+                "instructions": 8,
+                "registers": 2,
+                "transfers": 8,
+                "waves": 1,
+                "projections": 8,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 4e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.001869,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000272,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 48,
+                  "avalanche": 1,
+                  "graph_sites": 1,
+                  "routes": 1,
+                  "constants": 21,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 1,
+                  "graph_sites:absent": 1
+                },
+                "bytes": 274
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 0.555175
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.017021,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 1.454425,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.039332,
+                    "input_bytes": 202796,
+                    "output_bytes": 314475,
+                    "delta_bytes": 111679,
+                    "graph_sites": 0,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.138278,
+                      "helper_analysis_input_bytes": 217425,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 15,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "get_box",
+                        "make_closure",
+                        "_int2",
+                        "_int1",
+                        "_cf",
+                        "_branch",
+                        "_graph_for",
+                        "_couple_direct",
+                        "_seal_result",
+                        "_arith2",
+                        "_arith1",
+                        "_elinear2",
+                        "_elinear1",
+                        "_pending_snapshot",
+                        "_pending_fragment",
+                        "_defer2r",
+                        "_defer1r",
+                        "_arith2r",
+                        "_arith1r",
+                        "_arith2s",
+                        "_arith1s",
+                        "_jump",
+                        "_loop_commit",
+                        "_forloop"
+                      ],
+                      "helper_bytes_removed": 15147,
+                      "arithmetic_kinds": [],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 0,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "GET",
+                        "VALUE"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 8,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 0,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 37,
+                        "__VM_CONTROL_GRAPHS__": 35743,
+                        "__VM_LOOP_GRAPHS__": 2,
+                        "__VM_SEMANTIC_GRAPHS__": 10713,
+                        "__VM_OCCURRENCE_GRAPHS__": 43883
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.080099
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.000857
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 2.092982,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 0.8879999999999981
+          },
+          {
+            "blob_bytes": 274,
+            "blob_sha256": "c2ead3f7546c2316a47c6093f95faa787d7c07dc1321f300f5e5fa5a8e3ad625",
+            "blob_literal_bytes": 1118,
+            "build_seconds": 2.040856800042093,
+            "build_cpu_seconds": 0.796875,
+            "output_bytes": 285125,
+            "runtime_bytes": 283870,
+            "bank_bytes": {
+              "_LG": 2,
+              "_GV": 7581,
+              "_DG": 8039,
+              "_AR": 37,
+              "_CG": 11753,
+              "_OG": 33408,
+              "_FG": 22827
+            },
+            "function_counts": {
+              "total_functions": 376,
+              "audited_helpers": 15
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.129784,
+              "helper_analysis_input_bytes": 217425,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 15,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "get_box",
+                "make_closure",
+                "_int2",
+                "_int1",
+                "_cf",
+                "_branch",
+                "_graph_for",
+                "_couple_direct",
+                "_seal_result",
+                "_arith2",
+                "_arith1",
+                "_elinear2",
+                "_elinear1",
+                "_pending_snapshot",
+                "_pending_fragment",
+                "_defer2r",
+                "_defer1r",
+                "_arith2r",
+                "_arith1r",
+                "_arith2s",
+                "_arith1s",
+                "_jump",
+                "_loop_commit",
+                "_forloop"
+              ],
+              "helper_bytes_removed": 15147,
+              "arithmetic_kinds": [],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 0,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "GET",
+                "VALUE"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 8,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 0,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 37,
+                "__VM_CONTROL_GRAPHS__": 35743,
+                "__VM_LOOP_GRAPHS__": 2,
+                "__VM_SEMANTIC_GRAPHS__": 10713,
+                "__VM_OCCURRENCE_GRAPHS__": 43883
+              }
+            },
+            "plan_sha256": "4fe536610df3bc18401765689abec2977e85056a12f5b60f32f66d37c19bde80",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000202
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.000239,
+                "functions": 1,
+                "instructions": 4
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 6.4e-05,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000406,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000125
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000232,
+                "function": "f0",
+                "instructions": 8,
+                "registers": 2,
+                "transfers": 8,
+                "waves": 1,
+                "projections": 8,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.001766,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 9.6e-05,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 48,
+                  "avalanche": 1,
+                  "graph_sites": 1,
+                  "routes": 1,
+                  "constants": 21,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 1,
+                  "graph_sites:absent": 1
+                },
+                "bytes": 274
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 0.535235
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.014107,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 1.433636,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.037677,
+                    "input_bytes": 202796,
+                    "output_bytes": 314475,
+                    "delta_bytes": 111679,
+                    "graph_sites": 0,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.129784,
+                      "helper_analysis_input_bytes": 217425,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 15,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "get_box",
+                        "make_closure",
+                        "_int2",
+                        "_int1",
+                        "_cf",
+                        "_branch",
+                        "_graph_for",
+                        "_couple_direct",
+                        "_seal_result",
+                        "_arith2",
+                        "_arith1",
+                        "_elinear2",
+                        "_elinear1",
+                        "_pending_snapshot",
+                        "_pending_fragment",
+                        "_defer2r",
+                        "_defer1r",
+                        "_arith2r",
+                        "_arith1r",
+                        "_arith2s",
+                        "_arith1s",
+                        "_jump",
+                        "_loop_commit",
+                        "_forloop"
+                      ],
+                      "helper_bytes_removed": 15147,
+                      "arithmetic_kinds": [],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 0,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "GET",
+                        "VALUE"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 8,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 0,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 37,
+                        "__VM_CONTROL_GRAPHS__": 35743,
+                        "__VM_LOOP_GRAPHS__": 2,
+                        "__VM_SEMANTIC_GRAPHS__": 10713,
+                        "__VM_OCCURRENCE_GRAPHS__": 43883
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.067251
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.000417
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 2.037933,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 0.9389999999999965
+          },
+          {
+            "blob_bytes": 274,
+            "blob_sha256": "c2ead3f7546c2316a47c6093f95faa787d7c07dc1321f300f5e5fa5a8e3ad625",
+            "blob_literal_bytes": 1100,
+            "build_seconds": 2.0293099000118673,
+            "build_cpu_seconds": 0.84375,
+            "output_bytes": 285107,
+            "runtime_bytes": 283870,
+            "bank_bytes": {
+              "_LG": 2,
+              "_CG": 11753,
+              "_OG": 33408,
+              "_AR": 37,
+              "_DG": 8039,
+              "_GV": 7581,
+              "_FG": 22827
+            },
+            "function_counts": {
+              "total_functions": 376,
+              "audited_helpers": 15
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.138027,
+              "helper_analysis_input_bytes": 217425,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 15,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "get_box",
+                "make_closure",
+                "_int2",
+                "_int1",
+                "_cf",
+                "_branch",
+                "_graph_for",
+                "_couple_direct",
+                "_seal_result",
+                "_arith2",
+                "_arith1",
+                "_elinear2",
+                "_elinear1",
+                "_pending_snapshot",
+                "_pending_fragment",
+                "_defer2r",
+                "_defer1r",
+                "_arith2r",
+                "_arith1r",
+                "_arith2s",
+                "_arith1s",
+                "_jump",
+                "_loop_commit",
+                "_forloop"
+              ],
+              "helper_bytes_removed": 15147,
+              "arithmetic_kinds": [],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 0,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "GET",
+                "VALUE"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 8,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 0,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 37,
+                "__VM_CONTROL_GRAPHS__": 35743,
+                "__VM_LOOP_GRAPHS__": 2,
+                "__VM_SEMANTIC_GRAPHS__": 10713,
+                "__VM_OCCURRENCE_GRAPHS__": 43883
+              }
+            },
+            "plan_sha256": "4fe536610df3bc18401765689abec2977e85056a12f5b60f32f66d37c19bde80",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000201
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.000228,
+                "functions": 1,
+                "instructions": 4
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 6.3e-05,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000386,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000118
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000217,
+                "function": "f0",
+                "instructions": 8,
+                "registers": 2,
+                "transfers": 8,
+                "waves": 1,
+                "projections": 8,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.001654,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 8e-05,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 48,
+                  "avalanche": 1,
+                  "graph_sites": 1,
+                  "routes": 1,
+                  "constants": 21,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 1,
+                  "graph_sites:absent": 1
+                },
+                "bytes": 274
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 0.541793
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.014246,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 1.422215,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.050711,
+                    "input_bytes": 202796,
+                    "output_bytes": 314475,
+                    "delta_bytes": 111679,
+                    "graph_sites": 0,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.138027,
+                      "helper_analysis_input_bytes": 217425,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 15,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "get_box",
+                        "make_closure",
+                        "_int2",
+                        "_int1",
+                        "_cf",
+                        "_branch",
+                        "_graph_for",
+                        "_couple_direct",
+                        "_seal_result",
+                        "_arith2",
+                        "_arith1",
+                        "_elinear2",
+                        "_elinear1",
+                        "_pending_snapshot",
+                        "_pending_fragment",
+                        "_defer2r",
+                        "_defer1r",
+                        "_arith2r",
+                        "_arith1r",
+                        "_arith2s",
+                        "_arith1s",
+                        "_jump",
+                        "_loop_commit",
+                        "_forloop"
+                      ],
+                      "helper_bytes_removed": 15147,
+                      "arithmetic_kinds": [],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 0,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "GET",
+                        "VALUE"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 8,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 0,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 37,
+                        "__VM_CONTROL_GRAPHS__": 35743,
+                        "__VM_LOOP_GRAPHS__": 2,
+                        "__VM_SEMANTIC_GRAPHS__": 10713,
+                        "__VM_OCCURRENCE_GRAPHS__": 43883
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.060551
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.000435
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 2.026538,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 0.9600000000000009
+          }
+        ]
+      },
+      "before": {
+        "output_bytes": 668665,
+        "runtime_bytes": 667419,
+        "blob_bytes": 274,
+        "build_seconds": 11.412018100032583,
+        "build_cpu_seconds": 5.0625,
+        "execution_cpu_seconds": 1.7140000000000004,
+        "blob_literal_bytes": 1109,
+        "bank_bytes": {
+          "_DG": 73463,
+          "_FG": 22827,
+          "_CG": 11753,
+          "_LG": 6939,
+          "_GV": 7581,
+          "_AR": 296096,
+          "_OG": 33408
+        },
+        "function_counts": {
+          "total_functions": 914,
+          "audited_helpers": 41
+        },
+        "emission": {}
+      },
+      "after": {
+        "output_bytes": 285124,
+        "runtime_bytes": 283870,
+        "blob_bytes": 274,
+        "build_seconds": 2.040856800042093,
+        "build_cpu_seconds": 0.84375,
+        "execution_cpu_seconds": 0.9389999999999965,
+        "blob_literal_bytes": 1117,
+        "bank_bytes": {
+          "_GV": 7581,
+          "_DG": 8039,
+          "_OG": 33408,
+          "_FG": 22827,
+          "_CG": 11753,
+          "_LG": 2,
+          "_AR": 37
+        },
+        "function_counts": {
+          "total_functions": 376,
+          "audited_helpers": 15
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.138278,
+          "helper_analysis_input_bytes": 217425,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 15,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15147,
+          "arithmetic_kinds": [],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "GET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 8,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 37,
+            "__VM_CONTROL_GRAPHS__": 35743,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 10713,
+            "__VM_OCCURRENCE_GRAPHS__": 43883
+          }
+        }
+      }
+    },
+    {
+      "fixture": "loops",
+      "setting": "default",
+      "options": {},
+      "samples": {
+        "before": [
+          {
+            "blob_bytes": 964,
+            "blob_sha256": "9a861b7f5d65f34a7faca37061c2ac99ab26cd7f6ddc0c08a48a6f993a881c48",
+            "blob_literal_bytes": 3977,
+            "build_seconds": 14.235600400017574,
+            "build_cpu_seconds": 6.5625,
+            "output_bytes": 1000982,
+            "runtime_bytes": 996868,
+            "bank_bytes": {
+              "_DG": 73875,
+              "_FG": 22111,
+              "_LG": 6288,
+              "_OG": 33414,
+              "_GV": 8374,
+              "_AR": 293735,
+              "_CG": 10213
+            },
+            "function_counts": {
+              "total_functions": 905,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "17cf79c028a9176e556be6fd5c648ff8a6be8dcaf2b1794f1ddbe67b428659b6",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.0004
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001506,
+                "functions": 1,
+                "instructions": 34
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000597,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.001577,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.001144
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.0046,
+                "function": "f0",
+                "instructions": 68,
+                "registers": 10,
+                "transfers": 210,
+                "waves": 2,
+                "projections": 68,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001105
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.009985,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000363,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 408,
+                  "avalanche": 15,
+                  "graph_sites": 268,
+                  "routes": 5,
+                  "constants": 66,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:sparse": 1,
+                  "graph_sites:sparse": 1
+                },
+                "bytes": 964
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 1.582374
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.067144,
+                "probe_count": 3,
+                "probe_lines": [
+                  23,
+                  24,
+                  25
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 12.378785,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.193997,
+                    "input_bytes": 552764,
+                    "output_bytes": 1217358,
+                    "delta_bytes": 664594,
+                    "graph_sites": 19,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.253184
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.00163
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 14.220174,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 4.471999999999994
+          },
+          {
+            "blob_bytes": 964,
+            "blob_sha256": "9a861b7f5d65f34a7faca37061c2ac99ab26cd7f6ddc0c08a48a6f993a881c48",
+            "blob_literal_bytes": 3975,
+            "build_seconds": 15.659983400022611,
+            "build_cpu_seconds": 5.734375,
+            "output_bytes": 1000980,
+            "runtime_bytes": 996868,
+            "bank_bytes": {
+              "_GV": 8374,
+              "_DG": 73875,
+              "_LG": 6288,
+              "_OG": 33414,
+              "_CG": 10213,
+              "_AR": 293735,
+              "_FG": 22111
+            },
+            "function_counts": {
+              "total_functions": 905,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "17cf79c028a9176e556be6fd5c648ff8a6be8dcaf2b1794f1ddbe67b428659b6",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.00035
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001415,
+                "functions": 1,
+                "instructions": 34
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000289,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000819,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000554
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.00377,
+                "function": "f0",
+                "instructions": 68,
+                "registers": 10,
+                "transfers": 210,
+                "waves": 2,
+                "projections": 68,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001153
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.008691,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000194,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 408,
+                  "avalanche": 15,
+                  "graph_sites": 268,
+                  "routes": 5,
+                  "constants": 66,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:sparse": 1,
+                  "graph_sites:sparse": 1
+                },
+                "bytes": 964
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 1.954964
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.064784,
+                "probe_count": 3,
+                "probe_lines": [
+                  23,
+                  24,
+                  25
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 13.467614,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.22601,
+                    "input_bytes": 552764,
+                    "output_bytes": 1217358,
+                    "delta_bytes": 664594,
+                    "graph_sites": 19,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.220238
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.001472
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 15.647695,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 4.388000000000005
+          },
+          {
+            "blob_bytes": 964,
+            "blob_sha256": "9a861b7f5d65f34a7faca37061c2ac99ab26cd7f6ddc0c08a48a6f993a881c48",
+            "blob_literal_bytes": 3962,
+            "build_seconds": 14.949126200051978,
+            "build_cpu_seconds": 5.796875,
+            "output_bytes": 1000967,
+            "runtime_bytes": 996868,
+            "bank_bytes": {
+              "_LG": 6288,
+              "_AR": 293735,
+              "_FG": 22111,
+              "_OG": 33414,
+              "_CG": 10213,
+              "_GV": 8374,
+              "_DG": 73875
+            },
+            "function_counts": {
+              "total_functions": 905,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "17cf79c028a9176e556be6fd5c648ff8a6be8dcaf2b1794f1ddbe67b428659b6",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000424
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001478,
+                "functions": 1,
+                "instructions": 34
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000353,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000988,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000674
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.005031,
+                "function": "f0",
+                "instructions": 68,
+                "registers": 10,
+                "transfers": 210,
+                "waves": 2,
+                "projections": 68,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.00149
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.009606,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000243,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 408,
+                  "avalanche": 15,
+                  "graph_sites": 268,
+                  "routes": 5,
+                  "constants": 66,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:sparse": 1,
+                  "graph_sites:sparse": 1
+                },
+                "bytes": 964
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 1.53828
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.08577,
+                "probe_count": 3,
+                "probe_lines": [
+                  23,
+                  24,
+                  25
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 13.085819,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.171312,
+                    "input_bytes": 552764,
+                    "output_bytes": 1217358,
+                    "delta_bytes": 664594,
+                    "graph_sites": 19,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.302607
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.003261
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 14.935183,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 5.893000000000001
+          }
+        ],
+        "after": [
+          {
+            "blob_bytes": 964,
+            "blob_sha256": "9a861b7f5d65f34a7faca37061c2ac99ab26cd7f6ddc0c08a48a6f993a881c48",
+            "blob_literal_bytes": 3975,
+            "build_seconds": 6.860443600220606,
+            "build_cpu_seconds": 2.828125,
+            "output_bytes": 727509,
+            "runtime_bytes": 723397,
+            "bank_bytes": {
+              "_CG": 10213,
+              "_GV": 8374,
+              "_OG": 33414,
+              "_AR": 76059,
+              "_FG": 22111,
+              "_DG": 24160,
+              "_LG": 6288
+            },
+            "function_counts": {
+              "total_functions": 540,
+              "audited_helpers": 31
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.368823,
+              "helper_analysis_input_bytes": 552183,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 31,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "get_box",
+                "make_closure",
+                "_int1",
+                "_arith1",
+                "_elinear1",
+                "_defer1r",
+                "_arith1r",
+                "_arith1s"
+              ],
+              "helper_bytes_removed": 6223,
+              "arithmetic_kinds": [
+                "ADD",
+                "MUL",
+                "SUB"
+              ],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 24,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "EQ",
+                "GET",
+                "MOD",
+                "NEWTABLE",
+                "SET",
+                "VALUE"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 24,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 3,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 131003,
+                "__VM_CONTROL_GRAPHS__": 34641,
+                "__VM_LOOP_GRAPHS__": 8871,
+                "__VM_SEMANTIC_GRAPHS__": 32430,
+                "__VM_OCCURRENCE_GRAPHS__": 43887
+              }
+            },
+            "plan_sha256": "17cf79c028a9176e556be6fd5c648ff8a6be8dcaf2b1794f1ddbe67b428659b6",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000469
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.002092,
+                "functions": 1,
+                "instructions": 34
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000548,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.001476,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.001037
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.006375,
+                "function": "f0",
+                "instructions": 68,
+                "registers": 10,
+                "transfers": 210,
+                "waves": 2,
+                "projections": 68,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001495
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.013001,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000418,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 408,
+                  "avalanche": 15,
+                  "graph_sites": 268,
+                  "routes": 5,
+                  "constants": 66,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:sparse": 1,
+                  "graph_sites:sparse": 1
+                },
+                "bytes": 964
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 2.024131
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.037967,
+                "probe_count": 3,
+                "probe_lines": [
+                  23,
+                  24,
+                  25
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 4.64608,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.153811,
+                    "input_bytes": 546556,
+                    "output_bytes": 816373,
+                    "delta_bytes": 269817,
+                    "graph_sites": 19,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.368823,
+                      "helper_analysis_input_bytes": 552183,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 31,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "get_box",
+                        "make_closure",
+                        "_int1",
+                        "_arith1",
+                        "_elinear1",
+                        "_defer1r",
+                        "_arith1r",
+                        "_arith1s"
+                      ],
+                      "helper_bytes_removed": 6223,
+                      "arithmetic_kinds": [
+                        "ADD",
+                        "MUL",
+                        "SUB"
+                      ],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 24,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "EQ",
+                        "GET",
+                        "MOD",
+                        "NEWTABLE",
+                        "SET",
+                        "VALUE"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 24,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 3,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 131003,
+                        "__VM_CONTROL_GRAPHS__": 34641,
+                        "__VM_LOOP_GRAPHS__": 8871,
+                        "__VM_SEMANTIC_GRAPHS__": 32430,
+                        "__VM_OCCURRENCE_GRAPHS__": 43887
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.165844
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.001594
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 6.84156,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 3.1509999999999962
+          },
+          {
+            "blob_bytes": 964,
+            "blob_sha256": "9a861b7f5d65f34a7faca37061c2ac99ab26cd7f6ddc0c08a48a6f993a881c48",
+            "blob_literal_bytes": 3968,
+            "build_seconds": 6.884977899957448,
+            "build_cpu_seconds": 2.34375,
+            "output_bytes": 727502,
+            "runtime_bytes": 723397,
+            "bank_bytes": {
+              "_DG": 24160,
+              "_OG": 33414,
+              "_AR": 76059,
+              "_CG": 10213,
+              "_FG": 22111,
+              "_GV": 8374,
+              "_LG": 6288
+            },
+            "function_counts": {
+              "total_functions": 540,
+              "audited_helpers": 31
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.402346,
+              "helper_analysis_input_bytes": 552183,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 31,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "get_box",
+                "make_closure",
+                "_int1",
+                "_arith1",
+                "_elinear1",
+                "_defer1r",
+                "_arith1r",
+                "_arith1s"
+              ],
+              "helper_bytes_removed": 6223,
+              "arithmetic_kinds": [
+                "ADD",
+                "MUL",
+                "SUB"
+              ],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 24,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "EQ",
+                "GET",
+                "MOD",
+                "NEWTABLE",
+                "SET",
+                "VALUE"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 24,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 3,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 131003,
+                "__VM_CONTROL_GRAPHS__": 34641,
+                "__VM_LOOP_GRAPHS__": 8871,
+                "__VM_SEMANTIC_GRAPHS__": 32430,
+                "__VM_OCCURRENCE_GRAPHS__": 43887
+              }
+            },
+            "plan_sha256": "17cf79c028a9176e556be6fd5c648ff8a6be8dcaf2b1794f1ddbe67b428659b6",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000347
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001114,
+                "functions": 1,
+                "instructions": 34
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000269,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.000781,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.000516
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.003625,
+                "function": "f0",
+                "instructions": 68,
+                "registers": 10,
+                "transfers": 210,
+                "waves": 2,
+                "projections": 68,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001111
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.007384,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000191,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 408,
+                  "avalanche": 15,
+                  "graph_sites": 268,
+                  "routes": 5,
+                  "constants": 66,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:sparse": 1,
+                  "graph_sites:sparse": 1
+                },
+                "bytes": 964
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 2.20243
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.035404,
+                "probe_count": 3,
+                "probe_lines": [
+                  23,
+                  24,
+                  25
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 4.521001,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.126429,
+                    "input_bytes": 546556,
+                    "output_bytes": 816373,
+                    "delta_bytes": 269817,
+                    "graph_sites": 19,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.402346,
+                      "helper_analysis_input_bytes": 552183,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 31,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "get_box",
+                        "make_closure",
+                        "_int1",
+                        "_arith1",
+                        "_elinear1",
+                        "_defer1r",
+                        "_arith1r",
+                        "_arith1s"
+                      ],
+                      "helper_bytes_removed": 6223,
+                      "arithmetic_kinds": [
+                        "ADD",
+                        "MUL",
+                        "SUB"
+                      ],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 24,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "EQ",
+                        "GET",
+                        "MOD",
+                        "NEWTABLE",
+                        "SET",
+                        "VALUE"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 24,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 3,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 131003,
+                        "__VM_CONTROL_GRAPHS__": 34641,
+                        "__VM_LOOP_GRAPHS__": 8871,
+                        "__VM_SEMANTIC_GRAPHS__": 32430,
+                        "__VM_OCCURRENCE_GRAPHS__": 43887
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.146612
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.001385
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 6.874377,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 3.593999999999994
+          },
+          {
+            "blob_bytes": 964,
+            "blob_sha256": "9a861b7f5d65f34a7faca37061c2ac99ab26cd7f6ddc0c08a48a6f993a881c48",
+            "blob_literal_bytes": 3974,
+            "build_seconds": 7.61896639992483,
+            "build_cpu_seconds": 2.421875,
+            "output_bytes": 727508,
+            "runtime_bytes": 723397,
+            "bank_bytes": {
+              "_OG": 33414,
+              "_FG": 22111,
+              "_AR": 76059,
+              "_GV": 8374,
+              "_DG": 24160,
+              "_CG": 10213,
+              "_LG": 6288
+            },
+            "function_counts": {
+              "total_functions": 540,
+              "audited_helpers": 31
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.478006,
+              "helper_analysis_input_bytes": 552183,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 31,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "get_box",
+                "make_closure",
+                "_int1",
+                "_arith1",
+                "_elinear1",
+                "_defer1r",
+                "_arith1r",
+                "_arith1s"
+              ],
+              "helper_bytes_removed": 6223,
+              "arithmetic_kinds": [
+                "ADD",
+                "MUL",
+                "SUB"
+              ],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 24,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "EQ",
+                "GET",
+                "MOD",
+                "NEWTABLE",
+                "SET",
+                "VALUE"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 24,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 3,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 131003,
+                "__VM_CONTROL_GRAPHS__": 34641,
+                "__VM_LOOP_GRAPHS__": 8871,
+                "__VM_SEMANTIC_GRAPHS__": 32430,
+                "__VM_OCCURRENCE_GRAPHS__": 43887
+              }
+            },
+            "plan_sha256": "17cf79c028a9176e556be6fd5c648ff8a6be8dcaf2b1794f1ddbe67b428659b6",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000401
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001485,
+                "functions": 1,
+                "instructions": 34
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000497,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.001364,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.00084
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.004241,
+                "function": "f0",
+                "instructions": 68,
+                "registers": 10,
+                "transfers": 210,
+                "waves": 2,
+                "projections": 68,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001264
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.009238,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000259,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 183,
+                  "proto_headers": 5,
+                  "instructions": 408,
+                  "avalanche": 15,
+                  "graph_sites": 268,
+                  "routes": 5,
+                  "constants": 66,
+                  "upvalues": 1,
+                  "children": 1
+                },
+                "metadata_modes": {
+                  "avalanche:sparse": 1,
+                  "graph_sites:sparse": 1
+                },
+                "bytes": 964
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 2.295118
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.047472,
+                "probe_count": 3,
+                "probe_lines": [
+                  23,
+                  24,
+                  25
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 5.133207,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.202444,
+                    "input_bytes": 546556,
+                    "output_bytes": 816373,
+                    "delta_bytes": 269817,
+                    "graph_sites": 19,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.478006,
+                      "helper_analysis_input_bytes": 552183,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 31,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "get_box",
+                        "make_closure",
+                        "_int1",
+                        "_arith1",
+                        "_elinear1",
+                        "_defer1r",
+                        "_arith1r",
+                        "_arith1s"
+                      ],
+                      "helper_bytes_removed": 6223,
+                      "arithmetic_kinds": [
+                        "ADD",
+                        "MUL",
+                        "SUB"
+                      ],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 24,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "EQ",
+                        "GET",
+                        "MOD",
+                        "NEWTABLE",
+                        "SET",
+                        "VALUE"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 24,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 3,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 131003,
+                        "__VM_CONTROL_GRAPHS__": 34641,
+                        "__VM_LOOP_GRAPHS__": 8871,
+                        "__VM_SEMANTIC_GRAPHS__": 32430,
+                        "__VM_OCCURRENCE_GRAPHS__": 43887
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.171229
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.00152
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 7.604813,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 3.2450000000000045
+          }
+        ]
+      },
+      "before": {
+        "output_bytes": 1000980,
+        "runtime_bytes": 996868,
+        "blob_bytes": 964,
+        "build_seconds": 14.949126200051978,
+        "build_cpu_seconds": 5.796875,
+        "execution_cpu_seconds": 4.471999999999994,
+        "blob_literal_bytes": 3975,
+        "bank_bytes": {
+          "_DG": 73875,
+          "_FG": 22111,
+          "_LG": 6288,
+          "_OG": 33414,
+          "_GV": 8374,
+          "_AR": 293735,
+          "_CG": 10213
+        },
+        "function_counts": {
+          "total_functions": 905,
+          "audited_helpers": 41
+        },
+        "emission": {}
+      },
+      "after": {
+        "output_bytes": 727508,
+        "runtime_bytes": 723397,
+        "blob_bytes": 964,
+        "build_seconds": 6.884977899957448,
+        "build_cpu_seconds": 2.421875,
+        "execution_cpu_seconds": 3.2450000000000045,
+        "blob_literal_bytes": 3974,
+        "bank_bytes": {
+          "_CG": 10213,
+          "_GV": 8374,
+          "_OG": 33414,
+          "_AR": 76059,
+          "_FG": 22111,
+          "_DG": 24160,
+          "_LG": 6288
+        },
+        "function_counts": {
+          "total_functions": 540,
+          "audited_helpers": 31
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.368823,
+          "helper_analysis_input_bytes": 552183,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 6223,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 24,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 131003,
+            "__VM_CONTROL_GRAPHS__": 34641,
+            "__VM_LOOP_GRAPHS__": 8871,
+            "__VM_SEMANTIC_GRAPHS__": 32430,
+            "__VM_OCCURRENCE_GRAPHS__": 43887
+          }
+        }
+      }
+    },
+    {
+      "fixture": "closures",
+      "setting": "default",
+      "options": {},
+      "samples": {
+        "before": [
+          {
+            "blob_bytes": 1088,
+            "blob_sha256": "6136e88a7126e500e2efc9b226291f862223ed2a9e9b5102b3f48c47327754e0",
+            "blob_literal_bytes": 4502,
+            "build_seconds": 15.452288999920711,
+            "build_cpu_seconds": 4.640625,
+            "output_bytes": 943747,
+            "runtime_bytes": 939108,
+            "bank_bytes": {
+              "_AR": 293353,
+              "_OG": 34149,
+              "_CG": 11508,
+              "_LG": 6065,
+              "_GV": 8200,
+              "_DG": 73451,
+              "_FG": 17223
+            },
+            "function_counts": {
+              "total_functions": 903,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "5a31cf8ef29385244e40a3ff9d6c71f0ca8cd9ab27939c8e6197dadf311f0dec",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000472
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001869,
+                "functions": 4,
+                "instructions": 66
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000543,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.00097,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.001018
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.003417,
+                "function": "f0",
+                "instructions": 67,
+                "registers": 12,
+                "transfers": 133,
+                "waves": 2,
+                "projections": 67,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001009
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000176,
+                "function": "f0.0",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 6,
+                "waves": 1,
+                "projections": 6,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 2e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000257,
+                "function": "f0.1",
+                "instructions": 14,
+                "registers": 3,
+                "transfers": 10,
+                "waves": 1,
+                "projections": 10,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 2e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000169,
+                "function": "f0.2",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 7,
+                "waves": 1,
+                "projections": 7,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 1e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.009815,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000294,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 233,
+                  "proto_headers": 20,
+                  "instructions": 570,
+                  "avalanche": 4,
+                  "graph_sites": 104,
+                  "routes": 4,
+                  "constants": 131,
+                  "upvalues": 6,
+                  "children": 4
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 4,
+                  "graph_sites:sparse": 2,
+                  "graph_sites:absent": 2
+                },
+                "bytes": 1088
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 1.61255
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.055431,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 13.570964,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.198874,
+                    "input_bytes": 498373,
+                    "output_bytes": 1151332,
+                    "delta_bytes": 652959,
+                    "graph_sites": 7,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.246451
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.003731
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 15.4374,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 2.841000000000008
+          },
+          {
+            "blob_bytes": 1088,
+            "blob_sha256": "6136e88a7126e500e2efc9b226291f862223ed2a9e9b5102b3f48c47327754e0",
+            "blob_literal_bytes": 4477,
+            "build_seconds": 15.739572700113058,
+            "build_cpu_seconds": 5.5625,
+            "output_bytes": 943722,
+            "runtime_bytes": 939108,
+            "bank_bytes": {
+              "_CG": 11508,
+              "_DG": 73451,
+              "_FG": 17223,
+              "_GV": 8200,
+              "_LG": 6065,
+              "_OG": 34149,
+              "_AR": 293353
+            },
+            "function_counts": {
+              "total_functions": 903,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "5a31cf8ef29385244e40a3ff9d6c71f0ca8cd9ab27939c8e6197dadf311f0dec",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000557
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.002899,
+                "functions": 4,
+                "instructions": 66
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.001085,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.002069,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.002411
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.007261,
+                "function": "f0",
+                "instructions": 67,
+                "registers": 12,
+                "transfers": 133,
+                "waves": 2,
+                "projections": 67,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.002281
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000379,
+                "function": "f0.0",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 6,
+                "waves": 1,
+                "projections": 6,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.00054,
+                "function": "f0.1",
+                "instructions": 14,
+                "registers": 3,
+                "transfers": 10,
+                "waves": 1,
+                "projections": 10,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000363,
+                "function": "f0.2",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 7,
+                "waves": 1,
+                "projections": 7,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.019457,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000523,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 233,
+                  "proto_headers": 20,
+                  "instructions": 570,
+                  "avalanche": 4,
+                  "graph_sites": 104,
+                  "routes": 4,
+                  "constants": 131,
+                  "upvalues": 6,
+                  "children": 4
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 4,
+                  "graph_sites:sparse": 2,
+                  "graph_sites:absent": 2
+                },
+                "bytes": 1088
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 1.467115
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.058701,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 14.001285,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.196103,
+                    "input_bytes": 498373,
+                    "output_bytes": 1151332,
+                    "delta_bytes": 652959,
+                    "graph_sites": 7,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.23601
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.001776
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 15.71078,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 3.7750000000000057
+          },
+          {
+            "blob_bytes": 1088,
+            "blob_sha256": "6136e88a7126e500e2efc9b226291f862223ed2a9e9b5102b3f48c47327754e0",
+            "blob_literal_bytes": 4494,
+            "build_seconds": 18.597075500059873,
+            "build_cpu_seconds": 6.90625,
+            "output_bytes": 943739,
+            "runtime_bytes": 939108,
+            "bank_bytes": {
+              "_LG": 6065,
+              "_OG": 34149,
+              "_AR": 293353,
+              "_CG": 11508,
+              "_DG": 73451,
+              "_FG": 17223,
+              "_GV": 8200
+            },
+            "function_counts": {
+              "total_functions": 903,
+              "audited_helpers": 41
+            },
+            "emission": {},
+            "plan_sha256": "5a31cf8ef29385244e40a3ff9d6c71f0ca8cd9ab27939c8e6197dadf311f0dec",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000577
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.003067,
+                "functions": 4,
+                "instructions": 66
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000971,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.001982,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.002179
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.003532,
+                "function": "f0",
+                "instructions": 67,
+                "registers": 12,
+                "transfers": 133,
+                "waves": 2,
+                "projections": 67,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.001092
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000193,
+                "function": "f0.0",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 6,
+                "waves": 1,
+                "projections": 6,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 2e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000281,
+                "function": "f0.1",
+                "instructions": 14,
+                "registers": 3,
+                "transfers": 10,
+                "waves": 1,
+                "projections": 10,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 2e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000185,
+                "function": "f0.2",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 7,
+                "waves": 1,
+                "projections": 7,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 1e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.01344,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.001079,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 233,
+                  "proto_headers": 20,
+                  "instructions": 570,
+                  "avalanche": 4,
+                  "graph_sites": 104,
+                  "routes": 4,
+                  "constants": 131,
+                  "upvalues": 6,
+                  "children": 4
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 4,
+                  "graph_sites:sparse": 2,
+                  "graph_sites:absent": 2
+                },
+                "bytes": 1088
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 2.371856
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.051691,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 15.95622,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.276901,
+                    "input_bytes": 498373,
+                    "output_bytes": 1151332,
+                    "delta_bytes": 652959,
+                    "graph_sites": 7,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {}
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.238443
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.00204
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 18.574591,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 2.9180000000000064
+          }
+        ],
+        "after": [
+          {
+            "blob_bytes": 1088,
+            "blob_sha256": "6136e88a7126e500e2efc9b226291f862223ed2a9e9b5102b3f48c47327754e0",
+            "blob_literal_bytes": 4492,
+            "build_seconds": 5.933439399814233,
+            "build_cpu_seconds": 2.21875,
+            "output_bytes": 615926,
+            "runtime_bytes": 611297,
+            "bank_bytes": {
+              "_AR": 25099,
+              "_OG": 34149,
+              "_DG": 23767,
+              "_LG": 4130,
+              "_FG": 17223,
+              "_GV": 8200,
+              "_CG": 11508
+            },
+            "function_counts": {
+              "total_functions": 504,
+              "audited_helpers": 29
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.315298,
+              "helper_analysis_input_bytes": 497885,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 29,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "_int1",
+                "_branch",
+                "_arith1",
+                "_elinear1",
+                "_pending_snapshot",
+                "_pending_fragment",
+                "_defer2r",
+                "_defer1r",
+                "_arith1r",
+                "_arith1s"
+              ],
+              "helper_bytes_removed": 7962,
+              "arithmetic_kinds": [
+                "ADD"
+              ],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 8,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "CLOSURE",
+                "GET",
+                "NEWTABLE",
+                "SET",
+                "VALUE",
+                "VARARG"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 24,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 2,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 43227,
+                "__VM_CONTROL_GRAPHS__": 26931,
+                "__VM_LOOP_GRAPHS__": 5864,
+                "__VM_SEMANTIC_GRAPHS__": 31530,
+                "__VM_OCCURRENCE_GRAPHS__": 44851
+              }
+            },
+            "plan_sha256": "5a31cf8ef29385244e40a3ff9d6c71f0ca8cd9ab27939c8e6197dadf311f0dec",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000431
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.001978,
+                "functions": 4,
+                "instructions": 66
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.000635,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.00116,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.001212
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.005835,
+                "function": "f0",
+                "instructions": 67,
+                "registers": 12,
+                "transfers": 133,
+                "waves": 2,
+                "projections": 67,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.002069
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000377,
+                "function": "f0.0",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 6,
+                "waves": 1,
+                "projections": 6,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 6e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000534,
+                "function": "f0.1",
+                "instructions": 14,
+                "registers": 3,
+                "transfers": 10,
+                "waves": 1,
+                "projections": 10,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 6e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000345,
+                "function": "f0.2",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 7,
+                "waves": 1,
+                "projections": 7,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 5e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.015282,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000498,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 233,
+                  "proto_headers": 20,
+                  "instructions": 570,
+                  "avalanche": 4,
+                  "graph_sites": 104,
+                  "routes": 4,
+                  "constants": 131,
+                  "upvalues": 6,
+                  "children": 4
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 4,
+                  "graph_sites:sparse": 2,
+                  "graph_sites:absent": 2
+                },
+                "bytes": 1088
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 1.651322
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.072203,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 3.988742,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.103391,
+                    "input_bytes": 490426,
+                    "output_bytes": 664155,
+                    "delta_bytes": 173729,
+                    "graph_sites": 7,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.315298,
+                      "helper_analysis_input_bytes": 497885,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 29,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "_int1",
+                        "_branch",
+                        "_arith1",
+                        "_elinear1",
+                        "_pending_snapshot",
+                        "_pending_fragment",
+                        "_defer2r",
+                        "_defer1r",
+                        "_arith1r",
+                        "_arith1s"
+                      ],
+                      "helper_bytes_removed": 7962,
+                      "arithmetic_kinds": [
+                        "ADD"
+                      ],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 8,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "CLOSURE",
+                        "GET",
+                        "NEWTABLE",
+                        "SET",
+                        "VALUE",
+                        "VARARG"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 24,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 2,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 43227,
+                        "__VM_CONTROL_GRAPHS__": 26931,
+                        "__VM_LOOP_GRAPHS__": 5864,
+                        "__VM_SEMANTIC_GRAPHS__": 31530,
+                        "__VM_OCCURRENCE_GRAPHS__": 44851
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.265828
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.002017
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 5.912548,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 3.094999999999999
+          },
+          {
+            "blob_bytes": 1088,
+            "blob_sha256": "6136e88a7126e500e2efc9b226291f862223ed2a9e9b5102b3f48c47327754e0",
+            "blob_literal_bytes": 4476,
+            "build_seconds": 10.08860330004245,
+            "build_cpu_seconds": 4.734375,
+            "output_bytes": 615910,
+            "runtime_bytes": 611297,
+            "bank_bytes": {
+              "_FG": 17223,
+              "_CG": 11508,
+              "_GV": 8200,
+              "_OG": 34149,
+              "_DG": 23767,
+              "_AR": 25099,
+              "_LG": 4130
+            },
+            "function_counts": {
+              "total_functions": 504,
+              "audited_helpers": 29
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.598754,
+              "helper_analysis_input_bytes": 497885,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 29,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "_int1",
+                "_branch",
+                "_arith1",
+                "_elinear1",
+                "_pending_snapshot",
+                "_pending_fragment",
+                "_defer2r",
+                "_defer1r",
+                "_arith1r",
+                "_arith1s"
+              ],
+              "helper_bytes_removed": 7962,
+              "arithmetic_kinds": [
+                "ADD"
+              ],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 8,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "CLOSURE",
+                "GET",
+                "NEWTABLE",
+                "SET",
+                "VALUE",
+                "VARARG"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 24,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 2,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 43227,
+                "__VM_CONTROL_GRAPHS__": 26931,
+                "__VM_LOOP_GRAPHS__": 5864,
+                "__VM_SEMANTIC_GRAPHS__": 31530,
+                "__VM_OCCURRENCE_GRAPHS__": 44851
+              }
+            },
+            "plan_sha256": "5a31cf8ef29385244e40a3ff9d6c71f0ca8cd9ab27939c8e6197dadf311f0dec",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.000638
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.00356,
+                "functions": 4,
+                "instructions": 66
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.001991,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.002371,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.003021
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.007846,
+                "function": "f0",
+                "instructions": 67,
+                "registers": 12,
+                "transfers": 133,
+                "waves": 2,
+                "projections": 67,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.002421
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000389,
+                "function": "f0.0",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 6,
+                "waves": 1,
+                "projections": 6,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 4e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000587,
+                "function": "f0.1",
+                "instructions": 14,
+                "registers": 3,
+                "transfers": 10,
+                "waves": 1,
+                "projections": 10,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000395,
+                "function": "f0.2",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 7,
+                "waves": 1,
+                "projections": 7,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 3e-06
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.023203,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.001039,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 233,
+                  "proto_headers": 20,
+                  "instructions": 570,
+                  "avalanche": 4,
+                  "graph_sites": 104,
+                  "routes": 4,
+                  "constants": 131,
+                  "upvalues": 6,
+                  "children": 4
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 4,
+                  "graph_sites:sparse": 2,
+                  "graph_sites:absent": 2
+                },
+                "bytes": 1088
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 3.856022
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.071914,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 5.948356,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.190525,
+                    "input_bytes": 490426,
+                    "output_bytes": 664155,
+                    "delta_bytes": 173729,
+                    "graph_sites": 7,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.598754,
+                      "helper_analysis_input_bytes": 497885,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 29,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "_int1",
+                        "_branch",
+                        "_arith1",
+                        "_elinear1",
+                        "_pending_snapshot",
+                        "_pending_fragment",
+                        "_defer2r",
+                        "_defer1r",
+                        "_arith1r",
+                        "_arith1s"
+                      ],
+                      "helper_bytes_removed": 7962,
+                      "arithmetic_kinds": [
+                        "ADD"
+                      ],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 8,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "CLOSURE",
+                        "GET",
+                        "NEWTABLE",
+                        "SET",
+                        "VALUE",
+                        "VARARG"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 24,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 2,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 43227,
+                        "__VM_CONTROL_GRAPHS__": 26931,
+                        "__VM_LOOP_GRAPHS__": 5864,
+                        "__VM_SEMANTIC_GRAPHS__": 31530,
+                        "__VM_OCCURRENCE_GRAPHS__": 44851
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.239368
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.003895
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 10.053309,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 2.890000000000015
+          },
+          {
+            "blob_bytes": 1088,
+            "blob_sha256": "6136e88a7126e500e2efc9b226291f862223ed2a9e9b5102b3f48c47327754e0",
+            "blob_literal_bytes": 4469,
+            "build_seconds": 7.87137829978019,
+            "build_cpu_seconds": 3.25,
+            "output_bytes": 615903,
+            "runtime_bytes": 611297,
+            "bank_bytes": {
+              "_CG": 11508,
+              "_DG": 23767,
+              "_OG": 34149,
+              "_LG": 4130,
+              "_AR": 25099,
+              "_GV": 8200,
+              "_FG": 17223
+            },
+            "function_counts": {
+              "total_functions": 504,
+              "audited_helpers": 29
+            },
+            "emission": {
+              "helper_analysis_seconds": 0.678648,
+              "helper_analysis_input_bytes": 497885,
+              "audited_helpers_before": 41,
+              "audited_helpers_after": 29,
+              "removed_helpers": [
+                "decode",
+                "_ss_step",
+                "_int1",
+                "_branch",
+                "_arith1",
+                "_elinear1",
+                "_pending_snapshot",
+                "_pending_fragment",
+                "_defer2r",
+                "_defer1r",
+                "_arith1r",
+                "_arith1s"
+              ],
+              "helper_bytes_removed": 7962,
+              "arithmetic_kinds": [
+                "ADD"
+              ],
+              "arithmetic_dags_before": 80,
+              "arithmetic_dags_generated": 80,
+              "arithmetic_dags_after": 8,
+              "native_arithmetic_variants_per_kind": 4,
+              "arithmetic_dags_per_kind": 8,
+              "semantic_kinds": [
+                "CLOSURE",
+                "GET",
+                "NEWTABLE",
+                "SET",
+                "VALUE",
+                "VARARG"
+              ],
+              "semantic_variants_before": 72,
+              "semantic_variants_generated": 72,
+              "semantic_variants_after": 24,
+              "loop_graphs_before": 3,
+              "loop_graphs_after": 2,
+              "occurrence_families": 8,
+              "bank_bytes": {
+                "__VM_ARITH_BUNDLE__": 43227,
+                "__VM_CONTROL_GRAPHS__": 26931,
+                "__VM_LOOP_GRAPHS__": 5864,
+                "__VM_SEMANTIC_GRAPHS__": 31530,
+                "__VM_OCCURRENCE_GRAPHS__": 44851
+              }
+            },
+            "plan_sha256": "5a31cf8ef29385244e40a3ff9d6c71f0ca8cd9ab27939c8e6197dadf311f0dec",
+            "profile": [
+              {
+                "phase": "compile_luac",
+                "elapsed": 0.001575
+              },
+              {
+                "phase": "build_semantic_ir",
+                "elapsed": 0.007046,
+                "functions": 4,
+                "instructions": 66
+              },
+              {
+                "phase": "optimize_semantic_ir",
+                "elapsed": 0.001014,
+                "folded": 0
+              },
+              {
+                "phase": "resolve_backend_capabilities",
+                "elapsed": 0.001739,
+                "backend": "karity",
+                "supported": [
+                  "blob_representation",
+                  "block_variants",
+                  "decoy_handlers",
+                  "delayed_materialization",
+                  "dispatcher_cff",
+                  "graph_execution",
+                  "handler_aliases",
+                  "handler_mutation",
+                  "helper_variants",
+                  "junk_instructions",
+                  "runtime_polymorphism",
+                  "semantic_variants"
+                ],
+                "disabled": []
+              },
+              {
+                "phase": "apply_semantic_protection",
+                "elapsed": 0.001974
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.009768,
+                "function": "f0",
+                "instructions": 67,
+                "registers": 12,
+                "transfers": 133,
+                "waves": 2,
+                "projections": 67,
+                "record_strategy": "stable",
+                "projection_elapsed": 0.004435
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.00083,
+                "function": "f0.0",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 6,
+                "waves": 1,
+                "projections": 6,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 9e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000694,
+                "function": "f0.1",
+                "instructions": 14,
+                "registers": 3,
+                "transfers": 10,
+                "waves": 1,
+                "projections": 10,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 9e-06
+              },
+              {
+                "phase": "karity_state_function",
+                "elapsed": 0.000395,
+                "function": "f0.2",
+                "instructions": 7,
+                "registers": 3,
+                "transfers": 7,
+                "waves": 1,
+                "projections": 7,
+                "record_strategy": "eager_acyclic",
+                "projection_elapsed": 5.4e-05
+              },
+              {
+                "phase": "backend_lowering",
+                "elapsed": 0.029388,
+                "backend": "karity",
+                "kind": "karity-handler-graph"
+              },
+              {
+                "phase": "serialize_blob",
+                "elapsed": 0.000596,
+                "format_version": 2,
+                "instruction_width": 6,
+                "section_bytes": {
+                  "header": 12,
+                  "fake_constants": 233,
+                  "proto_headers": 20,
+                  "instructions": 570,
+                  "avalanche": 4,
+                  "graph_sites": 104,
+                  "routes": 4,
+                  "constants": 131,
+                  "upvalues": 6,
+                  "children": 4
+                },
+                "metadata_modes": {
+                  "avalanche:absent": 4,
+                  "graph_sites:sparse": 2,
+                  "graph_sites:absent": 2
+                },
+                "bytes": 1088
+              },
+              {
+                "phase": "build_vm_code",
+                "elapsed": 3.460462
+              },
+              {
+                "phase": "source_line_state",
+                "elapsed": 0.035712,
+                "probe_count": 5,
+                "probe_lines": [
+                  23,
+                  24,
+                  25,
+                  26,
+                  27
+                ]
+              },
+              {
+                "phase": "obfuscate_vm_output",
+                "elapsed": 4.21859,
+                "details": [
+                  {
+                    "phase": "vm_output:handler_graphs",
+                    "class": "_apply_handler_graphs",
+                    "elapsed": 0.177176,
+                    "input_bytes": 490426,
+                    "output_bytes": 664155,
+                    "delta_bytes": 173729,
+                    "graph_sites": 7,
+                    "graph_families": 8,
+                    "backend": "pre_output_pipeline",
+                    "runtime_emission": {
+                      "helper_analysis_seconds": 0.678648,
+                      "helper_analysis_input_bytes": 497885,
+                      "audited_helpers_before": 41,
+                      "audited_helpers_after": 29,
+                      "removed_helpers": [
+                        "decode",
+                        "_ss_step",
+                        "_int1",
+                        "_branch",
+                        "_arith1",
+                        "_elinear1",
+                        "_pending_snapshot",
+                        "_pending_fragment",
+                        "_defer2r",
+                        "_defer1r",
+                        "_arith1r",
+                        "_arith1s"
+                      ],
+                      "helper_bytes_removed": 7962,
+                      "arithmetic_kinds": [
+                        "ADD"
+                      ],
+                      "arithmetic_dags_before": 80,
+                      "arithmetic_dags_generated": 80,
+                      "arithmetic_dags_after": 8,
+                      "native_arithmetic_variants_per_kind": 4,
+                      "arithmetic_dags_per_kind": 8,
+                      "semantic_kinds": [
+                        "CLOSURE",
+                        "GET",
+                        "NEWTABLE",
+                        "SET",
+                        "VALUE",
+                        "VARARG"
+                      ],
+                      "semantic_variants_before": 72,
+                      "semantic_variants_generated": 72,
+                      "semantic_variants_after": 24,
+                      "loop_graphs_before": 3,
+                      "loop_graphs_after": 2,
+                      "occurrence_families": 8,
+                      "bank_bytes": {
+                        "__VM_ARITH_BUNDLE__": 43227,
+                        "__VM_CONTROL_GRAPHS__": 26931,
+                        "__VM_LOOP_GRAPHS__": 5864,
+                        "__VM_SEMANTIC_GRAPHS__": 31530,
+                        "__VM_OCCURRENCE_GRAPHS__": 44851
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "phase": "dump_vm_function",
+                "elapsed": 0.143502
+              },
+              {
+                "phase": "encrypt_blob",
+                "elapsed": 0.001758
+              },
+              {
+                "phase": "backend_emit",
+                "elapsed": 7.828233,
+                "backend": "karity"
+              }
+            ],
+            "execution_cpu_seconds": 2.3149999999999977
+          }
+        ]
+      },
+      "before": {
+        "output_bytes": 943739,
+        "runtime_bytes": 939108,
+        "blob_bytes": 1088,
+        "build_seconds": 15.739572700113058,
+        "build_cpu_seconds": 5.5625,
+        "execution_cpu_seconds": 2.9180000000000064,
+        "blob_literal_bytes": 4494,
+        "bank_bytes": {
+          "_AR": 293353,
+          "_OG": 34149,
+          "_CG": 11508,
+          "_LG": 6065,
+          "_GV": 8200,
+          "_DG": 73451,
+          "_FG": 17223
+        },
+        "function_counts": {
+          "total_functions": 903,
+          "audited_helpers": 41
+        },
+        "emission": {}
+      },
+      "after": {
+        "output_bytes": 615910,
+        "runtime_bytes": 611297,
+        "blob_bytes": 1088,
+        "build_seconds": 7.87137829978019,
+        "build_cpu_seconds": 3.25,
+        "execution_cpu_seconds": 2.890000000000015,
+        "blob_literal_bytes": 4476,
+        "bank_bytes": {
+          "_AR": 25099,
+          "_OG": 34149,
+          "_DG": 23767,
+          "_LG": 4130,
+          "_FG": 17223,
+          "_GV": 8200,
+          "_CG": 11508
+        },
+        "function_counts": {
+          "total_functions": 504,
+          "audited_helpers": 29
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.315298,
+          "helper_analysis_input_bytes": 497885,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 29,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 7962,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 43227,
+            "__VM_CONTROL_GRAPHS__": 26931,
+            "__VM_LOOP_GRAPHS__": 5864,
+            "__VM_SEMANTIC_GRAPHS__": 31530,
+            "__VM_OCCURRENCE_GRAPHS__": 44851
+          }
+        }
+      }
+    }
+  ],
+  "scope": "VM only, no source/output/packing passes. Runtime bytes measured at final target wrap; raw blob hashes checked before integrity patching/encryption. Times are paired shared-workstation samples; execution includes startup."
+}
