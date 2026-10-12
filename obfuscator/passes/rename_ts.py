@@ -64,8 +64,14 @@ def _is_reference(node):
     return True
 
 
-def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, sparse=True):
-    """Return symbolic bindings, free names, literals and traversal statistics."""
+def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, sparse=True,
+                     identifier_filter=None):
+    """Return symbolic bindings, free names, literals and traversal statistics.
+
+    A closed-runtime dependency caller may restrict identifier spellings; all
+    occurrences of those names, including shadowing declarations, are retained.
+    Ordinary naming/field analysis uses the unchanged complete traversal.
+    """
     if ctx.root.has_error:
         raise ValueError('Cannot rename Lua source with syntax errors')
     bindings, literals = [], []
@@ -90,6 +96,8 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
             nodes = [n for n, name in captures if name == 'identifier']
             literals = [n for n, name in captures if name == 'literal'] if collect_literals else []
         literals.sort(key=lambda n: n.start_byte)
+        if identifier_filter is not None:
+            nodes = [n for n in nodes if identifier_filter(n)]
         identifier_offsets = sorted(n.start_byte for n in nodes)
         del captures, nodes
 

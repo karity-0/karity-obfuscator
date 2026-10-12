@@ -108,7 +108,9 @@ def _compact_executor_captures(source):
     """Bank immutable helper bindings, not user values or mutable VM state.
 
     Run after private-graph lowering: that lowering can introduce new helper
-    references even after the backend's executor was finalized.
+    references even after the backend's executor was finalized. Split dispatch
+    closures also capture frame-local helpers; bank those within their owning
+    executor, without copying mutable register/PC cells or forward routes.
     """
     from ...passes.ts_utils import parse
     from ...passes.rename_ts import resolve_bindings, _apply_replacements_once
@@ -118,11 +120,30 @@ def _compact_executor_captures(source):
     used_names = {b.original for b in bindings} | free_names
     replacements = []
     bank_index = 0
-    for node in ctx.walk():
-        if node.type not in ('function_definition', 'function_declaration'):
-            continue
+    import tree_sitter as ts
+    from ...passes.ts_utils import _LANG
+    candidates = ts.QueryCursor(ts.Query(_LANG,
+        '(function_definition) @function (function_declaration) @function')).captures(ctx.root)['function']
+    for node in sorted(candidates, key=lambda n: n.start_byte):
         params = node.child_by_field_name('parameters')
-        if params is None or not re.match(r'\(\s*proto\s*,\s*upvals\s*,', ctx.text(params)):
+        executor = params is not None and re.match(r'\(\s*proto\s*,\s*upvals\s*,', ctx.text(params))
+        body = node.child_by_field_name('body')
+        header = next((n for n in body.named_children if n.type != 'comment'), None) if body else None
+        assignment = (next((n for n in header.named_children if n.type == 'assignment_statement'), None)
+                      if header is not None and header.type == 'variable_declaration' else None)
+        fields = (next((n for n in assignment.named_children if n.type == 'variable_list'), None)
+                  if assignment is not None else None)
+        values = (next((n for n in assignment.named_children if n.type == 'expression_list'), None)
+                  if assignment is not None else None)
+        dispatch = (params is not None and ctx.plain_text(params).replace(' ', '') == '(...)'
+                    and fields is not None and len(fields.named_children) == 6
+                    and values is not None and ctx.plain_text(values).strip() == '...')
+        if not executor and not dispatch:
+            continue
+        owner = node.parent
+        while owner is not None and owner.type not in ('function_definition', 'function_declaration'):
+            owner = owner.parent
+        if dispatch and owner is None:
             continue
         captured = [b for b in bindings
                     if not node.start_byte <= b.nodes[0].start_byte < node.end_byte
@@ -132,6 +153,10 @@ def _compact_executor_captures(source):
             continue
         helpers = []
         for binding in captured:
+            if dispatch and not owner.start_byte <= binding.nodes[0].start_byte < owner.end_byte:
+                # The owning executor may bank outer captures too. Do not
+                # overlap those edits or copy its already-shared outer bank.
+                continue
             declaration = binding.nodes[0].parent
             if declaration.type != 'function_declaration' or declaration.children[0].type != 'local':
                 continue

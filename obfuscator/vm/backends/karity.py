@@ -132,10 +132,17 @@ class KarityBackend(VMBackend):
         if not lowered.policy.get("semantic_state_threading", False):
             # These calls belong to Karity's encoded-register and graph
             # runtime. Keep disabled profiles free of per-instruction
-            # semantic-state work while leaving cold helper definitions intact.
+            # semantic-state work. Cold declarations are removed later using
+            # lexical dependencies of the fully emitted runtime.
             source = source.replace("; _ss_step(_ip,op,A,B,C)", "")
             source = source.replace("\n        _ss_value(slot,encoded,epoch,kind)", "")
             source = source.replace("; _ss_value(i,encoded,epoch,kind)", "")
+        # Resolve the closed runtime once, after every handler/clone/dispatch
+        # route exists and before keystream/tamper expansion. Those target
+        # stages do not introduce handler graph keys or helper callbacks.
+        from .karity_runtime_usage import specialize_runtime
+        source, statistics = specialize_runtime(source)
+        lowered.backend_data['runtime_emission'] = statistics
         return source
 
     def emit_runtime_body(self, source, lowered, *, target):
@@ -155,6 +162,8 @@ class KarityBackend(VMBackend):
         if families - {0} and not graph_enabled:
             raise ValueError("Karity active graph descriptors exist under a disabled graph policy")
         graph_family_count = 8 if graph_enabled else 0
+        runtime_stats = dict(lowered.backend_data.get('runtime_emission', {}))
+        requirements = runtime_stats.pop('_graph_requirements', None)
         with karity_graph_encoding(lowered.protection_plan):
             rendered = _apply_handler_graphs(
                 source,
@@ -178,8 +187,11 @@ class KarityBackend(VMBackend):
                     lowered.policy.get("branch_virtualization", False)
                 ),
                 representation_routes=state.representation_routes,
+                stats=runtime_stats,
+                requirements=requirements,
                 **target.graph_runtime_options(),
             )
+        lowered.backend_data['runtime_emission'] = runtime_stats
         return RuntimeBody(
             source=rendered,
             phase="vm_output:handler_graphs",
@@ -187,4 +199,5 @@ class KarityBackend(VMBackend):
             backend="pre_output_pipeline",
             graph_sites=len(sites),
             graph_families=graph_family_count,
+            details=runtime_stats,
         )

@@ -251,7 +251,15 @@ count=_acount,get=_aget,seed=_aseed,key=_akey,wordkey=_aword_key}
         instruction_xor=runtime_source.split('--<<TARGET_INSTRUCTION_XOR>>',1)[1].split('--<<ENDTARGET_INSTRUCTION_XOR>>',1)[0]
         instruction_fields=runtime_source.split('--<<TARGET_INSTRUCTION_FIELDS>>',1)[1].split('--<<ENDTARGET_INSTRUCTION_FIELDS>>',1)[0]
         instruction_rekey=runtime_source.split('--<<TARGET_WORD_REKEY>>',1)[1].split('--<<ENDTARGET_WORD_REKEY>>',1)[0]
-        instruction_decode=runtime_source.split('--<<TARGET_INSTRUCTION_DECODE>>',1)[1].split('--<<ENDTARGET_INSTRUCTION_DECODE>>',1)[0]
+        decode_regions = native_regions(runtime_source,'INSTRUCTION_DECODE')
+        instruction_decode = ''.join(decode_regions)
+        if not decode_regions:
+            # Karity's execution kit inlines every decode call. The unused
+            # declaration is now omitted; exercise that actual emitted path
+            # instead of requiring a cold copy just for this source audit.
+            assert 'local function decode(' not in runtime_source
+            assert 'decode(ins,' not in runtime_source
+            assert re.search(r'_ifield48\((?:_dw|_ei|ei),',runtime_source)
         keystream=runtime_source.split('--<<KSTREAM>>',1)[1].split('--<<ENDKSTREAM>>',1)[0]
         instruction_regions=(instruction_reader+instruction_xor+instruction_fields+
                              instruction_rekey+instruction_decode+keystream)
