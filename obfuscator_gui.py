@@ -55,6 +55,7 @@ _DEFAULT_PREFERENCES = {
     "theme": "system",
     "density": "comfortable",
     "editor_font_size": 12,
+    "word_wrap": False,
     "motion": "system",
     "remember_sections": True,
     "sections": {},
@@ -280,6 +281,8 @@ def _normalize_preferences(value: object) -> dict:
         preferences["editor_font_size"] = max(10, min(18, int(size)))
     if isinstance(source.get("remember_sections"), bool):
         preferences["remember_sections"] = source["remember_sections"]
+    if isinstance(source.get("word_wrap"), bool):
+        preferences["word_wrap"] = source["word_wrap"]
     sections = source.get("sections")
     if isinstance(sections, dict):
         preferences["sections"] = {
