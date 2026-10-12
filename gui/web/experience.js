@@ -124,10 +124,16 @@
       const state = ctx.getState();
       const focused = document.activeElement?.dataset.presetChoice;
       const descriptions = [
-        'VM protection with source protection selected by markers.',
-        'Light source transformations; choose heavier protection with markers.',
-        'Whole-source string reconstruction and control-flow protection.',
-        'Whole-source protection, deeper variants and packing.',
+        'VM first. Protect key code with markers.',
+        'Light source protection, balanced cost.',
+        'Strings and control flow protected throughout.',
+        'Deeper transformations, with packing.',
+      ];
+      const motifs = [
+        {path:'M16 64H112 M46 44L66 64 46 84 M76 44L96 64 76 84', nodes:[[16,64],[112,64]]},
+        {path:'M16 64L48 32 80 64 112 32 M16 64L48 96 80 64 112 96', nodes:[[16,64],[48,32],[48,96],[80,64],[112,32],[112,96]]},
+        {path:'M16 64L48 24 80 44 112 64 80 84 48 104 16 64 M48 24V104 M80 44V84 M16 64H112', nodes:[[16,64],[48,24],[48,104],[80,44],[80,84],[112,64]]},
+        {path:'M16 76L64 100 112 76 M16 60L64 84 112 60 M16 44L64 20 112 44 64 68Z M64 68V100', nodes:[[16,44],[64,20],[112,44],[64,100]]},
       ];
       $('preset-picker-title').textContent = tr('Choose a protection preset');
       $('preset-picker-note').textContent = tr('Your VM backend and target stay unchanged.');
@@ -144,28 +150,35 @@
         const top = element('span', undefined, 'backend-card-top');
         top.append(element('span', tr(index < 2 ? 'Selective protection' : 'Whole-source protection'), 'backend-kind'),
           element('span', tr('Currently selected'), 'backend-current'));
-        button.append(top, element('strong', ctx.presetLabel(name), 'backend-name'),
+        const artwork = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        artwork.setAttribute('viewBox', '0 0 128 128'); artwork.setAttribute('aria-hidden', 'true');
+        artwork.classList.add('preset-artwork');
+        const path = document.createElementNS(artwork.namespaceURI, 'path');
+        path.setAttribute('d', motifs[index].path); artwork.append(path);
+        for (const [x,y] of motifs[index].nodes) {
+          const circle = document.createElementNS(artwork.namespaceURI, 'circle');
+          circle.setAttribute('cx', x); circle.setAttribute('cy', y); circle.setAttribute('r', 4);
+          artwork.append(circle);
+        }
+        button.append(top, artwork, element('strong', ctx.presetLabel(name), 'backend-name'),
           element('span', tr(descriptions[index]), 'backend-description'));
-        const features = element('span', undefined, 'preset-features');
         const vm = next.config.vm_options || {};
         const backend = ctx.getBootstrap().backend_aliases[vm.backend] || vm.backend || 'karity';
         const unsupported = vm_options.filter(field => field.resolution[backend]?.outcome === 'disable' && vm[field.name]);
         const fallback = vm_options.filter(field => field.resolution[backend]?.outcome === 'fallback' && vm[field.name]);
-        const sourceNames = next.config.passes.filter(pass => ['boolean_obf','table_obf','string_obf','function_obf','number_obf','meme_strings','localize_globals'].includes(pass));
         const label = pass => tr(passes.find(p => p.name === pass)?.label || pass);
-        features.append(element('span', `${tr('Source & main')}: ${sourceNames.length ? sourceNames.map(label).join(' · ') : tr('Protection markers')}`),
-          element('span', `${tr('VM count')}: ${vm.vm_count} · ${tr('Block variants')}: ${vm.block_variant_count}`),
-          element('span', `${tr('VM output')}: ${next.config.vm_output_passes.filter(pass=>['number_obf','meme_strings'].includes(pass)).map(label).join(' · ') || tr('None')}`));
-        if (unsupported.length) features.append(element('span', `${backendName(backend)} · ${tr('Support limitations')}: ${unsupported.length}`, 'capability-warning'));
-        if (fallback.length) features.append(element('span', `${tr('Fallback implementation')}: ${fallback.length}`, 'capability-warning'));
-        if (next.preset_custom) features.append(element('span', tr('Restores your saved custom settings.'), 'capability-warning'));
-        button.append(features);
+        const notices = element('span', undefined, 'preset-notices');
+        if (unsupported.length || fallback.length) notices.append(element('span', `${backendName(backend)} · ${tr(unsupported.length ? 'Support limitations' : 'Fallback implementation')}`, 'capability-warning'));
+        if (next.preset_custom) notices.append(element('span', tr('Saved custom settings'), 'capability-warning'));
+        button.append(notices);
         button.addEventListener('click', () => { ctx.applyPreset(name); presetDialog.close(); });
         const details = element('details', undefined, 'preset-diff');
-        details.append(element('summary', `${tr('Details & changes')} · ${changes.length}`));
+        details.append(element('summary', tr('Details')));
         const body = element('div', undefined, 'preset-diff-body');
         body.append(element('p', `${tr('Source & main')}: ${next.config.passes.map(label).join(' · ')}`),
-          element('p', `${tr('VM output')}: ${next.config.vm_output_passes.map(label).join(' · ')}`));
+          element('p', `${tr('VM output')}: ${next.config.vm_output_passes.map(label).join(' · ')}`),
+          element('p', `${tr('VM count')}: ${vm.vm_count} · ${tr('Block variants')}: ${vm.block_variant_count}`));
+        if (next.preset_custom) body.append(element('p', tr('Restores your saved custom settings.'), 'capability-warning'));
         if (unsupported.length) body.append(element('p', `${tr('Support limitations')}: ${unsupported.map(field=>tr(field.label)).join(', ')}`, 'capability-warning'));
         if (fallback.length) body.append(element('p', `${tr('Fallback implementation')}: ${fallback.map(field=>`${field.name} → ${field.resolution[backend].target}`).join(', ')}`, 'capability-warning'));
         if (!changes.length) body.append(element('p', tr('No configuration changes.')));
@@ -540,6 +553,8 @@
         });
       }
       $('command-open').title = tr('Search commands (Ctrl+K)');
+      $('command-open').setAttribute('aria-label', tr('Search commands (Ctrl+K)'));
+      $('command-open-label').textContent = tr('Search commands');
       if (lastAttempt && !lastAttempt.ok && ui.output.value) ui.outputStats.textContent = tr('Previous result');
       markerChanged(); renderProgress();
       if (presetDialog.open) renderPresets(); if (inspector.open) renderInspector(); if (palette.open) renderCommands();

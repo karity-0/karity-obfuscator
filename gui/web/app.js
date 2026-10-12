@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', () => {
     preferencesClose: $('preferences-close'), preferencesReset: $('preferences-reset'),
     preferencesStatus: $('preferences-status'), density: $('density-select'),
     editorFontSize: $('editor-font-size'), editorFontValue: $('editor-font-value'),
+    wordWrap: $('word-wrap'),
     motion: $('motion-select'), rememberSections: $('remember-sections'),
     backendPicker: $('backend-picker'),
   };
@@ -263,6 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
     ui.density.addEventListener('change', event => updatePreference('density', event.target.value));
+    ui.wordWrap.addEventListener('change', event => updatePreference('word_wrap', event.target.checked));
     ui.editorFontSize.addEventListener('input', event => {
       preferences.editor_font_size = Number(event.target.value);
       ui.editorFontValue.textContent = event.target.value;
@@ -368,9 +370,6 @@ document.addEventListener('DOMContentLoaded', () => {
     root.dataset.themePreference = preferences.theme;
     root.dataset.density = preferences.density;
     root.dataset.motion = preferences.motion;
-    const search = $('command-open');
-    const searchSlot = (preferences.gui_version || 'v2') === 'v2' ? $('toolbar-actions') : document.querySelector('.window-controls');
-    if (search.parentElement !== searchSlot) searchSlot.prepend(search);
     root.dataset.guiVersion = preferences.gui_version || 'v2';
     root.lang = preferences.language || 'ko';
     if (previousVersion !== root.dataset.guiVersion || !root.dataset.settingsOpen) toggleSettings(false);
@@ -392,6 +391,8 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.density.value = preferences.density;
     ui.editorFontSize.value = preferences.editor_font_size;
     ui.editorFontValue.textContent = preferences.editor_font_size;
+    ui.wordWrap.checked = Boolean(preferences.word_wrap);
+    editors.forEach(editor => editor.setWordWrap(Boolean(preferences.word_wrap)));
     ui.motion.value = preferences.motion;
     ui.rememberSections.checked = Boolean(preferences.remember_sections);
     ui.preferencesStatus.textContent = tr(ui.preferencesStatus.textContent);
