@@ -3,7 +3,7 @@ from pathlib import Path
 import sys
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
-from obfuscator.vm.ir.facts import analyze_function,literal_fact,merge_facts,INTEGER,UNKNOWN
+from obfuscator.vm.ir.facts import analyze_function,literal_fact,merge_facts,cfg_components,INTEGER,UNKNOWN
 from obfuscator.vm.targets.profile import TargetProfile
 from obfuscator.toolchain import LuaToolchain
 
@@ -15,6 +15,14 @@ def analyze(source,version='5.3'):
 
 
 def main():
+    from types import SimpleNamespace
+    graph=SimpleNamespace(blocks=tuple(SimpleNamespace(id=n,successors=s) for n,s in
+        (('entry',('left','right')),('left',('join',)),('right',('join',)),
+         ('join',('loop',)),('loop',('join','exit')),('exit',()))))
+    predecessors,components=cfg_components(graph)
+    assert predecessors['join']=={'left','right','loop'}
+    assert components['join']==components['loop']
+    assert len({components[n] for n in ('entry','left','right','join','exit')})==5
     ir,facts=analyze('local x=1;for i=1,20 do x=x~i end;print(x)')
     integer_ops=[i for b in ir.root.blocks for i in b.instructions if i.operation=='BIT_XOR']
     assert integer_ops and all(facts[ir.root.id].operand(i,r).kind=='integer' for i in integer_ops for r in ('left','right'))

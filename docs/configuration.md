@@ -689,7 +689,7 @@ default: `0.0`
 
 ### ir_rematerialization_rate
 
-Recompute shared proven integer definitions at scalar uses when operands and lifetimes remain valid.
+Recompute shared proven Lua 5.3 integer definitions at scalar uses when operands and lifetimes remain valid. Lua 5.1 reports this strategy unavailable.
 
 range: 0.0 to 1.0
 

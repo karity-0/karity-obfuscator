@@ -5,7 +5,7 @@ own the backend, target, signature, toolchain or explicit selection settings.
 """
 from copy import deepcopy
 
-REVISION = 1
+REVISION = 2
 USER_PRESETS = ('fast', 'balanced', 'strong', 'maximum')
 PREFIX = 'builtin:'
 CONTEXT_KEYS = ('target', 'signature', 'lua_executable', 'luac_executable',
@@ -65,6 +65,19 @@ def user_preset(name):
             },
         },
         'vm_options': {
+            'physical_block_permutation_rate': (0.15, 0.35, 0.6, 0.8)[index],
+            'physical_block_permutation_max_jumps': (8, 16, 32, 64)[index],
+            'ir_mba_rate': (0.06, 0.2, 0.45, 0.65)[index],
+            'ir_test_set_rate': (0.15, 0.25, 0.5, 0.75)[index],
+            'ir_tail_duplication_rate': (0.04, 0.08, 0.18, 0.3)[index],
+            'ir_rematerialization_rate': (0.03, 0.1, 0.25, 0.4)[index],
+            'ir_morph_max_growth': (1.12, 1.2, 1.3, 1.4)[index],
+            'ir_morph_max_added_instructions': (16, 32, 64, 96)[index],
+            'ir_morph_max_added_blocks': (2, 4, 8, 12)[index],
+            'ir_morph_max_transforms': (2, 4, 8, 12)[index],
+            'ir_morph_max_depth': (1, 2, 2, 3)[index],
+            'ir_morph_pass_max_added_instructions': (256, 512, 2048, 4096)[index],
+            'ir_morph_max_new_operations': (1, 2, 3, 4)[index],
             'dispatcher_type': 'mixed', 'blob_form': 'random',
             'vm_count': (1, 1, 2, 3)[index], 'runtime_trace': False,
             'dispatcher_target_hiding': True,

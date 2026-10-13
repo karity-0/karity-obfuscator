@@ -170,6 +170,13 @@ def build(source, options, seed, legacy=None):
     capture['function_counts'] = function_counts(capture['runtime'])
     capture['emission'] = p.last_lowered_ir.backend_data.get('runtime_emission', {})
     capture['effective_vm_count'] = p.last_lowered_ir.backend_data['layout'].vm_count
+    from obfuscator.vm.backends.runtime_layout import iter_functions
+    capture['physical_instructions'] = sum(len(f.code) for f in iter_functions(p.last_lowered_ir.backend_data['layout'].functions))
+    counts = lambda ir: {'instructions': sum(len(b.instructions) for f in ir.functions() for b in f.blocks),
+                         'blocks': sum(len(f.blocks) for f in ir.functions())}
+    capture['source_ir'] = counts(p.last_optimized_ir)
+    capture['morphed_ir'] = counts(p.last_morphed_ir)
+    capture['blob_form'] = p.last_protection_plan.functions[p.last_semantic_ir.root.id]['blob_form']
     capture['plan_sha256'] = hashlib.sha256(p.last_protection_plan.dump().encode()).hexdigest()
     capture['profile'] = p.last_profile
     return capture

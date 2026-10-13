@@ -8,7 +8,7 @@ def transform(ctx,rate):
     for block in ctx.function.blocks[1:]:
         predecessors=ctx.analysis.predecessors[block.id]
         if len(predecessors)<2:continue
-        if any(ctx.analysis.reaches(block.id,p) for p in predecessors):
+        if any(ctx.analysis.components[block.id]==ctx.analysis.components[p] for p in predecessors):
             ctx.skip('cyclic_join');continue
         if any(i.id not in ctx.analysis.effects or ctx.analysis.effects[i.id].boundaries
                or ctx.analysis.liveness.captured_before[i.id] for i in block.instructions):

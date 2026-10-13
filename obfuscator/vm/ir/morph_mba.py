@@ -18,6 +18,7 @@ PATTERNS={
   (('BIT_XOR','a','x','y'),('BIT_AND','b','x','y'),('ADD','b','b','b'),('ADD','d','a','b')),
   (('BIT_OR','a','x','y'),('BIT_AND','b','x','y'),('ADD','d','a','b'))),
  'SUB': (
+  (('BIT_AND','a','x','y'),('SUB','b','y','a'),('SUB','a','x','a'),('SUB','d','a','b')),
   (('BIT_NOT','a','x'),('BIT_NOT','b','y'),('SUB','d','b','a')),
   (('BIT_XOR','a','x','y'),('BIT_NOT','b','x'),('BIT_AND','b','b','y'),('ADD','b','b','b'),('SUB','d','a','b'))),
 }
@@ -33,11 +34,18 @@ def transform(ctx,rate):
             if any(ctx.analysis.operand(original,r).kind!='integer' for r in ('left','right')):
                 ctx.skip('unproven_integer');continue
             if not ctx.can_scratch(2):continue
-            patterns=ctx.rng.sample(list(PATTERNS[original.operation]),len(PATTERNS[original.operation]))
+            operands={v.role:v for v in original.operands}
+            kinds={'x':operands['left'].kind,'y':operands['right'].kind}
+            # Unary IR operands are registers, unlike binary RK operands.
+            # Preserve constants as RK operands rather than emitting an invalid
+            # BIT_NOT constant or allocating a third scratch register.
+            valid=[p for p in PATTERNS[original.operation] if not any(
+                len(step)==3 and kinds.get(step[2],'register')!='register' for step in p)]
+            if not valid:ctx.skip('unary_constant_operand');continue
+            patterns=ctx.rng.sample(valid,len(valid))
             pattern=next((p for p in patterns if ctx.admit(len(p)-1,0,[v[0] for v in p])),None)
             if pattern is None:continue
             a,b=ctx.scratch(2)
-            operands={v.role:v for v in original.operands}
             symbols={'x':operands['left'],'y':operands['right'],'d':operands['destination'],
                      'a':IROperand('value','register',a),'b':IROperand('value','register',b)}
             sequence=[]

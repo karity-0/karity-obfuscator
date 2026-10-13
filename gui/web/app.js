@@ -296,6 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
       $(`target-${key}`).addEventListener('change', event => {
         state.config.target[key] = event.target.value;
         markPresetCustom();
+        renderAll();
       });
     });
     $('target-host_images').addEventListener('input', event => {
@@ -708,11 +709,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (option.resolution[backend]?.outcome === 'fallback') {
       row.querySelector('.option-description').textContent = `Fallback: ${option.resolution[backend].target}`;
     }
-    if (option.resolution[backend]?.outcome === 'disable') {
+    const unsupportedTarget = option.supported_lua_versions && !option.supported_lua_versions.includes(state.config.target?.lua_version ?? '5.3');
+    if (option.resolution[backend]?.outcome === 'disable' || unsupportedTarget) {
       row.classList.add('unsupported-option');
       row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
-      row.querySelector('.option-description').textContent = `Not used by ${backend}; saved value retained`;
-      row.dataset.hint = `This option does not apply to ${backend}. Switch backends to edit it.`;
+      row.querySelector('.option-description').textContent = unsupportedTarget ? 'Unavailable for Lua 5.1; saved value retained' : `Not used by ${backend}; saved value retained`;
+      row.dataset.hint = unsupportedTarget ? 'This strategy requires proven Lua 5.3 integers.' : `This option does not apply to ${backend}. Switch backends to edit it.`;
     }
     return row;
   }
