@@ -13,7 +13,7 @@ import random
 
 from .number_expressions import NumberExpressionEngine
 from .meme_expressions import MemeExpressionEngine
-from .mosaic_metrics import DiversityMetrics, expression_summary
+from .mosaic_metrics import DiversityMetrics, expression_summary, expression_operations
 
 ACTIVE: ContextVar[LiteralMosaic | None] = ContextVar('literal_mosaic', default=None)
 
@@ -153,15 +153,21 @@ class LiteralMosaic:
                 expression = self._literal(value,exotic=policy.style != 'compact' or random.getrandbits(1))
         if expression is None:
             expression = fallback() if fallback is not None else '(' + self._plain(value) + ')'
-        over_budget = len(expression) > chars or expression_summary(expression)[2] > operations
+        summary = expression_summary(expression) if self.metrics.enabled else None
+        operation_count = summary[2] if summary is not None else expression_operations(expression)
+        over_budget = len(expression) > chars or operation_count > operations
         if over_budget:
             expression = self._literal(value,exotic=policy.lua_version == '5.3') if number_on else '(' + self._plain(value) + ')'
-            if len(expression) > chars or expression_summary(expression)[2] > operations:
+            summary = expression_summary(expression) if self.metrics.enabled else None
+            operation_count = summary[2] if summary is not None else expression_operations(expression)
+            if len(expression) > chars or operation_count > operations:
                 expression = '(' + self._plain(value) + ')'
+                summary = expression_summary(expression) if self.metrics.enabled else None
+                operation_count = summary[2] if summary is not None else expression_operations(expression)
             strategy = 'number_literal' if number_on else 'mandatory_literal'
-        if len(expression) > chars or expression_summary(expression)[2] > operations:
+        if len(expression) > chars or operation_count > operations:
             raise RuntimeError(f'Literal Mosaic budget cannot represent {context}: {chars} chars, {operations} operations')
-        self.metrics.record(expression,strategy,context,policy.phase,fallback=over_budget)
+        self.metrics.record(expression,strategy,context,policy.phase,fallback=over_budget,summary=summary)
         from .numeric_provenance import CodeText
         return CodeText(expression,[(0,len(expression))],
                         origins=[(0,len(expression),context+'/mosaic:'+strategy)])

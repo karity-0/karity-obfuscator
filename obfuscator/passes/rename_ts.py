@@ -16,18 +16,38 @@ from .ts_utils import _LANG, parse as _ts_parse
 
 _IDENTIFIERS = ts.Query(_LANG, '(identifier) @identifier')
 _RENAME_NODES = ts.Query(_LANG, '(identifier) @identifier (number) @literal (string) @literal [(true) (false)] @literal')
+_OUTPUT_NODES = ts.Query(_LANG, '(identifier) @identifier (number) @literal (string) @literal [(true) (false)] @literal (comment) @comment (label_statement (identifier) @label) (goto_statement (identifier) @label)')
+
+
+def collect_output_nodes(ctx):
+    """One C traversal for a generated output's literals, names and stripping."""
+    captures = ts.QueryCursor(_OUTPUT_NODES).captures(ctx.root)
+    if not isinstance(captures, dict):
+        grouped = {}
+        for node, name in captures:
+            grouped.setdefault(name, []).append(node)
+        captures = grouped
+    captures.setdefault('literal', []).sort(key=lambda n: n.start_byte)
+    return captures
 
 
 @dataclass
 class Binding:
     original: str
     nodes: list = field(default_factory=list)
+    function_scope: Scope | None = None
 
 
 class Scope:
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, *, function=False, name_scopes=False):
         self.parent = parent
         self.names = {}
+        self.name_scopes = name_scopes if parent is None else parent.name_scopes
+        if self.name_scopes:
+            self.function = self if parent is None or function else parent.function
+            if self.function is self:
+                self.depth = 0 if parent is None else parent.function.depth + 1
+                self.captures = set()
 
     def resolve(self, name):
         scope = self
@@ -65,7 +85,7 @@ def _is_reference(node):
 
 
 def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, sparse=True,
-                     identifier_filter=None):
+                     identifier_filter=None, captures=None, collect_name_scopes=False):
     """Return symbolic bindings, free names, literals and traversal statistics.
 
     A closed-runtime dependency caller may restrict identifier spellings; all
@@ -78,7 +98,7 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
     reserved = {'_ENV', 'self'}
     scopes = 1
     identifiers = 0
-    stack = [('walk', ctx.root, Scope())]
+    stack = [('walk', ctx.root, Scope(name_scopes=collect_name_scopes))]
     text = ctx.plain_text
     # Final naming/field analysis needs identifiers, not the hundreds of
     # thousands of arithmetic nodes introduced by literal emitters. The C
@@ -88,7 +108,8 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
     # walk remains available for coverage auditing and conservative callers.
     identifier_offsets = None
     if sparse:
-        captures = ts.QueryCursor(_RENAME_NODES if collect_literals else _IDENTIFIERS).captures(ctx.root)
+        if captures is None:
+            captures = ts.QueryCursor(_RENAME_NODES if collect_literals else _IDENTIFIERS).captures(ctx.root)
         if isinstance(captures, dict):
             nodes = captures.get('identifier', [])
             literals = captures.get('literal', []) if collect_literals else []
@@ -103,7 +124,7 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
 
     def declare(node, scope):
         name = text(node)
-        binding = Binding(name, [node])
+        binding = Binding(name, [node], scope.function if collect_name_scopes else None)
         bindings.append(binding)
         scope.names[name] = binding
 
@@ -129,6 +150,13 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
                         free_environments[node.id] = None if scope.is_implicit(name) else scope.resolve('_ENV')
                 else:
                     binding.nodes.append(node)
+                    if collect_name_scopes:
+                        function = scope.function
+                        while function is not binding.function_scope:
+                            # Reserve captures through intermediate functions:
+                            # an unused local there must not shadow a grandchild's upvalue.
+                            function.captures.add(id(binding))
+                            function = function.parent.function
             continue
         if typ in {'string', 'number', 'true', 'false'}:
             if collect_literals and not sparse:
@@ -148,7 +176,7 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
                 actions.extend(('declare', c, scope) for c in names.named_children if c.type == 'identifier')
         elif typ in {'function_declaration', 'function_definition'}:
             name = node.child_by_field_name('name')
-            inner = Scope(scope)
+            inner = Scope(scope, function=True)
             scopes += 1
             if name is not None:
                 if node.children[0].type == 'local':
@@ -228,8 +256,9 @@ def _apply_replacements_once(script: str, replacements: list[tuple[int, int, str
     return join_code(parts)
 
 
-def rename_script_ts(script: str, *, seed=None, readable=None) -> str:
-    return rename_with_ctx(_ts_parse(script), seed=seed, readable=readable)
+def rename_script_ts(script: str, *, seed=None, readable=None, reuse_function_names=False) -> str:
+    return rename_with_ctx(_ts_parse(script), seed=seed, readable=readable,
+                          reuse_function_names=reuse_function_names)
 
 
 def qualify_runtime_globals(script: str) -> str:
@@ -262,20 +291,34 @@ def rename_plan_with_ctx(ctx, **options):
 
 
 def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=(), keep=None,
-                                 resolution=None, collect_literals=True):
+                                 resolution=None, collect_literals=True, reuse_function_names=False):
     options = RENAME_OPTIONS.get()
     seed = options.get('seed') if seed is None else seed
     readable = options.get('readable', False) if readable is None else readable
     start = time.perf_counter()
     bindings, free, literals, scopes, identifiers = (resolution if resolution is not None
-        else resolve_bindings(ctx, collect_literals=collect_literals))
+        else resolve_bindings(ctx, collect_literals=collect_literals, collect_name_scopes=reuse_function_names))
     collected = time.perf_counter()
     kept = {id(b) for b in bindings if keep is not None and keep(b)}
-    allocator = NameAllocator(free | set(reserved) | {b.original for b in bindings if id(b) in kept}, seed=seed, readable=readable)
-    # Unique names across the chunk also prevent accidental upvalue capture.
+    unavailable = free | set(reserved) | {b.original for b in bindings if id(b) in kept}
     ordered = sorted(bindings, key=lambda b: -len(b.nodes))
-    names = [(b, b.original if b.original == '_ENV' or id(b) in kept else allocator.allocate(b.original))
-             for b in ordered]
+    reuse = reuse_function_names and not readable and all(b.function_scope is not None for b in bindings)
+    groups = {}
+    if reuse:
+        for binding in ordered:
+            groups.setdefault(binding.function_scope, []).append(binding)
+        assigned, names = {}, []
+        for function, group in sorted(groups.items(), key=lambda item: item[0].depth):
+            allocator = NameAllocator(unavailable | {assigned[capture] for capture in function.captures}, seed=seed)
+            for binding in group:
+                name = binding.original if binding.original == '_ENV' or id(binding) in kept else allocator.allocate(binding.original)
+                assigned[id(binding)] = name
+                names.append((binding, name))
+    else:
+        # General source naming and readable hints retain their existing policy.
+        allocator = NameAllocator(unavailable, seed=seed, readable=readable)
+        names = [(b, b.original if b.original == '_ENV' or id(b) in kept else allocator.allocate(b.original))
+                 for b in ordered]
     allocated = time.perf_counter()
     replacements = [Replacement(ctx.cs(n), ctx.ce(n), name)
                     for binding, name in names for n in binding.nodes]
@@ -287,6 +330,8 @@ def rename_plan_with_ctx_profiled(ctx, *, seed=None, readable=None, reserved=(),
         'total_elapsed': time.perf_counter() - start,
         'scope_count': scopes, 'identifier_count': identifiers,
         'literal_count': len(literals),
+        'function_name_scopes': len(groups) if reuse else 1,
+        'reused_function_names': bool(reuse),
     }
 
 

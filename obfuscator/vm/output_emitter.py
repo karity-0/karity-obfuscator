@@ -275,7 +275,11 @@ def _parse_fragments(
         node = payload
         if track_regions:
             parts.append(LiteralRegion(start, end + 1, node.type))
-        token = source[start:end + 1]
+        # Numeric provenance is read from the source spans below. Copying it
+        # onto every temporary spelling only rebuilds metadata that the typed
+        # NumberLiteral already owns, tens of thousands of times per runtime.
+        token = (str.__getitem__(source, slice(start, end + 1))
+                 if node.type == 'number' else source[start:end + 1])
         if node.type == "number":
             origin, hot = (numeric_path(node, start, end+1) if budgeted else
                            (number_origin(source,start,end+1,'vm_constant'), True))
