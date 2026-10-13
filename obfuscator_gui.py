@@ -12,6 +12,8 @@ import json
 import re
 import time
 import traceback
+import hashlib
+import threading
 from pathlib import Path
 from obfuscator.presets import PREFIX, REVISION, USER_PRESETS, resolve_user_preset, selection_profiles
 
@@ -19,6 +21,8 @@ import webview
 
 from obfuscator import Pipeline, __version__
 from obfuscator.profiling import Profiler
+from obfuscator.profiling import phase_scope
+from obfuscator.gui_build import GuiBuild
 from obfuscator.gui_execution import LuaExecution
 from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
@@ -51,13 +55,19 @@ _DEFAULT_PREFERENCES = {
     "theme": "system",
     "density": "comfortable",
     "editor_font_size": 12,
+    "word_wrap": False,
     "motion": "system",
     "remember_sections": True,
-    "quick_vm_change": False,
     "sections": {},
 }
 
 _OPTION_GROUPS = {
+    "physical_block_permutation_rate": "Physical layout", "physical_block_permutation_max_jumps": "Physical layout",
+    "ir_mba_rate": "IR morphing", "ir_test_set_rate": "IR morphing",
+    "ir_tail_duplication_rate": "IR morphing", "ir_rematerialization_rate": "IR morphing",
+    **dict.fromkeys(('ir_morph_max_growth','ir_morph_max_added_instructions','ir_morph_max_added_blocks',
+                    'ir_morph_max_transforms','ir_morph_max_depth','ir_morph_pass_max_added_instructions',
+                    'ir_morph_max_new_operations'),'IR budget'),
     "backend": "Execution",
     "dispatcher_type": "Execution", "blob_form": "Execution", "vm_count": "Execution",
     "fake_handlers": "Handlers", "mutate_handlers": "Handlers",
@@ -74,6 +84,16 @@ _OPTION_GROUPS = {
 }
 
 _OPTION_LABELS = {
+    "physical_block_permutation_rate": "Block permutation rate",
+    "physical_block_permutation_max_jumps": "Permutation bridge limit",
+    "ir_mba_rate": "Integer substitution",
+    "ir_test_set_rate": "Conditional assignment split",
+    "ir_tail_duplication_rate": "Join block duplication",
+    "ir_rematerialization_rate": "Shared calculation rebuild",
+    "ir_morph_max_growth": "IR growth ratio", "ir_morph_max_added_instructions": "Added instruction limit",
+    "ir_morph_max_added_blocks": "Added block limit", "ir_morph_max_transforms": "Strategy application limit",
+    "ir_morph_max_depth": "Composition depth", "ir_morph_pass_max_added_instructions": "Program growth limit",
+    "ir_morph_max_new_operations": "New operation limit",
     "backend": "VM runtime",
     "dispatcher_type": "Dispatcher", "blob_form": "Blob representation", "vm_count": "VM count",
     "fake_handlers": "Fake handlers", "mutate_handlers": "Handler mutation",
@@ -176,7 +196,9 @@ def _protection_levels(profiles: dict[str, dict]) -> dict[str, dict]:
 
 
 def _range_bounds(info: dict, default) -> tuple[float | int, float | int, float | int]:
-    values = re.findall(r"-?\d+(?:\.\d+)?", str(info.get("range", "")))
+    # VM sizes/counts/rates are nonnegative. A range separator ("1-3")
+    # is not a negative sign on its upper bound.
+    values = re.findall(r"\d+(?:\.\d+)?", str(info.get("range", "")))
     is_int = isinstance(default, int) and not isinstance(default, bool)
     if len(values) >= 2:
         low = int(float(values[0])) if is_int else float(values[0])
@@ -203,6 +225,7 @@ def _vm_option_meta() -> list[dict]:
             "resolution": {backend: vm_option_resolution(backend, name) for backend in VM_BACKENDS},
             "supported_backends": [backend for backend in VM_BACKENDS
                                    if name not in unsupported_vm_options(backend)],
+            "supported_lua_versions": ['5.3'] if name in ('ir_mba_rate','ir_rematerialization_rate') else ['5.1','5.3'],
         }
         if name == "requirements":
             from obfuscator.vm.protection import protection_features
@@ -234,6 +257,7 @@ def _vm_option_meta() -> list[dict]:
 def _pass_meta() -> list[dict]:
     return [{
         "name": name, "label": info["label"], "group": info["group"],
+        'class_name': info.class_name,
         "description": PASS_DESCRIPTIONS.get(name, ""),
         "contexts": get_pass_contexts(name),
     } for name, info in PASS_REGISTRY.items()]
@@ -274,8 +298,8 @@ def _normalize_preferences(value: object) -> dict:
         preferences["editor_font_size"] = max(10, min(18, int(size)))
     if isinstance(source.get("remember_sections"), bool):
         preferences["remember_sections"] = source["remember_sections"]
-    if isinstance(source.get("quick_vm_change"), bool):
-        preferences["quick_vm_change"] = source["quick_vm_change"]
+    if isinstance(source.get("word_wrap"), bool):
+        preferences["word_wrap"] = source["word_wrap"]
     sections = source.get("sections")
     if isinstance(sections, dict):
         preferences["sections"] = {
@@ -297,6 +321,8 @@ class Api:
 
     def __init__(self):
         self._execution = LuaExecution()
+        self._build_lock = threading.Lock()
+        self._builds = GuiBuild(self.run_obfuscation)
         self._restore_geometry: tuple[int, int, int, int] | None = None
         self._is_maximized = False
 
@@ -336,7 +362,72 @@ class Api:
             "preferences": _load_preferences(),
             "preference_defaults": _normalize_preferences({}),
             "themes": copy.deepcopy(THEME_CATALOG),
+            "marker_fields": self.marker_fields(),
         }
+
+    def marker_fields(self):
+        # Presentation metadata only. The parser/registry remain authoritative.
+        function = [{'name': key, 'label': label, 'kind': 'boolean', 'common': common}
+                    for key, label, common in (
+                        ('cff', 'CFF', True), ('junk', 'Junk', True),
+                        ('inline', 'Inline helpers', True), ('wrapper', 'Wrapper', True),
+                        ('loop_split', 'Loop splitting', False), ('loop_unroll', 'Loop unrolling', False),
+                        ('nested', 'Nested functions', False))]
+        function += [
+            {'name': 'boundary_mode', 'label': 'Boundary mode', 'kind': 'enum',
+             'choices': ['mixed', 'split', 'cff'], 'common': False},
+            {'name': 'nested_max_depth', 'label': 'Nested depth', 'kind': 'integer',
+             'min': 0, 'max': 16, 'step': 1, 'common': False},
+            {'name': 'loop_unroll_rate', 'label': 'Loop unroll rate', 'kind': 'number',
+             'min': 0, 'max': 1, 'step': 0.05, 'common': False},
+        ]
+        common = {'vm_count', 'junk_instructions', 'junk_rate', 'integrity_constants'}
+        vm = []
+        for field in _vm_option_meta():
+            if field['kind'] == 'requirements':
+                continue  # This nested object remains available as text options.
+            field = {**field, 'common': field['name'] in common}
+            if field['kind'] == 'select':
+                field['kind'] = 'enum'
+                field['choices'] = [value['value'] for value in field['values']]
+            if field['name'] == 'vm_count':
+                field.pop('max', None)  # The actual validator has no upper bound.
+            vm.append(field)
+        return {'function_obf': function, 'vm': vm}
+
+    def validate_marker_options(self, payload):
+        from obfuscator.selection import _options
+        from obfuscator.selection_runtime import SelectionRuntime
+        kind = payload.get('kind')
+        if kind not in ('VM', 'VM_START', 'FUNCTION_OBF', 'FUNCTION_OBF_START'):
+            return {'ok': not bool(payload.get('options', '').strip()), 'options': {}}
+        feature = 'function_obf' if kind.startswith('FUNCTION') else 'vm'
+        text = payload.get('options', '').strip()
+        if '\n' in text or '\r' in text:
+            return {'ok': False, 'error': 'Keep options on a single line.'}
+        if text and not (text.startswith('(') and text.endswith(')')):
+            text = '(' + text + ')'
+        try:
+            values = _options('', 0, text, feature)
+            if any(value is None for value in values.values()):
+                raise ValueError('Directive options cannot be null')
+            resolver = SelectionRuntime.__new__(SelectionRuntime)
+            resolver.config = _complete_config(payload.get('config', {}))
+            resolver._function_defaults = {}
+            effective = (resolver.function_options(values) if feature == 'function_obf'
+                         else resolver.vm_options(values))
+            return {'ok': True, 'options': values, 'effective': effective}
+        except (ValueError, TypeError) as exc:
+            return {'ok': False, 'error': str(exc)}
+
+    def start_build(self, payload):
+        return self._builds.start(payload)
+
+    def poll_build(self, identity, cursor=0):
+        return self._builds.poll(identity, cursor)
+
+    def get_build_result(self, identity):
+        return self._builds.result(identity)
 
     def save_preferences(self, preferences: dict):
         saved = _normalize_preferences(preferences)
@@ -380,25 +471,45 @@ class Api:
         return result if isinstance(result, str) else result[0]
 
     def run_obfuscation(self, payload: dict):
+        # Both the legacy synchronous API and the streaming API use this path.
+        with self._build_lock:
+            return self._run_obfuscation(copy.deepcopy(payload))
+
+    def _run_obfuscation(self, payload: dict):
         script = payload.get("script", "")
         config = _complete_config(payload.get("config", {}))
         if not script.strip():
             return {"ok": False, "error": "입력 스크립트가 비어있습니다."}
         try:
-            if not config["passes"]:
-                from obfuscator.selection import SelectionPlan
-                if not SelectionPlan(script, config.get("selection_modes")).active:
-                    return {"ok": False, "error": "패스를 선택하거나 보호 마커를 추가하세요."}
-            validate_config(config)
-            if payload.get("release_check"):
-                validate_release_config(config)
-            if payload.get('deployment_check'):
-                validate_deployment_config(config)
-            pipeline = build_pipeline_from_config(config, Pipeline)
+            with phase_scope('configuration'):
+                if not config["passes"]:
+                    from obfuscator.selection import SelectionPlan
+                    if not SelectionPlan(script, config.get("selection_modes")).active:
+                        raise ValueError("패스를 선택하거나 보호 마커를 추가하세요.")
+                validate_config(config)
+                if payload.get("release_check"):
+                    validate_release_config(config)
+                if payload.get('deployment_check'):
+                    validate_deployment_config(config)
+                pipeline = build_pipeline_from_config(config, Pipeline)
             profiler = Profiler()
             start = time.perf_counter()
             output = pipeline.run(script, verbose=0, profiler=profiler)
-            return {"ok": True, "output": output,
+            source_bytes, output_bytes = len(script.encode('utf-8')), len(output.encode('utf-8'))
+            metadata = {'source_bytes': source_bytes, 'output_bytes': output_bytes,
+                        'source_characters': len(script), 'output_characters': len(output),
+                        'size_ratio': output_bytes / source_bytes if source_bytes else None,
+                        'preset': payload.get('preset', 'custom'),
+                        'preset_custom': bool(payload.get('preset_custom', False)),
+                        'backend': VM_BACKEND_ALIASES.get(config['vm_options']['backend'],
+                                                        config['vm_options']['backend']),
+                        'target': copy.deepcopy(config.get('target', {})),
+                        'source_hash': hashlib.sha256(script.encode('utf-8')).hexdigest(),
+                        'config_hash': hashlib.sha256(json.dumps(config, sort_keys=True,
+                            ensure_ascii=False).encode('utf-8')).hexdigest(),
+                        'checks': {'release': bool(payload.get('release_check')),
+                                   'deployment': bool(payload.get('deployment_check'))}}
+            return {"ok": True, "output": output, 'metadata': metadata,
                     "elapsed": round(time.perf_counter() - start, 3),
                     "profile": profiler.as_dict(), "warnings": config_warnings(config)}
         except Exception:
@@ -453,6 +564,7 @@ class Api:
             self._is_maximized = True
 
     def window_close(self):
+        self._builds.close()
         self._execution.close()
         webview.windows[0].destroy()
 
@@ -464,9 +576,11 @@ def main():
         js_api=api, width=1440, height=900, min_size=(1040, 680),
         background_color="#070a12", frameless=True, easy_drag=False)
     window.events.closed += api._execution.close
+    window.events.closed += api._builds.close
     try:
         webview.start(debug=False)
     finally:
+        api._builds.close()
         api._execution.close()
 
 

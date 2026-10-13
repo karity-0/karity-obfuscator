@@ -34,6 +34,7 @@ class HandlerInstruction:
     b: int = 0
     c: int = 0
     source_id: str = ""
+    linker_owned: bool = False
 
     @property
     def operation(self) -> str:
@@ -149,7 +150,7 @@ def lower_handler_ir(ir: SemanticIR) -> HandlerFunction:
             next_block = function.blocks[block_index + 1].id if block_index + 1 < len(function.blocks) else None
             def jump(target, source):
                 jumps.append((len(code), target))
-                code.append(HandlerInstruction(OPERATION_IDS["JUMP"], 0, source_id=source).with_bx(131071))
+                code.append(HandlerInstruction(OPERATION_IDS["JUMP"], 0, source_id=source, linker_owned=True).with_bx(131071))
             for instruction in block.instructions:
                 operation = instruction.operation
                 lowered = _lower_instruction(instruction)
@@ -199,6 +200,10 @@ def serialization_targets(program: HandlerFunction, plan) -> dict[int, dict]:
         }
         for index, instruction in enumerate(function.code):
             state = plan.instructions.get(instruction.source_id, {})
+            if instruction.linker_owned:
+                # A connector shares diagnostic provenance, not the semantic
+                # instruction's split/fuse, avalanche or occurrence identity.
+                state = {}
             target["alias_variants"][index] = state.get("alias_variant", 0)
             target["block_variants"][index] = state.get("block_variant_selected", False)
             target["avalanche_slots"][index] = tuple(range(function.max_stack_size, min(255, function.max_stack_size + state.get("avalanche_arity", 0))))

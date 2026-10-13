@@ -10,6 +10,7 @@ __lazy_modules__ = {
 }
 
 from functools import partial
+from ..profiling import run_phase
 from typing import Callable, cast
 
 from pathlib import Path
@@ -93,6 +94,7 @@ class VMBuildPipeline(PostPass):
         self.last_profile: list[dict] = []
         self.last_source_ir: SemanticIR | None = None
         self.last_optimized_ir: SemanticIR | None = None
+        self.last_morphed_ir: SemanticIR | None = None
         self.last_protected_ir: ProtectedIR | None = None
         self.last_semantic_ir: SemanticIR | None = None
         self.last_protection_plan: ProtectionPlan | None = None
@@ -102,6 +104,7 @@ class VMBuildPipeline(PostPass):
         self.last_profile = []
         self.last_source_ir = None
         self.last_optimized_ir = None
+        self.last_morphed_ir = None
         self.last_protected_ir = None
         self.last_semantic_ir = None
         self.last_protection_plan = None
@@ -134,10 +137,10 @@ class VMBuildPipeline(PostPass):
             constant_provider=constant_provider,
         )
         started = time.perf_counter()
-        bytecode = self.target.compile(script, self.toolchain)
+        bytecode = run_phase('vm:compile', self.target.compile, script, self.toolchain)
         self.last_profile.append({"phase": "compile_luac", "elapsed": round(time.perf_counter() - started, 6)})
         started = time.perf_counter()
-        source_ir = self.target.build_ir(bytecode)
+        source_ir = run_phase('vm:ir', self.target.build_ir, bytecode)
         self.last_source_ir = source_ir
         self.last_profile.append({
             "phase": "build_semantic_ir", "elapsed": round(time.perf_counter() - started, 6),
@@ -146,7 +149,7 @@ class VMBuildPipeline(PostPass):
         })
         planner = ProtectionPlanner(self.vm_options)
         optimize_started = time.perf_counter()
-        optimized_ir = optimize_semantic_ir(source_ir)
+        optimized_ir = run_phase('vm:optimize', optimize_semantic_ir, source_ir)
         self.last_optimized_ir = optimized_ir
         self.last_profile.append({
             "phase": "optimize_semantic_ir", "elapsed": round(time.perf_counter() - optimize_started, 6),
@@ -154,6 +157,20 @@ class VMBuildPipeline(PostPass):
                           for function in optimized_ir.functions() for block in function.blocks
                           for instruction in block.instructions),
         })
+        from .ir.morphing import morph_semantic_ir
+        reserve = 2 if self.vm_options.get('integrity_constants') else 0
+        if backend.capabilities.supports('graph_execution') and self.vm_options.get('graph_execution_rate',0):
+            reserve = max(reserve,int(self.vm_options.get('state_dependency_limit',3)))
+        morphed_ir, morph_profile = run_phase('vm:ir_morphing', morph_semantic_ir,
+            optimized_ir, self.vm_options, self.target_profile.lua_version, register_reserve=reserve,
+            physical_policy={'integrity_stream':bool(self.vm_options.get('integrity_constants')),
+                'junk':bool(self.vm_options.get('junk_instructions')),
+                'split_width':backend.name in ('classic','karity'),
+                'variant_count':int(self.vm_options.get('block_variant_count',3)) if backend.capabilities.supports('block_variants') and self.vm_options.get('block_variant_rate',0)>0 else 1,
+                'bridge_budget':int(self.vm_options.get('physical_block_permutation_max_jumps',64)) if backend.capabilities.supports('physical_block_permutation') and self.vm_options.get('physical_block_permutation_rate',0)>0 else 0})
+        self.last_profile.extend(morph_profile)
+        self.last_morphed_ir = morphed_ir
+        optimized_ir = morphed_ir
         resolution_started = time.perf_counter()
         initial_plan = planner.build(optimized_ir)
         resolution = resolve_capabilities(initial_plan, backend.capabilities)
@@ -164,11 +181,11 @@ class VMBuildPipeline(PostPass):
             "disabled": [request.feature for request in resolution.disabled],
         })
         started = time.perf_counter()
-        semantic_ir = apply_protection(optimized_ir, initial_plan, resolution)
+        semantic_ir = run_phase('vm:protection', apply_protection, optimized_ir, initial_plan, resolution)
         self.last_profile.append({"phase": "apply_semantic_protection", "elapsed": round(time.perf_counter() - started, 6)})
         started = time.perf_counter()
         plan = planner.build(semantic_ir)
-        lowered = backend.optimize(backend.lower(protect(semantic_ir, plan), context), context)
+        lowered = run_phase('vm:lowering', lambda: backend.optimize(backend.lower(protect(semantic_ir, plan), context), context))
         self.last_semantic_ir = semantic_ir
         self.last_protected_ir = lowered.protected_ir
         self.last_protection_plan = plan
@@ -178,12 +195,13 @@ class VMBuildPipeline(PostPass):
             "backend": backend.name, "kind": lowered.kind,
         })
         started = time.perf_counter()
-        output = backend.emit(lowered, context)
+        output = run_phase('vm:generation', backend.emit, lowered, context)
         self.last_profile.append({
             "phase": "backend_emit", "elapsed": round(time.perf_counter() - started, 6),
             "backend": backend.name,
         })
         dumps = {
+            "morphed_ir": lambda: morphed_ir.dump(),
             "ir": source_ir.dump, "optimized_ir": optimized_ir.dump, "protected_ir": semantic_ir.dump,
             "protection_plan": lambda: plan.dump() + lowered.resolution.dump(),
             "backend_ir": lowered.dump,
@@ -219,6 +237,7 @@ class VMPass(PostPass):
         self.last_profile: list[dict] = []
         self.last_source_ir: SemanticIR | None = None
         self.last_optimized_ir: SemanticIR | None = None
+        self.last_morphed_ir: SemanticIR | None = None
         self.last_protected_ir: ProtectedIR | None = None
         self.last_semantic_ir: SemanticIR | None = None
         self.last_protection_plan: ProtectionPlan | None = None
@@ -235,6 +254,7 @@ class VMPass(PostPass):
 
     def run(self, script: str) -> str:
         self.last_source_ir = None
+        self.last_morphed_ir = None
         self.last_optimized_ir = None
         self.last_protected_ir = None
         self.last_semantic_ir = None
@@ -245,6 +265,7 @@ class VMPass(PostPass):
         self.last_profile = getattr(self._backend, "last_profile", [])
         self.last_source_ir = self._backend.last_source_ir
         self.last_optimized_ir = self._backend.last_optimized_ir
+        self.last_morphed_ir = self._backend.last_morphed_ir
         self.last_protected_ir = self._backend.last_protected_ir
         self.last_semantic_ir = self._backend.last_semantic_ir
         self.last_protection_plan = self._backend.last_protection_plan

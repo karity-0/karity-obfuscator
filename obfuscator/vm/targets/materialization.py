@@ -85,7 +85,7 @@ class MaterializationPlan:
         source = source.replace(marker, emit_host_reader(self.references) +
                                 '\nlocal _host_slots=' + slots + '\nlocal _host_ordinal=0\n' + marker +
                                 '\n_host_ordinal=_host_ordinal+1;local _host_function=_host_ordinal')
-        marker = 'n=r.u32(); p.upvalues={}'
+        marker = 'n=r.uint(); p.upvalues={}'
         if source.count(marker) != 1:
             raise ValueError('host materialization constant boundary is missing')
         return source.replace(marker,

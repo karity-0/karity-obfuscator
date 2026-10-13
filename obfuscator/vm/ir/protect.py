@@ -27,4 +27,5 @@ def apply_protection(ir, plan, resolution):
                     **instruction.metadata, "junk_before_applied": tuple(registers)}))
             blocks.append(replace(block, instructions=tuple(instructions)))
         return replace(function, blocks=tuple(blocks), children=tuple(transform(child) for child in function.children))
-    return normalize_semantic_ir(replace(ir, root=transform(ir.root)))
+    return normalize_semantic_ir(replace(ir, root=transform(ir.root)),
+        preserve_structure=any(function.debug_metadata.get('morph_strategies') for function in ir.functions()))

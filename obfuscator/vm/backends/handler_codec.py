@@ -8,15 +8,39 @@ from .handler_ir import HandlerFunction, HandlerInstruction
 # 기본값과 일치해야 한다. 파이프라인은 per-run 랜덤 레이아웃을 주입한다.
 # 제약: op은 비트 0(7비트) 고정, B=C+9(연속, Bx=B|C), 모든 필드 ≤ 비트47(_ksm 48비트 마스크).
 DEFAULT_INSTR_LAYOUT = {"A": 32, "B": 23, "C": 14, "V": 40}
+BLOB_MAGIC = b"KVM\x02"
+INSTRUCTION_BYTES = 6
+
+
+def _uint_size(value: int) -> int:
+    return max(1, (value.bit_length() + 6) // 7)
 
 
 # ---------------------------------------------------------------------------
 # Writer
 # ---------------------------------------------------------------------------
 class Writer:
-    def __init__(self, layout: dict | None = None):
+    def __init__(self, layout: dict | None = None, stats: dict | None = None):
         self._buf = bytearray()
         self.layout = layout or DEFAULT_INSTR_LAYOUT
+        self.stats = stats
+        used = 0x7F
+        for name, width in (("A", 8), ("C", 9), ("B", 9), ("V", 8)):
+            shift = self.layout[name]
+            if type(shift) is not int or shift < 7 or shift + width > 48:
+                raise ValueError("instruction fields must be disjoint within 48 bits")
+            mask = ((1 << width) - 1) << shift
+            if used & mask:
+                raise ValueError("instruction fields must be disjoint within 48 bits")
+            used |= mask
+        if self.layout["B"] != self.layout["C"] + 9:
+            raise ValueError("instruction BC fields must be adjacent")
+        self._padding_mask = ~used
+
+    def mark(self, section: str, start: int) -> None:
+        if self.stats is not None:
+            sections = self.stats.setdefault("section_bytes", {})
+            sections[section] = sections.get(section, 0) + len(self._buf) - start
 
     def data(self) -> bytes:
         return bytes(self._buf)
@@ -30,6 +54,15 @@ class Writer:
     def u32(self, v: int):
         self._buf += struct.pack('<I', v & 0xFFFFFFFF)
 
+    def uint(self, value: int):
+        """Bounded uint32 ULEB128 for lengths, counts and physical indices."""
+        if type(value) is not int or not 0 <= value <= 0xFFFFFFFF:
+            raise ValueError(f"blob length/count outside uint32: {value}")
+        while value >= 128:
+            self._buf.append((value & 127) | 128)
+            value >>= 7
+        self._buf.append(value)
+
     def u64(self, v: int):
         self._buf += struct.pack('<Q', v & 0xFFFFFFFFFFFFFFFF)
 
@@ -41,15 +74,15 @@ class Writer:
 
     def string(self, s: str | bytes | None):
         if s is None:
-            self.u32(0)
+            self.uint(0)
             return
         encoded = s.encode('utf-8') if isinstance(s, str) else s
-        self.u32(len(encoded))
+        self.uint(len(encoded))
         self._buf += encoded
 
     def instr(self, raw: HandlerInstruction, enc_op: int, enc_variant: int):
         """
-        커스텀 64비트 instruction 레이아웃. op은 [6:0] 고정, A/B/C/variant 위치는
+        커스텀 48비트 instruction 레이아웃. op은 [6:0] 고정, A/B/C/variant 위치는
         self.layout(per-run 랜덤)에 따른다. B=C+9(연속) → Bx=B|C. 나머지 비트는 랜덤.
           op       (7비트, [6:0], acc-인코딩된 vop & 0x7F)
           C        (9비트, <<L["C"])
@@ -70,9 +103,11 @@ class Writer:
             | ((enc_variant & 0xFF) << L["V"])
         )
         # 사용된 필드 비트를 제외한 나머지 전 비트에 랜덤 쓰레기(pad/reserved 대체)
-        used = 0x7F | (0x1FF << L["C"]) | (0x1FF << L["B"]) | (0xFF << L["A"]) | (0xFF << L["V"])
-        garbage = random.getrandbits(64) & ~used
-        self.u64((val | garbage) & 0xFFFFFFFFFFFFFFFF)
+        garbage = random.getrandbits(64) & self._padding_mask
+        # Keep the exact legacy low 48 bits and RNG consumption. Only unused
+        # upper padding is omitted; physical slots and accumulator steps stay.
+        val |= garbage
+        self._buf += struct.pack('<IH', val & 0xFFFFFFFF, (val >> 32) & 0xFFFF)
 
 
 # ---------------------------------------------------------------------------
@@ -84,9 +119,34 @@ class BinReader:
         self._pos  = 0
 
     def u8(self) -> int:
+        if self._pos >= len(self._data):
+            raise ValueError("truncated blob")
         v = self._data[self._pos]
         self._pos += 1
         return v
+
+    def header(self) -> None:
+        if self._data[:len(BLOB_MAGIC)] != BLOB_MAGIC:
+            raise ValueError("unsupported handler blob format")
+        self._pos = len(BLOB_MAGIC)
+
+    def skip(self, size: int) -> None:
+        if size < 0 or self._pos + size > len(self._data):
+            raise ValueError("truncated blob")
+        self._pos += size
+
+    def uint(self) -> int:
+        value = 0
+        for shift in range(0, 35, 7):
+            byte = self.u8()
+            if shift == 28 and byte > 15:
+                raise ValueError("blob uint32 overflow")
+            value |= (byte & 127) << shift
+            if byte < 128:
+                if shift and byte == 0:
+                    raise ValueError("noncanonical blob uint32")
+                return value
+        raise ValueError("unterminated blob uint32")
 
     def u16(self) -> int:
         v = struct.unpack_from('<H', self._data, self._pos)[0]
@@ -114,11 +174,11 @@ class BinReader:
         return v
 
     def string(self) -> str | None:
-        length = self.u32()
+        length = self.uint()
         if length == 0:
             return None
         raw = self._data[self._pos : self._pos + length]
-        self._pos += length
+        self.skip(length)
         return raw.decode('utf-8', errors='replace')
 
 
@@ -184,7 +244,7 @@ def _write_fake_pool(w: Writer, constant_tags: tuple[int, ...]) -> None:
     entries.append((c_nil, None))
 
     random.shuffle(entries)
-    w.u32(len(entries))
+    w.uint(len(entries))
     for tag, val in entries:
         w.u8(tag)
         if tag == c_nil:
@@ -318,11 +378,16 @@ def _write_integrity_program(w: Writer, program: list[tuple[int, int | None]]) -
 
 def serialize(function, *, layout: dict | None = None,
               constant_tags: dict[str, int] | None = None,
-              integrity_options: dict | None = None, vm_count: int = 1) -> bytes:
+              integrity_options: dict | None = None, vm_count: int = 1,
+              stats: dict | None = None) -> bytes:
     from .handler_layout import PhysicalFunction
     if not isinstance(function, PhysicalFunction):
         raise ValueError("handler serialization requires physical layout with concrete protection targets")
-    w = Writer(layout)
+    if stats is not None:
+        stats.clear()
+        stats.update(format_version=2, instruction_width=INSTRUCTION_BYTES)
+    w = Writer(layout, stats)
+    w._buf += BLOB_MAGIC
     constant_tag_values = tuple(
         (constant_tags or {}).get(name, default)
         for name, default in (
@@ -347,11 +412,79 @@ def serialize(function, *, layout: dict | None = None,
     }
     w.u32(integrity["layout_hash"])
     w.u16(integrity["vm_count"])
+    w.mark("header", 0)
+    start = len(w._buf)
     _write_fake_pool(w, constant_tag_values)
+    w.mark("fake_constants", start)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
     _write_proto(w, function, acc_state, seed, integrity, constant_tag_values)
+    if stats is not None:
+        stats["bytes"] = len(w._buf)
     return w.data()
+
+
+def _write_metadata(w: Writer, values, section: str) -> None:
+    """Choose absent/dense/sparse by encoded size, without losing records."""
+    start = len(w._buf)
+    entries = [(index, value) for index, value in enumerate(values, 1) if value]
+    mode = 0
+    if entries:
+        mode = 1
+        # Every sparse record needs at least one delta byte and one count byte.
+        # Skip the extra sizing pass when even that lower bound cannot win.
+        if 2 * len(entries) + _uint_size(len(entries)) < len(values):
+            previous = 0
+            sparse_index_bytes = _uint_size(len(entries))
+            for index, _ in entries:
+                sparse_index_bytes += _uint_size(index - previous)
+                previous = index
+            if sparse_index_bytes + len(entries) < len(values):
+                mode = 2
+    w.u8(mode)
+    if mode == 2:
+        w.uint(len(entries))
+    previous = 0
+    records = entries if mode == 2 else enumerate(values, 1) if mode == 1 else ()
+    for index, value in records:
+        if len(value) > 255:
+            raise ValueError("instruction metadata count exceeds uint8")
+        if mode == 2:
+            w.uint(index - previous)
+            previous = index
+        w.u8(len(value))
+        for item in value:
+            if section == "avalanche":
+                w.u8(item)
+            else:
+                family, site, selector_seed, state_key, policy = item
+                w.u8(family)
+                w.u8(policy)
+                w.u16(state_key)
+                w.u32(site)
+                w.u32(selector_seed)
+    w.mark(section, start)
+    if w.stats is not None:
+        modes = w.stats.setdefault("metadata_modes", {})
+        name = f"{section}:{('absent', 'dense', 'sparse')[mode]}"
+        modes[name] = modes.get(name, 0) + 1
+
+
+def _skip_metadata(r: BinReader, code_count: int, item_size: int) -> None:
+    mode = r.u8()
+    if mode not in (0, 1, 2):
+        raise ValueError("invalid instruction metadata mode")
+    count = code_count if mode == 1 else r.uint() if mode == 2 else 0
+    if count > code_count:
+        raise ValueError("invalid instruction metadata count")
+    index = 0
+    for _ in range(count):
+        if mode == 2:
+            delta = r.uint()
+            index += delta
+            if delta == 0 or index > code_count:
+                raise ValueError("invalid instruction metadata index")
+        r.skip(r.u8() * item_size)
 
 
 def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
@@ -361,40 +494,36 @@ def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
     total = len(function.code)
     iexpr_indices = function.integrity_indices
     stream_enabled = function.stream_integrity
+    start = len(w._buf)
     w.u8(proto.num_params)
     w.u8(proto.is_vararg)
     w.u8(proto.max_stack_size)
     w.u8(vm_id)
-    w.u32(total)
+    w.uint(total)
+    w.mark("proto_headers", start)
+    start = len(w._buf)
     for item in function.code:
         _emit_instr(w, item.instruction, item.vop, acc_state)
+    w.mark("instructions", start)
     emitted_av = [item.avalanche for item in function.code]
     emitted_sites = [item.graph_sites for item in function.code]
     block_routes = function.routes
 
-    for slots in emitted_av:
-        w.u8(len(slots))
-        for slot in slots:
-            w.u8(slot)
+    _write_metadata(w, emitted_av, "avalanche")
+    _write_metadata(w, emitted_sites, "graph_sites")
 
-    for descriptors in emitted_sites:
-        w.u8(len(descriptors))
-        for family, site, selector_seed, state_key, policy in descriptors:
-            w.u8(family)
-            w.u8(policy)
-            w.u16(state_key)
-            w.u32(site)
-            w.u32(selector_seed)
-
-    w.u16(len(block_routes))
+    start = len(w._buf)
+    w.uint(len(block_routes))
     for route in block_routes:
         w.u8(len(route))
         for target in route:
-            w.u32(target)
+            w.uint(target)
+    w.mark("routes", start)
 
     # 상수
     c_nil, c_bool, c_int, c_float, c_str, c_iexpr = constant_tags
-    w.u32(len(proto.constants))
+    start = len(w._buf)
+    w.uint(len(proto.constants))
     for i, c in enumerate(proto.constants):
         if c is None:
             w.u8(c_nil)
@@ -422,15 +551,20 @@ def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
             w.string(c)
         else:
             raise ValueError(f"unknown constant type: {type(c)}")
+    w.mark("constants", start)
 
     # upvalue
-    w.u32(len(proto.upvalues))
+    start = len(w._buf)
+    w.uint(len(proto.upvalues))
     for uv in proto.upvalues:
         w.u8(uv.instack)
         w.u8(uv.idx)
+    w.mark("upvalues", start)
 
     # 중첩 proto (acc_state 전역 공유, vm_id별 맵은 sub마다 재선택)
-    w.u32(len(proto.protos))
+    start = len(w._buf)
+    w.uint(len(proto.protos))
+    w.mark("children", start)
     for sub in function.children:
         _write_proto(w, sub, acc_state, seed, integrity, constant_tags)
 
@@ -446,6 +580,7 @@ def patch_integrity_sources(
 ) -> bytes:
     patched = bytearray(data)
     r = BinReader(data)
+    r.header()
     constant_tag_values = tuple(
         (constant_tags or {}).get(name, default)
         for name, default in (
@@ -474,7 +609,7 @@ def patch_integrity_script_hash(data: bytes, new_hash: int) -> bytes:
 
 def _skip_fake_pool(r: BinReader, constant_tags: tuple[int, ...]) -> None:
     _c_nil, c_bool, c_int, c_float, c_str, c_iexpr = constant_tags
-    count = r.u32()
+    count = r.uint()
     for _ in range(count):
         tag = r.u8()
         if tag == c_bool:
@@ -534,24 +669,19 @@ def _patch_proto_integrity(
     c_nil, c_bool, c_int, c_float, c_str, c_iexpr = constant_tags
     r.u8(); r.u8(); r.u8()
     vm_id = r.u8()
-    code_count = r.u32()
-    for _ in range(code_count):
-        r.u64()
-    for _ in range(code_count):
+    code_count = r.uint()
+    r.skip(code_count * INSTRUCTION_BYTES)
+    _skip_metadata(r, code_count, 1)
+    _skip_metadata(r, code_count, 12)
+    for _ in range(r.uint()):
         for _ in range(r.u8()):
-            r.u8()
-    for _ in range(code_count):
-        for _ in range(r.u8()):
-            r.u8(); r.u8(); r.u16(); r.u32(); r.u32()
-    for _ in range(r.u16()):
-        for _ in range(r.u8()):
-            r.u32()
+            r.uint()
 
     sources_base = {
         "vm_count": vm_count,
         "layout_hash": layout_hash,
     }
-    const_count = r.u32()
+    const_count = r.uint()
     for _ in range(const_count):
         tag = r.u8()
         if tag == c_nil:
@@ -588,11 +718,11 @@ def _patch_proto_integrity(
         else:
             raise ValueError(f"unknown constant tag: {tag}")
 
-    upvalue_count = r.u32()
+    upvalue_count = r.uint()
     for _ in range(upvalue_count):
         r.u8(); r.u8()
 
-    proto_count = r.u32()
+    proto_count = r.uint()
     for _ in range(proto_count):
         _patch_proto_integrity(
             r, buf, seed, layout_hash, vm_count,

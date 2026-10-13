@@ -81,6 +81,7 @@ def parse_args():
     parser.add_argument("--selection-report", help="write selective protection results as JSON to this path, or '-' for stdout")
     parser.add_argument("--dump-protected-ir", metavar="PATH", help="write normalized IR after protection transforms to PATH")
     parser.add_argument("--dump-ir", metavar="PATH", help="write deterministic Semantic IR to PATH")
+    parser.add_argument("--dump-morphed-ir", metavar="PATH", help="write Semantic IR after independent morphing strategies to PATH")
     parser.add_argument(
         "--dump-protection-plan", metavar="PATH",
         help="write the resolved backend-neutral protection plan to PATH",
@@ -145,7 +146,7 @@ def apply_cli_overrides(config: dict, args) -> dict:
 
     debug_dumps = {
         name: getattr(args, f"dump_{name}", None)
-        for name in ("ir", "protected_ir", "protection_plan", "backend_ir")
+        for name in ("ir", "morphed_ir", "protected_ir", "protection_plan", "backend_ir")
     }
     debug_dumps = {name: path for name, path in debug_dumps.items() if path}
     if debug_dumps:

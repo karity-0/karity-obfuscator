@@ -26,6 +26,19 @@
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
+  - [ir_mba_rate](#ir_mba_rate)
+  - [ir_test_set_rate](#ir_test_set_rate)
+  - [ir_tail_duplication_rate](#ir_tail_duplication_rate)
+  - [ir_rematerialization_rate](#ir_rematerialization_rate)
+  - [ir_morph_max_growth](#ir_morph_max_growth)
+  - [ir_morph_max_added_instructions](#ir_morph_max_added_instructions)
+  - [ir_morph_max_added_blocks](#ir_morph_max_added_blocks)
+  - [ir_morph_max_transforms](#ir_morph_max_transforms)
+  - [ir_morph_max_depth](#ir_morph_max_depth)
+  - [ir_morph_pass_max_added_instructions](#ir_morph_pass_max_added_instructions)
+  - [ir_morph_max_new_operations](#ir_morph_max_new_operations)
+  - [physical_block_permutation_rate](#physical_block_permutation_rate)
+  - [physical_block_permutation_max_jumps](#physical_block_permutation_max_jumps)
   - [state_dependency_limit](#state_dependency_limit)
   - [requirements](#requirements)
   - [backend](#backend)
@@ -72,6 +85,18 @@ See the [selective protection guide](selective-obfuscation.md) and
 Optional bounded reconstruction parameters: steps_min/steps_max (2..5),
 slots_min/slots_max (2..4), unroll_bytes (0..16). Omission retains the original generator.
 These also apply to automatically enabled STRING_OBF macros. They do not filter literals.
+
+## boolean_obf_options / table_obf_options
+Boolean `mode` is `expression` (default), `mixed`, or `dataflow`. The shared source/VM
+generator varies arithmetic, XOR, mask and MBA predicates. Dataflow adds bounded
+local assignments for subsequent CFF; VM literal emission always uses scalar expressions.
+Generated numeric operands use NumberObf/Literal Mosaic and provenance prevents re-expansion.
+Table `mode` is `mixed` (default), `shuffle`, or `reconstruct`; `max_fields` defaults to 16 (1..64).
+Optional `string_keys: true` reuses StringObf for staged string keys and requires Lua 5.3.
+Sparse or uncertain list fields retain constructor form. Dense literal arrays can be staged. Calls, global reads, colliding keys and
+uncertain expressions retain their evaluation structure. Budget fallback is recorded in profiling.
+Options also apply to automatically enabled BOOLEAN_OBF/TABLE_OBF macros.
+See [literal reconstruction and cost measurements](passes/boolean-table.md).
 
 ## literal_mosaic
 `literal_mosaic` configures the internal shared generator; it is not a pass.
@@ -631,6 +656,136 @@ Compresses and wraps the final output in a self-extracting loader.
 See [`pack` design and implementation notes](passes/packer.md) for architecture, trade-offs, and future work.
 
 ## vm_options
+
+### ir_mba_rate
+
+Replace proven dynamic Lua 5.3 integer operations with bounded multi-instruction identities. Lua 5.1 reports this strategy unavailable.
+
+range: 0.0 to 1.0
+
+default: `0.0`
+
+---
+
+### ir_test_set_rate
+
+Decompose TEST_SET into a truth branch and edge-local operand assignment before protection planning.
+
+range: 0.0 to 1.0
+
+default: `0.0`
+
+---
+
+### ir_tail_duplication_rate
+
+Clone safe acyclic join blocks and redirect one predecessor, preserving execution counts.
+
+range: 0.0 to 1.0
+
+default: `0.0`
+
+---
+
+### ir_rematerialization_rate
+
+Recompute shared proven Lua 5.3 integer definitions at scalar uses when operands and lifetimes remain valid. Lua 5.1 reports this strategy unavailable.
+
+range: 0.0 to 1.0
+
+default: `0.0`
+
+---
+
+### ir_morph_max_growth
+
+Maximum semantic instruction ratio per function across all morphing strategies.
+
+range: 1.0 to 4.0
+
+default: `1.35`
+
+---
+
+### ir_morph_max_added_instructions
+
+Maximum extra semantic instructions per function across all strategies.
+
+range: 0 to 4096
+
+default: `128`
+
+---
+
+### ir_morph_max_added_blocks
+
+Maximum extra basic blocks per function across all strategies.
+
+range: 0 to 256
+
+default: `16`
+
+---
+
+### ir_morph_max_transforms
+
+Maximum applications of each strategy per function.
+
+range: 0 to 256
+
+default: `16`
+
+---
+
+### ir_morph_max_depth
+
+Maximum provenance depth when independently composing transformations; strategies never recursively process their own output.
+
+range: 1 to 4
+
+default: `2`
+
+---
+
+### ir_morph_pass_max_added_instructions
+
+Maximum extra semantic instructions across the whole VM program.
+
+range: 0 to 65536
+
+default: `4096`
+
+---
+
+### ir_morph_max_new_operations
+
+Limit newly introduced operation kinds to bound additional handlers and graph banks.
+
+range: 0 to 12
+
+default: `3`
+
+---
+
+### physical_block_permutation_rate
+
+Fraction of safe physical block bundles selected for storage-order permutation (Karity/Classic). Skip/extension/variant adjacency is preserved.
+
+range: 0.0 to 1.0
+
+default: `0.0`
+
+---
+
+### physical_block_permutation_max_jumps
+
+Maximum added fallthrough bridges per function; address overflow preserves the original physical layout.
+
+range: 0 to 4096
+
+default: `64`
+
+---
 
 ### state_dependency_limit
 

@@ -141,7 +141,7 @@ def main():
     random.seed(4610)
     selected = build_pipeline_from_config({'passes':['function_obf'],
         'selection_modes':{'function_obf':'marked'}}, Pipeline,show_header=False)
-    result = selected.run('-- @FUNCTION_OBF(inline=false,max_jump_instructions=1024)\n'+large)
+    result = selected.run('--@FUNCTION_OBF(inline=false,max_jump_instructions=1024)\n'+large)
     selected_pass = next(p for p in selected._passes if isinstance(p,FunctionObfuscationPass))
     assert selected_pass.last_split_helper_count > 3
     assert runtime('5.3').execute(result) == (182,None)

@@ -84,6 +84,10 @@ def main() -> int:
             "ok": True, "preferences": _normalize_preferences(value),
         })
         page.expose_function("buildGui", api.run_obfuscation)
+        page.expose_function("startBuild", api.start_build)
+        page.expose_function("pollBuild", api.poll_build)
+        page.expose_function("buildResult", api.get_build_result)
+        page.expose_function("validateMarker", api.validate_marker_options)
         page.expose_function("startLua", api.start_execution)
         page.expose_function("pollLua", api.poll_execution)
         page.expose_function("inputLua", api.send_execution_input)
@@ -93,6 +97,10 @@ def main() -> int:
             get_bootstrap: () => window.bootstrapGui(), get_version: async () => 'test',
             save_preferences: value => window.persistPreferences(value),
             run_obfuscation: value => window.buildGui(value),
+            start_build: value => window.startBuild(value),
+            poll_build: (id, cursor) => window.pollBuild(id, cursor),
+            get_build_result: id => window.buildResult(id),
+            validate_marker_options: value => window.validateMarker(value),
             start_execution: value => window.startLua(value),
             poll_execution: (id, cursor) => window.pollLua(id, cursor),
             send_execution_input: (id, value) => window.inputLua(id, value),
@@ -105,8 +113,8 @@ def main() -> int:
         assert not page.locator("#preset-select").is_visible()
         assert page.locator("#run-btn").inner_text().startswith("난독화")
         check_build_language(page, bootstrap)
-        page.locator('[data-preset="fast-vm"]').click()
-        assert page.locator('[data-preset="fast-vm"]').get_attribute("aria-pressed") == "true"
+        page.locator('[data-preset="builtin:fast"]').click()
+        assert page.locator('[data-preset="builtin:fast"]').get_attribute("aria-pressed") == "true"
         page.locator("#input-script").fill('print("marker")')
         page.locator("#input-script").evaluate("el => el.setSelectionRange(6, 14)")
         page.locator("#marker-tools > summary").click()
@@ -166,9 +174,11 @@ def main() -> int:
         page.locator("#input-script").evaluate("el => el.setSelectionRange(0, 21)")
         page.locator("#marker-tools > summary").click()
         page.locator("#marker-kind").select_option("VM_START")
+        page.locator("#marker-advanced").evaluate("el => {el.open=true}")
         page.locator("#marker-options").fill('profile="fast-vm", junk_rate=0.05')
         page.locator("#insert-marker-btn").click()
-        expected = '-- @VM_START(profile="fast-vm", junk_rate=0.05)\nlocal x = 1\nprint(x)\n-- @VM_END\nprint("tail")\n'
+        expected = '--@VM_START(profile="fast-vm", junk_rate=0.05)\nlocal x = 1\nprint(x)\n--@VM_END\nprint("tail")\n'
+        page.wait_for_function("document.querySelector('#input-script').value.startsWith('--@VM_START')")
         assert page.locator("#input-script").input_value() == expected
         page.locator("#run-btn").click()
         page.wait_for_function("!document.querySelector('#run-btn').disabled", timeout=300000)
@@ -224,10 +234,11 @@ def main() -> int:
         if len(sys.argv) > 1:
             page.screenshot(path=str(Path(sys.argv[1]).with_stem("preferences-themes")))
         page.locator("#preferences-close").click()
-        example = '-- @VM_START\nlocal function greet(name)\n  local message = STRING_OBF("hello, " .. name)\n  return message, 42\nend\n-- @VM_END\n'
+        example = '--@VM_START\nlocal function greet(name)\n  local message = STRING_OBF("hello, " .. name)\n  return message, 42\nend\n--@VM_END\n'
         page.locator("#input-script").fill(example)
         page.wait_for_function("document.querySelector('.token-keyword')?.textContent === 'local'")
-        assert page.locator('.code-surface .token-comment').count() >= 2
+        assert page.locator('.code-surface .token-marker-start').count() >= 1
+        assert page.locator('.code-surface .token-marker-end').count() >= 1
         assert page.locator('.code-surface .token-string').count() >= 1
         assert page.locator('.code-surface .token-number').count() >= 1
         # HTML-like source remains text, and long comments retain Lua semantics.

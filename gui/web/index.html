@@ -19,6 +19,7 @@
         <div class="app-caption">Lua protection studio</div>
       </div>
     </div>
+    <button id="command-open" class="command-trigger" type="button" data-live-ui aria-label="Search commands (Ctrl+K)" aria-haspopup="dialog" aria-controls="command-palette"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8" cy="8" r="5.5"/><path d="m12 12 5 5"/></svg><span id="command-open-label">Search commands</span><kbd>Ctrl K</kbd></button>
     <div class="title-meta"><span class="live-dot"></span><span id="backend-label">connecting</span></div>
     <div class="window-controls">
       <button id="preferences-btn" class="window-button preferences-button" title="GUI 환경설정" aria-label="GUI 환경설정">⚙</button>
@@ -36,11 +37,11 @@
           <span class="eyebrow">PROTECTION</span>
           <h1>보호 설정</h1>
           <div class="quick-choice">
-            <span class="quick-choice-label">보호 강도</span>
+            <span class="quick-choice-label">보호 강도 <button id="preset-details" class="choice-details" type="button" aria-label="Protection preset details" aria-haspopup="dialog" aria-controls="preset-picker">ⓘ</button></span>
             <div id="quick-presets" class="preset-grid" role="group" aria-label="보호 강도"></div>
           </div>
           <div class="quick-choice">
-            <span class="quick-choice-label">VM</span>
+            <span class="quick-choice-label">VM <button id="backend-details" class="choice-details" type="button" aria-label="VM backend details" aria-haspopup="dialog" aria-controls="backend-picker">ⓘ</button></span>
             <div id="quick-backends" class="preset-grid backend-grid" role="group" aria-label="VM backend">
               <button type="button" class="preset-button" data-backend="classic"><strong>Classic</strong></button>
               <button type="button" class="preset-button" data-backend="karity"><strong>Karity</strong></button>
@@ -159,7 +160,7 @@
     <main class="main-stage">
       <section id="workspace-toolbar" class="workspace-toolbar v2-only">
         <div id="preset-toolbar-slot"></div>
-        <button id="settings-open" class="button ghost" title="빌드 설정">⚒ <span>설정</span></button>
+        <div id="toolbar-actions" class="toolbar-actions"><button id="settings-open" class="button ghost" title="빌드 설정">⚒ <span>설정</span></button></div>
       </section>
       <nav class="editor-view-tabs v2-only" aria-label="작업 화면">
         <div role="tablist" aria-label="코드 보기">
@@ -211,8 +212,12 @@
                 <option value="NO_VM">함수 VM 제외</option><option value="NO_VM_START">영역 VM 제외</option>
                 <option value="NO_OBF_START">영역 보호 제외</option>
               </select>
+<div id="marker-fields" data-live-ui></div>
+<details id="marker-advanced"><summary>Advanced options</summary><div id="marker-advanced-fields" data-live-ui></div>
               <label id="marker-options-label" class="field-label" for="marker-options">옵션</label>
               <input id="marker-options" class="text-control" placeholder='예: junk_rate=0.05' aria-label="커스텀 마커 옵션">
+</details>
+<pre id="marker-preview" class="marker-preview" aria-label="Marker preview" data-live-ui></pre>
               <p id="marker-hint" class="marker-hint" aria-live="polite"></p>
               <button id="insert-marker-btn" class="button secondary">삽입</button>
             </div>
@@ -225,6 +230,7 @@ print(&quot;hello, karity&quot;)"></textarea>
           <header class="editor-header">
             <div><span class="editor-kicker">Output</span><span id="output-stats" class="filename"></span></div>
             <div class="editor-actions">
+              <button id="inspect-output" class="button tiny ghost" type="button" disabled aria-label="Result inspector">▥</button>
               <button id="execute-output-btn" class="button tiny execute-button" title="결과 실행 (Shift+F5)" aria-label="결과 실행 (Shift+F5)">▶</button>
               <button id="copy-output-btn" class="button tiny ghost">Copy</button>
               <button id="save-output-btn" class="button tiny">Save</button>
@@ -250,6 +256,8 @@ print(&quot;hello, karity&quot;)"></textarea>
         </form>
       </section>
 
+      <div class="build-dock-wrap">
+        <section id="build-progress" class="build-progress" hidden data-live-ui aria-label="Build status"></section>
       <footer class="run-dock">
         <button id="console-toggle" class="button tiny ghost console-toggle" title="실행 콘솔" aria-label="실행 콘솔" aria-expanded="false">›_</button>
         <div class="status-wrap">
@@ -259,6 +267,7 @@ print(&quot;hello, karity&quot;)"></textarea>
         <label class="release-check" title="배포용 보안 설정 검사"><input id="release-check" type="checkbox"><span>Release check</span></label>
         <button id="run-btn" class="button primary"><span>Obfuscate</span><span class="run-arrow">→</span></button>
       </footer>
+      </div>
     </main>
   </div>
 </div>
@@ -297,6 +306,25 @@ print(&quot;hello, karity&quot;)"></textarea>
     <p class="backend-picker-hint">클릭해서 선택 · 방향키로 이동</p>
   </div>
 </dialog>
+
+<dialog id="preset-picker" class="backend-picker preset-picker" aria-labelledby="preset-picker-title" data-live-ui>
+  <div class="backend-picker-content">
+    <header class="backend-picker-header"><div><span class="eyebrow">PROTECTION</span><h2 id="preset-picker-title"></h2><p id="preset-picker-note"></p></div><button id="preset-picker-close" class="button ghost" type="button"></button></header>
+    <div id="preset-cards" class="preset-cards"></div>
+    <p id="preset-picker-hint" class="backend-picker-hint"></p>
+  </div>
+</dialog>
+<dialog id="build-inspector" class="build-inspector" aria-labelledby="inspector-title" data-live-ui>
+  <header class="inspector-header"><h2 id="inspector-title"></h2><button id="inspector-close" class="button tiny ghost" type="button"></button></header>
+  <div id="inspector-body" class="inspector-body"></div>
+</dialog>
+<dialog id="command-palette" class="command-palette" aria-label="Search commands" data-live-ui>
+  <label id="command-label" for="command-query"></label>
+  <input id="command-query" type="search" autocomplete="off" spellcheck="false" role="combobox" aria-autocomplete="list" aria-expanded="true" aria-controls="command-results">
+  <ul id="command-results" role="listbox"></ul>
+  <footer><span id="command-hint"></span><button id="command-close" class="button tiny ghost" type="button"></button></footer>
+</dialog>
+
 <div id="preferences-overlay" class="preferences-overlay hidden" role="presentation">
   <section class="preferences-panel" role="dialog" aria-modal="true" aria-labelledby="preferences-title">
     <header class="preferences-header">
@@ -324,10 +352,7 @@ print(&quot;hello, karity&quot;)"></textarea>
         <span><strong>설정 그룹 상태 기억</strong></span>
         <input id="remember-sections" type="checkbox">
       </label>
-      <label class="preference-row choice" for="quick-vm-change">
-        <span><strong>빠른 VM 변경</strong><small>선택 화면 없이 바로 변경</small></span>
-        <input id="quick-vm-change" type="checkbox">
-      </label>
+
     </div>
     <div id="appearance-panel" class="preferences-body" role="tabpanel" aria-labelledby="appearance-tab">
       <div id="theme-grid" class="theme-grid" aria-label="테마"></div>
@@ -340,6 +365,10 @@ print(&quot;hello, karity&quot;)"></textarea>
       <label class="preference-row" for="editor-font-size">
         <span><strong>글자 크기</strong><small><span id="editor-font-value">12</span>px</small></span>
         <input id="editor-font-size" class="range-control" type="range" min="10" max="18" step="1">
+      </label>
+      <label class="preference-row choice" for="word-wrap">
+        <span><strong>자동 줄바꿈</strong><small>소스와 결과를 화면 너비에 맞춰 표시합니다.</small></span>
+        <input id="word-wrap" type="checkbox">
       </label>
     </div>
     <div id="general-panel" class="preferences-body hidden" role="tabpanel" aria-labelledby="general-tab">
@@ -362,6 +391,7 @@ print(&quot;hello, karity&quot;)"></textarea>
 <script src="i18n.js"></script>
 <script src="editor.js"></script>
 <script src="preset_state.js"></script>
+<script src="experience.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

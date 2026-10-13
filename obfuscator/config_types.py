@@ -24,6 +24,19 @@ class LiteralMosaicOptions(TypedDict, total=False):
 
 
 class ProtectionOptions(TypedDict, total=False):
+    ir_mba_rate: float
+    ir_test_set_rate: float
+    ir_tail_duplication_rate: float
+    ir_rematerialization_rate: float
+    ir_morph_max_growth: float
+    ir_morph_max_added_instructions: int
+    ir_morph_max_added_blocks: int
+    ir_morph_max_transforms: int
+    ir_morph_max_depth: int
+    ir_morph_pass_max_added_instructions: int
+    ir_morph_max_new_operations: int
+    physical_block_permutation_rate: float
+    physical_block_permutation_max_jumps: int
     requirements: dict[str, RequirementLevel]
     dispatcher_type: str
     blob_form: BlobForm
@@ -119,6 +132,8 @@ class SignatureConfig(TypedDict, total=False):
 
 
 class DebugDumps(TypedDict, total=False):
+    optimized_ir: str
+    morphed_ir: str
     ir: str
     protected_ir: str
     protection_plan: str
@@ -127,6 +142,8 @@ class DebugDumps(TypedDict, total=False):
 
 class ObfuscatorConfig(TypedDict, total=False):
     string_obf_options: dict[str, int]
+    boolean_obf_options: dict[str, str]
+    table_obf_options: dict[str, str | int | bool]
     literal_mosaic: LiteralMosaicOptions
     passes: list[str]
     vm_output_passes: list[str]

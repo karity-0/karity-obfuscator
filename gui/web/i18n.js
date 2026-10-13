@@ -1,5 +1,38 @@
 (() => {
   const pairs = [
+    ['Protection preset details', '프리셋 상세 선택'], ['VM backend details', 'VM 백엔드 상세 선택'],
+    ['Choose a protection preset', '보호 프리셋 선택'], ['Your VM backend and target stay unchanged.', '선택한 VM 백엔드와 Lua 대상은 유지됩니다.'],
+    ['Left click: apply · Right click: details', '좌클릭: 바로 적용 · 우클릭: 상세 선택'],
+    ['VM first. Protect key code with markers.', 'VM 중심 · 중요한 코드는 마커로'],
+    ['Light source protection, balanced cost.', '가벼운 소스 보호 · 균형 잡힌 비용'],
+    ['Strings and control flow protected throughout.', '전체 문자열 · 제어 흐름 보호'],
+    ['Deeper transformations, with packing.', '깊은 변형 · 패킹까지'],
+    ['Saved custom settings', '저장한 커스텀 설정'],
+    ['Word wrap', '자동 줄바꿈'], ['Fit source and output to the editor width.', '소스와 결과를 화면 너비에 맞춰 표시합니다.'],
+    ['Restores your saved custom settings.', '저장한 커스텀 설정을 복원합니다.'],
+    ['Changes', '변경 내용'], ['Details & changes', '상세 및 변경 내용'], ['No configuration changes.', '설정 변경 없음'],
+    ['Advanced options', '고급 옵션'], ['Marker preview', '마커 미리보기'], ['Inherit', '상속'], ['On', '켜기'], ['Off', '끄기'],
+    ['Junk', '정크'], ['Inline helpers', '헬퍼 인라인'], ['Wrapper', '래퍼'], ['Loop splitting', '루프 분할'],
+    ['Loop unrolling', '루프 펼치기'], ['Nested functions', '중첩 함수'], ['Boundary mode', '분할 방식'], ['Nested depth', '중첩 깊이'], ['Loop unroll rate', '루프 펼치기 비율'],
+    ['Not used by this backend; stored value retained.', '이 백엔드에서 미지원 · 입력값 유지'], ['Invalid marker options', '잘못된 마커 옵션'],
+    ['Effective VM backend', '마커에 적용되는 VM'],
+    ['Result inspector', '결과 분석'], ['Previous result', '이전 결과'], ['Build status', '빌드 상태'], ['Build details', '빌드 상세'], ['Details', '상세'],
+    ['Build stages', '빌드 단계'],
+    ['Original source size', '원본 크기'], ['Obfuscated output size', '결과 크기'], ['Size ratio', '크기 배율'], ['Build elapsed time', '빌드 시간'],
+    ['Lua target', 'Lua 대상'], ['Characters', '문자 수'], ['Previous successful result', '이전 성공 결과'],
+    ['Previous build comparison', '직전 빌드 비교'], ['Same input and settings', '같은 입력과 설정'], ['Different build conditions', '빌드 조건이 다릅니다'],
+    ['Profiling details', '프로파일 상세'], ['Profiled pass time', '패스 시간 합계'],
+    ['Configuration validation', '설정 검증'], ['Protection markers', '보호 마커 해석'], ['Source protection', '소스 보호'], ['Finalization', '마무리'],
+    ['Source parsing', '소스 파싱'], ['Output parsing', '출력 파싱'],
+    ['Lua compilation', 'Lua 컴파일'], ['VM intermediate representation', 'VM 중간 표현 구성'], ['VM optimization', 'VM 최적화'],
+    ['VM protection', 'VM 보호'], ['Backend lowering', '백엔드 변환'], ['VM generation', 'VM 생성'], ['Serialization', '직렬화'],
+    ['Runtime graphs', '런타임 그래프 생성'], ['Integrity finalization', '무결성 처리'], ['Output transformations', '출력 후처리'], ['Output signature', '출력 서명'],
+    ['Bytecode encryption', '바이트코드 암호화'],
+    ['Search commands', '명령 검색'], ['Search commands (Ctrl+K)', '명령 검색 (Ctrl+K)'],
+    ['Change protection preset', '보호 프리셋 변경'], ['Choose VM backend', 'VM 백엔드 선택'], ['Insert Marker', '마커 삽입'],
+    ['Open GUI Preferences', '환경설정 열기'], ['Change Theme', '테마 변경'], ['Run Source', '원본 실행'], ['Run Output', '결과 실행'],
+    ['Save Configuration', '설정 저장'], ['Copy Output', '결과 복사'], ['Show Result Inspector', '결과 분석 열기'],
+    ['Unavailable in the current state', '현재 상태에서 사용할 수 없습니다'], ['↑ ↓ Navigate · Enter Select · Esc Close', '↑ ↓ 이동 · Enter 선택 · Esc 닫기'], ['No matching commands', '검색 결과 없음'],
     ['Console', '콘솔'], ['Run source (F5)', '원본 실행 (F5)'], ['Run output (Shift+F5)', '결과 실행 (Shift+F5)'],
     ['Stop execution', '실행 중지'], ['Clear console', '콘솔 지우기'], ['Hide console', '콘솔 접기'],
     ['Execution console', '실행 콘솔'], ['Execution output', '실행 출력'], ['Execution input', '실행 입력'],
@@ -56,6 +89,16 @@
     ['Custom pattern', '커스텀 패턴'], ['Custom', '커스텀'], ['Comment text', '주석 내용'],
     ['Execution', '실행'], ['Handlers', '핸들러'], ['Integrity', '무결성'], ['Semantic routing', '의미 라우팅'],
     ['Runtime diversity', '런타임 다양성'], ['Choke-point diversity', '핵심 경로 다양성'], ['Advanced', '고급'],
+    ['Physical layout', '물리 배치'], ['IR morphing', 'IR 구조 변형'], ['IR budget', 'IR 비용 제한'],
+    ['Block permutation rate', '블록 재배치 비율'], ['Permutation bridge limit', '연결 점프 제한'],
+    ['Integer substitution', '정수 연산 치환'], ['Conditional assignment split', '조건부 대입 분해'],
+    ['Join block duplication', '합류 블록 복제'], ['Shared calculation rebuild', '공유 계산 재구성'],
+    ['IR growth ratio', 'IR 확장 비율'], ['Added instruction limit', '추가 명령어 제한'],
+    ['Added block limit', '추가 블록 제한'], ['Strategy application limit', '전략 적용 제한'],
+    ['Composition depth', '변형 조합 깊이'], ['Program growth limit', '전체 확장 제한'],
+    ['New operation limit', '신규 연산 제한'], ['Unavailable for Lua 5.1; saved value retained', 'Lua 5.1 미지원 · 설정값 유지'],
+    ['This strategy requires proven Lua 5.3 integers.', 'Lua 5.3 정수임이 검증된 값이 필요합니다.'],
+    ['Integer substitution requires Lua 5.3.', '정수 연산 치환은 Lua 5.3에서 사용할 수 있습니다.'],
     ['Strip Info', '정보 제거'], ['Remove Comment', '주석 제거'], ['Encode String', '문자열 인코딩'],
     ['String Obfuscation', '문자열 난독화'], ['Boolean Obfuscation', '불리언 난독화'], ['Number Obfuscation', '숫자 난독화'],
     ['Table Obfuscation', '테이블 난독화'], ['Function Obfuscation', '함수 난독화'], ['Rename Obfuscation', '이름 난독화'],
@@ -100,12 +143,14 @@
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
     while (walker.nextNode()) {
       const node = walker.currentNode;
+      if (node.parentElement.closest('[data-live-ui]')) continue;
       if (node.parentElement.closest('script, style, textarea, pre, code, .filename, #config-source, #profile-summary, #status-msg, #preferences-status, #quick-preset-status, #backend-capability-status, #backend-capability-note, #execution-status, .theme-tile')) continue;
       if (!originals.has(node)) originals.set(node, node.nodeValue);
       const original = originals.get(node), trimmed = original.trim();
       if (trimmed) node.nodeValue = original.replace(trimmed, tr(trimmed, language));
     }
     root.querySelectorAll('[title], [aria-label]').forEach(element => {
+      if (element.closest('[data-live-ui]')) return;
       if (!attributes.has(element)) attributes.set(element, {title: element.title, label: element.getAttribute('aria-label')});
       const original = attributes.get(element);
       if (original.title) element.title = tr(original.title, language);

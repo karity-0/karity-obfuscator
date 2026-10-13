@@ -1,4 +1,5 @@
 from __future__ import annotations
+from ...profiling import run_phase
 from obfuscator.names import NameAllocator
 import subprocess
 import tempfile
@@ -309,12 +310,13 @@ def _finalize_output_identifiers(output: str, *, rename: bool, strip: bool) -> t
 
 
 def _plan_output_identifiers(final_ctx, *, rename, strip, expanded_number_keys=frozenset(),
-                             backend='shared_final_context'):
+                             backend='shared_final_context', captures=None, reuse_function_names=False):
     from obfuscator.passes.rename_ts import resolve_bindings, rename_plan_with_ctx_profiled
     from obfuscator.passes.strip_info import StripInfoPass
     details = []
     stage_start = time.perf_counter()
-    resolution = resolve_bindings(final_ctx, collect_literals=False)
+    resolution = resolve_bindings(final_ctx, collect_literals=False, captures=captures,
+                                  collect_name_scopes=reuse_function_names)
     details.append({'phase': 'vm_output:final_bindings',
                     'elapsed': round(time.perf_counter() - stage_start, 6),
                     'bindings': len(resolution[0]), 'identifier_count': resolution[4]})
@@ -322,16 +324,19 @@ def _plan_output_identifiers(final_ctx, *, rename, strip, expanded_number_keys=f
     if rename or strip:
         stage_start = time.perf_counter()
         options = {} if rename else {'readable': False}
-        names, _, _ = rename_plan_with_ctx_profiled(final_ctx, resolution=resolution, **options)
+        names, _, name_profile = rename_plan_with_ctx_profiled(final_ctx, resolution=resolution,
+                                                               reuse_function_names=reuse_function_names, **options)
         edits.extend((item.start, item.end, item.new_text) for item in names)
         details.append({'phase': 'vm_output:final_names',
                         'elapsed': round(time.perf_counter() - stage_start, 6),
                         'replacements': len(names), 'bindings': len(resolution[0]),
+                        'function_name_scopes': name_profile['function_name_scopes'],
+                        'reused_function_names': name_profile['reused_function_names'],
                         'backend': backend})
     if strip:
         stage_start = time.perf_counter()
         strip_edits = StripInfoPass(rename_locals=False).replacements_with_ctx(
-            final_ctx, bindings=resolution[0], expanded_number_keys=expanded_number_keys)
+            final_ctx, bindings=resolution[0], expanded_number_keys=expanded_number_keys, captures=captures)
         edits.extend(strip_edits)
         details.append({'phase': 'vm_output:strip_info', 'class': 'StripInfoPass',
                         'elapsed': round(time.perf_counter() - stage_start, 6),
@@ -457,7 +462,7 @@ def _obfuscate_vm_output_scoped(
             names.append(configured_name)
 
         profiler = Profiler()
-        transformed = pipeline.run(source, profiler=profiler)
+        transformed = run_phase('output:transforms', pipeline.run, source, profiler=profiler)
         records: list[dict] = []
         for index, record in enumerate(profiler.records):
             data = record.as_dict()
@@ -502,7 +507,7 @@ def _obfuscate_vm_output_scoped(
         configured_name, cls = before.pop(0)
         stage_start = time.perf_counter()
         function_pass = cls(skip_vm_dispatcher=protect_vm_dispatcher)
-        function_replacements = function_pass.run(output, shared_ctx)
+        function_replacements = run_phase('output:FunctionObfuscationPass', function_pass.run, output, shared_ctx)
         transformed = apply_replacements(output, function_replacements)
         details.append({
             "phase": f"vm_output:{configured_name}",
@@ -553,6 +558,16 @@ def _obfuscate_vm_output_scoped(
         planned_replacements = []
         renamed_spans: set[tuple[int, int]] = set()
         literal_nodes = None
+        shared_captures = None
+        if reuse_scalar_analysis:
+            from obfuscator.passes.rename_ts import collect_output_nodes
+            capture_start = time.perf_counter()
+            shared_captures = collect_output_nodes(shared_ctx)
+            literal_nodes = shared_captures['literal']
+            details.append({'phase': 'vm_output:syntax_capture',
+                            'elapsed': round(time.perf_counter() - capture_start, 6),
+                            'capture_count': 1, 'literal_count': len(literal_nodes),
+                            'identifier_count': len(shared_captures.get('identifier', []))})
         rename_detail = None
         if "rename_obf" in identifier_names and not deferred_names:
             stage_start = time.perf_counter()
@@ -606,7 +621,8 @@ def _obfuscate_vm_output_scoped(
             def finalize(expanded_keys):
                 edits, final_details = _plan_output_identifiers(
                     shared_ctx, rename='rename_obf' in identifier_names, strip=fused_strip,
-                    expanded_number_keys=expanded_keys, backend='reused_source_context')
+                    expanded_number_keys=expanded_keys, backend='reused_source_context', captures=shared_captures,
+                    reuse_function_names=True)
                 final_details.insert(0, {'phase': 'vm_output:final_parse', 'elapsed': 0.0,
                                         'parser': 'treesitter', 'parse_count': 0,
                                         'backend': 'reused_source_context'})
@@ -619,6 +635,10 @@ def _obfuscate_vm_output_scoped(
             literal_nodes=literal_nodes,
             finalize=finalize,
         )
+        if shared_captures is not None:
+            for item in emitter_details:
+                if item['phase'] == 'vm_output:literal_capture':
+                    item['capture_source'] = 'shared_output_query'
         reused_identifiers = any(item.get('reused') for item in emitter_details
                                  if item['phase'] == 'vm_output:analysis_reuse')
         if reused_identifiers:
@@ -696,7 +716,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     constant_tags, constant_kinds = prepared.constant_tags, prepared.constant_kinds
     constant_tag_names = tuple(constant_tags)
     materialization = lowered_ir.backend_data.get("materialization")
-    blob = backend_adapter.serialize_program(lowered_ir, context)
+    blob = run_phase('vm:serialization', backend_adapter.serialize_program, lowered_ir, context)
 
     # 3. VM 코드 로드 + (단일/멀티) exec 생성
     _phase_start = time.perf_counter()
@@ -719,6 +739,17 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
             f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
         )
     vm_code = backend_adapter.emit_handlers(vm_code, lowered_ir, planned_runtime_variants)
+    if prepared.vm_count > 1 and backend_adapter.shared_runtime_helpers:
+        emission = lowered_ir.backend_data.setdefault('runtime_emission', {})
+        if not emission.get('skeleton_analyzed'):
+            from .runtime_skeleton import share_runtime_helpers
+            vm_code, skeleton_stats = run_phase('vm:shared_skeleton', share_runtime_helpers,
+                                               vm_code, backend_adapter.shared_runtime_helpers)
+            emission.update(skeleton_stats)
+        skeleton_stats = {k: v for k, v in emission.items() if k.startswith('skeleton_')}
+        context.profile.append({'phase':'shared_runtime_skeleton',
+                                'elapsed':skeleton_stats.get('skeleton_analysis_seconds',0.0),
+                                **skeleton_stats})
 
     # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
     # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.
@@ -767,7 +798,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # emitter intentionally makes no backend-kind decision here.
     _runtime_body_start = time.perf_counter()
     _runtime_body_input_bytes = len(vm_func_src.encode("utf-8"))
-    runtime_body = backend_adapter.emit_runtime_body(
+    runtime_body = run_phase('vm:graphs', backend_adapter.emit_runtime_body,
         vm_func_src, lowered_ir, target=target,
     )
     vm_func_src = runtime_body.source
@@ -783,6 +814,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         "graph_sites": runtime_body.graph_sites,
         "graph_families": runtime_body.graph_families,
         "backend": runtime_body.backend,
+        "runtime_emission": runtime_body.details,
     }
 
     # Graph banks and blob decoders may introduce target API operations too.
@@ -801,7 +833,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
                 protected=getattr(vm_func_src,'protected',()),
                 reconstructions=getattr(vm_func_src,'reconstructions',()),
                 origins=getattr(vm_func_src,'origins',()) or [(0,len(vm_func_src),'vm_entry')])
-        vm_func_src, vm_output_details = output_transform(
+        vm_func_src, vm_output_details = run_phase('output:transforms', output_transform,
             vm_func_src,
             context.output_passes,
         )
@@ -844,7 +876,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         secrets.choice(wrapper_alphabet)
         for _ in range(34)
     )
-    dump_bytes = target.dump_function(
+    dump_bytes = run_phase('vm:integrity', target.dump_function,
         vm_func_src, header, decoy_name, decoy_value, context.toolchain,
     )
     dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
@@ -861,7 +893,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
 
     # 6. blob 암호화: nonce(8B) + ciphertext
     _phase_start = time.perf_counter()
-    nonce, ct = encrypt_blob(blob, _KEY)
+    nonce, ct = run_phase('vm:encryption', encrypt_blob, blob, _KEY)
     encrypted_blob = nonce + ct
     if blob_form == "table":
         lua_blob = _to_table_blob(encrypted_blob, random.randint(16, 48))
@@ -875,4 +907,4 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
 
     # 7. 최종 출력 조합 — vm_func_src(_vmf 본문)는 더 이상 재가공하지 않음
     # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용
-    return target.wrap(vm_func_src, decoy_name, decoy_value, vmf_name, lua_blob, rand_tail)
+    return run_phase('finalization:runtime', target.wrap, vm_func_src, decoy_name, decoy_value, vmf_name, lua_blob, rand_tail)

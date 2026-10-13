@@ -13,7 +13,8 @@
       };
     }
     const saved = next.preset_snapshots[name];
-    next.config = clone(saved?.config || definition);
+    const keepSnapshot = saved && (saved.custom || saved.revision === revision || !name.startsWith('builtin:'));
+    next.config = clone(keepSnapshot ? saved.config : definition);
     for (const key of contextKeys) {
       if (Object.hasOwn(state.config, key)) next.config[key] = clone(state.config[key]);
     }
@@ -24,8 +25,8 @@
       }
     }
     next.preset = name;
-    next.preset_custom = saved?.custom || false;
-    next.preset_revision = saved ? saved.revision : revision;
+    next.preset_custom = keepSnapshot ? saved.custom : false;
+    next.preset_revision = keepSnapshot ? saved.revision : revision;
     next.protection_level = name.replace(/^builtin:/, '');
     // The existing strict release check requires at least two VMs. Keep that
     // explicit switch unchanged; do not silently toggle it when choosing a tier.

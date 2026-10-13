@@ -160,7 +160,7 @@ local function make_reader(blob)
         --<<ENDTARGET_WORD_READ>>
     end
     function r.iword()
-        local lo=r.u32(); local hi=r.u32()
+        local lo=r.u32(); local hi=r.u16()
         --<<TARGET_INSTRUCTION_READ>>
         return lo|(hi*0x100000000)
         --<<ENDTARGET_INSTRUCTION_READ>>
@@ -181,8 +181,57 @@ local function make_reader(blob)
         local v=string.unpack('<d',blob,pos); pos=pos+8; return v
         --<<ENDTARGET_FLOAT_READ>>
     end
+    function r.uint()
+        local value,scale=0,1
+        for i=1,5 do
+            local byte=r.u8()
+            if not byte or (i==5 and byte>15) then error("bad blob uint32") end
+            value=value+(byte%128)*scale
+            if byte<128 then
+                if i>1 and byte==0 then error("noncanonical blob uint32") end
+                return value
+            end
+            scale=scale*128
+        end
+        error("unterminated blob uint32")
+    end
+    function r.header()
+        if r.u8()~=75 or r.u8()~=86 or r.u8()~=77 or r.u8()~=2 then
+            error("unsupported handler blob format")
+        end
+    end
+    function r.metadata(n,graph)
+        local mode=r.u8()
+        if mode~=0 and mode~=1 and mode~=2 then error("bad metadata mode") end
+        local count=0
+        if mode==1 then count=n elseif mode==2 then count=r.uint() end
+        if count>n then error("bad metadata count") end
+        local result,index={},0
+        for i=1,count do
+            if mode==2 then
+                local delta=r.uint()
+                index=index+delta
+                if delta==0 or index>n then error("bad metadata index") end
+            else index=i end
+            local size=r.u8()
+            if size>0 then
+                local values={}
+                for j=1,size do
+                    if graph then
+                        local family,policy=r.u8(),r.u8()
+                        local state_key=r.u16()
+                        local site,selector=r.u32(),r.u32()
+                        values[j]={family,site,selector,state_key,policy}
+                    else values[j]=r.u8() end
+                end
+                result[index]=values
+            end
+        end
+        return result
+    end
     function r.str()
-        local len=r.u32(); if len==0 then return nil end
+        local len=r.uint(); if len==0 then return nil end
+        if len>#blob-pos+1 then error("truncated blob string") end
         local sv=string.sub(blob,pos,pos+len-1); pos=pos+len; return sv
     end
     return r
@@ -238,7 +287,7 @@ local function read_proto(r, acc_state)
     local p={}
     p.num_params=r.u8(); p.is_vararg=r.u8(); p.max_stack_size=r.u8()
     p.vm_id=r.u8()
-    local n=r.u32(); p.code={}
+    local n=r.uint(); p.code={}
     --<<TARGET_PROTO_CODE>>
     for i=1,n do
         local raw64=r.iword()
@@ -259,38 +308,15 @@ local function read_proto(r, acc_state)
     end
     --<<ENDTARGET_PROTO_CODE>>
     --<<TARGET_PROTO_METADATA>>
-    p.avalanche={}
-    for i=1,n do
-        local an=r.u8()
-        if an>0 then
-            local slots={}
-            for j=1,an do slots[j]=r.u8() end
-            p.avalanche[i]=slots
-        end
-    end
-    p.graph_sites={}
-    for i=1,n do
-        local sn=r.u8()
-        if sn>0 then
-            local sites={}
-            for j=1,sn do
-                local family=r.u8()
-                local policy=r.u8()
-                local state_key=r.u16()
-                local site=r.u32()
-                local selector=r.u32()
-                sites[j]={family,site,selector,state_key,policy}
-            end
-            p.graph_sites[i]=sites
-        end
-    end
-    n=r.u16(); p.block_routes={}
+    p.avalanche=r.metadata(n,false)
+    p.graph_sites=r.metadata(n,true)
+    n=r.uint(); p.block_routes={}
     for i=1,n do
         local rn=r.u8(); local route={}
-        for j=1,rn do route[j]=r.u32() end
+        for j=1,rn do route[j]=r.uint() end
         p.block_routes[i]=route
     end
-    n=r.u32(); p.constants={}
+    n=r.uint(); p.constants={}
     for i=1,n do
         local tag=r.u8()
         if     tag==CTAG_NIL   then p.constants[i]={CK_NIL}
@@ -308,10 +334,10 @@ local function read_proto(r, acc_state)
         else error("bad const tag "..tostring(tag)) end
     end
     --<<ENDTARGET_PROTO_METADATA>>
-    n=r.u32(); p.upvalues={}
+    n=r.uint(); p.upvalues={}
     --<<TARGET_PROTO_CHILDREN>>
     for i=1,n do p.upvalues[i]={instack=r.u8(),idx=r.u8()} end
-    n=r.u32(); p.protos={}
+    n=r.uint(); p.protos={}
     for i=1,n do p.protos[i]=read_proto(r,acc_state) end
     --<<ENDTARGET_PROTO_CHILDREN>>
     return p
@@ -2003,7 +2029,7 @@ local function run(blob,rand_tail,self_func)
     _ksd=dump_crc
     local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
     blob=kae_decrypt(from_base36(blob),key)
-    local r=make_reader(blob)
+    local r=make_reader(blob); r.header()
     local seed=r.u16()
     _IT.seed=seed; _IT.layout=r.u32(); _IT.vmc=r.u16()
     _PE=_PE+1
@@ -2030,7 +2056,7 @@ local function run(blob,rand_tail,self_func)
     local acc_state={seed,0}
     -- 가짜 상수 풀 스킵
     --<<TARGET_FAKE_CONSTANT_SKIP>>
-    local _fn=r.u32()
+    local _fn=r.uint()
     for _=1,_fn do
         local _ft=r.u8()
         if     _ft==CTAG_NIL then

@@ -22,11 +22,13 @@ document.addEventListener('DOMContentLoaded', () => {
     preferencesClose: $('preferences-close'), preferencesReset: $('preferences-reset'),
     preferencesStatus: $('preferences-status'), density: $('density-select'),
     editorFontSize: $('editor-font-size'), editorFontValue: $('editor-font-value'),
+    wordWrap: $('word-wrap'),
     motion: $('motion-select'), rememberSections: $('remember-sections'),
-    quickVmChange: $('quick-vm-change'), backendPicker: $('backend-picker'),
+    backendPicker: $('backend-picker'),
   };
 
   let api = null;
+  let experience = null;
   let bootstrap = null;
   let state = null;
   let preferences = null;
@@ -71,6 +73,11 @@ document.addEventListener('DOMContentLoaded', () => {
       ensureConfigShape();
       renderPresetChoices();
       bindStaticEvents();
+      experience = window.GuiExperience.attach({ui, tr, refreshEditors, applyPreset, setStatus,
+        getApi: () => api, getState: () => state, getBootstrap: () => bootstrap,
+        openBackendPicker, openPreferences, closePreferences, selectPreferenceTab,
+        executeCode, runObfuscation, saveConfiguration, copyOutput,
+        presetLabel: name => tr(presetLabels[name]?.[0] || titleCase(name))});
       renderAll();
       const version = await api.get_version();
       document.getElementById("app-version").textContent = `v${version}`;
@@ -151,7 +158,7 @@ document.addEventListener('DOMContentLoaded', () => {
     document.addEventListener('keydown', event => {
       if (event.key !== 'F5' || event.ctrlKey || event.altKey || event.metaKey) return;
       event.preventDefault();
-      if (!$('preferences-overlay').classList.contains('hidden') || ui.backendPicker.open) return;
+      if (!$('preferences-overlay').classList.contains('hidden') || document.querySelector('dialog[open]')) return;
       executeCode(event.shiftKey ? 'output' : 'source');
     });
     ui.preset.addEventListener('change', () => applyPreset(ui.preset.value));
@@ -196,8 +203,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
     document.querySelectorAll('[data-backend]').forEach(button => {
       button.addEventListener('click', () => {
-        if (preferences.quick_vm_change) setVmOption('backend', button.dataset.backend);
-        else openBackendPicker(button);
+        setVmOption('backend', button.dataset.backend);
       });
     });
     document.querySelectorAll('[data-backend-choice]').forEach(button => {
@@ -210,7 +216,10 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.backendPicker.addEventListener('click', event => {
       if (event.target === ui.backendPicker) ui.backendPicker.close();
     });
-    ui.backendPicker.addEventListener('close', () => { backendOpener?.focus(); backendOpener = null; });
+    ui.backendPicker.addEventListener('close', () => {
+      if (!document.querySelector('dialog[open]') && ui.preferencesOverlay.classList.contains('hidden')) backendOpener?.focus();
+      backendOpener = null;
+    });
     ui.backendPicker.addEventListener('keydown', event => {
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
       const cards = [...ui.backendPicker.querySelectorAll('[data-backend-choice]')];
@@ -243,7 +252,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (event.target === ui.preferencesOverlay) closePreferences();
     });
     document.addEventListener('keydown', event => {
-      if (ui.backendPicker.open) return; // Native dialog owns Escape and focus trapping.
+      if (document.querySelector('dialog[open]')) return; // Native dialog owns Escape and focus trapping.
       if (event.key === 'Escape' && !ui.preferencesOverlay.classList.contains('hidden')) closePreferences();
       if (event.key === 'Escape') $('marker-tools').open = false;
       if (event.key === 'Escape' && ui.preferencesOverlay.classList.contains('hidden')) toggleSettings(false);
@@ -255,6 +264,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     });
     ui.density.addEventListener('change', event => updatePreference('density', event.target.value));
+    ui.wordWrap.addEventListener('change', event => updatePreference('word_wrap', event.target.checked));
     ui.editorFontSize.addEventListener('input', event => {
       preferences.editor_font_size = Number(event.target.value);
       ui.editorFontValue.textContent = event.target.value;
@@ -262,10 +272,6 @@ document.addEventListener('DOMContentLoaded', () => {
       schedulePreferenceSave();
     });
     ui.motion.addEventListener('change', event => updatePreference('motion', event.target.value));
-    ui.quickVmChange.addEventListener('change', event => {
-      updatePreference('quick_vm_change', event.target.checked);
-      updateOverview();
-    });
     ui.rememberSections.addEventListener('change', event => {
       preferences.remember_sections = event.target.checked;
       if (!event.target.checked) preferences.sections = {};
@@ -290,6 +296,7 @@ document.addEventListener('DOMContentLoaded', () => {
       $(`target-${key}`).addEventListener('change', event => {
         state.config.target[key] = event.target.value;
         markPresetCustom();
+        renderAll();
       });
     });
     $('target-host_images').addEventListener('input', event => {
@@ -346,9 +353,9 @@ document.addEventListener('DOMContentLoaded', () => {
     renderPasses();
     renderVmOptions();
     renderSignature();
-    renderMarkerHint();
     updateOverview();
     bindSectionPreferences();
+    experience?.render();
     window.GuiI18n.localize(document.body, preferences.language);
     refreshEditors();
   }
@@ -385,12 +392,14 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.density.value = preferences.density;
     ui.editorFontSize.value = preferences.editor_font_size;
     ui.editorFontValue.textContent = preferences.editor_font_size;
+    ui.wordWrap.checked = Boolean(preferences.word_wrap);
+    editors.forEach(editor => editor.setWordWrap(Boolean(preferences.word_wrap)));
     ui.motion.value = preferences.motion;
     ui.rememberSections.checked = Boolean(preferences.remember_sections);
-    ui.quickVmChange.checked = Boolean(preferences.quick_vm_change);
     ui.preferencesStatus.textContent = tr(ui.preferencesStatus.textContent);
     $('console-input').placeholder = tr('Type and press Enter');
     if (executionStatusParts.length) setExecutionStatus(...executionStatusParts);
+    experience?.render();
     window.GuiI18n.localize(document.body, preferences.language);
     refreshEditors();
   }
@@ -535,69 +544,11 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   function renderMarkerHint() {
-    const kind = $('marker-kind').value;
-    const hasOptions = ['VM', 'VM_START', 'FUNCTION_OBF', 'FUNCTION_OBF_START'].includes(kind);
-    $('marker-options').hidden = !hasOptions;
-    $('marker-options-label').hidden = !hasOptions;
-    $('marker-options').placeholder = kind.startsWith('FUNCTION') ? 'cff, junk=false' : 'profile="fast-vm", junk_rate=0.05';
-    const hints = {
-      STRING_OBF: '문자열 리터럴 선택 → 삽입', NUMBER_OBF: '숫자 리터럴 선택 → 삽입',
-      BOOLEAN_OBF: 'true / false 선택 → 삽입', TABLE_OBF: '테이블 { … } 선택 → 삽입',
-      VM_START: '완전한 문장들을 선택 → VM 영역', FUNCTION_OBF: '함수 앞에 삽입',
-      FUNCTION_OBF_START: '함수 내부 문장들을 선택 → 보호 영역', VM: '파일 맨 앞에 삽입',
-      NO_VM: '함수 앞에 삽입 → VM 제외', NO_VM_START: '문장들을 선택 → VM 제외',
-      NO_OBF_START: '문장들을 선택 → 보호 제외',
-    };
-    $('marker-hint').textContent = tr(hints[kind]);
+    experience?.markerChanged();
   }
 
-  function insertMarker() {
-    const editor = ui.input;
-    const kind = $('marker-kind').value;
-    let start = editor.selectionStart, end = editor.selectionEnd;
-    const source = editor.value;
-    const selected = source.slice(start, end);
-    const macro = ['STRING_OBF', 'NUMBER_OBF', 'BOOLEAN_OBF', 'TABLE_OBF'].includes(kind);
-    if ((macro || kind.endsWith('_START')) && !selected.trim()) {
-      $('marker-hint').textContent = tr('코드에서 보호할 부분을 먼저 선택하세요.');
-      editor.focus();
-      return;
-    }
-    const hasOptions = ['VM', 'VM_START', 'FUNCTION_OBF', 'FUNCTION_OBF_START'].includes(kind);
-    let options = hasOptions ? $('marker-options').value.trim() : '';
-    if (/[\r\n]/.test(options)) {
-      $('marker-hint').textContent = tr('옵션은 한 줄로 입력하세요.');
-      return;
-    }
-    if (options.startsWith('(') && options.endsWith(')')) options = options.slice(1, -1);
-    const suffix = options ? `(${options})` : '';
-    let replacement;
-    if (macro) replacement = `${kind}(${selected})`;
-    else {
-      if (kind === 'VM') { start = 0; end = 0; }
-      else {
-        start = start > 0 ? source.lastIndexOf('\n', start - 1) + 1 : 0;
-        if (kind.endsWith('_START')) {
-          // Keep complete physical lines; a selection ending at a line start
-          // must not consume the next statement.
-          const next = source.indexOf('\n', end - (source[end - 1] === '\n' ? 1 : 0));
-          end = next < 0 ? source.length : next + 1;
-        } else end = start;
-      }
-      const indent = source.slice(start).match(/^[\t ]*/)[0];
-      replacement = `${indent}-- @${kind}${suffix}\n`;
-      if (kind.endsWith('_START')) {
-        const body = source.slice(start, end);
-        replacement += body + (body.endsWith('\n') ? '' : '\n');
-        replacement += `${indent}-- @${kind.replace(/_START$/, '_END')}\n`;
-      }
-    }
-    editor.focus();
-    editor.setSelectionRange(start, end);
-    editor.setRangeText(replacement, start, end, 'select');
-    editor.dispatchEvent(new Event('input', { bubbles: true }));
-    $('marker-tools').open = false;
-    setStatus('마커 삽입됨', 'success', kind);
+  async function insertMarker() {
+    await experience?.insertMarker();
   }
 
   function renderSignature() {
@@ -758,11 +709,12 @@ document.addEventListener('DOMContentLoaded', () => {
     if (option.resolution[backend]?.outcome === 'fallback') {
       row.querySelector('.option-description').textContent = `Fallback: ${option.resolution[backend].target}`;
     }
-    if (option.resolution[backend]?.outcome === 'disable') {
+    const unsupportedTarget = option.supported_lua_versions && !option.supported_lua_versions.includes(state.config.target?.lua_version ?? '5.3');
+    if (option.resolution[backend]?.outcome === 'disable' || unsupportedTarget) {
       row.classList.add('unsupported-option');
       row.querySelectorAll('input, select').forEach(control => { control.disabled = true; });
-      row.querySelector('.option-description').textContent = `Not used by ${backend}; saved value retained`;
-      row.dataset.hint = `This option does not apply to ${backend}. Switch backends to edit it.`;
+      row.querySelector('.option-description').textContent = unsupportedTarget ? 'Unavailable for Lua 5.1; saved value retained' : `Not used by ${backend}; saved value retained`;
+      row.dataset.hint = unsupportedTarget ? 'This strategy requires proven Lua 5.3 integers.' : `This option does not apply to ${backend}. Switch backends to edit it.`;
     }
     return row;
   }
@@ -799,7 +751,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const backend = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
     document.querySelectorAll('[data-backend]').forEach(button => {
       button.setAttribute('aria-pressed', String(button.dataset.backend === backend));
-      button.setAttribute('aria-haspopup', preferences.quick_vm_change ? 'false' : 'dialog');
+      button.setAttribute('aria-haspopup', 'false');
       button.setAttribute('aria-controls', 'backend-picker');
     });
     document.querySelectorAll('[data-backend-choice]').forEach(button => {
@@ -891,17 +843,15 @@ document.addEventListener('DOMContentLoaded', () => {
     ui.run.disabled = true;
     setStatus('Protecting…', 'running', `${ui.activePreset.textContent} / ${ui.activeLevel.textContent}`);
     try {
-      const result = await api.run_obfuscation({
+      const result = await experience.runBuild({
+        preset: state.preset, preset_custom: Boolean(state.preset_custom),
         script: ui.input.value,
-        config: state.config,
+        config: clone(state.config),
         release_check: Boolean(state.release_check) && !bootstrap.user_presets.includes(state.preset),
         deployment_check: Boolean(state.release_check) && bootstrap.user_presets.includes(state.preset),
       });
       if (!result.ok) {
-        ui.output.value = result.error;
-        refreshEditors();
-        if (editorView !== 'split') setEditorView('output');
-        ui.outputStats.textContent = 'error';
+        ui.outputStats.textContent = tr(ui.output.value ? 'Previous result' : 'error');
         setStatus('Build failed', 'error', lastErrorLine(result.error));
         return;
       }
@@ -909,13 +859,13 @@ document.addEventListener('DOMContentLoaded', () => {
       refreshEditors();
       $('result-dot').classList.add('has-result');
       if (editorView !== 'split') setEditorView('output');
-      ui.outputStats.textContent = `${result.output.length.toLocaleString()} chars · ${result.elapsed}s`;
+      ui.outputStats.textContent = `${result.metadata.output_bytes.toLocaleString()} B · ${(result.build_elapsed ?? result.elapsed).toFixed(2)}s`;
       const passCount = result.profile?.passes?.length || 0;
       if (result.warnings?.length) {
         setStatus('Protection complete (options ignored)', 'success', result.warnings.join('\n'));
         return;
       }
-      setStatus('Protection complete', 'success', `${passCount} passes · ${result.elapsed}s total`);
+      setStatus('Protection complete', 'success', `${passCount} passes · ${(result.build_elapsed ?? result.elapsed).toFixed(2)}s total`);
     } catch (error) {
       setStatus('Build failed', 'error', String(error));
     } finally {

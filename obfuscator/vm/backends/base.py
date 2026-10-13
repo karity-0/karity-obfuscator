@@ -140,9 +140,11 @@ class RuntimeBody:
     backend: str
     graph_sites: int = 0
     graph_families: int = 0
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 class VMBackend:
+    shared_runtime_helpers: tuple[str, ...] = ()
     domain = ExecutionDomain.VM
     name = ""
     description = ""
@@ -238,12 +240,14 @@ class VMBackend:
         layout = lowered.backend_data['layout']
         materialization = lowered.backend_data.get('materialization')
         started = time.perf_counter()
+        storage_stats: dict[str, Any] = {}
         blob = serialize(materialization.functions if materialization else layout.functions,
                          layout=layout.instruction_layout, constant_tags=layout.constant_tags,
                          vm_count=layout.vm_count,
-                         integrity_options={'enabled': lowered.policy.get('integrity_constants', False)})
+                         integrity_options={'enabled': lowered.policy.get('integrity_constants', False)},
+                         stats=storage_stats)
         context.profile.append({'phase': 'serialize_blob',
-                                'elapsed': round(time.perf_counter() - started, 6)})
+                                'elapsed': round(time.perf_counter() - started, 6), **storage_stats})
         return blob
 
     def emit(self, lowered: LoweredIR, context: BackendContext) -> str:
@@ -272,11 +276,16 @@ class VMBackend:
 
 
 SHARED_OPTIONS = frozenset((
+    "ir_mba_rate", "ir_test_set_rate", "ir_tail_duplication_rate", "ir_rematerialization_rate",
+    "ir_morph_max_growth", "ir_morph_max_added_instructions", "ir_morph_max_added_blocks",
+    "ir_morph_max_transforms", "ir_morph_max_depth", "ir_morph_pass_max_added_instructions",
+    "ir_morph_max_new_operations",
     "backend", "requirements", "blob_form", "vm_count", "junk_instructions", "junk_rate",
     "integrity_constants", "integrity_constant_rate",
 ))
 
 CLASSIC_OPTIONS = SHARED_OPTIONS | frozenset((
+    "physical_block_permutation_rate", "physical_block_permutation_max_jumps",
     "dispatcher_type", "dispatcher_target_hiding", "fake_handlers",
     "mutate_handlers",
 ))

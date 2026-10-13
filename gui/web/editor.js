@@ -11,7 +11,13 @@
     for (const match of text.matchAll(pattern)) {
       const value = match[0];
       let kind = '';
-      if (value.startsWith('--')) kind = 'comment';
+      if (value.startsWith('--')) {
+        kind = 'comment';
+        const marker = /^--@(?:(VM|FUNCTION_OBF|NO_VM)\b|(VM|FUNCTION_OBF|NO_VM|NO_OBF|NUMBER_OBF|MEME_STRINGS)_(START|END)\b)/.exec(value);
+        if (marker
+            && !text.slice(text.lastIndexOf('\n', match.index - 1) + 1, match.index).trim())
+          kind = marker[3] === 'START' ? 'marker-start' : marker[3] === 'END' ? 'marker-end' : 'marker';
+      }
       else if (/^["'\[]/.test(value)) kind = 'string';
       else if (/^[\d.]/.test(value) && value !== '..') kind = 'number';
       else if (keywords.has(value)) kind = 'keyword';
@@ -29,6 +35,17 @@
     let lo = 0, hi = tokens.length;
     while (lo < hi) { const mid = (lo + hi) >>> 1; if (tokens[mid].end <= offset) lo = mid + 1; else hi = mid; }
     return lo;
+  }
+
+  function highlight(text, tokens, start, end) {
+    let html = '', position = start;
+    for (let index = lowerBound(tokens, start); index < tokens.length && tokens[index].start < end; index++) {
+      const token = tokens[index], left = Math.max(start, token.start), right = Math.min(end, token.end);
+      html += escape(text.slice(position, left));
+      html += `<span class="token-${token.kind}">${escape(text.slice(left, right))}</span>`;
+      position = right;
+    }
+    return html + escape(text.slice(position, end));
   }
 
   class LuaEditor {
@@ -59,6 +76,17 @@
       });
       new ResizeObserver(() => this.schedule()).observe(this.surface);
       this.refresh();
+    }
+
+    setWordWrap(enabled) {
+      if (this.wordWrap === enabled) return;
+      this.wordWrap = enabled;
+      this.surface.classList.toggle('word-wrap', enabled);
+      this.input.wrap = enabled ? 'soft' : 'off';
+      this.input.scrollLeft = 0;
+      this.wrapTokens = null;
+      if (!enabled) { this.measure?.remove(); this.measure = null; }
+      this.schedule();
     }
 
     createScrollbar(axis) {
@@ -157,6 +185,7 @@
           });
         }).join('\n');
         this.tokens = tokenize(this.text);
+        this.wrapTokens = null;
         this.starts = [0];
         for (let i = 0; i < this.text.length; i++) if (this.text[i] === '\n') this.starts.push(i + 1);
       }
@@ -168,11 +197,72 @@
       this.frame = requestAnimationFrame(() => this.render());
     }
 
+    renderWrapped(style, lineHeight) {
+      // A single plain text node lets the browser determine its own Unicode,
+      // tab and word boundaries. Only visible visual rows get token elements;
+      // even a megabyte-long minified line never becomes a full highlighted DOM.
+      if (!this.measure) {
+        this.measure = document.createElement('pre');
+        this.measure.className = 'wrap-measure';
+        this.measure.setAttribute('aria-hidden', 'true');
+        this.surface.append(this.measure);
+      }
+      if (!this.wrapTokens) {
+        this.wrapTokens = tokenize(this.original);
+        this.rawStarts = [0];
+        for (let i = 0; i < this.original.length; i++) if (this.original[i] === '\n') this.rawStarts.push(i + 1);
+        this.measure.textContent = this.original + '\u200b';
+      }
+      Object.assign(this.measure.style, {width: `${this.input.clientWidth}px`, padding: style.padding,
+        fontFamily: style.fontFamily, fontSize: style.fontSize, fontWeight: style.fontWeight,
+        fontStyle: style.fontStyle, lineHeight: style.lineHeight, letterSpacing: style.letterSpacing});
+      const range = document.createRange(), text = this.measure.firstChild, length = this.original.length;
+      range.setStart(text, 0); range.setEnd(text, 1);
+      const firstGlyphTop = range.getBoundingClientRect().top;
+      const yAt = offset => {
+        range.setStart(text, offset); range.setEnd(text, offset + 1);
+        return parseFloat(style.paddingTop) + Math.round((range.getBoundingClientRect().top - firstGlyphTop) / lineHeight) * lineHeight;
+      };
+      const firstAt = (y, start = 0) => {
+        let lo = start, hi = length + 1;
+        while (lo < hi) {
+          const mid = (lo + hi) >>> 1;
+          if (yAt(mid) < y) lo = mid + 1; else hi = mid;
+        }
+        return lo;
+      };
+      let start = firstAt(this.input.scrollTop - 2 * lineHeight);
+      let logical = 0, hi = this.rawStarts.length;
+      while (logical < hi) {
+        const mid = (logical + hi) >>> 1;
+        if (this.rawStarts[mid] <= start) logical = mid + 1; else hi = mid;
+      }
+      logical = Math.max(0, logical - 1);
+      const lines = [], numbers = [], count = Math.ceil(this.input.clientHeight / lineHeight) + 6;
+      for (let row = 0; row < count && start <= length; row++) {
+        const y = yAt(start), next = firstAt(y + lineHeight / 2, start + 1);
+        let end = Math.min(next, length);
+        if (this.original[end - 1] === '\n') end--;
+        if (this.original[end - 1] === '\r') end--;
+        const top = y - this.input.scrollTop;
+        lines.push(`<pre style="top:${top}px;left:${parseFloat(style.paddingLeft)}px">${highlight(this.original, this.wrapTokens, start, end) || ' '}</pre>`);
+        while (logical + 1 < this.rawStarts.length && this.rawStarts[logical + 1] <= start) logical++;
+        if (this.rawStarts[logical] === start) {
+          const marker = this.wrapTokens[lowerBound(this.wrapTokens, start)];
+          const markerClass = marker?.start < end && ['marker-start','marker-end'].includes(marker.kind) ? ` class="${marker.kind}-line"` : '';
+          numbers.push(`<span${markerClass} style="top:${top}px">${logical + 1}</span>`);
+        }
+        start = next;
+      }
+      this.layer.innerHTML = lines.join(''); this.gutter.innerHTML = numbers.join('');
+    }
+
     render() {
       if (!this.input.clientHeight) return;
       this.renderScrollbars();
       const style = getComputedStyle(this.input);
       const lineHeight = parseFloat(style.lineHeight);
+      if (this.wordWrap) { this.renderWrapped(style, lineHeight); return; }
       const paddingTop = parseFloat(style.paddingTop), paddingLeft = parseFloat(style.paddingLeft);
       const canvas = this.canvas ||= document.createElement('canvas');
       const context = canvas.getContext('2d'); context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
@@ -199,17 +289,12 @@
           offset = context.measureText(content.slice(0, column)).width;
         }
         const start = Math.min(lineEnd, lineStart + column), end = Math.min(lineEnd, start + columns);
-        let html = '', position = start;
-        for (let index = lowerBound(this.tokens, start); index < this.tokens.length && this.tokens[index].start < end; index++) {
-          const token = this.tokens[index], left = Math.max(start, token.start), right = Math.min(end, token.end);
-          html += escape(this.text.slice(position, left));
-          html += `<span class="token-${token.kind}">${escape(this.text.slice(left, right))}</span>`;
-          position = right;
-        }
-        html += escape(this.text.slice(position, end));
+        const html = highlight(this.text, this.tokens, start, end);
         const y = paddingTop + line * lineHeight - this.input.scrollTop;
         lines.push(`<pre style="top:${y}px;left:${paddingLeft + offset - this.input.scrollLeft}px">${html || ' '}</pre>`);
-        numbers.push(`<span style="top:${y}px">${line + 1}</span>`);
+        const marker = this.tokens[lowerBound(this.tokens, lineStart)];
+        const markerClass = marker?.start < lineEnd && ['marker-start', 'marker-end'].includes(marker.kind) ? ` class="${marker.kind}-line"` : '';
+        numbers.push(`<span${markerClass} style="top:${y}px">${line + 1}</span>`);
       }
       this.layer.innerHTML = lines.join('');
       this.gutter.innerHTML = numbers.join('');

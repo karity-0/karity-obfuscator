@@ -1,161 +1,214 @@
+"""Conservative constructor reshaping and bounded table reconstruction."""
+from __future__ import annotations
+
+from bisect import bisect_left, bisect_right
+from collections import Counter
+import math
 import random
+import time
 
+from ..names import NameAllocator
 from .base import BasePass, Replacement
+from .numeric_provenance import CodeText, join_code
+from .number_expressions import NumberExpressionEngine
+from .string_obfuscation import parse_lua_string
 
 
-# 부수효과 없이 평가 순서가 결과에 영향을 주지 않는 leaf 노드 타입들.
-_SAFE_LEAF_TYPES = {"number", "string", "true", "false", "nil", "identifier"}
-
-# 다중값 반환 가능 표현식 (`...`, 함수/메서드 호출)
-_MULTRET_TYPES = {"function_call", "vararg_expression"}
-
-
-def _is_multret_expr(node) -> bool:
-    return node is not None and node.type in _MULTRET_TYPES
-
-
-def _is_side_effect_free(node) -> bool:
-    """node가 함수 호출/인덱스 접근/클로저 생성 없이 평가될 수 있는지.
-
-    Table 리터럴은 재귀적으로 모든 필드를 검사한다. 알 수 없는 타입은
-    보수적으로 unsafe(=순서 보존)로 취급한다.
-    """
-    if node is None:
-        return True
-
-    t = node.type
-    if t in _SAFE_LEAF_TYPES:
-        return True
-
-    if t in {"unary_expression", "binary_expression"}:
-        # Even identifier-only arithmetic may invoke Lua metamethods.  Without
-        # type proof, reordering these expressions is not semantics-preserving.
-        return False
-
-    if t == "table_constructor":
-        for f in _fields(node):
-            key, value, _ = _parse_field(f)
-            if not _is_side_effect_free(key) or not _is_side_effect_free(value):
-                return False
-        return True
-
-    # function_call / *_index_expression / function_definition /
-    # vararg_expression 등은 모두 안전하지 않음으로 취급
-    return False
+def validate_options(options):
+    if not isinstance(options, dict) or set(options) - {'mode', 'max_fields', 'string_keys'}:
+        raise ValueError('table_obf_options accepts mode, max_fields, and string_keys')
+    if options.get('mode', 'mixed') not in ('mixed', 'shuffle', 'reconstruct'):
+        raise ValueError('table_obf_options.mode must be mixed, shuffle, or reconstruct')
+    limit = options.get('max_fields', 16)
+    if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 64:
+        raise ValueError('table_obf_options.max_fields must be between 1 and 64')
+    if not isinstance(options.get('string_keys', False), bool):
+        raise ValueError('table_obf_options.string_keys must be boolean')
 
 
-def _fields(table_node):
-    return [c for c in table_node.children if c.type == "field"]
+def _fields(node):
+    return [c for c in node.named_children if c.type == 'field']
 
 
 def _parse_field(field):
-    """field 노드를 (key_node|None, value_node, kind)로 분해.
-
-    kind: "array" (`v`), "record" (`name=v`), "bracket" (`[expr]=v`)
-    """
-    ch = field.children
-    eq_idx = next((i for i, c in enumerate(ch) if c.type == "="), None)
-    if eq_idx is None:
-        # array-style: 단일 값 표현식
-        return None, (ch[0] if ch else None), "array"
-    value = ch[eq_idx + 1]
-    if ch[0].type == "[":
-        return ch[1], value, "bracket"   # [expr]=value
-    return ch[0], value, "record"        # name=value (key는 identifier)
+    children = field.children
+    eq = next((i for i, c in enumerate(children) if c.type == '='), None)
+    if eq is None:
+        return None, children[0], 'array'
+    return children[1] if children[0].type == '[' else children[0], children[eq+1], (
+        'bracket' if children[0].type == '[' else 'record')
 
 
-def _field_text(tree, field) -> tuple[str | None, str]:
-    """필드의 (key_text 또는 None, value_text)를 반환."""
-    key, value, kind = _parse_field(field)
-    value_text = tree.text(value)
-    if kind == "array":
-        return None, value_text
-    if kind == "bracket":
-        return f"[{tree.text(key)}]", value_text
-    # record: name=value → ["name"]=value
-    return f'["{tree.text(key)}"]', value_text
+def _literal_key(tree, key, kind, index):
+    if kind == 'array':
+        return ('number', index)
+    if kind == 'record':
+        return ('string', tree.text(key).encode('utf-8'))
+    if key.type == 'string':
+        return ('string', parse_lua_string(tree.text(key)))
+    if key.type in {'true', 'false'}:
+        return ('boolean', key.type == 'true')
+    if key.type == 'number':
+        text = tree.text(key).lower()
+        try:
+            value = (float.fromhex(text) if text.startswith('0x') else float(text))
+            if math.isfinite(value) and abs(value) < 2**53:
+                return ('number', value)
+        except ValueError:
+            pass
+    return None
 
 
 class TableObfuscationPass(BasePass):
-    """테이블 리터럴을 명시적 키-값 형태로 재작성하고, 안전하면 필드 순서를 섞는다.
+    parser = 'treesitter'
 
-    - 배열식 필드(`{1,2,3}`)는 `{[1]=1,[2]=2,[3]=3}` 형태로 명시적 인덱싱
-    - record/bracket 필드는 `["key"]=value` / `[expr]=value` 형태로 통일
-    - 모든 key/value가 부수효과 없는 리터럴만 변환하고 필드 순서를 셔플
-    - 호출/metamethod/index 접근이 섞인 테이블은 keyed-field 변환 자체가 Lua의
-      평가 순서를 바꿀 수 있으므로 원문을 보존
-    """
-    parser = "treesitter"
+    def __init__(self, **options):
+        validate_options(options)
+        self.options = options
 
-    def run(self, script: str, tree) -> list[Replacement]:
-        # 중첩 테이블을 안쪽(start_char 큰 것)부터 처리한다.
-        tables = [
-            node for node in tree.walk()
-            if node.type == "table_constructor" and _fields(node)
-        ]
-        tables.sort(key=lambda n: tree.cs(n), reverse=True)
+    def run(self, script, tree):
+        started = time.perf_counter()
+        from .literal_mosaic import ACTIVE
+        mosaic = ACTIVE.get()
+        if self.options.get('string_keys') and mosaic is not None and mosaic.policy.lua_version == '5.1':
+            raise ValueError('table_obf_options.string_keys requires Lua 5.3 StringObf support')
+        tables = [n for n in tree.walk() if n.type == 'table_constructor' and _fields(n)]
+        if not tables:
+            self.last_profile = [{'phase': 'table_generation', 'elapsed': time.perf_counter()-started,
+                                  'tables_seen': 0}]
+            return []
+        from .rename_ts import resolve_bindings
+        # Resolve actual lexical reads once. Free globals may invoke _ENV's
+        # __index; identifier spelling alone is not a purity proof.
+        bindings, _, _, _, _ = resolve_bindings(tree, collect_literals=False)
+        locals_ = {n.id: id(binding) for binding in bindings for n in binding.nodes if binding.original != '_ENV'}
+        tables.sort(key=tree.cs, reverse=True)
+        allocator = NameAllocator.for_source(script, seed=random.getrandbits(64))
+        numbers = NumberExpressionEngine()
+        safe = {}
+        captures = {}
+        fields = {}
+        # Postorder facts cover unselected nested constructors too. No repeated
+        # recursion over the same nested tables and no Python recursion limit.
+        stack = [(node, False) for node in tables]
+        while stack:
+            node, visited = stack.pop()
+            if node.id in safe:
+                continue
+            if not visited:
+                stack.append((node, True))
+                if node.type == 'table_constructor':
+                    fields[node.id] = [_parse_field(f) for f in _fields(node)]
+                    stack.extend((value, False) for _, value, _ in fields[node.id])
+                continue
+            if node.type == 'table_constructor':
+                parsed = fields[node.id]
+                seen, valid, index = set(), True, 0
+                for key, value, kind in parsed:
+                    index += kind == 'array'
+                    identity = _literal_key(tree, key, kind, index)
+                    if identity is None or identity in seen or not safe.get(value.id, False):
+                        valid = False
+                    seen.add(identity)
+                safe[node.id] = valid
+                captures[node.id] = set().union(*(captures.get(value.id, set()) for _, value, _ in parsed))
+            else:
+                safe[node.id] = (node.type in {'number', 'string', 'true', 'false', 'nil'}
+                                 or node.type == 'identifier' and node.id in locals_)
+                captures[node.id] = {locals_[node.id]} if node.type == 'identifier' and node.id in locals_ else set()
+        replacements, starts = [], []  # descending, disjoint intervals
+        counts = Counter()
 
-        rewritten: dict[int, str] = {}     # node.id -> 변환된 텍스트
-        replacements: list[Replacement] = []
+        def fragment(node):
+            start, end = tree.cs(node), tree.ce(node)+1
+            first, last = bisect_right(starts, -end), bisect_right(starts, -start)
+            parts, pos = [], start
+            for replacement in reversed(replacements[first:last]):
+                parts.extend((script[pos:replacement.start], replacement.new_text))
+                pos = replacement.end+1
+            return join_code((*parts, script[pos:end]))
 
         for node in tables:
-            fields = _fields(node)
-
-            # 마지막 array 필드가 다중값 표현식이면 명시적 인덱싱으로
-            # 펼침 의미가 깨지므로 이 테이블은 통째로 건너뛴다.
-            array_fields = [f for f in fields if _parse_field(f)[2] == "array"]
-            if array_fields and _is_multret_expr(_parse_field(array_fields[-1])[1]):
+            parsed = fields[node.id]
+            if not safe[node.id]:
+                counts['preserved_unsafe_or_colliding'] += 1
                 continue
-
-            entries: list[str] = []
-            array_index = 1
-            safe_to_shuffle = True
-            bail = False
-
-            for f in fields:
-                key, value, kind = _parse_field(f)
-                if not _is_side_effect_free(key) or not _is_side_effect_free(value):
-                    safe_to_shuffle = False
-
-                key_text, value_text = _field_text(tree, f)
-
-                # value가 이미 처리된 nested table이면 변환된 텍스트로 대체
-                if value is not None and value.type == "table_constructor" \
-                        and value.id in rewritten:
-                    value_text = rewritten[value.id]
-
-                if kind == "array":
-                    entries.append(f"[{array_index}]={value_text}")
+            identities, index = [], 0
+            for key, _, kind in parsed:
+                index += kind == 'array'
+                identities.append(_literal_key(tree, key, kind, index))
+            has_array = any(kind == 'array' for _, _, kind in parsed)
+            # Sparse/uncertain lists must keep constructor allocation/order.
+            # A proven dense final table has a unique length regardless of
+            # insertion order and can be reconstructed with assignments.
+            shuffle_safe = not has_array and all(k[0] != 'number' for k in identities)
+            dense = all(kind != 'array' or value.type in {'number', 'string', 'true', 'false'}
+                        for _, value, kind in parsed)
+            staged_safe = dense and all(kind == 'array' or k[0] != 'number'
+                                       for (_, _, kind), k in zip(parsed, identities))
+            mode = self.options.get('mode', 'mixed')
+            staged = staged_safe and mode != 'shuffle' and (
+                mode == 'reconstruct' or bool(random.getrandbits(1)))
+            if staged and len(parsed) > self.options.get('max_fields', 16):
+                staged = False
+                counts['reconstruction_field_budget'] += 1
+            # Lua 5.1 allows 60 upvalues per function. Reserve one slot for
+            # StringObf's environment when string key reconstruction is enabled.
+            if staged and len(captures[node.id]) > 60 - bool(self.options.get('string_keys')):
+                staged = False
+                counts['reconstruction_upvalue_budget'] += 1
+            entries = []
+            array_index = 0
+            for key, value, kind in parsed:
+                key_text = ('"'+tree.text(key)+'"') if kind == 'record' else fragment(key) if key is not None else None
+                if staged and kind == 'array':
                     array_index += 1
+                    fallback = lambda: '('+numbers._fmt_plain_int(array_index)+')'
+                    if mosaic is not None:
+                        with mosaic.at(tree.cs(value), tree.ce(value)+1):
+                            key_text = mosaic.number(array_index, context='table_index', hot=True,
+                                                     max_chars=80, max_operations=1, fallback=fallback)
+                    else:
+                        key_text = fallback()
+                    key_text = CodeText(key_text, [(0,len(key_text))],
+                                        origins=getattr(key_text,'origins',()) or [(0,len(key_text),'table_index')])
+                entries.append((key_text, fragment(value), kind))
+            if staged:
+                table, key_name, value_name = (allocator.allocate(h) for h in ('table', 'table_key', 'table_value'))
+                parts = ['(function() local ', table, '={};local ', key_name, ',', value_name, ';']
+                records = entries.copy()
+                random.shuffle(records)
+                for key_text, value_text, _ in records:
+                    if self.options.get('string_keys') and key_text.startswith(('"', "'", '[')):
+                        from .string_obfuscation import _encode
+                        key_text = _encode(parse_lua_string(key_text), allocator)
+                    parts.extend((key_name, '=', key_text, ';', value_name, '=', value_text, ';',
+                                  table, '[', key_name, ']=', value_name, ';'))
+                parts.extend(('return ', table, ' end)()'))
+                expression = join_code(parts)
+                expression = CodeText(expression, getattr(expression, 'protected', ()),
+                                      [(0, len(expression))], getattr(expression, 'origins', ()))
+                counts['reconstruction_programs'] += 1
+                counts['reconstruction_fields'] += len(parsed)
+            else:
+                if shuffle_safe:
+                    random.shuffle(entries)
+                    counts['shuffled_constructors'] += 1
                 else:
-                    if key_text is None:
-                        bail = True
-                        break
-                    entries.append(f"{key_text}={value_text}")
-
-            if bail or not safe_to_shuffle:
-                continue
-
-            random.shuffle(entries)
-
-            new_text = "{" + ",".join(entries) + "}"
-            rewritten[node.id] = new_text
-
-            replacements.append(Replacement(
-                start=tree.cs(node),
-                end=tree.ce(node),
-                new_text=new_text,
-            ))
-
-        # nested table은 부모의 new_text에 이미 반영되므로, 다른 replacement에
-        # 완전히 포함되는 replacement는 제거한다.
-        def _contained(inner: Replacement, outer: Replacement) -> bool:
-            return (outer.start <= inner.start and inner.end <= outer.end
-                    and (outer.start, outer.end) != (inner.start, inner.end))
-
-        replacements = [
-            r for r in replacements
-            if not any(_contained(r, other) for other in replacements)
-        ]
-
-        return replacements
+                    counts['ordered_constructors'] += 1
+                body = [value if kind == 'array' else join_code(('[', key, ']=', value))
+                        for key, value, kind in entries]
+                expression = join_code(('{', join_code(part for i, value in enumerate(body)
+                                                       for part in ((',' if i else ''), value)), '}'))
+            # A parent incorporates every child edit, including constructors
+            # nested inside keys/other expressions. Replace those intervals in
+            # one ordered sweep, rather than an all-pairs containment filter.
+            start, end = tree.cs(node), tree.ce(node)
+            first = bisect_left(starts, -end)
+            del replacements[first:]
+            del starts[first:]
+            replacements.append(Replacement(start, end, expression))
+            starts.append(-start)
+        self.last_profile = [{'phase': 'table_generation', 'elapsed': time.perf_counter()-started,
+                              'tables_seen': len(tables), **dict(counts)}]
+        return list(reversed(replacements))

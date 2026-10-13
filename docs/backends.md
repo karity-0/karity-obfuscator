@@ -17,6 +17,8 @@ encrypted blob forms, and configured output passes. The backend declares its
 capabilities and selects instruction lowering and runtime generation. Packing is
 a separate outer pass and also works without a VM. See the
 [IR architecture and migration map](vm-ir-architecture.md).
+Shared blob layout and measured storage costs are described in the
+[compact prototype storage report](performance/serialization.md).
 
 ```mermaid
 flowchart TD
@@ -133,6 +135,19 @@ unsupported controls, including values inherited from a profile.
 
 | Option | Karity | Classic | MOV |
 |---|---|---|---|
+| `ir_mba_rate` | Yes | Yes | Yes |
+| `ir_test_set_rate` | Yes | Yes | Yes |
+| `ir_tail_duplication_rate` | Yes | Yes | Yes |
+| `ir_rematerialization_rate` | Yes | Yes | Yes |
+| `ir_morph_max_growth` | Yes | Yes | Yes |
+| `ir_morph_max_added_instructions` | Yes | Yes | Yes |
+| `ir_morph_max_added_blocks` | Yes | Yes | Yes |
+| `ir_morph_max_transforms` | Yes | Yes | Yes |
+| `ir_morph_max_depth` | Yes | Yes | Yes |
+| `ir_morph_pass_max_added_instructions` | Yes | Yes | Yes |
+| `ir_morph_max_new_operations` | Yes | Yes | Yes |
+| `physical_block_permutation_rate` | Yes | Yes | No |
+| `physical_block_permutation_max_jumps` | Yes | Yes | No |
 | `state_dependency_limit` | Yes | No | No |
 | `requirements` | Yes | Yes | Yes |
 | `backend` | Yes | Yes | Yes |

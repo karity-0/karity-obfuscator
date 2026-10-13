@@ -149,16 +149,18 @@ def main() -> int:
         "gui_version": "v2",
         "language": "ko",
         "theme": "system", "density": "compact", "editor_font_size": 18,
+        "word_wrap": False,
         "motion": "reduced", "remember_sections": True,
-        "quick_vm_change": False,
         "sections": {"pipeline": False},
     }
     assert _normalize_preferences({"gui_version": "invalid"})["gui_version"] == "v2"
-    assert _normalize_preferences({"quick_vm_change": True})["quick_vm_change"] is True
-    assert _normalize_preferences({"quick_vm_change": "true"})["quick_vm_change"] is False
+    assert 'quick_vm_change' not in _normalize_preferences({"quick_vm_change": True})
+    assert 'quick_vm_change' not in _normalize_preferences({"quick_vm_change": "true"})
     assert _normalize_preferences({"gui_version": "v1"})["gui_version"] == "v1"
     assert _normalize_preferences({"language": "en", "theme": "crystal"})["language"] == "en"
     assert _normalize_preferences({"language": "invalid"})["language"] == "ko"
+    assert _normalize_preferences({"word_wrap": True})["word_wrap"] is True
+    assert _normalize_preferences({"word_wrap": "true"})["word_wrap"] is False
     assert {"crystal", "ocean", "dracula", "mythic", "crimson"} <= set(bootstrap["themes"])
     assert not {"white", "pyobf-dark"} & set(bootstrap["themes"])
     assert _normalize_preferences({"theme": "white"})["theme"] == "light"
@@ -210,6 +212,7 @@ def main() -> int:
                 "theme": "classic", "editor_font_size": 9,
                 "gui_version": "v1",
                 "language": "en",
+                "word_wrap": True,
                 "quick_vm_change": True,
                 "sections": {"signature": False},
             })
@@ -218,8 +221,10 @@ def main() -> int:
             assert persisted["theme"] == "classic"
             assert persisted["gui_version"] == "v1"
             assert persisted["language"] == "en"
-            assert persisted["quick_vm_change"] is True
-            assert Api().get_bootstrap()["preferences"]["quick_vm_change"] is True
+            assert persisted["word_wrap"] is True
+            assert Api().get_bootstrap()["preferences"]["word_wrap"] is True
+            assert 'quick_vm_change' not in persisted
+            assert 'quick_vm_change' not in Api().get_bootstrap()["preferences"]
             assert persisted["editor_font_size"] == 10
             assert persisted["sections"] == {"signature": False}
         finally:

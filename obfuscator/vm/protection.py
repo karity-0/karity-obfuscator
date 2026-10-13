@@ -231,6 +231,14 @@ class UnsupportedProtectionError(ValueError):
 
 
 _OPTION_FEATURES = {
+    "ir_mba_rate": "semantic_ir_morphing", "ir_test_set_rate": "semantic_ir_morphing",
+    "ir_tail_duplication_rate": "semantic_ir_morphing", "ir_rematerialization_rate": "semantic_ir_morphing",
+    "ir_morph_max_growth": "semantic_ir_morphing", "ir_morph_max_added_instructions": "semantic_ir_morphing",
+    "ir_morph_max_added_blocks": "semantic_ir_morphing", "ir_morph_max_transforms": "semantic_ir_morphing",
+    "ir_morph_max_depth": "semantic_ir_morphing", "ir_morph_pass_max_added_instructions": "semantic_ir_morphing",
+    "ir_morph_max_new_operations": "semantic_ir_morphing",
+    "physical_block_permutation_rate": "physical_block_permutation",
+    "physical_block_permutation_max_jumps": "physical_block_permutation",
     "dispatcher_type": "dispatcher_cff",
     "dispatcher_target_hiding": "dispatcher_target_hiding",
     "semantic_state_threading": "state_transition",
@@ -260,6 +268,10 @@ _OPTION_FEATURES = {
 }
 
 _PARAMETER_OPTIONS = frozenset((
+    "ir_morph_max_growth", "ir_morph_max_added_instructions", "ir_morph_max_added_blocks",
+    "ir_morph_max_transforms", "ir_morph_max_depth", "ir_morph_pass_max_added_instructions",
+    "ir_morph_max_new_operations",
+    "physical_block_permutation_max_jumps",
     "junk_rate", "integrity_constant_rate", "block_variant_count",
     "block_variant_max_instructions", "helper_variant_count",
     "state_dependency_limit",
