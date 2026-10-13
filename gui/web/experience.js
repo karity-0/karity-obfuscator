@@ -33,11 +33,11 @@
         } else end = start;
       }
       const indent = source.slice(start).match(/^[\t ]*/)[0];
-      replacement = `${indent}-- @${kind}${options ? `(${options})` : ''}\n`;
+      replacement = `${indent}--@${kind}${options ? `(${options})` : ''}\n`;
       if (kind.endsWith('_START')) {
         const body = source.slice(start, end);
         replacement += body + (body.endsWith('\n') ? '' : '\n');
-        replacement += `${indent}-- @${kind.replace(/_START$/, '_END')}\n`;
+        replacement += `${indent}--@${kind.replace(/_START$/, '_END')}\n`;
       }
     }
     return {start, end, replacement};

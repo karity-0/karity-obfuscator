@@ -113,7 +113,7 @@ text]=])
             self.assertNotIn('"hidden"', output)
             self.assertNotIn("STRING_OBF", output)
             self.assertEqual(LuaRuntime().execute(output), ("visible", "hidden"))
-        excluded = '-- @NO_OBF_START\nlocal s=STRING_OBF("keep")\n-- @NO_OBF_END\nreturn s'
+        excluded = '--@NO_OBF_START\nlocal s=STRING_OBF("keep")\n--@NO_OBF_END\nreturn s'
         pipeline = build_pipeline_from_config({"passes": ["string_obf"], "signature": {"mode": "none"}}, Pipeline)
         self.assertEqual(LuaRuntime().execute(pipeline.run(excluded)), "keep")
 

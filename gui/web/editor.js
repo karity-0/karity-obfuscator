@@ -13,9 +13,10 @@
       let kind = '';
       if (value.startsWith('--')) {
         kind = 'comment';
-        if (/^--\s*@(?:VM|FUNCTION_OBF|NO_VM|NO_OBF|NUMBER_OBF|MEME_STRINGS)_(?:START|END)\b/.test(value)
+        const marker = /^--@(?:(VM|FUNCTION_OBF|NO_VM)\b|(VM|FUNCTION_OBF|NO_VM|NO_OBF|NUMBER_OBF|MEME_STRINGS)_(START|END)\b)/.exec(value);
+        if (marker
             && !text.slice(text.lastIndexOf('\n', match.index - 1) + 1, match.index).trim())
-          kind = /_START\b/.test(value) ? 'marker-start' : 'marker-end';
+          kind = marker[3] === 'START' ? 'marker-start' : marker[3] === 'END' ? 'marker-end' : 'marker';
       }
       else if (/^["'\[]/.test(value)) kind = 'string';
       else if (/^[\d.]/.test(value) && value !== '..') kind = 'number';

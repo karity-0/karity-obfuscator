@@ -36,14 +36,14 @@ scope. See [Literal Mosaic](literal-mosaic.md).
 A listed pass defaults to `all`. In `marked` mode only selected locations run
 through that pass. A macro/directive can also enable an absent pass; that pass
 defaults to `marked` unless `selection_modes` explicitly says otherwise.
-File-level `@VM` overrides `marked` and selects the whole chunk.
+File-level `--@VM` overrides `marked` and selects the whole chunk.
 
 Configuration supplies default options. Enclosing selections supply overrides;
 inner selections override individual supplied keys. Exclusions take precedence:
 `NO_VM` excludes VM execution while allowing source passes, and `NO_OBF` excludes
 source transformations and VM execution. Packaging still transports the final
 script, including excluded code.
-Comment markers accept both `--@NO_VM_START` and `-- @NO_VM_START`.
+Comment directives use `--@NO_VM_START` without whitespace after `--`.
 When all original statements are excluded, generated source guards/wrappers do
 not enable VM compilation; those protections remain native Lua.
 Direct `Pipeline` users inherit function selection defaults from their configured
@@ -84,7 +84,7 @@ Put an annotation immediately before a function declaration or a single local
 assignment to an anonymous function:
 
 ```lua
--- @FUNCTION_OBF(cff, wrapper, junk=false, nested=false)
+--@FUNCTION_OBF(cff, wrapper, junk=false, nested=false)
 local function check(value)
     local result = value + 1
     if result > 10 then result = result * 2 end
@@ -92,8 +92,8 @@ local function check(value)
 end
 ```
 
-Both `-- @DIRECTIVE` and bare `@DIRECTIVE` are accepted. Comment directives keep
-the source valid for Lua editors. Bare directives are removed before parsing.
+Only `--@DIRECTIVE` is accepted. Spaced `-- @DIRECTIVE` and bare `@DIRECTIVE`
+produce a syntax guidance error; ordinary comments and string contents are unchanged.
 Directives occupy their own physical lines. Marker text inside strings, ordinary
 comments and long comments has no effect. Trailing Lua comments are accepted.
 
@@ -111,11 +111,11 @@ The paired form can select the complete containing function body:
 
 ```lua
 local function check(value)
-    @FUNCTION_OBF_START(cff, junk)
+    --@FUNCTION_OBF_START(cff, junk)
     local result = value + 1
     if result > 10 then result = result * 2 end
     return result
-    @FUNCTION_OBF_END
+    --@FUNCTION_OBF_END
 end
 ```
 
@@ -124,10 +124,10 @@ It can also select part of a function body, including statements inside a loop:
 ```lua
 local function check(value, ...)
     local fast = value + 1
-    -- @FUNCTION_OBF_START(cff, junk=false)
+    --@FUNCTION_OBF_START(cff, junk=false)
     local result = fast * 3
     if result > 10 then return result, ... end
-    -- @FUNCTION_OBF_END
+    --@FUNCTION_OBF_END
     return result
 end
 ```
@@ -151,12 +151,12 @@ functions otherwise follow `nested` and `nested_max_depth`.
 ```lua
 local counter = 0
 
--- @VM_START(profile="fast-vm", junk_rate=0.05)
+--@VM_START(profile="fast-vm", junk_rate=0.05)
 local function protected(amount)
     counter = counter + amount
     return counter
 end
--- @VM_END
+--@VM_END
 
 local function hot_path()
     counter = counter + 1
@@ -169,11 +169,11 @@ functions, or arbitrary complete sibling statements in one Lua block:
 ```lua
 local total = 0
 for i = 1, 100 do
-    -- @VM_START(profile="fast-vm")
+    --@VM_START(profile="fast-vm")
     local increment = i * 2
     total = total + increment
     if total > 500 then break end
-    -- @VM_END
+    --@VM_END
 end
 print(total)
 ```
@@ -210,10 +210,10 @@ internal VM distribution within each shared runtime.
 File-level whole VM execution and native exclusions:
 
 ```lua
--- @VM
+--@VM
 local counter = 0
 
--- @NO_VM
+--@NO_VM
 local function hot_path()
     counter = counter + 1
 end
@@ -225,17 +225,17 @@ end
 print(protected())
 ```
 
-`@VM` must precede Lua code; leading comments and blank lines are allowed. It
-can accept VM options, for example `@VM(profile="fast-vm")`. `@NO_VM` selects
-the immediately following function. `@NO_VM_START` / `@NO_VM_END` select complete
+`--@VM` must precede Lua code; leading comments and blank lines are allowed. It
+can accept VM options, for example `--@VM(profile="fast-vm")`. `--@NO_VM` selects
+the immediately following function. `--@NO_VM_START` / `--@NO_VM_END` select complete
 sibling statements, including part of a selected VM function:
 
 ```lua
--- @VM
+--@VM
 local total = 0
--- @NO_VM_START
+--@NO_VM_START
 for i = 1, 10000 do total = total + i end
--- @NO_VM_END
+--@NO_VM_END
 print(total)
 ```
 
@@ -259,9 +259,9 @@ the configured whole-script VM behavior.
 ## Exclusions and reports
 
 ```lua
--- @NO_OBF_START
+--@NO_OBF_START
 local readable = "leave this alone"
--- @NO_OBF_END
+--@NO_OBF_END
 ```
 
 Source-only `NO_OBF` regions can contain complete statements in one Lua block.
