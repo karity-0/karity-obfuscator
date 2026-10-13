@@ -24,6 +24,17 @@ class LiteralMosaicOptions(TypedDict, total=False):
 
 
 class ProtectionOptions(TypedDict, total=False):
+    ir_mba_rate: float
+    ir_test_set_rate: float
+    ir_tail_duplication_rate: float
+    ir_rematerialization_rate: float
+    ir_morph_max_growth: float
+    ir_morph_max_added_instructions: int
+    ir_morph_max_added_blocks: int
+    ir_morph_max_transforms: int
+    ir_morph_max_depth: int
+    ir_morph_pass_max_added_instructions: int
+    ir_morph_max_new_operations: int
     physical_block_permutation_rate: float
     physical_block_permutation_max_jumps: int
     requirements: dict[str, RequirementLevel]
@@ -121,6 +132,8 @@ class SignatureConfig(TypedDict, total=False):
 
 
 class DebugDumps(TypedDict, total=False):
+    optimized_ir: str
+    morphed_ir: str
     ir: str
     protected_ir: str
     protection_plan: str

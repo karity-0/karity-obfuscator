@@ -191,6 +191,17 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    "ir_mba_rate": {"description": "Replace proven dynamic Lua 5.3 integer operations with bounded multi-instruction identities. Lua 5.1 reports this strategy unavailable.", "default": 0.0, "range": "0.0 to 1.0"},
+    "ir_test_set_rate": {"description": "Decompose TEST_SET into a truth branch and edge-local operand assignment before protection planning.", "default": 0.0, "range": "0.0 to 1.0"},
+    "ir_tail_duplication_rate": {"description": "Clone safe acyclic join blocks and redirect one predecessor, preserving execution counts.", "default": 0.0, "range": "0.0 to 1.0"},
+    "ir_rematerialization_rate": {"description": "Recompute shared proven integer definitions at scalar uses when operands and lifetimes remain valid.", "default": 0.0, "range": "0.0 to 1.0"},
+    "ir_morph_max_growth": {"description": "Maximum semantic instruction ratio per function across all morphing strategies.", "default": 1.35, "range": "1.0 to 4.0"},
+    "ir_morph_max_added_instructions": {"description": "Maximum extra semantic instructions per function across all strategies.", "default": 128, "range": "0 to 4096"},
+    "ir_morph_max_added_blocks": {"description": "Maximum extra basic blocks per function across all strategies.", "default": 16, "range": "0 to 256"},
+    "ir_morph_max_transforms": {"description": "Maximum applications of each strategy per function.", "default": 16, "range": "0 to 256"},
+    "ir_morph_max_depth": {"description": "Maximum provenance depth when independently composing transformations; strategies never recursively process their own output.", "default": 2, "range": "1 to 4"},
+    "ir_morph_pass_max_added_instructions": {"description": "Maximum extra semantic instructions across the whole VM program.", "default": 4096, "range": "0 to 65536"},
+    "ir_morph_max_new_operations": {"description": "Limit newly introduced operation kinds to bound additional handlers and graph banks.", "default": 3, "range": "0 to 12"},
     "physical_block_permutation_rate": {
         "description": "Fraction of safe physical block bundles selected for storage-order permutation (Karity/Classic). Skip/extension/variant adjacency is preserved.",
         "default": 0.0, "range": "0.0 to 1.0",
@@ -765,6 +776,7 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError("vm_options.vm_count must be an integer >= 1")
 
     for key in ("junk_rate", "integrity_constant_rate", "graph_execution_rate",
+                "ir_mba_rate", "ir_test_set_rate", "ir_tail_duplication_rate", "ir_rematerialization_rate",
                 "physical_block_permutation_rate",
                 "cross_instruction_rate", "runtime_polymorphism_rate",
                 "block_variant_rate", "helper_diversity_rate",
@@ -786,6 +798,12 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError(f"vm_options.{key} must be true or false")
 
     for key, minimum, maximum in (
+        ("ir_morph_max_added_instructions", 0, 4096),
+        ("ir_morph_max_added_blocks", 0, 256),
+        ("ir_morph_max_transforms", 0, 256),
+        ("ir_morph_max_depth", 1, 4),
+        ("ir_morph_pass_max_added_instructions", 0, 65536),
+        ("ir_morph_max_new_operations", 0, 12),
         ("physical_block_permutation_max_jumps", 0, 4096),
         ("block_variant_count", 2, 4),
         ("block_variant_max_instructions", 2, 32),
@@ -801,6 +819,10 @@ def _validate_vm_options(options: dict) -> None:
                     f"vm_options.{key} must be between {minimum} and {maximum}"
                 )
 
+    growth = options.get('ir_morph_max_growth',1.35)
+    if type(growth) not in (int,float) or not 1 <= growth <= 4:
+        raise ConfigError('vm_options.ir_morph_max_growth must be between 1.0 and 4.0')
+
     from .vm.backends import backend_capabilities
     from .vm.protection import protection_requests, resolve_capabilities
     try:
@@ -815,7 +837,7 @@ def _validate_vm_options(options: dict) -> None:
 def _validate_debug_dumps(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'debug_dumps' must be an object")
-    allowed = {"ir", "protected_ir", "protection_plan", "backend_ir"}
+    allowed = {"ir", "optimized_ir", "morphed_ir", "protected_ir", "protection_plan", "backend_ir"}
     unknown = sorted(set(options) - allowed)
     if unknown:
         raise ConfigError("unknown debug dumps: " + ", ".join(unknown))

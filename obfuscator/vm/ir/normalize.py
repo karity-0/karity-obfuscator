@@ -5,8 +5,10 @@ from .operations import OPERATIONS
 from .validate import validate_semantic_ir
 
 
-def normalize_semantic_ir(ir: SemanticIR) -> SemanticIR:
+def normalize_semantic_ir(ir: SemanticIR, *, preserve_structure=False) -> SemanticIR:
     validate_semantic_ir(ir)
+    if preserve_structure:
+        return ir
     def normalize(function):
         records={block.id:[list(block.instructions),block.successors] for block in function.blocks}
         predecessors={block.id:set() for block in function.blocks}

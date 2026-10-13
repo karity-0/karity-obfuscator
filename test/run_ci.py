@@ -12,6 +12,7 @@ REGRESSIONS = (
     "serialization",
     "block_permutation",
     "ir_facts",
+    "ir_morphing",
     "selection",
     "strip_info",
     "minify",
