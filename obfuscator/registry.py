@@ -191,6 +191,14 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    "physical_block_permutation_rate": {
+        "description": "Fraction of safe physical block bundles selected for storage-order permutation (Karity/Classic). Skip/extension/variant adjacency is preserved.",
+        "default": 0.0, "range": "0.0 to 1.0",
+    },
+    "physical_block_permutation_max_jumps": {
+        "description": "Maximum added fallthrough bridges per function; address overflow preserves the original physical layout.",
+        "default": 64, "range": "0 to 4096",
+    },
     'state_dependency_limit': {
         'default': 3, 'range': '1-3',
         'description': 'Maximum graph-selected instruction state dependency arity. Karity only; changing density alone does not change this limit.',
@@ -757,6 +765,7 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError("vm_options.vm_count must be an integer >= 1")
 
     for key in ("junk_rate", "integrity_constant_rate", "graph_execution_rate",
+                "physical_block_permutation_rate",
                 "cross_instruction_rate", "runtime_polymorphism_rate",
                 "block_variant_rate", "helper_diversity_rate",
                 "semantic_diversity_rate"):
@@ -777,6 +786,7 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError(f"vm_options.{key} must be true or false")
 
     for key, minimum, maximum in (
+        ("physical_block_permutation_max_jumps", 0, 4096),
         ("block_variant_count", 2, 4),
         ("block_variant_max_instructions", 2, 32),
         ("helper_variant_count", 1, 4),

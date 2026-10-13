@@ -1,6 +1,6 @@
 """Explicit physical handler layout, constructed before binary serialization."""
 from __future__ import annotations
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace, field
 from .handler_ir import HandlerFunction, HandlerInstruction
 from ..vm_obfuscation import FUSE_OPS
 
@@ -24,6 +24,8 @@ class PhysicalFunction:
     stream_integrity: bool
     children: list[PhysicalFunction]
     canonical: tuple[int, ...] = ()
+    chunks: tuple[tuple[int, int], ...] = ()
+    permutation: dict = field(default_factory=dict)
 
 
 def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
@@ -139,7 +141,9 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         return physical
 
     physical = 0
+    physical_chunks = []
     for chunk_index, entry in enumerate(block_layout):
+        chunk_start = physical
         if entry["selected"]:
             route_raw = _make_abc(PSEUDO_BLOCK_ROUTE, entry["route_index"])
             emit(route_raw, planned_alias(PSEUDO_BLOCK_ROUTE, entry["start"]))
@@ -160,6 +164,8 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
                 emitted_sites.append(())
                 physical += 1
 
+        physical_chunks.append((chunk_start, physical))
+
     if physical != total:
         raise RuntimeError(
             f"block layout size mismatch: emitted={physical}, expected={total}"
@@ -170,7 +176,7 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         for (instruction, vop, logical_index), avalanche, sites in zip(
             emitted, emitted_av, emitted_sites
         )
-    ], block_routes, iexpr_indices, stream_enabled, [], tuple(canonical))
+    ], block_routes, iexpr_indices, stream_enabled, [], tuple(canonical), tuple(physical_chunks))
 
 
 def validate_layout(function: PhysicalFunction, vm_maps: list) -> None:

@@ -24,6 +24,8 @@ class LiteralMosaicOptions(TypedDict, total=False):
 
 
 class ProtectionOptions(TypedDict, total=False):
+    physical_block_permutation_rate: float
+    physical_block_permutation_max_jumps: int
     requirements: dict[str, RequirementLevel]
     dispatcher_type: str
     blob_form: BlobForm
