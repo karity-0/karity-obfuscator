@@ -95,9 +95,14 @@ def main():
         complete = resolve_bindings(ctx, sparse=False)
         captured = resolve_bindings(ctx)
         sparse = resolve_bindings(ctx, collect_literals=False)
+        from obfuscator.passes.rename_ts import collect_output_nodes
+        shared_nodes = collect_output_nodes(ctx)
+        shared = resolve_bindings(ctx, captures=shared_nodes)
         assert signature(complete) == signature(captured), source
         assert [(n.type, n.start_byte, n.end_byte) for n in complete[2]] == [(n.type, n.start_byte, n.end_byte) for n in captured[2]], source
         assert signature(complete) == signature(sparse), source
+        assert signature(complete) == signature(shared), source
+        assert [(n.type, n.start_byte, n.end_byte) for n in captured[2]] == [(n.type, n.start_byte, n.end_byte) for n in shared[2]], source
         assert not sparse[2]
         for readable in (False, True):
             token = RENAME_OPTIONS.set({'seed': 12345, 'readable': readable})
@@ -161,8 +166,9 @@ def main():
     reuse = next(d for d in details if d['phase'] == 'vm_output:analysis_reuse')
     assert not reuse['reused'] and reuse['fallback_reason'] == 'generated_non_scalar_syntax'
     assert next(d for d in details if d['phase'] == 'vm_output:final_parse')['parse_count'] == 1
-    # Removing the early assignment must not change ordinary names, literal
-    # PRNG use or protection coverage. Readable-name hint spelling keeps the
+    # Compare the shared pipeline with a sequential reference using the same
+    # function-scoped final naming policy. Literal PRNG use and full binding
+    # coverage remain exact. Readable-name hint spelling keeps the
     # previous two assignments; alias/string generation also retains it.
     for source in CORPUS + LUA53_ONLY:
         for readable in (False, True):
@@ -171,7 +177,7 @@ def main():
                 random.seed(9300)
                 initial = rename_script_ts(source)
                 literals, _ = emit_vm_literals(initial, ['meme_strings', 'number_obf'])
-                expected = StripInfoPass(rename_locals=False).run(rename_script_ts(literals))
+                expected = StripInfoPass(rename_locals=False).run(rename_script_ts(literals, reuse_function_names=True))
                 random.seed(9300)
                 actual, details = _obfuscate_vm_output(source, ['rename_obf', 'meme_strings', 'number_obf', 'strip_info'])
                 assert actual == expected, (source, readable)

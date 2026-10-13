@@ -159,12 +159,39 @@ def main():
     ]
     for source in cases:
         expected = run(source)
-        for options in ({}, {"seed": 42}, {"readable": True}):
+        for options in ({}, {"seed": 42}, {"readable": True}, {"seed": 42, "reuse_function_names": True}):
             renamed = rename_script_ts(source, **options)
             assert run(renamed) == expected, (source, renamed)
             assert renamed == rename_script_ts(source, **options)
         pipeline = Pipeline(show_header=False).add(RenameObfuscationPass()).add(LocalizeGlobalsPass())
         assert run(pipeline.run(source)) == expected, source
+    capture_cases = [
+        # Reserve upvalues in every intermediate function, even when only a grandchild reads them.
+        'local outer=23;local function middle()local decoy=41;return function()return outer,decoy,nil end end;print(middle()())',
+        'local outer=7;local function f()local outer=outer+1;return function()return outer end end;print(f()(),outer)',
+        'local fs={};for i=1,3 do local n=i;fs[i]=function(...)n=n+1;return n,... end end;for i=1,3 do print(fs[i](nil,9,nil))end',
+        'local function left(x)local unused=0;return function()return x end end;local function right(x)local unused=0;return function()return x end end;print(left(7)(),right(9)())',
+        'local outer=5;local function f()local unused=1;return function()local unused=2;return outer end end;print(f()())',
+        'local function f(...)return coroutine.create(function()coroutine.yield("yield",nil);return "done",nil end),... end;local co,a,b=f(9,nil);print(a,b,coroutine.resume(co));print(coroutine.resume(co));print(pcall(function()error("expected",0)end))',
+    ]
+    for source in capture_cases:
+        renamed = rename_script_ts(source, seed=42, reuse_function_names=True)
+        assert run(renamed) == run(source), (source, renamed)
+        from lupa.lua51 import LuaRuntime
+        def run51(code):
+            lua = LuaRuntime(unpack_returned_tuples=True)
+            lua.execute('lines={};print=function(...)local t={};for i=1,select("#",...)do t[i]=tostring(select(i,...))end;lines[#lines+1]=table.concat(t,"\\t")end')
+            lua.eval('assert(loadstring(...))', code)()
+            return lua.eval('table.concat(lines,"\\n")')
+        assert run51(renamed) == run51(source), (source, renamed)
+    sibling = 'local function first(longparameter)local longvalue=longparameter+1;return longvalue end;local function second(longparameter)local longvalue=longparameter+1;return longvalue end;print(first(2),second(3))'
+    from obfuscator.passes.ts_utils import parse
+    from obfuscator.passes.rename_ts import rename_plan_with_ctx_profiled
+    before, _, _ = rename_plan_with_ctx_profiled(parse(sibling), seed=42)
+    after, _, stats = rename_plan_with_ctx_profiled(parse(sibling), seed=42, reuse_function_names=True)
+    assert len(after) == len(before)
+    assert len({r.new_text for r in after}) < len({r.new_text for r in before})
+    assert stats['reused_function_names'] and stats['function_name_scopes'] == 3
     source = 'a=7; local original=2; print(a+original)'
     for helper in (AntiDebugPass(), AntiDecompilePass()):
         pipeline = Pipeline(show_header=False).add(helper).add(RenameObfuscationPass())

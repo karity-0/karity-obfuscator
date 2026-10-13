@@ -218,8 +218,9 @@ def field_replacements(ctx, *, bindings=None, expanded_number_keys=frozenset()):
     return replacements
 
 
-def _strip_nodes(ctx):
-    captures = ts.QueryCursor(_STRIP_NODES).captures(ctx.root)
+def _strip_nodes(ctx, captures=None):
+    if captures is None:
+        captures = ts.QueryCursor(_STRIP_NODES).captures(ctx.root)
     if isinstance(captures, dict):
         labels, comments = captures.get('label', []), captures.get('comment', [])
     else:
@@ -258,10 +259,10 @@ class StripInfoPass(PrePass):
     def __init__(self, *, rename_locals=True):
         self.rename_locals = rename_locals
 
-    def replacements_with_ctx(self, ctx, *, bindings=None, expanded_number_keys=frozenset()):
+    def replacements_with_ctx(self, ctx, *, bindings=None, expanded_number_keys=frozenset(), captures=None):
         replacements = field_replacements(ctx, bindings=bindings,
                                           expanded_number_keys=expanded_number_keys)
-        labels, comments = _strip_nodes(ctx)
+        labels, comments = _strip_nodes(ctx, captures=captures)
         replacements.extend(label_replacements(ctx, labels=labels))
         # Whitespace prevents a removed inline comment from joining tokens.
         # Literal-expression replacements can contain comments; do not emit

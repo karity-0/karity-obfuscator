@@ -310,12 +310,13 @@ def _finalize_output_identifiers(output: str, *, rename: bool, strip: bool) -> t
 
 
 def _plan_output_identifiers(final_ctx, *, rename, strip, expanded_number_keys=frozenset(),
-                             backend='shared_final_context'):
+                             backend='shared_final_context', captures=None, reuse_function_names=False):
     from obfuscator.passes.rename_ts import resolve_bindings, rename_plan_with_ctx_profiled
     from obfuscator.passes.strip_info import StripInfoPass
     details = []
     stage_start = time.perf_counter()
-    resolution = resolve_bindings(final_ctx, collect_literals=False)
+    resolution = resolve_bindings(final_ctx, collect_literals=False, captures=captures,
+                                  collect_name_scopes=reuse_function_names)
     details.append({'phase': 'vm_output:final_bindings',
                     'elapsed': round(time.perf_counter() - stage_start, 6),
                     'bindings': len(resolution[0]), 'identifier_count': resolution[4]})
@@ -323,16 +324,19 @@ def _plan_output_identifiers(final_ctx, *, rename, strip, expanded_number_keys=f
     if rename or strip:
         stage_start = time.perf_counter()
         options = {} if rename else {'readable': False}
-        names, _, _ = rename_plan_with_ctx_profiled(final_ctx, resolution=resolution, **options)
+        names, _, name_profile = rename_plan_with_ctx_profiled(final_ctx, resolution=resolution,
+                                                               reuse_function_names=reuse_function_names, **options)
         edits.extend((item.start, item.end, item.new_text) for item in names)
         details.append({'phase': 'vm_output:final_names',
                         'elapsed': round(time.perf_counter() - stage_start, 6),
                         'replacements': len(names), 'bindings': len(resolution[0]),
+                        'function_name_scopes': name_profile['function_name_scopes'],
+                        'reused_function_names': name_profile['reused_function_names'],
                         'backend': backend})
     if strip:
         stage_start = time.perf_counter()
         strip_edits = StripInfoPass(rename_locals=False).replacements_with_ctx(
-            final_ctx, bindings=resolution[0], expanded_number_keys=expanded_number_keys)
+            final_ctx, bindings=resolution[0], expanded_number_keys=expanded_number_keys, captures=captures)
         edits.extend(strip_edits)
         details.append({'phase': 'vm_output:strip_info', 'class': 'StripInfoPass',
                         'elapsed': round(time.perf_counter() - stage_start, 6),
@@ -554,6 +558,16 @@ def _obfuscate_vm_output_scoped(
         planned_replacements = []
         renamed_spans: set[tuple[int, int]] = set()
         literal_nodes = None
+        shared_captures = None
+        if reuse_scalar_analysis:
+            from obfuscator.passes.rename_ts import collect_output_nodes
+            capture_start = time.perf_counter()
+            shared_captures = collect_output_nodes(shared_ctx)
+            literal_nodes = shared_captures['literal']
+            details.append({'phase': 'vm_output:syntax_capture',
+                            'elapsed': round(time.perf_counter() - capture_start, 6),
+                            'capture_count': 1, 'literal_count': len(literal_nodes),
+                            'identifier_count': len(shared_captures.get('identifier', []))})
         rename_detail = None
         if "rename_obf" in identifier_names and not deferred_names:
             stage_start = time.perf_counter()
@@ -607,7 +621,8 @@ def _obfuscate_vm_output_scoped(
             def finalize(expanded_keys):
                 edits, final_details = _plan_output_identifiers(
                     shared_ctx, rename='rename_obf' in identifier_names, strip=fused_strip,
-                    expanded_number_keys=expanded_keys, backend='reused_source_context')
+                    expanded_number_keys=expanded_keys, backend='reused_source_context', captures=shared_captures,
+                    reuse_function_names=True)
                 final_details.insert(0, {'phase': 'vm_output:final_parse', 'elapsed': 0.0,
                                         'parser': 'treesitter', 'parse_count': 0,
                                         'backend': 'reused_source_context'})
@@ -620,6 +635,10 @@ def _obfuscate_vm_output_scoped(
             literal_nodes=literal_nodes,
             finalize=finalize,
         )
+        if shared_captures is not None:
+            for item in emitter_details:
+                if item['phase'] == 'vm_output:literal_capture':
+                    item['capture_source'] = 'shared_output_query'
         reused_identifiers = any(item.get('reused') for item in emitter_details
                                  if item['phase'] == 'vm_output:analysis_reuse')
         if reused_identifiers:

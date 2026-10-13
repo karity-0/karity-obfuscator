@@ -16,7 +16,7 @@ from obfuscator.pipeline import Pipeline
 from obfuscator.registry import build_pipeline_from_config, validate_config, ConfigError
 from obfuscator.profiling import Profiler
 from obfuscator.passes.literal_mosaic import LiteralMosaic, use_mosaic, ACTIVE, boundary
-from obfuscator.passes.mosaic_metrics import DiversityMetrics, structural_fingerprint, expression_summary
+from obfuscator.passes.mosaic_metrics import DiversityMetrics, structural_fingerprint, expression_summary, expression_operations
 from obfuscator.passes.numeric_provenance import CodeText, NumericTransport, join_code, number_origin, protected_number
 from obfuscator.vm.backends.runtime_emitter import _obfuscate_vm_output
 
@@ -43,6 +43,15 @@ def pipeline(config,source=SOURCE):
 
 
 def main():
+    expressions = ['0X.FP+4', '-(0x8000000000000000)', '#"+-*/~"+3', '((7~3)&15)//2', '(#"🌸"-#"🌸")+.5', '(0.0/0.0)']
+    for expression in expressions:
+        assert expression_operations(expression) == expression_summary(expression)[2]
+    service = LiteralMosaic(['number_obf', 'meme_strings'], options={'diversity_metrics': True})
+    with patch('obfuscator.passes.literal_mosaic.expression_summary', wraps=expression_summary) as analyze:
+        with patch('obfuscator.passes.mosaic_metrics.expression_summary', side_effect=AssertionError('metrics rescanned a measured expression')):
+            random.seed(42)
+            service.number(73, max_operations=20)
+        assert analyze.call_count == 1
     expected=run(SOURCE)
     for number in (False,True):
         for meme in (False,True):

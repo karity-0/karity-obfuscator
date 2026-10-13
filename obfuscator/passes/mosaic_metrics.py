@@ -13,6 +13,11 @@ _TOKENS = re.compile(
 )
 
 
+def expression_operations(expression):
+    """Budget-only count; quoted meme text is never treated as operators."""
+    return sum(match.lastgroup == 'op' for match in _TOKENS.finditer(expression))
+
+
 def expression_summary(expression):
     literals, families = Counter(), Counter()
     operators = 0
@@ -87,12 +92,12 @@ class DiversityMetrics:
         self.fingerprints, self.shapes = Counter(), {}
         self.depth_sum = self.depth_max = 0
 
-    def record(self, expression, strategy, origin, phase, *, fallback=False):
+    def record(self, expression, strategy, origin, phase, *, fallback=False, summary=None):
         if not self.enabled: return
         self.total += 1
         self.length += len(expression)
         self.length_max = max(self.length_max,len(expression))
-        literals, families, count = expression_summary(expression)
+        literals, families, count = expression_summary(expression) if summary is None else summary
         self.operators += count
         self.operators_max = max(self.operators_max,count)
         self.literals.update(literals); self.families.update(families)
