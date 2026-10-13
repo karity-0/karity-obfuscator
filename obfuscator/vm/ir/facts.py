@@ -164,14 +164,15 @@ def analyze_function(function, version, *, cfg=None):
             if may_call or 'upvalue_write' in contract.effects:
                 for name in live.captured_before[instruction.id]:
                     r=reg_index[name];facts.pop(r,None);defs[r]=frozenset((instruction.id+':clobber',))
-            integer_loop=False
+            integer_loop=False; float_loop=False
             if op in {'FOR_PREP','FOR_LOOP'}:
                 start=next(v.value for v in instruction.operands if v.role=='loop_state')
                 integer_loop=version=='5.3' and all(facts.get(r,UNKNOWN).kind=='integer' for r in range(start,start+3))
+                float_loop=version=='5.1' and all(facts.get(r,UNKNOWN).kind=='float' for r in range(start,start+3))
             for name in instruction.outputs:
                 if name not in reg_index:continue
                 r=reg_index[name];defs[r]=frozenset((instruction.id,))
-                result=literal_fact(None,version) if op=='LOAD_NIL' else INTEGER if integer_loop else value
+                result=literal_fact(None,version) if op=='LOAD_NIL' else INTEGER if integer_loop else ValueFact('float') if float_loop else value
                 if result.kind=='unknown':facts.pop(r,None)
                 else:facts[r]=result
         outgoing={}
