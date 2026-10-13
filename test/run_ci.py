@@ -11,6 +11,7 @@ REGRESSIONS = (
     "blob_form",
     "serialization",
     "block_permutation",
+    "ir_facts",
     "selection",
     "strip_info",
     "minify",
