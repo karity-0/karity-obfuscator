@@ -1,0 +1,1527 @@
+{
+  "seed": 7361,
+  "full_presets": false,
+  "ablation": true,
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "records": [
+    {
+      "preset": "strong",
+      "input": "mixed",
+      "strategy": "ir_test_set_rate",
+      "before": {
+        "blob_bytes": 1349,
+        "blob_sha256": "1d2120ccd1f57b46442a3e22921975a47e0568e4a4bb692915d6c9351616f6a5",
+        "blob_literal_bytes": 4073,
+        "build_seconds": 1.7686300999484956,
+        "build_cpu_seconds": 0.828125,
+        "output_bytes": 1091045,
+        "runtime_bytes": 1086859,
+        "bank_bytes": {
+          "_LG": 5358,
+          "_AR": 229708,
+          "_DG": 34479,
+          "_FG": 25162,
+          "_GV": 11525,
+          "_CG": 11513,
+          "_OG": 44832
+        },
+        "function_counts": {
+          "total_functions": 460,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.594725,
+          "helper_analysis_input_bytes": 745010,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.03755819983780384,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 229708,
+            "__VM_CONTROL_GRAPHS__": 27384,
+            "__VM_LOOP_GRAPHS__": 5476,
+            "__VM_SEMANTIC_GRAPHS__": 34479,
+            "__VM_OCCURRENCE_GRAPHS__": 44832
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 116,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "blob_form": "chinese",
+        "plan_sha256": "4d82a1fe336f2911a4d77cfba07ab9ec1d27779b7013029487825f6fbcd3cfa0",
+        "execution_cpu_seconds": 0.051,
+        "structural_profile": []
+      },
+      "after": {
+        "blob_bytes": 1387,
+        "blob_sha256": "032c5d54129429788443b25f1ab6b4e24684ecb935f207f152111a0647cc7eef",
+        "blob_literal_bytes": 2606,
+        "build_seconds": 1.3637833001557738,
+        "build_cpu_seconds": 0.671875,
+        "output_bytes": 959905,
+        "runtime_bytes": 957186,
+        "bank_bytes": {
+          "_FG": 34186,
+          "_AR": 228076,
+          "_OG": 45291,
+          "_DG": 35025,
+          "_LG": 5359,
+          "_CG": 13081,
+          "_GV": 12687
+        },
+        "function_counts": {
+          "total_functions": 303,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.447013,
+          "helper_analysis_input_bytes": 605515,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.032791499979794025,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 228076,
+            "__VM_CONTROL_GRAPHS__": 37078,
+            "__VM_LOOP_GRAPHS__": 5476,
+            "__VM_SEMANTIC_GRAPHS__": 35025,
+            "__VM_OCCURRENCE_GRAPHS__": 45291
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 119,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 45,
+          "blocks": 19
+        },
+        "blob_form": "table",
+        "plan_sha256": "bfd80dea4530c1eb23bb2daf7336782e8d9e8eb556aeb18f143bc491d6aa6cf4",
+        "execution_cpu_seconds": 0.044,
+        "structural_profile": [
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0",
+            "elapsed": 3.400025889277458e-06,
+            "strategy": "ir_test_set_rate",
+            "applied": 0,
+            "failed": 0,
+            "added_instructions": 0,
+            "added_blocks": 0,
+            "skipped": {
+              "no_candidate_operation": 1
+            }
+          },
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0.0",
+            "elapsed": 0.0002001000102609396
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.0",
+            "elapsed": 5.879998207092285e-05,
+            "strategy": "ir_test_set_rate",
+            "applied": 1,
+            "failed": 0,
+            "skipped": {},
+            "added_instructions": 1,
+            "added_blocks": 1
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.1",
+            "elapsed": 2.00001522898674e-06,
+            "strategy": "ir_test_set_rate",
+            "applied": 0,
+            "failed": 0,
+            "added_instructions": 0,
+            "added_blocks": 0,
+            "skipped": {
+              "no_candidate_operation": 1
+            }
+          },
+          {
+            "phase": "semantic_ir_morphing",
+            "added_instructions": 1,
+            "introduced_operations": [
+              "TEST"
+            ],
+            "generation": "64cfc50a4af7a47b07826836",
+            "elapsed": 0.009351399959996343
+          }
+        ]
+      }
+    },
+    {
+      "preset": "strong",
+      "input": "mixed",
+      "strategy": "ir_tail_duplication_rate",
+      "before": {
+        "blob_bytes": 1349,
+        "blob_sha256": "1d2120ccd1f57b46442a3e22921975a47e0568e4a4bb692915d6c9351616f6a5",
+        "blob_literal_bytes": 4073,
+        "build_seconds": 1.9550824000034481,
+        "build_cpu_seconds": 1.109375,
+        "output_bytes": 1091045,
+        "runtime_bytes": 1086859,
+        "bank_bytes": {
+          "_AR": 229708,
+          "_DG": 34479,
+          "_GV": 11525,
+          "_FG": 25162,
+          "_CG": 11513,
+          "_OG": 44832,
+          "_LG": 5358
+        },
+        "function_counts": {
+          "total_functions": 460,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.674857,
+          "helper_analysis_input_bytes": 745010,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.07442980003543198,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 229708,
+            "__VM_CONTROL_GRAPHS__": 27384,
+            "__VM_LOOP_GRAPHS__": 5476,
+            "__VM_SEMANTIC_GRAPHS__": 34479,
+            "__VM_OCCURRENCE_GRAPHS__": 44832
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 116,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "blob_form": "chinese",
+        "plan_sha256": "4d82a1fe336f2911a4d77cfba07ab9ec1d27779b7013029487825f6fbcd3cfa0",
+        "execution_cpu_seconds": 0.076,
+        "structural_profile": []
+      },
+      "after": {
+        "blob_bytes": 1416,
+        "blob_sha256": "94524d3d719099cb2d80abde09569ba1c329d7fe5d14d4043260996e61a73913",
+        "blob_literal_bytes": 5868,
+        "build_seconds": 2.3303402999881655,
+        "build_cpu_seconds": 1.03125,
+        "output_bytes": 1103663,
+        "runtime_bytes": 1097682,
+        "bank_bytes": {
+          "_GV": 11975,
+          "_LG": 4806,
+          "_AR": 224908,
+          "_CG": 13766,
+          "_OG": 42540,
+          "_DG": 37229,
+          "_FG": 28136
+        },
+        "function_counts": {
+          "total_functions": 468,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.920321,
+          "helper_analysis_input_bytes": 756464,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15996,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.055238100001588464,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 224908,
+            "__VM_CONTROL_GRAPHS__": 30616,
+            "__VM_LOOP_GRAPHS__": 4926,
+            "__VM_SEMANTIC_GRAPHS__": 37229,
+            "__VM_OCCURRENCE_GRAPHS__": 42540
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 123,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 47,
+          "blocks": 20
+        },
+        "blob_form": "numeric",
+        "plan_sha256": "9cfd4cbbda702bfe63e74b9049e528e4e58e90c9a64b7ab108c956b58bc413dc",
+        "execution_cpu_seconds": 0.06,
+        "structural_profile": [
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0",
+            "elapsed": 5.5099837481975555e-05,
+            "strategy": "ir_tail_duplication_rate",
+            "applied": 0,
+            "failed": 0,
+            "added_instructions": 0,
+            "added_blocks": 0,
+            "skipped": {
+              "no_acyclic_join": 1
+            }
+          },
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0.0",
+            "elapsed": 0.00030649988912045956
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.0",
+            "elapsed": 0.0001870999112725258,
+            "strategy": "ir_tail_duplication_rate",
+            "applied": 1,
+            "failed": 0,
+            "skipped": {},
+            "added_instructions": 1,
+            "added_blocks": 1
+          },
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0.1",
+            "elapsed": 0.0003814001102000475
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.1",
+            "elapsed": 0.0001283001620322466,
+            "strategy": "ir_tail_duplication_rate",
+            "applied": 1,
+            "failed": 0,
+            "skipped": {},
+            "added_instructions": 2,
+            "added_blocks": 1
+          },
+          {
+            "phase": "semantic_ir_morphing",
+            "added_instructions": 3,
+            "introduced_operations": [],
+            "generation": "021f84bb22bad5c04b97b9da",
+            "elapsed": 0.002375700045377016
+          }
+        ]
+      }
+    },
+    {
+      "preset": "strong",
+      "input": "mixed",
+      "strategy": "ir_rematerialization_rate",
+      "before": {
+        "blob_bytes": 1349,
+        "blob_sha256": "1d2120ccd1f57b46442a3e22921975a47e0568e4a4bb692915d6c9351616f6a5",
+        "blob_literal_bytes": 4073,
+        "build_seconds": 1.7401337998453528,
+        "build_cpu_seconds": 0.875,
+        "output_bytes": 1091045,
+        "runtime_bytes": 1086859,
+        "bank_bytes": {
+          "_DG": 34479,
+          "_GV": 11525,
+          "_FG": 25162,
+          "_AR": 229708,
+          "_OG": 44832,
+          "_LG": 5358,
+          "_CG": 11513
+        },
+        "function_counts": {
+          "total_functions": 460,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.627759,
+          "helper_analysis_input_bytes": 745010,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.04032170004211366,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 229708,
+            "__VM_CONTROL_GRAPHS__": 27384,
+            "__VM_LOOP_GRAPHS__": 5476,
+            "__VM_SEMANTIC_GRAPHS__": 34479,
+            "__VM_OCCURRENCE_GRAPHS__": 44832
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 116,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "blob_form": "chinese",
+        "plan_sha256": "4d82a1fe336f2911a4d77cfba07ab9ec1d27779b7013029487825f6fbcd3cfa0",
+        "execution_cpu_seconds": 0.106,
+        "structural_profile": []
+      },
+      "after": {
+        "blob_bytes": 1464,
+        "blob_sha256": "3f46b353d0eba7f21e4455bc0ff816b2c97140c2130f4c1727f8d02c86ae0f1a",
+        "blob_literal_bytes": 5890,
+        "build_seconds": 1.826839999994263,
+        "build_cpu_seconds": 0.9375,
+        "output_bytes": 1064560,
+        "runtime_bytes": 1058557,
+        "bank_bytes": {
+          "_GV": 11269,
+          "_LG": 6459,
+          "_CG": 11518,
+          "_DG": 33626,
+          "_FG": 28050,
+          "_AR": 226820,
+          "_OG": 43917
+        },
+        "function_counts": {
+          "total_functions": 453,
+          "audited_helpers": 46
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.622263,
+          "helper_analysis_input_bytes": 719504,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 46,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 17759,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 501,
+          "skeleton_analysis_seconds": 0.0370539000723511,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 226820,
+            "__VM_CONTROL_GRAPHS__": 30618,
+            "__VM_LOOP_GRAPHS__": 6575,
+            "__VM_SEMANTIC_GRAPHS__": 33626,
+            "__VM_OCCURRENCE_GRAPHS__": 43917
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 124,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 47,
+          "blocks": 18
+        },
+        "blob_form": "emoji",
+        "plan_sha256": "4ef2dc7bf3485d9dc0319593306a9c25cbdbae3c5e9f396bd0b6f8eb033ad62b",
+        "execution_cpu_seconds": 0.06,
+        "structural_profile": [
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0",
+            "elapsed": 0.0007418999448418617
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0",
+            "elapsed": 0.00023240013979375362,
+            "strategy": "ir_rematerialization_rate",
+            "applied": 3,
+            "failed": 0,
+            "skipped": {},
+            "added_instructions": 3,
+            "added_blocks": 0
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.0",
+            "elapsed": 4.00003045797348e-06,
+            "strategy": "ir_rematerialization_rate",
+            "applied": 0,
+            "failed": 0,
+            "added_instructions": 0,
+            "added_blocks": 0,
+            "skipped": {
+              "no_candidate_operation": 1
+            }
+          },
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0.1",
+            "elapsed": 0.00016699987463653088
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.1",
+            "elapsed": 1.759990118443966e-05,
+            "strategy": "ir_rematerialization_rate",
+            "applied": 0,
+            "failed": 0,
+            "skipped": {},
+            "added_instructions": 0,
+            "added_blocks": 0
+          },
+          {
+            "phase": "semantic_ir_morphing",
+            "added_instructions": 3,
+            "introduced_operations": [],
+            "generation": "0da57930bcf29c900250a228",
+            "elapsed": 0.0019493000581860542
+          }
+        ]
+      }
+    },
+    {
+      "preset": "strong",
+      "input": "mixed",
+      "strategy": "ir_mba_rate",
+      "before": {
+        "blob_bytes": 1349,
+        "blob_sha256": "1d2120ccd1f57b46442a3e22921975a47e0568e4a4bb692915d6c9351616f6a5",
+        "blob_literal_bytes": 4073,
+        "build_seconds": 1.7554808999411762,
+        "build_cpu_seconds": 1.03125,
+        "output_bytes": 1091045,
+        "runtime_bytes": 1086859,
+        "bank_bytes": {
+          "_GV": 11525,
+          "_FG": 25162,
+          "_DG": 34479,
+          "_AR": 229708,
+          "_OG": 44832,
+          "_CG": 11513,
+          "_LG": 5358
+        },
+        "function_counts": {
+          "total_functions": 460,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.587145,
+          "helper_analysis_input_bytes": 745010,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.048568099969998,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 229708,
+            "__VM_CONTROL_GRAPHS__": 27384,
+            "__VM_LOOP_GRAPHS__": 5476,
+            "__VM_SEMANTIC_GRAPHS__": 34479,
+            "__VM_OCCURRENCE_GRAPHS__": 44832
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 116,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "blob_form": "chinese",
+        "plan_sha256": "4d82a1fe336f2911a4d77cfba07ab9ec1d27779b7013029487825f6fbcd3cfa0",
+        "execution_cpu_seconds": 0.066,
+        "structural_profile": []
+      },
+      "after": {
+        "blob_bytes": 1602,
+        "blob_sha256": "b43f75b74ef3a1ce970cf7cccdd7c96a93ccf95800bddcc121353c2c79fe823c",
+        "blob_literal_bytes": 6442,
+        "build_seconds": 1.9632147999946028,
+        "build_cpu_seconds": 0.953125,
+        "output_bytes": 1285076,
+        "runtime_bytes": 1278521,
+        "bank_bytes": {
+          "_LG": 6732,
+          "_GV": 12393,
+          "_OG": 42544,
+          "_CG": 9818,
+          "_AR": 316140,
+          "_DG": 37491,
+          "_FG": 28280
+        },
+        "function_counts": {
+          "total_functions": 404,
+          "audited_helpers": 54
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.659768,
+          "helper_analysis_input_bytes": 843953,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 54,
+          "removed_helpers": [
+            "decode",
+            "_defer1r",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 13853,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.03351989993825555,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 56,
+          "arithmetic_dags_after": 56,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 316140,
+            "__VM_CONTROL_GRAPHS__": 30616,
+            "__VM_LOOP_GRAPHS__": 6850,
+            "__VM_SEMANTIC_GRAPHS__": 37491,
+            "__VM_OCCURRENCE_GRAPHS__": 42544
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 130,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 52,
+          "blocks": 18
+        },
+        "blob_form": "emoji",
+        "plan_sha256": "304a77b57a7f286f1cdcb743f72d64ec37780e1a4149ea4952a135d4ddacda52",
+        "execution_cpu_seconds": 0.068,
+        "structural_profile": [
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0",
+            "elapsed": 0.0011085998266935349
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0",
+            "elapsed": 0.0004141000099480152,
+            "strategy": "ir_mba_rate",
+            "applied": 3,
+            "failed": 0,
+            "skipped": {
+              "growth_budget": 3
+            },
+            "added_instructions": 8,
+            "added_blocks": 0
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.0",
+            "elapsed": 4.600035026669502e-06,
+            "strategy": "ir_mba_rate",
+            "applied": 0,
+            "failed": 0,
+            "added_instructions": 0,
+            "added_blocks": 0,
+            "skipped": {
+              "no_candidate_operation": 1
+            }
+          },
+          {
+            "phase": "ir_morph_analysis",
+            "function": "f0.1",
+            "elapsed": 0.00018099998123943806
+          },
+          {
+            "phase": "ir_morph_strategy",
+            "function": "f0.1",
+            "elapsed": 1.100008375942707e-05,
+            "strategy": "ir_mba_rate",
+            "applied": 0,
+            "failed": 0,
+            "skipped": {
+              "unproven_integer": 3
+            },
+            "added_instructions": 0,
+            "added_blocks": 0
+          },
+          {
+            "phase": "semantic_ir_morphing",
+            "added_instructions": 8,
+            "introduced_operations": [
+              "BIT_NOT",
+              "BIT_OR"
+            ],
+            "generation": "9d5cd9497ef703fea247b640",
+            "elapsed": 0.0026453000027686357
+          }
+        ]
+      }
+    },
+    {
+      "preset": "strong",
+      "input": "mixed",
+      "strategy": "physical_block_permutation_rate",
+      "before": {
+        "blob_bytes": 1349,
+        "blob_sha256": "1d2120ccd1f57b46442a3e22921975a47e0568e4a4bb692915d6c9351616f6a5",
+        "blob_literal_bytes": 4073,
+        "build_seconds": 1.684164599981159,
+        "build_cpu_seconds": 0.875,
+        "output_bytes": 1091045,
+        "runtime_bytes": 1086859,
+        "bank_bytes": {
+          "_LG": 5358,
+          "_OG": 44832,
+          "_CG": 11513,
+          "_GV": 11525,
+          "_FG": 25162,
+          "_AR": 229708,
+          "_DG": 34479
+        },
+        "function_counts": {
+          "total_functions": 460,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.570647,
+          "helper_analysis_input_bytes": 745010,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.042011700104922056,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 229708,
+            "__VM_CONTROL_GRAPHS__": 27384,
+            "__VM_LOOP_GRAPHS__": 5476,
+            "__VM_SEMANTIC_GRAPHS__": 34479,
+            "__VM_OCCURRENCE_GRAPHS__": 44832
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 116,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "blob_form": "chinese",
+        "plan_sha256": "4d82a1fe336f2911a4d77cfba07ab9ec1d27779b7013029487825f6fbcd3cfa0",
+        "execution_cpu_seconds": 0.067,
+        "structural_profile": []
+      },
+      "after": {
+        "blob_bytes": 1495,
+        "blob_sha256": "52e1b0aac64e743f47484d7b6ee89e4621b4252add4345e2a8df54412a3ce10b",
+        "blob_literal_bytes": 4511,
+        "build_seconds": 1.578944900073111,
+        "build_cpu_seconds": 0.8125,
+        "output_bytes": 1088831,
+        "runtime_bytes": 1084207,
+        "bank_bytes": {
+          "_DG": 33638,
+          "_LG": 5084,
+          "_AR": 227463,
+          "_GV": 11374,
+          "_CG": 13131,
+          "_OG": 42539,
+          "_FG": 27228
+        },
+        "function_counts": {
+          "total_functions": 458,
+          "audited_helpers": 49
+        },
+        "emission": {
+          "helper_analysis_seconds": 0.56159,
+          "helper_analysis_input_bytes": 744969,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 49,
+          "removed_helpers": [
+            "decode",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_touch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 15975,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.040499000111594796,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BXOR",
+            "SHR",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 40,
+          "arithmetic_dags_after": 40,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "EQ",
+            "GET",
+            "LT",
+            "MOD",
+            "TRUTH",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 227463,
+            "__VM_CONTROL_GRAPHS__": 29539,
+            "__VM_LOOP_GRAPHS__": 5201,
+            "__VM_SEMANTIC_GRAPHS__": 33638,
+            "__VM_OCCURRENCE_GRAPHS__": 42539
+          }
+        },
+        "effective_vm_count": 2,
+        "physical_instructions": 140,
+        "source_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "morphed_ir": {
+          "instructions": 44,
+          "blocks": 18
+        },
+        "blob_form": "chinese",
+        "plan_sha256": "f2b305dc6dcfc11ef3e1c0d8e8bb584b7f4dd313c26971ab05f26135a1dae2db",
+        "execution_cpu_seconds": 0.068,
+        "structural_profile": [
+          {
+            "phase": "physical_block_permutation",
+            "function": "f0",
+            "elapsed": 0.000534699996933341,
+            "units": 23,
+            "moved_units": 16,
+            "bridges": 18,
+            "before": 90,
+            "after": 108,
+            "order": [
+              0,
+              3,
+              8,
+              20,
+              10,
+              5,
+              22,
+              4,
+              2,
+              9,
+              6,
+              12,
+              18,
+              13,
+              19,
+              15,
+              7,
+              17,
+              1,
+              14,
+              11,
+              21,
+              16
+            ]
+          },
+          {
+            "phase": "physical_block_permutation",
+            "function": "f0.0",
+            "elapsed": 8.110003545880318e-05,
+            "units": 6,
+            "moved_units": 4,
+            "bridges": 2,
+            "before": 7,
+            "after": 9,
+            "order": [
+              0,
+              4,
+              2,
+              5,
+              3,
+              1
+            ]
+          },
+          {
+            "phase": "physical_block_permutation",
+            "function": "f0.1",
+            "elapsed": 0.00011319993063807487,
+            "units": 10,
+            "moved_units": 7,
+            "bridges": 4,
+            "before": 19,
+            "after": 23,
+            "order": [
+              0,
+              1,
+              3,
+              6,
+              4,
+              2,
+              8,
+              5,
+              9,
+              7
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

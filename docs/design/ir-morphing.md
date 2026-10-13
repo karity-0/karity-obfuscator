@@ -43,7 +43,8 @@ the function; refresh before the next strategy. No generic plugin framework.
 - MBA/substitution: lower proven Lua 5.3 integer operations to multiple ordinary
   IR instructions, using several 64-bit identities. Preserve modulo-2^64 behavior;
   uncertain operands, floats, implicit conversions and possible metamethods stay
-  unchanged. Lua 5.1 uses other strategies and reports this strategy unavailable.
+  unchanged. Lua 5.1 uses TEST_SET/tail strategies and reports integer MBA and
+  integer rematerialization unavailable.
 
 Fresh instruction/block IDs retain source line/PC and explicit parent provenance.
 Generated instructions carry protection provenance so the existing optimizer

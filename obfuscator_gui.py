@@ -62,6 +62,12 @@ _DEFAULT_PREFERENCES = {
 }
 
 _OPTION_GROUPS = {
+    "physical_block_permutation_rate": "Physical layout", "physical_block_permutation_max_jumps": "Physical layout",
+    "ir_mba_rate": "IR morphing", "ir_test_set_rate": "IR morphing",
+    "ir_tail_duplication_rate": "IR morphing", "ir_rematerialization_rate": "IR morphing",
+    **dict.fromkeys(('ir_morph_max_growth','ir_morph_max_added_instructions','ir_morph_max_added_blocks',
+                    'ir_morph_max_transforms','ir_morph_max_depth','ir_morph_pass_max_added_instructions',
+                    'ir_morph_max_new_operations'),'IR budget'),
     "backend": "Execution",
     "dispatcher_type": "Execution", "blob_form": "Execution", "vm_count": "Execution",
     "fake_handlers": "Handlers", "mutate_handlers": "Handlers",
@@ -78,6 +84,16 @@ _OPTION_GROUPS = {
 }
 
 _OPTION_LABELS = {
+    "physical_block_permutation_rate": "Block permutation rate",
+    "physical_block_permutation_max_jumps": "Permutation bridge limit",
+    "ir_mba_rate": "Integer substitution",
+    "ir_test_set_rate": "Conditional assignment split",
+    "ir_tail_duplication_rate": "Join block duplication",
+    "ir_rematerialization_rate": "Shared calculation rebuild",
+    "ir_morph_max_growth": "IR growth ratio", "ir_morph_max_added_instructions": "Added instruction limit",
+    "ir_morph_max_added_blocks": "Added block limit", "ir_morph_max_transforms": "Strategy application limit",
+    "ir_morph_max_depth": "Composition depth", "ir_morph_pass_max_added_instructions": "Program growth limit",
+    "ir_morph_max_new_operations": "New operation limit",
     "backend": "VM runtime",
     "dispatcher_type": "Dispatcher", "blob_form": "Blob representation", "vm_count": "VM count",
     "fake_handlers": "Fake handlers", "mutate_handlers": "Handler mutation",
@@ -209,6 +225,7 @@ def _vm_option_meta() -> list[dict]:
             "resolution": {backend: vm_option_resolution(backend, name) for backend in VM_BACKENDS},
             "supported_backends": [backend for backend in VM_BACKENDS
                                    if name not in unsupported_vm_options(backend)],
+            "supported_lua_versions": ['5.3'] if name in ('ir_mba_rate','ir_rematerialization_rate') else ['5.1','5.3'],
         }
         if name == "requirements":
             from obfuscator.vm.protection import protection_features

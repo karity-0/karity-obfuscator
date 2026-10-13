@@ -27,6 +27,33 @@ _INTEGER_OPS = frozenset(('ADD','SUB','MUL','NEGATE','BIT_AND','BIT_OR','BIT_XOR
                           'BIT_NOT','SHIFT_LEFT','SHIFT_RIGHT'))
 
 
+def cfg_components(function):
+    """Iterative SCCs avoid rewalking a whole dispatcher for each join."""
+    graph={b.id:b.successors for b in function.blocks}
+    predecessors={key:set() for key in graph}
+    for node,targets in graph.items():
+        for target in targets:predecessors[target].add(node)
+    seen=set();order=[]
+    for start in graph:
+        if start in seen:continue
+        stack=[(start,False)]
+        while stack:
+            node,done=stack.pop()
+            if done:order.append(node);continue
+            if node in seen:continue
+            seen.add(node);stack.append((node,True))
+            stack.extend((target,False) for target in graph[node] if target not in seen)
+    components={}
+    for start in reversed(order):
+        if start in components:continue
+        label=len(components);stack=[start]
+        while stack:
+            node=stack.pop()
+            if node in components:continue
+            components[node]=label;stack.extend(predecessors[node]-components.keys())
+    return predecessors,components
+
+
 def literal_fact(value, version):
     kind = ('nil' if value is None else 'boolean' if type(value) is bool else
             'integer' if type(value) is int and version == '5.3' else
@@ -67,6 +94,7 @@ class FunctionFacts:
     locations: dict
     effects: dict
     liveness: object
+    components: dict
 
     def operand(self, instruction, role):
         operand=next(v for v in instruction.operands if v.role==role)
@@ -77,22 +105,9 @@ class FunctionFacts:
     def dominates(self, first, second):
         return bool(self.dominance.get(second,0) & (1 << self.block_indices[first]))
 
-    def reaches(self, start, target):
-        blocks={b.id:b for b in self.function.blocks}
-        pending=[start];seen=set()
-        while pending:
-            node=pending.pop()
-            if node==target:return True
-            if node not in seen:
-                seen.add(node);pending.extend(blocks[node].successors)
-        return False
-
-
-def analyze_function(function, version):
+def analyze_function(function, version, *, cfg=None):
     blocks={b.id:b for b in function.blocks}
-    predecessors={key:set() for key in blocks}
-    for block in blocks.values():
-        for target in block.successors:predecessors[target].add(block.id)
+    predecessors,components=cfg or cfg_components(function)
     live=analyze_liveness(function)
     constants={v.index:literal_fact(v.literal,version) for v in function.values if v.kind=='constant'}
     registers=tuple(v.index for v in function.values if v.kind=='register')
@@ -205,4 +220,4 @@ def analyze_function(function, version):
                 value=merged | (1 << indices[key])
                 if dom[key]!=value:dom[key]=value;changed=True
     return FunctionFacts(function,version,constants,before,definitions,producers,predecessors,
-                         dom,indices,locations,effects,live)
+                         dom,indices,locations,effects,live,components)

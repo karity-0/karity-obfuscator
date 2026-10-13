@@ -194,7 +194,7 @@ VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
     "ir_mba_rate": {"description": "Replace proven dynamic Lua 5.3 integer operations with bounded multi-instruction identities. Lua 5.1 reports this strategy unavailable.", "default": 0.0, "range": "0.0 to 1.0"},
     "ir_test_set_rate": {"description": "Decompose TEST_SET into a truth branch and edge-local operand assignment before protection planning.", "default": 0.0, "range": "0.0 to 1.0"},
     "ir_tail_duplication_rate": {"description": "Clone safe acyclic join blocks and redirect one predecessor, preserving execution counts.", "default": 0.0, "range": "0.0 to 1.0"},
-    "ir_rematerialization_rate": {"description": "Recompute shared proven integer definitions at scalar uses when operands and lifetimes remain valid.", "default": 0.0, "range": "0.0 to 1.0"},
+    "ir_rematerialization_rate": {"description": "Recompute shared proven Lua 5.3 integer definitions at scalar uses when operands and lifetimes remain valid. Lua 5.1 reports this strategy unavailable.", "default": 0.0, "range": "0.0 to 1.0"},
     "ir_morph_max_growth": {"description": "Maximum semantic instruction ratio per function across all morphing strategies.", "default": 1.35, "range": "1.0 to 4.0"},
     "ir_morph_max_added_instructions": {"description": "Maximum extra semantic instructions per function across all strategies.", "default": 128, "range": "0 to 4096"},
     "ir_morph_max_added_blocks": {"description": "Maximum extra basic blocks per function across all strategies.", "default": 16, "range": "0 to 256"},
@@ -461,6 +461,10 @@ def config_warnings(config: Mapping[str, Any]) -> list[str]:
         messages.append(f"unsupported VM options are ignored: {', '.join(ignored)}")
     if fallbacks:
         messages.append(f"declared fallbacks: {', '.join(fallbacks)}")
+    if config.get('target',{}).get('lua_version','5.3')=='5.1' and options.get('ir_mba_rate',0)>0:
+        messages.append('IR integer MBA unavailable on Lua 5.1; other enabled IR strategies remain active')
+    if config.get('target',{}).get('lua_version','5.3')=='5.1' and options.get('ir_rematerialization_rate',0)>0:
+        messages.append('IR integer rematerialization unavailable on Lua 5.1; TEST_SET and acyclic tail strategies remain active')
     return [f"backend={backend}: " + "; ".join(messages)] if messages else []
 
 

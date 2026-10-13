@@ -157,16 +157,21 @@ class VMBuildPipeline(PostPass):
                           for function in optimized_ir.functions() for block in function.blocks
                           for instruction in block.instructions),
         })
-        resolution_started = time.perf_counter()
         from .ir.morphing import morph_semantic_ir
         reserve = 2 if self.vm_options.get('integrity_constants') else 0
         if backend.capabilities.supports('graph_execution') and self.vm_options.get('graph_execution_rate',0):
             reserve = max(reserve,int(self.vm_options.get('state_dependency_limit',3)))
         morphed_ir, morph_profile = run_phase('vm:ir_morphing', morph_semantic_ir,
-            optimized_ir, self.vm_options, self.target_profile.lua_version, register_reserve=reserve)
+            optimized_ir, self.vm_options, self.target_profile.lua_version, register_reserve=reserve,
+            physical_policy={'integrity_stream':bool(self.vm_options.get('integrity_constants')),
+                'junk':bool(self.vm_options.get('junk_instructions')),
+                'split_width':backend.name in ('classic','karity'),
+                'variant_count':int(self.vm_options.get('block_variant_count',3)) if backend.capabilities.supports('block_variants') and self.vm_options.get('block_variant_rate',0)>0 else 1,
+                'bridge_budget':int(self.vm_options.get('physical_block_permutation_max_jumps',64)) if backend.capabilities.supports('physical_block_permutation') and self.vm_options.get('physical_block_permutation_rate',0)>0 else 0})
         self.last_profile.extend(morph_profile)
         self.last_morphed_ir = morphed_ir
         optimized_ir = morphed_ir
+        resolution_started = time.perf_counter()
         initial_plan = planner.build(optimized_ir)
         resolution = resolve_capabilities(initial_plan, backend.capabilities)
         self.last_profile.append({

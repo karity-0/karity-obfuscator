@@ -13,6 +13,7 @@ REGRESSIONS = (
     "block_permutation",
     "ir_facts",
     "ir_morphing",
+    "ir_options",
     "selection",
     "strip_info",
     "minify",

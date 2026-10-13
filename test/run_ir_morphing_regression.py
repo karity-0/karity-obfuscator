@@ -14,6 +14,7 @@ from obfuscator.vm.ir.morphing import morph_semantic_ir,RATES
 from obfuscator.vm.ir.optimize import optimize_semantic_ir
 from obfuscator.vm.ir.validate import validate_semantic_ir
 from obfuscator.vm.ir.morph_mba import PATTERNS
+from obfuscator.vm.ir.model import IRValue
 from obfuscator.toolchain import LuaToolchain
 from lupa.lua53 import LuaRuntime
 
@@ -67,6 +68,36 @@ def structural_checks():
     out,stats=morph_semantic_ir(ir,{'ir_mba_rate':1},'5.3')
     assert out.dump()==ir.dump()
     assert any(r.get('skipped',{}).get('unproven_integer') for r in stats)
+    target51=TargetProfile('5.1','karity').adapter()
+    ir51=target51.build_ir(target51.compile('local n=1;for i=1,9 do local x=i+n;print(x,x)end',LuaToolchain(lua_version='5.1')))
+    out,stats=morph_semantic_ir(ir51,{'ir_rematerialization_rate':1,'ir_mba_rate':1},'5.1')
+    assert out.dump()==ir51.dump()
+    assert all(r.get('skipped',{}).get('target_has_no_integer_domain') for r in stats if r['phase']=='ir_morph_strategy')
+    source='local x=1;for i=1,9 do local s=i~x;local a=s&255;local b=s>>2;x=a+(3-i) end;print(x)'
+    ir=optimize_semantic_ir(target.build_ir(target.compile(source,LuaToolchain())))
+    for seed in range(16):
+        random.seed(seed)
+        out,_=morph_semantic_ir(ir,{**POLICY,'ir_morph_max_growth':4},'5.3')
+        validate_semantic_ir(out)
+    # Preserve existing VM protection scratch instead of consuming its slots.
+    function=ir.root
+    expanded=replace(function,max_stack_size=253,values=function.values+tuple(
+        IRValue(f'{function.id}:r{r}','register',r) for r in range(function.max_stack_size,253)))
+    constrained=replace(ir,root=expanded)
+    out,stats=morph_semantic_ir(constrained,{'ir_mba_rate':1},'5.3',register_reserve=3)
+    assert out.dump()==constrained.dump()
+    assert any(r.get('skipped',{}).get('protection_scratch_budget') for r in stats)
+    # Non-adjacent fallthroughs need connector JUMPs, but never borrow their
+    # parent arithmetic operation's concrete graph IDs or split/fuse plan.
+    from obfuscator.vm.backends import get_backend,BackendContext
+    from obfuscator.vm.protection import ProtectionPlanner,protect
+    reordered=replace(ir,root=replace(function,blocks=(function.blocks[0],*reversed(function.blocks[1:]))))
+    options={'graph_execution_rate':1.,'block_variant_rate':1.}
+    lowered=get_backend('karity').lower(protect(reordered,ProtectionPlanner(options).build(reordered)),BackendContext(options))
+    assert any(i.linker_owned for i in lowered.program.code)
+    targets=get_backend('karity').serialization_targets(lowered)[id(lowered.program)]
+    assert all(not targets['occurrence_descriptors'][idx] and targets['instruction_forms'][idx]==(('normal',1),)
+               for idx,i in enumerate(lowered.program.code) if i.linker_owned)
 
 
 def build_case(source,options,version,backend,seed):
