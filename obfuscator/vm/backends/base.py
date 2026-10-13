@@ -281,6 +281,7 @@ SHARED_OPTIONS = frozenset((
 ))
 
 CLASSIC_OPTIONS = SHARED_OPTIONS | frozenset((
+    "physical_block_permutation_rate", "physical_block_permutation_max_jumps",
     "dispatcher_type", "dispatcher_target_hiding", "fake_handlers",
     "mutate_handlers",
 ))

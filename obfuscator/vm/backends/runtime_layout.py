@@ -23,6 +23,7 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
     protection_plan = lowered_ir.protection_plan
     protected_semantic_ir = lowered_ir.semantic_ir
     block_variant_rate = lowered_ir.policy["block_variant_rate"]
+    permutation_rate = float(lowered_ir.policy.get('physical_block_permutation_rate', 0))
     # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
     #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
     protection_targets = backend_adapter.serialization_targets(lowered_ir)
@@ -44,6 +45,8 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
         if block_variant_rate > 0.0:
             for pseudo_op in (58, 59):
                 used_ops.update(vop_map[pseudo_op])
+        elif permutation_rate > 0.0:
+            used_ops.update(vop_map[59])
         used_ops_list.append(used_ops)
 
     # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
@@ -55,6 +58,9 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
     constant_kind_values = random.sample(range(0x1000, 0x100000), 6)
     constant_kinds = dict(zip(constant_tag_names, constant_kind_values))
     graph_sites: set[int] = set()
+    if permutation_rate:
+        import hashlib
+        permutation_seed = int.from_bytes(hashlib.blake2b(protection_plan.dump().encode(), digest_size=16).digest(), 'little')
     def lower(proto):
         vm_id = vm_assign[id(proto)]
         function = lower_function(proto, vm_id, vm_maps[vm_id], protection_targets[id(proto)],
@@ -65,6 +71,16 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
                                   block_variant_rate=block_variant_rate,
                                   block_variant_count=int(lowered_ir.policy.get("block_variant_count", 3)),
                                   block_variant_max_instructions=int(lowered_ir.policy.get("block_variant_max_instructions", 6)))
+        if permutation_rate:
+            import time
+            from .block_permutation import permute_blocks
+            started = time.perf_counter()
+            seed = permutation_seed ^ int.from_bytes(proto.id.encode(), 'little')
+            function = permute_blocks(function, vm_maps[vm_id], rate=permutation_rate,
+                max_jumps=int(lowered_ir.policy.get('physical_block_permutation_max_jumps', 64)), rng=random.Random(seed))
+            context.profile.append({'phase': 'physical_block_permutation', 'function': proto.id,
+                                    'elapsed': time.perf_counter() - started,
+                                    **function.permutation})
         function.children = [lower(child) for child in proto.protos]
         return function
     functions = lower(proto)

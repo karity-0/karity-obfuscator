@@ -231,6 +231,8 @@ class UnsupportedProtectionError(ValueError):
 
 
 _OPTION_FEATURES = {
+    "physical_block_permutation_rate": "physical_block_permutation",
+    "physical_block_permutation_max_jumps": "physical_block_permutation",
     "dispatcher_type": "dispatcher_cff",
     "dispatcher_target_hiding": "dispatcher_target_hiding",
     "semantic_state_threading": "state_transition",
@@ -260,6 +262,7 @@ _OPTION_FEATURES = {
 }
 
 _PARAMETER_OPTIONS = frozenset((
+    "physical_block_permutation_max_jumps",
     "junk_rate", "integrity_constant_rate", "block_variant_count",
     "block_variant_max_instructions", "helper_variant_count",
     "state_dependency_limit",

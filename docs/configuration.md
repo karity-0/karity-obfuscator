@@ -26,6 +26,8 @@
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
+  - [physical_block_permutation_rate](#physical_block_permutation_rate)
+  - [physical_block_permutation_max_jumps](#physical_block_permutation_max_jumps)
   - [state_dependency_limit](#state_dependency_limit)
   - [requirements](#requirements)
   - [backend](#backend)
@@ -643,6 +645,26 @@ Compresses and wraps the final output in a self-extracting loader.
 See [`pack` design and implementation notes](passes/packer.md) for architecture, trade-offs, and future work.
 
 ## vm_options
+
+### physical_block_permutation_rate
+
+Fraction of safe physical block bundles selected for storage-order permutation (Karity/Classic). Skip/extension/variant adjacency is preserved.
+
+range: 0.0 to 1.0
+
+default: `0.0`
+
+---
+
+### physical_block_permutation_max_jumps
+
+Maximum added fallthrough bridges per function; address overflow preserves the original physical layout.
+
+range: 0 to 4096
+
+default: `64`
+
+---
 
 ### state_dependency_limit
 
