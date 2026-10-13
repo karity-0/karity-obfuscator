@@ -144,6 +144,7 @@ class RuntimeBody:
 
 
 class VMBackend:
+    shared_runtime_helpers: tuple[str, ...] = ()
     domain = ExecutionDomain.VM
     name = ""
     description = ""

@@ -43,10 +43,11 @@ def _relevant(name):
             or name in _SLOT_TOKENS or name in _SEMANTIC_TOKENS
             or name.startswith('__VM_LOOP_'))
 
-def _resolve(ctx):
+def _resolve(ctx, extra_names=()):
     nodes = []
     def select(node):
-        if _relevant(ctx.plain_text(node)):
+        name = ctx.plain_text(node)
+        if _relevant(name) or name in extra_names:
             nodes.append(node)
             return True
         return False
@@ -56,13 +57,13 @@ def _resolve(ctx):
     return bindings, nodes
 
 
-def specialize_runtime(source: str) -> tuple[str, dict]:
+def specialize_runtime(source: str, *, shared_helpers=()) -> tuple[str, dict]:
     started = time.perf_counter()
     ctx = parse(source)
     # An unfamiliar target syntax must retain the original runtime, not guess.
     if ctx.root.has_error:
         return source, {'helper_pruning_deferred': 'unrecognized runtime syntax'}
-    bindings, nodes = _resolve(ctx)
+    bindings, nodes = _resolve(ctx, set(shared_helpers) | ({'_pmix'} if shared_helpers else set()))
     declarations = {}
     for index, binding in enumerate(bindings):
         name = binding.nodes[0]
@@ -101,6 +102,13 @@ def specialize_runtime(source: str) -> tuple[str, dict]:
     parts.append(source[end:])
     result = join_code(parts)
     requirements = _requirements(ctx, bindings, ranges, nodes)
+    helper_bytes_removed = len(source.encode()) - len(result.encode())
+    skeleton_stats = {}
+    if shared_helpers:
+        from .runtime_skeleton import share_runtime_helpers
+        result, skeleton_stats = share_runtime_helpers(
+            source, shared_helpers, ctx=ctx, bindings=bindings, removals=ranges,
+        )
     return result, {
         '_graph_requirements': requirements,
         'helper_analysis_seconds': round(time.perf_counter() - started, 6),
@@ -108,7 +116,8 @@ def specialize_runtime(source: str) -> tuple[str, dict]:
         'audited_helpers_before': len(declarations),
         'audited_helpers_after': len(declarations) - len(removed),
         'removed_helpers': [bindings[i].original for i in sorted(removed)],
-        'helper_bytes_removed': len(source.encode()) - len(result.encode()),
+        'helper_bytes_removed': helper_bytes_removed,
+        **skeleton_stats,
     }
 
 

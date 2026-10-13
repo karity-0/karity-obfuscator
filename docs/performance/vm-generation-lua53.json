@@ -1,0 +1,3296 @@
+{
+  "baseline_ref": "ebc237a",
+  "seed": 9171,
+  "repeats": 3,
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "lua_version": "5.3",
+  "records": [
+    {
+      "fixture": "hello",
+      "setting": "single",
+      "options": {
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 297698,
+        "runtime_bytes": 296465,
+        "blob_bytes": 276,
+        "build_seconds": 0.9995087999850512,
+        "build_cpu_seconds": 0.171875,
+        "graph_cpu_seconds": 0.046875,
+        "execution_cpu_seconds": 0.035,
+        "blob_literal_bytes": 1120,
+        "emission": {
+          "helper_analysis_seconds": 0.295094,
+          "helper_analysis_input_bytes": 208284,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 15,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 13251,
+          "arithmetic_kinds": [],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "GET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 8,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 37,
+            "__VM_CONTROL_GRAPHS__": 27383,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 9676,
+            "__VM_OCCURRENCE_GRAPHS__": 43457
+          }
+        },
+        "bank_bytes": {
+          "_AR": 37,
+          "_OG": 43457,
+          "_DG": 9676,
+          "_LG": 2,
+          "_CG": 12699,
+          "_GV": 11685,
+          "_FG": 25290
+        },
+        "function_counts": {
+          "total_functions": 129,
+          "audited_helpers": 15
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "cc00086f0a94631c59fb05369506ecef8b8c76df44cf306c0e76c0f06284d88b",
+        "plan_sha256": "53ea228d5149feffae61ec2f2f1292c548f47b237b62ad55f047389dc353e266",
+        "timing_samples": [
+          {
+            "build_seconds": 1.1688167999964207,
+            "build_cpu_seconds": 0.3125,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.035
+          },
+          {
+            "build_seconds": 0.9562049999367446,
+            "build_cpu_seconds": 0.09375,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.035
+          },
+          {
+            "build_seconds": 0.9995087999850512,
+            "build_cpu_seconds": 0.171875,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.029
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 295886,
+        "runtime_bytes": 294655,
+        "blob_bytes": 276,
+        "build_seconds": 0.9133265998680145,
+        "build_cpu_seconds": 0.09375,
+        "graph_cpu_seconds": 0.0,
+        "execution_cpu_seconds": 0.036,
+        "blob_literal_bytes": 1118,
+        "emission": {
+          "helper_analysis_seconds": 0.292556,
+          "helper_analysis_input_bytes": 208284,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 15,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 13251,
+          "arithmetic_kinds": [],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 0,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "GET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 8,
+          "semantic_variants_after": 8,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 37,
+            "__VM_CONTROL_GRAPHS__": 28462,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 9676,
+            "__VM_OCCURRENCE_GRAPHS__": 39794
+          }
+        },
+        "bank_bytes": {
+          "_AR": 37,
+          "_DG": 9676,
+          "_LG": 2,
+          "_FG": 26288,
+          "_OG": 39794,
+          "_GV": 13171,
+          "_CG": 12054
+        },
+        "function_counts": {
+          "total_functions": 129,
+          "audited_helpers": 15
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "cc00086f0a94631c59fb05369506ecef8b8c76df44cf306c0e76c0f06284d88b",
+        "plan_sha256": "53ea228d5149feffae61ec2f2f1292c548f47b237b62ad55f047389dc353e266",
+        "timing_samples": [
+          {
+            "build_seconds": 0.9133265998680145,
+            "build_cpu_seconds": 0.125,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.036
+          },
+          {
+            "build_seconds": 0.8750238001812249,
+            "build_cpu_seconds": 0.078125,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.034
+          },
+          {
+            "build_seconds": 0.9650421000551432,
+            "build_cpu_seconds": 0.09375,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.041
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 295887,
+        "runtime_bytes": 294655,
+        "blob_bytes": 276,
+        "build_seconds": 0.9338994000572711,
+        "build_cpu_seconds": 0.1875,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.037,
+        "blob_literal_bytes": 1119,
+        "emission": {
+          "helper_analysis_seconds": 0.339293,
+          "helper_analysis_input_bytes": 208284,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 15,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 13251,
+          "arithmetic_kinds": [],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 0,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "GET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 8,
+          "semantic_variants_after": 8,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 37,
+            "__VM_CONTROL_GRAPHS__": 28462,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 9676,
+            "__VM_OCCURRENCE_GRAPHS__": 39794
+          }
+        },
+        "bank_bytes": {
+          "_LG": 2,
+          "_DG": 9676,
+          "_AR": 37,
+          "_FG": 26288,
+          "_OG": 39794,
+          "_CG": 12054,
+          "_GV": 13171
+        },
+        "function_counts": {
+          "total_functions": 129,
+          "audited_helpers": 15
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "cc00086f0a94631c59fb05369506ecef8b8c76df44cf306c0e76c0f06284d88b",
+        "plan_sha256": "53ea228d5149feffae61ec2f2f1292c548f47b237b62ad55f047389dc353e266",
+        "timing_samples": [
+          {
+            "build_seconds": 0.9338994000572711,
+            "build_cpu_seconds": 0.203125,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.037
+          },
+          {
+            "build_seconds": 0.87953140004538,
+            "build_cpu_seconds": 0.1875,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.034
+          },
+          {
+            "build_seconds": 1.0812486000359058,
+            "build_cpu_seconds": 0.125,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.043
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "arithmetic",
+      "setting": "single",
+      "options": {
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 1276361,
+        "runtime_bytes": 1270426,
+        "blob_bytes": 1447,
+        "build_seconds": 2.774199799867347,
+        "build_cpu_seconds": 0.4375,
+        "graph_cpu_seconds": 0.09375,
+        "execution_cpu_seconds": 0.123,
+        "blob_literal_bytes": 5822,
+        "emission": {
+          "helper_analysis_seconds": 1.870482,
+          "helper_analysis_input_bytes": 694531,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 30,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_cf",
+            "_branch",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 5979,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 455804,
+            "__VM_CONTROL_GRAPHS__": 27387,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 35077,
+            "__VM_OCCURRENCE_GRAPHS__": 42999
+          }
+        },
+        "bank_bytes": {
+          "_DG": 35077,
+          "_FG": 25190,
+          "_OG": 42999,
+          "_CG": 12379,
+          "_LG": 2,
+          "_AR": 455804,
+          "_GV": 12158
+        },
+        "function_counts": {
+          "total_functions": 286,
+          "audited_helpers": 30
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "7896f4155d09b11e9b2bab6d9a28742e3ee2a5dd3be47341e05786cf3c898f1c",
+        "plan_sha256": "52bfd6d361318ac080585b65180ca59c95288cf001907461151408e47659424b",
+        "timing_samples": [
+          {
+            "build_seconds": 5.655794899910688,
+            "build_cpu_seconds": 2.328125,
+            "graph_cpu_seconds": 0.828125,
+            "execution_cpu_seconds": 0.253
+          },
+          {
+            "build_seconds": 2.6560974000021815,
+            "build_cpu_seconds": 0.296875,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.123
+          },
+          {
+            "build_seconds": 2.774199799867347,
+            "build_cpu_seconds": 0.4375,
+            "graph_cpu_seconds": 0.09375,
+            "execution_cpu_seconds": 0.115
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 1275776,
+        "runtime_bytes": 1269841,
+        "blob_bytes": 1447,
+        "build_seconds": 4.032980100018904,
+        "build_cpu_seconds": 1.0625,
+        "graph_cpu_seconds": 0.140625,
+        "execution_cpu_seconds": 0.134,
+        "blob_literal_bytes": 5822,
+        "emission": {
+          "helper_analysis_seconds": 1.37128,
+          "helper_analysis_input_bytes": 694531,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 30,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_cf",
+            "_branch",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 5979,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 452754,
+            "__VM_CONTROL_GRAPHS__": 27385,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 35910,
+            "__VM_OCCURRENCE_GRAPHS__": 43459
+          }
+        },
+        "bank_bytes": {
+          "_OG": 43459,
+          "_DG": 35910,
+          "_GV": 13323,
+          "_AR": 452754,
+          "_LG": 2,
+          "_FG": 25215,
+          "_CG": 12375
+        },
+        "function_counts": {
+          "total_functions": 286,
+          "audited_helpers": 30
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "7896f4155d09b11e9b2bab6d9a28742e3ee2a5dd3be47341e05786cf3c898f1c",
+        "plan_sha256": "52bfd6d361318ac080585b65180ca59c95288cf001907461151408e47659424b",
+        "timing_samples": [
+          {
+            "build_seconds": 5.0811890999320894,
+            "build_cpu_seconds": 1.0625,
+            "graph_cpu_seconds": 0.140625,
+            "execution_cpu_seconds": 0.16
+          },
+          {
+            "build_seconds": 4.032980100018904,
+            "build_cpu_seconds": 1.0625,
+            "graph_cpu_seconds": 0.265625,
+            "execution_cpu_seconds": 0.128
+          },
+          {
+            "build_seconds": 3.0107021001167595,
+            "build_cpu_seconds": 0.40625,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.134
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 1275776,
+        "runtime_bytes": 1269841,
+        "blob_bytes": 1447,
+        "build_seconds": 4.446406099945307,
+        "build_cpu_seconds": 1.40625,
+        "graph_cpu_seconds": 0.3125,
+        "execution_cpu_seconds": 0.236,
+        "blob_literal_bytes": 5822,
+        "emission": {
+          "helper_analysis_seconds": 1.347137,
+          "helper_analysis_input_bytes": 694531,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 30,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_cf",
+            "_branch",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 5979,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 452754,
+            "__VM_CONTROL_GRAPHS__": 27385,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 35910,
+            "__VM_OCCURRENCE_GRAPHS__": 43459
+          }
+        },
+        "bank_bytes": {
+          "_DG": 35910,
+          "_OG": 43459,
+          "_LG": 2,
+          "_AR": 452754,
+          "_FG": 25215,
+          "_GV": 13323,
+          "_CG": 12375
+        },
+        "function_counts": {
+          "total_functions": 286,
+          "audited_helpers": 30
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "7896f4155d09b11e9b2bab6d9a28742e3ee2a5dd3be47341e05786cf3c898f1c",
+        "plan_sha256": "52bfd6d361318ac080585b65180ca59c95288cf001907461151408e47659424b",
+        "timing_samples": [
+          {
+            "build_seconds": 3.62043400015682,
+            "build_cpu_seconds": 0.6875,
+            "graph_cpu_seconds": 0.203125,
+            "execution_cpu_seconds": 0.236
+          },
+          {
+            "build_seconds": 4.471799900056794,
+            "build_cpu_seconds": 1.515625,
+            "graph_cpu_seconds": 0.3125,
+            "execution_cpu_seconds": 0.214
+          },
+          {
+            "build_seconds": 4.446406099945307,
+            "build_cpu_seconds": 1.40625,
+            "graph_cpu_seconds": 0.46875,
+            "execution_cpu_seconds": 0.258
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "loops",
+      "setting": "single",
+      "options": {
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 692830,
+        "runtime_bytes": 690853,
+        "blob_bytes": 928,
+        "build_seconds": 2.7430231999605894,
+        "build_cpu_seconds": 0.859375,
+        "graph_cpu_seconds": 0.109375,
+        "execution_cpu_seconds": 0.221,
+        "blob_literal_bytes": 1864,
+        "emission": {
+          "helper_analysis_seconds": 1.146305,
+          "helper_analysis_input_bytes": 428348,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 5509,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 24,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 136857,
+            "__VM_CONTROL_GRAPHS__": 36002,
+            "__VM_LOOP_GRAPHS__": 8279,
+            "__VM_SEMANTIC_GRAPHS__": 27679,
+            "__VM_OCCURRENCE_GRAPHS__": 40711
+          }
+        },
+        "bank_bytes": {
+          "_DG": 27679,
+          "_OG": 40711,
+          "_GV": 12178,
+          "_FG": 33092,
+          "_CG": 13324,
+          "_LG": 8130,
+          "_AR": 136857
+        },
+        "function_counts": {
+          "total_functions": 197,
+          "audited_helpers": 31
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "231991b8ac1edd89c7590f824797621523a0f6df850b833cd0f844dd5f00c9e6",
+        "plan_sha256": "5d1737912f0f9d4ee3f3254a1735aacdb87d269c8d1c6b36e5fa323295147d0e",
+        "timing_samples": [
+          {
+            "build_seconds": 3.065564899938181,
+            "build_cpu_seconds": 0.859375,
+            "graph_cpu_seconds": 0.109375,
+            "execution_cpu_seconds": 0.211
+          },
+          {
+            "build_seconds": 2.509386399993673,
+            "build_cpu_seconds": 0.515625,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.221
+          },
+          {
+            "build_seconds": 2.7430231999605894,
+            "build_cpu_seconds": 1.28125,
+            "graph_cpu_seconds": 0.109375,
+            "execution_cpu_seconds": 0.221
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 699665,
+        "runtime_bytes": 697688,
+        "blob_bytes": 928,
+        "build_seconds": 2.535256600007415,
+        "build_cpu_seconds": 0.5625,
+        "graph_cpu_seconds": 0.0625,
+        "execution_cpu_seconds": 0.152,
+        "blob_literal_bytes": 1864,
+        "emission": {
+          "helper_analysis_seconds": 0.849301,
+          "helper_analysis_input_bytes": 428348,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 5509,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 24,
+          "arithmetic_dags_after": 24,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "loop_graphs_generated": 3,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 140802,
+            "__VM_CONTROL_GRAPHS__": 33846,
+            "__VM_LOOP_GRAPHS__": 8551,
+            "__VM_SEMANTIC_GRAPHS__": 30157,
+            "__VM_OCCURRENCE_GRAPHS__": 42088
+          }
+        },
+        "bank_bytes": {
+          "_LG": 8397,
+          "_CG": 12368,
+          "_AR": 140802,
+          "_GV": 13664,
+          "_DG": 30157,
+          "_FG": 31267,
+          "_OG": 42088
+        },
+        "function_counts": {
+          "total_functions": 197,
+          "audited_helpers": 31
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "231991b8ac1edd89c7590f824797621523a0f6df850b833cd0f844dd5f00c9e6",
+        "plan_sha256": "5d1737912f0f9d4ee3f3254a1735aacdb87d269c8d1c6b36e5fa323295147d0e",
+        "timing_samples": [
+          {
+            "build_seconds": 2.535256600007415,
+            "build_cpu_seconds": 0.375,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.218
+          },
+          {
+            "build_seconds": 2.4458023000042886,
+            "build_cpu_seconds": 0.5625,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.152
+          },
+          {
+            "build_seconds": 2.654447900131345,
+            "build_cpu_seconds": 1.046875,
+            "graph_cpu_seconds": 0.15625,
+            "execution_cpu_seconds": 0.151
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 699665,
+        "runtime_bytes": 697688,
+        "blob_bytes": 928,
+        "build_seconds": 2.567093700170517,
+        "build_cpu_seconds": 0.40625,
+        "graph_cpu_seconds": 0.03125,
+        "execution_cpu_seconds": 0.206,
+        "blob_literal_bytes": 1864,
+        "emission": {
+          "helper_analysis_seconds": 0.929289,
+          "helper_analysis_input_bytes": 428348,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 5509,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 24,
+          "arithmetic_dags_after": 24,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "loop_graphs_generated": 3,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 140802,
+            "__VM_CONTROL_GRAPHS__": 33846,
+            "__VM_LOOP_GRAPHS__": 8551,
+            "__VM_SEMANTIC_GRAPHS__": 30157,
+            "__VM_OCCURRENCE_GRAPHS__": 42088
+          }
+        },
+        "bank_bytes": {
+          "_OG": 42088,
+          "_GV": 13664,
+          "_FG": 31267,
+          "_DG": 30157,
+          "_CG": 12368,
+          "_AR": 140802,
+          "_LG": 8397
+        },
+        "function_counts": {
+          "total_functions": 197,
+          "audited_helpers": 31
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "231991b8ac1edd89c7590f824797621523a0f6df850b833cd0f844dd5f00c9e6",
+        "plan_sha256": "5d1737912f0f9d4ee3f3254a1735aacdb87d269c8d1c6b36e5fa323295147d0e",
+        "timing_samples": [
+          {
+            "build_seconds": 2.567093700170517,
+            "build_cpu_seconds": 0.40625,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.206
+          },
+          {
+            "build_seconds": 2.811140999896452,
+            "build_cpu_seconds": 0.5625,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.227
+          },
+          {
+            "build_seconds": 1.9143374001141638,
+            "build_cpu_seconds": 0.375,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.13
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "closures",
+      "setting": "single",
+      "options": {
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 613798,
+        "runtime_bytes": 608780,
+        "blob_bytes": 1187,
+        "build_seconds": 2.7089507998898625,
+        "build_cpu_seconds": 1.96875,
+        "graph_cpu_seconds": 0.21875,
+        "execution_cpu_seconds": 0.101,
+        "blob_literal_bytes": 4905,
+        "emission": {
+          "helper_analysis_seconds": 0.749476,
+          "helper_analysis_input_bytes": 434852,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 29,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 6304,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 45704,
+            "__VM_CONTROL_GRAPHS__": 34924,
+            "__VM_LOOP_GRAPHS__": 6300,
+            "__VM_SEMANTIC_GRAPHS__": 30396,
+            "__VM_OCCURRENCE_GRAPHS__": 43456
+          }
+        },
+        "bank_bytes": {
+          "_AR": 45704,
+          "_DG": 30396,
+          "_OG": 43456,
+          "_LG": 6183,
+          "_CG": 13297,
+          "_FG": 32264,
+          "_GV": 11962
+        },
+        "function_counts": {
+          "total_functions": 175,
+          "audited_helpers": 29
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "e863b9e1ec6716e5ab93bed6407766fe458fe2f7278183f57e7ae63f0e12ce98",
+        "plan_sha256": "3d98875c4580694b2557db77f187d65f44052295bc3c5ecc772c65d3437693c1",
+        "timing_samples": [
+          {
+            "build_seconds": 1.9531896999105811,
+            "build_cpu_seconds": 0.453125,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.101
+          },
+          {
+            "build_seconds": 2.7089507998898625,
+            "build_cpu_seconds": 2.109375,
+            "graph_cpu_seconds": 0.328125,
+            "execution_cpu_seconds": 0.226
+          },
+          {
+            "build_seconds": 3.3042618001345545,
+            "build_cpu_seconds": 1.96875,
+            "graph_cpu_seconds": 0.21875,
+            "execution_cpu_seconds": 0.077
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 605922,
+        "runtime_bytes": 600898,
+        "blob_bytes": 1187,
+        "build_seconds": 2.495006100041792,
+        "build_cpu_seconds": 0.65625,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.144,
+        "blob_literal_bytes": 4911,
+        "emission": {
+          "helper_analysis_seconds": 0.613938,
+          "helper_analysis_input_bytes": 434852,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 29,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 6304,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 8,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 46815,
+            "__VM_CONTROL_GRAPHS__": 26308,
+            "__VM_LOOP_GRAPHS__": 5475,
+            "__VM_SEMANTIC_GRAPHS__": 31780,
+            "__VM_OCCURRENCE_GRAPHS__": 43003
+          }
+        },
+        "bank_bytes": {
+          "_DG": 31780,
+          "_FG": 24146,
+          "_GV": 13487,
+          "_OG": 43003,
+          "_CG": 10783,
+          "_AR": 46815,
+          "_LG": 5356
+        },
+        "function_counts": {
+          "total_functions": 175,
+          "audited_helpers": 29
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "e863b9e1ec6716e5ab93bed6407766fe458fe2f7278183f57e7ae63f0e12ce98",
+        "plan_sha256": "3d98875c4580694b2557db77f187d65f44052295bc3c5ecc772c65d3437693c1",
+        "timing_samples": [
+          {
+            "build_seconds": 1.6632547001354396,
+            "build_cpu_seconds": 0.328125,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.144
+          },
+          {
+            "build_seconds": 5.411183800082654,
+            "build_cpu_seconds": 1.84375,
+            "graph_cpu_seconds": 0.15625,
+            "execution_cpu_seconds": 0.121
+          },
+          {
+            "build_seconds": 2.495006100041792,
+            "build_cpu_seconds": 0.65625,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.151
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 605917,
+        "runtime_bytes": 600898,
+        "blob_bytes": 1187,
+        "build_seconds": 3.0346431001089513,
+        "build_cpu_seconds": 1.59375,
+        "graph_cpu_seconds": 0.1875,
+        "execution_cpu_seconds": 0.188,
+        "blob_literal_bytes": 4906,
+        "emission": {
+          "helper_analysis_seconds": 1.336365,
+          "helper_analysis_input_bytes": 434852,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 29,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 6304,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 8,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 46815,
+            "__VM_CONTROL_GRAPHS__": 26308,
+            "__VM_LOOP_GRAPHS__": 5475,
+            "__VM_SEMANTIC_GRAPHS__": 31780,
+            "__VM_OCCURRENCE_GRAPHS__": 43003
+          }
+        },
+        "bank_bytes": {
+          "_FG": 24146,
+          "_DG": 31780,
+          "_GV": 13487,
+          "_LG": 5356,
+          "_AR": 46815,
+          "_CG": 10783,
+          "_OG": 43003
+        },
+        "function_counts": {
+          "total_functions": 175,
+          "audited_helpers": 29
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "e863b9e1ec6716e5ab93bed6407766fe458fe2f7278183f57e7ae63f0e12ce98",
+        "plan_sha256": "3d98875c4580694b2557db77f187d65f44052295bc3c5ecc772c65d3437693c1",
+        "timing_samples": [
+          {
+            "build_seconds": 3.0346431001089513,
+            "build_cpu_seconds": 1.59375,
+            "graph_cpu_seconds": 0.203125,
+            "execution_cpu_seconds": 0.188
+          },
+          {
+            "build_seconds": 5.0464433000888675,
+            "build_cpu_seconds": 1.734375,
+            "graph_cpu_seconds": 0.1875,
+            "execution_cpu_seconds": 0.23
+          },
+          {
+            "build_seconds": 2.528601400088519,
+            "build_cpu_seconds": 1.125,
+            "graph_cpu_seconds": 0.09375,
+            "execution_cpu_seconds": 0.056
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "arithmetic",
+      "setting": "protected-2",
+      "options": {
+        "vm_count": 2,
+        "graph_execution_rate": 1,
+        "cross_instruction_rate": 1,
+        "runtime_polymorphism_rate": 1,
+        "block_variant_rate": 1,
+        "semantic_state_threading": true,
+        "argument_virtualization": true,
+        "upvalue_virtualization": true,
+        "table_virtualization": true,
+        "branch_virtualization": true,
+        "dispatcher_target_hiding": true,
+        "fake_handlers": true,
+        "mutate_handlers": true,
+        "junk_instructions": true,
+        "junk_rate": 0.2,
+        "integrity_constants": true,
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 1471618,
+        "runtime_bytes": 1460005,
+        "blob_bytes": 2761,
+        "build_seconds": 1.9896905000787228,
+        "build_cpu_seconds": 0.703125,
+        "graph_cpu_seconds": 0.109375,
+        "execution_cpu_seconds": 0.129,
+        "blob_literal_bytes": 11500,
+        "emission": {
+          "helper_analysis_seconds": 1.110678,
+          "helper_analysis_input_bytes": 882851,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 47,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 16455,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 463106,
+            "__VM_CONTROL_GRAPHS__": 34925,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 36705,
+            "__VM_OCCURRENCE_GRAPHS__": 42999
+          }
+        },
+        "bank_bytes": {
+          "_OG": 42999,
+          "_LG": 2,
+          "_DG": 36705,
+          "_FG": 32265,
+          "_CG": 10869,
+          "_AR": 463106,
+          "_GV": 12679
+        },
+        "function_counts": {
+          "total_functions": 348,
+          "audited_helpers": 47
+        },
+        "effective_vm_count": 2,
+        "blob_sha256": "bde754a88e6f84a67ba20e16b2efee64a4b239c95c93a8946aeef6cd4c1ecfb5",
+        "plan_sha256": "782b50c5f1c8fcc4df551c7eba0059c84483ccd12083b656b5167f610c8dc5ee",
+        "timing_samples": [
+          {
+            "build_seconds": 3.0832874001935124,
+            "build_cpu_seconds": 1.3125,
+            "graph_cpu_seconds": 0.140625,
+            "execution_cpu_seconds": 0.135
+          },
+          {
+            "build_seconds": 1.6788745000958443,
+            "build_cpu_seconds": 0.703125,
+            "graph_cpu_seconds": 0.109375,
+            "execution_cpu_seconds": 0.129
+          },
+          {
+            "build_seconds": 1.9896905000787228,
+            "build_cpu_seconds": 0.59375,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.114
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 1471230,
+        "runtime_bytes": 1459627,
+        "blob_bytes": 2761,
+        "build_seconds": 2.4956891001202166,
+        "build_cpu_seconds": 0.8125,
+        "graph_cpu_seconds": 0.09375,
+        "execution_cpu_seconds": 0.091,
+        "blob_literal_bytes": 11490,
+        "emission": {
+          "helper_analysis_seconds": 0.887132,
+          "helper_analysis_input_bytes": 882851,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 47,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 16455,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 462461,
+            "__VM_CONTROL_GRAPHS__": 36000,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 35073,
+            "__VM_OCCURRENCE_GRAPHS__": 41170
+          }
+        },
+        "bank_bytes": {
+          "_DG": 35073,
+          "_FG": 33158,
+          "_LG": 2,
+          "_OG": 41170,
+          "_AR": 462461,
+          "_GV": 13074,
+          "_CG": 13321
+        },
+        "function_counts": {
+          "total_functions": 348,
+          "audited_helpers": 47
+        },
+        "effective_vm_count": 2,
+        "blob_sha256": "bde754a88e6f84a67ba20e16b2efee64a4b239c95c93a8946aeef6cd4c1ecfb5",
+        "plan_sha256": "782b50c5f1c8fcc4df551c7eba0059c84483ccd12083b656b5167f610c8dc5ee",
+        "timing_samples": [
+          {
+            "build_seconds": 2.4956891001202166,
+            "build_cpu_seconds": 0.8125,
+            "graph_cpu_seconds": 0.125,
+            "execution_cpu_seconds": 0.102
+          },
+          {
+            "build_seconds": 2.7698991000652313,
+            "build_cpu_seconds": 1.4375,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.063
+          },
+          {
+            "build_seconds": 1.8110201000235975,
+            "build_cpu_seconds": 0.8125,
+            "graph_cpu_seconds": 0.09375,
+            "execution_cpu_seconds": 0.091
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 1470726,
+        "runtime_bytes": 1459124,
+        "blob_bytes": 2761,
+        "build_seconds": 1.908510599983856,
+        "build_cpu_seconds": 0.875,
+        "graph_cpu_seconds": 0.078125,
+        "execution_cpu_seconds": 0.09,
+        "blob_literal_bytes": 11489,
+        "emission": {
+          "helper_analysis_seconds": 0.703422,
+          "helper_analysis_input_bytes": 882851,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 47,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 16455,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 505,
+          "skeleton_analysis_seconds": 0.0337143000215292,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 462461,
+            "__VM_CONTROL_GRAPHS__": 36000,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 35073,
+            "__VM_OCCURRENCE_GRAPHS__": 41170
+          }
+        },
+        "bank_bytes": {
+          "_FG": 33158,
+          "_AR": 462461,
+          "_OG": 41170,
+          "_LG": 2,
+          "_CG": 13321,
+          "_DG": 35073,
+          "_GV": 13074
+        },
+        "function_counts": {
+          "total_functions": 346,
+          "audited_helpers": 47
+        },
+        "effective_vm_count": 2,
+        "blob_sha256": "bde754a88e6f84a67ba20e16b2efee64a4b239c95c93a8946aeef6cd4c1ecfb5",
+        "plan_sha256": "782b50c5f1c8fcc4df551c7eba0059c84483ccd12083b656b5167f610c8dc5ee",
+        "timing_samples": [
+          {
+            "build_seconds": 1.908510599983856,
+            "build_cpu_seconds": 0.859375,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.09
+          },
+          {
+            "build_seconds": 1.8945123001467437,
+            "build_cpu_seconds": 0.890625,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.112
+          },
+          {
+            "build_seconds": 2.2152823000214994,
+            "build_cpu_seconds": 0.875,
+            "graph_cpu_seconds": 0.125,
+            "execution_cpu_seconds": 0.083
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "arithmetic",
+      "setting": "protected-3",
+      "options": {
+        "vm_count": 3,
+        "graph_execution_rate": 1,
+        "cross_instruction_rate": 1,
+        "runtime_polymorphism_rate": 1,
+        "block_variant_rate": 1,
+        "semantic_state_threading": true,
+        "argument_virtualization": true,
+        "upvalue_virtualization": true,
+        "table_virtualization": true,
+        "branch_virtualization": true,
+        "dispatcher_target_hiding": true,
+        "fake_handlers": true,
+        "mutate_handlers": true,
+        "junk_instructions": true,
+        "junk_rate": 0.2,
+        "integrity_constants": true,
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 1674206,
+        "runtime_bytes": 1663333,
+        "blob_bytes": 2585,
+        "build_seconds": 2.2286668000742793,
+        "build_cpu_seconds": 0.703125,
+        "graph_cpu_seconds": 0.09375,
+        "execution_cpu_seconds": 0.088,
+        "blob_literal_bytes": 10760,
+        "emission": {
+          "helper_analysis_seconds": 0.902929,
+          "helper_analysis_input_bytes": 1109121,
+          "audited_helpers_before": 121,
+          "audited_helpers_after": 70,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 24690,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 451990,
+            "__VM_CONTROL_GRAPHS__": 36001,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 34822,
+            "__VM_OCCURRENCE_GRAPHS__": 41626
+          }
+        },
+        "bank_bytes": {
+          "_GV": 11813,
+          "_FG": 33227,
+          "_CG": 12978,
+          "_DG": 34822,
+          "_OG": 41626,
+          "_LG": 2,
+          "_AR": 451990
+        },
+        "function_counts": {
+          "total_functions": 414,
+          "audited_helpers": 70
+        },
+        "effective_vm_count": 3,
+        "blob_sha256": "8436d0a8534f4c788fb6290ea96f1bd8f044f28af1efb7a184a7443b66c03366",
+        "plan_sha256": "c312686fb427796e36befd6b0728200803c2e7aa813bd46f224d0b3bd61d7087",
+        "timing_samples": [
+          {
+            "build_seconds": 2.4197507998906076,
+            "build_cpu_seconds": 0.703125,
+            "graph_cpu_seconds": 0.234375,
+            "execution_cpu_seconds": 0.082
+          },
+          {
+            "build_seconds": 2.2286668000742793,
+            "build_cpu_seconds": 0.890625,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.091
+          },
+          {
+            "build_seconds": 2.1820962000638247,
+            "build_cpu_seconds": 0.625,
+            "graph_cpu_seconds": 0.09375,
+            "execution_cpu_seconds": 0.088
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 1662321,
+        "runtime_bytes": 1651461,
+        "blob_bytes": 2585,
+        "build_seconds": 2.056939800037071,
+        "build_cpu_seconds": 0.65625,
+        "graph_cpu_seconds": 0.078125,
+        "execution_cpu_seconds": 0.091,
+        "blob_literal_bytes": 10747,
+        "emission": {
+          "helper_analysis_seconds": 0.776435,
+          "helper_analysis_input_bytes": 1109121,
+          "audited_helpers_before": 121,
+          "audited_helpers_after": 70,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 24690,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 451311,
+            "__VM_CONTROL_GRAPHS__": 24155,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 33989,
+            "__VM_OCCURRENCE_GRAPHS__": 42084
+          }
+        },
+        "bank_bytes": {
+          "_OG": 42084,
+          "_FG": 22167,
+          "_LG": 2,
+          "_CG": 11807,
+          "_AR": 451311,
+          "_GV": 13224,
+          "_DG": 33989
+        },
+        "function_counts": {
+          "total_functions": 414,
+          "audited_helpers": 70
+        },
+        "effective_vm_count": 3,
+        "blob_sha256": "8436d0a8534f4c788fb6290ea96f1bd8f044f28af1efb7a184a7443b66c03366",
+        "plan_sha256": "c312686fb427796e36befd6b0728200803c2e7aa813bd46f224d0b3bd61d7087",
+        "timing_samples": [
+          {
+            "build_seconds": 2.056939800037071,
+            "build_cpu_seconds": 0.65625,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.102
+          },
+          {
+            "build_seconds": 2.0507324000354856,
+            "build_cpu_seconds": 0.65625,
+            "graph_cpu_seconds": 0.125,
+            "execution_cpu_seconds": 0.091
+          },
+          {
+            "build_seconds": 2.1023787998128682,
+            "build_cpu_seconds": 0.5625,
+            "graph_cpu_seconds": 0.0625,
+            "execution_cpu_seconds": 0.074
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 1661457,
+        "runtime_bytes": 1650585,
+        "blob_bytes": 2585,
+        "build_seconds": 2.1071176000405103,
+        "build_cpu_seconds": 0.5625,
+        "graph_cpu_seconds": 0.109375,
+        "execution_cpu_seconds": 0.09,
+        "blob_literal_bytes": 10759,
+        "emission": {
+          "helper_analysis_seconds": 0.841887,
+          "helper_analysis_input_bytes": 1109121,
+          "audited_helpers_before": 121,
+          "audited_helpers_after": 70,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_touch",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 24690,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 4,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 880,
+          "skeleton_analysis_seconds": 0.04484949982725084,
+          "arithmetic_kinds": [
+            "ADD",
+            "BAND",
+            "BNOT",
+            "BOR",
+            "BXOR",
+            "MUL",
+            "SHL",
+            "SHR",
+            "SUB",
+            "UNM"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 80,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "DIV",
+            "GET",
+            "IDIV",
+            "MOD",
+            "POW",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 28,
+          "semantic_variants_after": 28,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 0,
+          "loop_graphs_generated": 0,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 451311,
+            "__VM_CONTROL_GRAPHS__": 24155,
+            "__VM_LOOP_GRAPHS__": 2,
+            "__VM_SEMANTIC_GRAPHS__": 33989,
+            "__VM_OCCURRENCE_GRAPHS__": 42084
+          }
+        },
+        "bank_bytes": {
+          "_DG": 33989,
+          "_AR": 451311,
+          "_GV": 13224,
+          "_CG": 11807,
+          "_OG": 42084,
+          "_LG": 2,
+          "_FG": 22167
+        },
+        "function_counts": {
+          "total_functions": 410,
+          "audited_helpers": 70
+        },
+        "effective_vm_count": 3,
+        "blob_sha256": "8436d0a8534f4c788fb6290ea96f1bd8f044f28af1efb7a184a7443b66c03366",
+        "plan_sha256": "c312686fb427796e36befd6b0728200803c2e7aa813bd46f224d0b3bd61d7087",
+        "timing_samples": [
+          {
+            "build_seconds": 2.1071176000405103,
+            "build_cpu_seconds": 0.546875,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.09
+          },
+          {
+            "build_seconds": 2.496680699987337,
+            "build_cpu_seconds": 0.5625,
+            "graph_cpu_seconds": 0.109375,
+            "execution_cpu_seconds": 0.111
+          },
+          {
+            "build_seconds": 2.0789099000394344,
+            "build_cpu_seconds": 0.75,
+            "graph_cpu_seconds": 0.109375,
+            "execution_cpu_seconds": 0.077
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "closures",
+      "setting": "protected-2",
+      "options": {
+        "vm_count": 2,
+        "graph_execution_rate": 1,
+        "cross_instruction_rate": 1,
+        "runtime_polymorphism_rate": 1,
+        "block_variant_rate": 1,
+        "semantic_state_threading": true,
+        "argument_virtualization": true,
+        "upvalue_virtualization": true,
+        "table_virtualization": true,
+        "branch_virtualization": true,
+        "dispatcher_target_hiding": true,
+        "fake_handlers": true,
+        "mutate_handlers": true,
+        "junk_instructions": true,
+        "junk_rate": 0.2,
+        "integrity_constants": true,
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 689121,
+        "runtime_bytes": 684928,
+        "blob_bytes": 2313,
+        "build_seconds": 1.0902944998815656,
+        "build_cpu_seconds": 0.3125,
+        "graph_cpu_seconds": 0.03125,
+        "execution_cpu_seconds": 0.047,
+        "blob_literal_bytes": 4080,
+        "emission": {
+          "helper_analysis_seconds": 0.444531,
+          "helper_analysis_input_bytes": 535322,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 44,
+          "removed_helpers": [
+            "decode",
+            "_int2",
+            "_int1",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 18882,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 45258,
+            "__VM_CONTROL_GRAPHS__": 31693,
+            "__VM_LOOP_GRAPHS__": 6300,
+            "__VM_SEMANTIC_GRAPHS__": 28220,
+            "__VM_OCCURRENCE_GRAPHS__": 39794
+          }
+        },
+        "bank_bytes": {
+          "_FG": 29096,
+          "_LG": 6181,
+          "_GV": 13793,
+          "_OG": 39794,
+          "_AR": 45258,
+          "_DG": 28220,
+          "_CG": 11740
+        },
+        "function_counts": {
+          "total_functions": 233,
+          "audited_helpers": 44
+        },
+        "effective_vm_count": 2,
+        "blob_sha256": "5919fb710cc1cec94f62b141d7339db3b31b4feace0e7f99f5076da6b2384cfb",
+        "plan_sha256": "7923b202cb394a31dbad7058a276f734efd74b05f2f2c462b7f1d295dce268bc",
+        "timing_samples": [
+          {
+            "build_seconds": 1.1923114999663085,
+            "build_cpu_seconds": 0.3125,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.076
+          },
+          {
+            "build_seconds": 1.0902944998815656,
+            "build_cpu_seconds": 0.375,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.044
+          },
+          {
+            "build_seconds": 1.081337200012058,
+            "build_cpu_seconds": 0.171875,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.047
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 698933,
+        "runtime_bytes": 694740,
+        "blob_bytes": 2313,
+        "build_seconds": 1.016598700080067,
+        "build_cpu_seconds": 0.3125,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.043,
+        "blob_literal_bytes": 4080,
+        "emission": {
+          "helper_analysis_seconds": 0.501927,
+          "helper_analysis_input_bytes": 535322,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 44,
+          "removed_helpers": [
+            "decode",
+            "_int2",
+            "_int1",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 18882,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 8,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 46960,
+            "__VM_CONTROL_GRAPHS__": 34923,
+            "__VM_LOOP_GRAPHS__": 4926,
+            "__VM_SEMANTIC_GRAPHS__": 29587,
+            "__VM_OCCURRENCE_GRAPHS__": 43916
+          }
+        },
+        "bank_bytes": {
+          "_AR": 46960,
+          "_OG": 43916,
+          "_DG": 29587,
+          "_GV": 12331,
+          "_CG": 14087,
+          "_FG": 32197,
+          "_LG": 4809
+        },
+        "function_counts": {
+          "total_functions": 233,
+          "audited_helpers": 44
+        },
+        "effective_vm_count": 2,
+        "blob_sha256": "5919fb710cc1cec94f62b141d7339db3b31b4feace0e7f99f5076da6b2384cfb",
+        "plan_sha256": "7923b202cb394a31dbad7058a276f734efd74b05f2f2c462b7f1d295dce268bc",
+        "timing_samples": [
+          {
+            "build_seconds": 1.4026564001105726,
+            "build_cpu_seconds": 0.421875,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.045
+          },
+          {
+            "build_seconds": 1.0103072000201792,
+            "build_cpu_seconds": 0.3125,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.041
+          },
+          {
+            "build_seconds": 1.016598700080067,
+            "build_cpu_seconds": 0.203125,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.043
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 698436,
+        "runtime_bytes": 694243,
+        "blob_bytes": 2313,
+        "build_seconds": 1.1087593000847846,
+        "build_cpu_seconds": 0.203125,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.042,
+        "blob_literal_bytes": 4080,
+        "emission": {
+          "helper_analysis_seconds": 0.433966,
+          "helper_analysis_input_bytes": 535322,
+          "audited_helpers_before": 81,
+          "audited_helpers_after": 44,
+          "removed_helpers": [
+            "decode",
+            "_int2",
+            "_int1",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop"
+          ],
+          "helper_bytes_removed": 18882,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 2,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 501,
+          "skeleton_analysis_seconds": 0.022132599959149957,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 8,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 46960,
+            "__VM_CONTROL_GRAPHS__": 34923,
+            "__VM_LOOP_GRAPHS__": 4926,
+            "__VM_SEMANTIC_GRAPHS__": 29587,
+            "__VM_OCCURRENCE_GRAPHS__": 43916
+          }
+        },
+        "bank_bytes": {
+          "_AR": 46960,
+          "_DG": 29587,
+          "_CG": 14087,
+          "_OG": 43916,
+          "_GV": 12331,
+          "_LG": 4809,
+          "_FG": 32197
+        },
+        "function_counts": {
+          "total_functions": 231,
+          "audited_helpers": 44
+        },
+        "effective_vm_count": 2,
+        "blob_sha256": "5919fb710cc1cec94f62b141d7339db3b31b4feace0e7f99f5076da6b2384cfb",
+        "plan_sha256": "7923b202cb394a31dbad7058a276f734efd74b05f2f2c462b7f1d295dce268bc",
+        "timing_samples": [
+          {
+            "build_seconds": 1.1087593000847846,
+            "build_cpu_seconds": 0.125,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.042
+          },
+          {
+            "build_seconds": 1.1258815000765026,
+            "build_cpu_seconds": 0.203125,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.042
+          },
+          {
+            "build_seconds": 1.0756417999509722,
+            "build_cpu_seconds": 0.265625,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.041
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "closures",
+      "setting": "protected-3",
+      "options": {
+        "vm_count": 3,
+        "graph_execution_rate": 1,
+        "cross_instruction_rate": 1,
+        "runtime_polymorphism_rate": 1,
+        "block_variant_rate": 1,
+        "semantic_state_threading": true,
+        "argument_virtualization": true,
+        "upvalue_virtualization": true,
+        "table_virtualization": true,
+        "branch_virtualization": true,
+        "dispatcher_target_hiding": true,
+        "fake_handlers": true,
+        "mutate_handlers": true,
+        "junk_instructions": true,
+        "junk_rate": 0.2,
+        "integrity_constants": true,
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 937408,
+        "runtime_bytes": 933292,
+        "blob_bytes": 2269,
+        "build_seconds": 1.483185200020671,
+        "build_cpu_seconds": 0.34375,
+        "graph_cpu_seconds": 0.046875,
+        "execution_cpu_seconds": 0.071,
+        "blob_literal_bytes": 4003,
+        "emission": {
+          "helper_analysis_seconds": 0.595976,
+          "helper_analysis_input_bytes": 795259,
+          "audited_helpers_before": 121,
+          "audited_helpers_after": 60,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 30831,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 46349,
+            "__VM_CONTROL_GRAPHS__": 32769,
+            "__VM_LOOP_GRAPHS__": 5751,
+            "__VM_SEMANTIC_GRAPHS__": 30403,
+            "__VM_OCCURRENCE_GRAPHS__": 41623
+          }
+        },
+        "bank_bytes": {
+          "_LG": 5633,
+          "_CG": 12024,
+          "_DG": 30403,
+          "_GV": 11245,
+          "_FG": 30117,
+          "_AR": 46349,
+          "_OG": 41623
+        },
+        "function_counts": {
+          "total_functions": 292,
+          "audited_helpers": 60
+        },
+        "effective_vm_count": 3,
+        "blob_sha256": "3354ee97a5d814a9356eaa748c42b9f5f0847a5e761a5c5013d0f244018868c4",
+        "plan_sha256": "56b04a7df670b2ccd4d01af62d2a8160e32671133451bd625c8f7e2bd5c56725",
+        "timing_samples": [
+          {
+            "build_seconds": 1.8120766000356525,
+            "build_cpu_seconds": 0.53125,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.092
+          },
+          {
+            "build_seconds": 1.4483870000112802,
+            "build_cpu_seconds": 0.34375,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.071
+          },
+          {
+            "build_seconds": 1.483185200020671,
+            "build_cpu_seconds": 0.3125,
+            "graph_cpu_seconds": 0.03125,
+            "execution_cpu_seconds": 0.061
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 936985,
+        "runtime_bytes": 932869,
+        "blob_bytes": 2269,
+        "build_seconds": 1.5174982000607997,
+        "build_cpu_seconds": 0.515625,
+        "graph_cpu_seconds": 0.078125,
+        "execution_cpu_seconds": 0.059,
+        "blob_literal_bytes": 4003,
+        "emission": {
+          "helper_analysis_seconds": 0.780401,
+          "helper_analysis_input_bytes": 795259,
+          "audited_helpers_before": 121,
+          "audited_helpers_after": 60,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 30831,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 8,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 47770,
+            "__VM_CONTROL_GRAPHS__": 28461,
+            "__VM_LOOP_GRAPHS__": 6301,
+            "__VM_SEMANTIC_GRAPHS__": 30144,
+            "__VM_OCCURRENCE_GRAPHS__": 44373
+          }
+        },
+        "bank_bytes": {
+          "_GV": 11007,
+          "_AR": 47770,
+          "_FG": 26073,
+          "_OG": 44373,
+          "_CG": 11411,
+          "_LG": 6181,
+          "_DG": 30144
+        },
+        "function_counts": {
+          "total_functions": 292,
+          "audited_helpers": 60
+        },
+        "effective_vm_count": 3,
+        "blob_sha256": "3354ee97a5d814a9356eaa748c42b9f5f0847a5e761a5c5013d0f244018868c4",
+        "plan_sha256": "56b04a7df670b2ccd4d01af62d2a8160e32671133451bd625c8f7e2bd5c56725",
+        "timing_samples": [
+          {
+            "build_seconds": 1.9758903000038117,
+            "build_cpu_seconds": 0.671875,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.053
+          },
+          {
+            "build_seconds": 1.4441752000711858,
+            "build_cpu_seconds": 0.390625,
+            "graph_cpu_seconds": 0.078125,
+            "execution_cpu_seconds": 0.059
+          },
+          {
+            "build_seconds": 1.5174982000607997,
+            "build_cpu_seconds": 0.515625,
+            "graph_cpu_seconds": 0.125,
+            "execution_cpu_seconds": 0.066
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 936115,
+        "runtime_bytes": 931999,
+        "blob_bytes": 2269,
+        "build_seconds": 1.6741274001542479,
+        "build_cpu_seconds": 0.390625,
+        "graph_cpu_seconds": 0.046875,
+        "execution_cpu_seconds": 0.058,
+        "blob_literal_bytes": 4003,
+        "emission": {
+          "helper_analysis_seconds": 0.621189,
+          "helper_analysis_input_bytes": 795259,
+          "audited_helpers_before": 121,
+          "audited_helpers_after": 60,
+          "removed_helpers": [
+            "decode",
+            "get_box",
+            "_texpose",
+            "make_closure",
+            "_int1",
+            "_branch",
+            "_arith1",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s",
+            "_call_args",
+            "_native_call",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "get_box",
+            "make_closure",
+            "_int2",
+            "_int1",
+            "_cf",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s",
+            "_jump",
+            "_loop_commit",
+            "_forloop",
+            "_int2",
+            "_int1",
+            "_branch",
+            "_graph_for",
+            "_couple_direct",
+            "_seal_result",
+            "_arith2",
+            "_arith1",
+            "_elinear2",
+            "_elinear1",
+            "_pending_snapshot",
+            "_pending_fragment",
+            "_defer2r",
+            "_defer1r",
+            "_arith2r",
+            "_arith1r",
+            "_arith2s",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 30831,
+          "skeleton_shared_helpers": [
+            "_rmix",
+            "_rslot"
+          ],
+          "skeleton_declarations_removed": 4,
+          "skeleton_analyzed": true,
+          "skeleton_bytes_saved": 872,
+          "skeleton_analysis_seconds": 0.03449880005791783,
+          "arithmetic_kinds": [
+            "ADD"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 8,
+          "arithmetic_dags_after": 8,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 8,
+          "semantic_kinds": [
+            "CLOSURE",
+            "GET",
+            "NEWTABLE",
+            "SET",
+            "VALUE",
+            "VARARG"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 2,
+          "loop_graphs_generated": 2,
+          "occurrence_families": 8,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 47770,
+            "__VM_CONTROL_GRAPHS__": 28461,
+            "__VM_LOOP_GRAPHS__": 6301,
+            "__VM_SEMANTIC_GRAPHS__": 30144,
+            "__VM_OCCURRENCE_GRAPHS__": 44373
+          }
+        },
+        "bank_bytes": {
+          "_DG": 30144,
+          "_OG": 44373,
+          "_CG": 11411,
+          "_LG": 6181,
+          "_GV": 11007,
+          "_FG": 26073,
+          "_AR": 47770
+        },
+        "function_counts": {
+          "total_functions": 288,
+          "audited_helpers": 60
+        },
+        "effective_vm_count": 3,
+        "blob_sha256": "3354ee97a5d814a9356eaa748c42b9f5f0847a5e761a5c5013d0f244018868c4",
+        "plan_sha256": "56b04a7df670b2ccd4d01af62d2a8160e32671133451bd625c8f7e2bd5c56725",
+        "timing_samples": [
+          {
+            "build_seconds": 1.7714406999293715,
+            "build_cpu_seconds": 0.34375,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.056
+          },
+          {
+            "build_seconds": 1.6741274001542479,
+            "build_cpu_seconds": 0.390625,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.058
+          },
+          {
+            "build_seconds": 1.5761924998369068,
+            "build_cpu_seconds": 0.40625,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.059
+          }
+        ]
+      }
+    },
+    {
+      "fixture": "loops",
+      "setting": "graphs-off",
+      "options": {
+        "graph_execution_rate": 0,
+        "runtime_polymorphism_rate": 0,
+        "lua_version": "5.3"
+      },
+      "before": {
+        "output_bytes": 517796,
+        "runtime_bytes": 515855,
+        "blob_bytes": 944,
+        "build_seconds": 0.8168435001280159,
+        "build_cpu_seconds": 0.1875,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.063,
+        "blob_literal_bytes": 1828,
+        "emission": {
+          "helper_analysis_seconds": 0.340746,
+          "helper_analysis_input_bytes": 428346,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 5509,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 80,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 0,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 72,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "occurrence_families": 0,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 2156,
+            "__VM_CONTROL_GRAPHS__": 34923,
+            "__VM_LOOP_GRAPHS__": 8826,
+            "__VM_SEMANTIC_GRAPHS__": 30965,
+            "__VM_OCCURRENCE_GRAPHS__": 2
+          }
+        },
+        "bank_bytes": {
+          "_FG": 32131,
+          "_CG": 11192,
+          "_OG": 2,
+          "_GV": 11697,
+          "_LG": 8683,
+          "_AR": 2156,
+          "_DG": 30965
+        },
+        "function_counts": {
+          "total_functions": 165,
+          "audited_helpers": 31
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "6b2f40b0a41f7e81b6340a07f68f6f8e4db609ec876ac57f2911bcba3dfd2572",
+        "plan_sha256": "f553e30e51f2aa7185e62cd9b872e40eb3e51eee9e6e43dae57d36ed73c480aa",
+        "timing_samples": [
+          {
+            "build_seconds": 0.8766514998860657,
+            "build_cpu_seconds": 0.1875,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.071
+          },
+          {
+            "build_seconds": 0.7719638999551535,
+            "build_cpu_seconds": 0.09375,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.063
+          },
+          {
+            "build_seconds": 0.8168435001280159,
+            "build_cpu_seconds": 0.1875,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.056
+          }
+        ]
+      },
+      "dag_only": {
+        "output_bytes": 510042,
+        "runtime_bytes": 508101,
+        "blob_bytes": 944,
+        "build_seconds": 0.9163204000797123,
+        "build_cpu_seconds": 0.296875,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.06,
+        "blob_literal_bytes": 1828,
+        "emission": {
+          "helper_analysis_seconds": 0.40556,
+          "helper_analysis_input_bytes": 428346,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 5509,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 0,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 0,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "loop_graphs_generated": 3,
+          "occurrence_families": 0,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 2151,
+            "__VM_CONTROL_GRAPHS__": 30617,
+            "__VM_LOOP_GRAPHS__": 9924,
+            "__VM_SEMANTIC_GRAPHS__": 27967,
+            "__VM_OCCURRENCE_GRAPHS__": 2
+          }
+        },
+        "bank_bytes": {
+          "_FG": 28253,
+          "_OG": 2,
+          "_DG": 27967,
+          "_AR": 2151,
+          "_GV": 10882,
+          "_LG": 9783,
+          "_CG": 10053
+        },
+        "function_counts": {
+          "total_functions": 165,
+          "audited_helpers": 31
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "6b2f40b0a41f7e81b6340a07f68f6f8e4db609ec876ac57f2911bcba3dfd2572",
+        "plan_sha256": "f553e30e51f2aa7185e62cd9b872e40eb3e51eee9e6e43dae57d36ed73c480aa",
+        "timing_samples": [
+          {
+            "build_seconds": 0.9675221000798047,
+            "build_cpu_seconds": 0.34375,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.085
+          },
+          {
+            "build_seconds": 0.9163204000797123,
+            "build_cpu_seconds": 0.21875,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.06
+          },
+          {
+            "build_seconds": 0.8002211998682469,
+            "build_cpu_seconds": 0.296875,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.053
+          }
+        ]
+      },
+      "after": {
+        "output_bytes": 510042,
+        "runtime_bytes": 508101,
+        "blob_bytes": 944,
+        "build_seconds": 0.7889841999858618,
+        "build_cpu_seconds": 0.25,
+        "graph_cpu_seconds": 0.015625,
+        "execution_cpu_seconds": 0.083,
+        "blob_literal_bytes": 1828,
+        "emission": {
+          "helper_analysis_seconds": 0.335211,
+          "helper_analysis_input_bytes": 428346,
+          "audited_helpers_before": 41,
+          "audited_helpers_after": 31,
+          "removed_helpers": [
+            "decode",
+            "_ss_step",
+            "get_box",
+            "make_closure",
+            "_int1",
+            "_arith1",
+            "_elinear1",
+            "_defer1r",
+            "_arith1r",
+            "_arith1s"
+          ],
+          "helper_bytes_removed": 5509,
+          "arithmetic_kinds": [
+            "ADD",
+            "MUL",
+            "SUB"
+          ],
+          "arithmetic_dags_before": 80,
+          "arithmetic_dags_generated": 0,
+          "arithmetic_dags_after": 0,
+          "native_arithmetic_variants_per_kind": 4,
+          "arithmetic_dags_per_kind": 0,
+          "semantic_kinds": [
+            "EQ",
+            "GET",
+            "MOD",
+            "NEWTABLE",
+            "SET",
+            "VALUE"
+          ],
+          "semantic_variants_before": 72,
+          "semantic_variants_generated": 24,
+          "semantic_variants_after": 24,
+          "loop_graphs_before": 3,
+          "loop_graphs_after": 3,
+          "loop_graphs_generated": 3,
+          "occurrence_families": 0,
+          "bank_bytes": {
+            "__VM_ARITH_BUNDLE__": 2151,
+            "__VM_CONTROL_GRAPHS__": 30617,
+            "__VM_LOOP_GRAPHS__": 9924,
+            "__VM_SEMANTIC_GRAPHS__": 27967,
+            "__VM_OCCURRENCE_GRAPHS__": 2
+          }
+        },
+        "bank_bytes": {
+          "_GV": 10882,
+          "_LG": 9783,
+          "_CG": 10053,
+          "_FG": 28253,
+          "_OG": 2,
+          "_AR": 2151,
+          "_DG": 27967
+        },
+        "function_counts": {
+          "total_functions": 165,
+          "audited_helpers": 31
+        },
+        "effective_vm_count": 1,
+        "blob_sha256": "6b2f40b0a41f7e81b6340a07f68f6f8e4db609ec876ac57f2911bcba3dfd2572",
+        "plan_sha256": "f553e30e51f2aa7185e62cd9b872e40eb3e51eee9e6e43dae57d36ed73c480aa",
+        "timing_samples": [
+          {
+            "build_seconds": 0.7889841999858618,
+            "build_cpu_seconds": 0.265625,
+            "graph_cpu_seconds": 0.015625,
+            "execution_cpu_seconds": 0.092
+          },
+          {
+            "build_seconds": 1.2182341001462191,
+            "build_cpu_seconds": 0.25,
+            "graph_cpu_seconds": 0.046875,
+            "execution_cpu_seconds": 0.083
+          },
+          {
+            "build_seconds": 0.7698354998137802,
+            "build_cpu_seconds": 0.171875,
+            "graph_cpu_seconds": 0.0,
+            "execution_cpu_seconds": 0.051
+          }
+        ]
+      }
+    }
+  ]
+}

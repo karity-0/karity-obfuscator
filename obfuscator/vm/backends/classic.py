@@ -3,6 +3,7 @@ from ..protection import BackendCapabilities, option_feature
 
 
 class ClassicBackend(VMBackend):
+    shared_runtime_helpers = ('_acount', '_aget', '_carry')
     name = "classic"
     description = 'direct-register and direct-handler runtime on the current VM pipeline'
     lowered_kind = "classic-handler-ir"

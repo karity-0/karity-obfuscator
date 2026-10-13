@@ -49,6 +49,23 @@ def _hex64() -> str:
     return f"0x{random.getrandbits(64):016X}"
 
 
+def _graph_candidate(enabled, compile_graph):
+    """Reserve one candidate seed; only live candidates build their DAG.
+
+    Every position consumes the same parent-stream draw. A compiler's variable
+    random consumption remains private, so omitted candidates cannot shift
+    later encodings or the global protection-plan/handler RNG.
+    """
+    seed = random.getrandbits(128)
+    if not enabled:
+        return ''
+    token = _GRAPH_ENCODING_RNG.set(_random_module.Random(seed))
+    try:
+        return compile_graph()
+    finally:
+        _GRAPH_ENCODING_RNG.reset(token)
+
+
 def _exact_graph_source(source: str) -> str:
     return "--[[KARITY_EXACT_BEGIN]]" + source + "--[[KARITY_EXACT_END]]"
 
@@ -944,15 +961,12 @@ def _apply_handler_graphs(
             native_entry = f"{{{native},{native}}}"
             graph_entry = (
                 "{" + ",".join(
-                    _compile_integer_graph_func(
-                        kind,
-                        preserve_native_numbers,
-                        private_state_native,
-                    )
+                    _graph_candidate(kind in arithmetic_kinds and bool(graph_family_count),
+                        lambda: _compile_integer_graph_func(kind, preserve_native_numbers, private_state_native))
                     for _ in range(4)
                 ) + "}"
             )
-            # Keep the encoder RNG/name stream unchanged. A live operation
+            # Keep candidate positions/name allocation stable. A live operation
             # retains both epochs, both native variants and all four DAGs.
             # Sparse keys preserve the original shuffled representation index.
             if kind in arithmetic_kinds:
@@ -1064,7 +1078,8 @@ def _apply_handler_graphs(
     loop_entries = []
     loop_kinds = []
     for kind, tag in zip(('FORLOOP', 'FORPREP', 'TFORLOOP'), loop_tags):
-        entry = _compile_loop_ir_func(kind, native_control=native_graph_control)
+        entry = _graph_candidate(f'__VM_LOOP_{kind}__' in required_tokens,
+            lambda: _compile_loop_ir_func(kind, native_control=native_graph_control))
         if f'__VM_LOOP_{kind}__' in required_tokens:
             loop_entries.append(f'[{tag}]={entry}')
             loop_kinds.append(kind)
@@ -1089,10 +1104,8 @@ def _apply_handler_graphs(
         semantic_share_b: list[str] = []
         for dense_index, (kind, tag) in enumerate(semantic_order, 1):
             share = random.randint(0x10000, 0x7FFFFFFF)
-            entry = _compile_semantic_ir_func(
-                kind, native_user_arithmetic=preserve_native_numbers,
-                native_control=native_graph_control,
-            )
+            entry = _graph_candidate(kind in semantic_used, lambda: _compile_semantic_ir_func(
+                kind, native_user_arithmetic=preserve_native_numbers, native_control=native_graph_control))
             if kind not in semantic_used:
                 continue
             key = f'[{dense_index}]=' if len(semantic_used) < len(semantic_kinds) else ''
@@ -1151,15 +1164,16 @@ def _apply_handler_graphs(
         stats.update({
             'arithmetic_kinds': sorted(arithmetic_kinds),
             'arithmetic_dags_before': 8 * len(_ARITH_SPECS),
-            'arithmetic_dags_generated': 8 * len(_ARITH_SPECS),
+            'arithmetic_dags_generated': 8 * len(arithmetic_kinds) if graph_family_count else 0,
             'arithmetic_dags_after': 8 * len(arithmetic_kinds) if graph_family_count else 0,
             'native_arithmetic_variants_per_kind': 4,
             'arithmetic_dags_per_kind': 8 if graph_family_count else 0,
             'semantic_kinds': sorted(semantic_used),
             'semantic_variants_before': 4 * len(semantic_kinds),
-            'semantic_variants_generated': 4 * len(semantic_kinds),
+            'semantic_variants_generated': 4 * len(semantic_used),
             'semantic_variants_after': 4 * len(semantic_used),
             'loop_graphs_before': 3, 'loop_graphs_after': len(loop_kinds),
+            'loop_graphs_generated': len(loop_kinds),
             'occurrence_families': graph_family_count,
             'bank_bytes': graph_bytes,
         })
