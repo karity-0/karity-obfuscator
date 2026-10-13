@@ -35,6 +35,10 @@ class SelectionRuntime:
         self.names = {type(p): class_names.get(type(p).__name__)
                       for p in (*pipeline._pre_passes, *pipeline._passes, *pipeline._post_passes)}
         self.vm_finished = False
+        self.original_vm_fully_excluded = False
+        if self.enabled and any(s.feature in {'no_vm', 'no_obf'} for s in self.plan.spans):
+            from .selective_vm import vm_selection_fully_excluded
+            self.original_vm_fully_excluded = vm_selection_fully_excluded(self.plan, self.plan.source)
         self._function_defaults = {}
         for span in self.plan.spans:
             try:
@@ -298,4 +302,9 @@ class SelectionRuntime:
                      difflib.SequenceMatcher(None, source, after, autojunk=False).get_opcodes()
                      if op != "equal" and not self.plan.excluded(a, b)]
             return self.plan.apply(source, edits)
+        if self.original_vm_fully_excluded:
+            # Base selections have already been consumed, and no later VM
+            # stage needs coordinates. Diffing a large flattened source
+            # against its minified/packed form is both unnecessary and costly.
+            return post.run(source)
         return self.plan.follow_text(source, post.run(source))

@@ -43,6 +43,9 @@ inner selections override individual supplied keys. Exclusions take precedence:
 `NO_VM` excludes VM execution while allowing source passes, and `NO_OBF` excludes
 source transformations and VM execution. Packaging still transports the final
 script, including excluded code.
+Comment markers accept both `--@NO_VM_START` and `-- @NO_VM_START`.
+When all original statements are excluded, generated source guards/wrappers do
+not enable VM compilation; those protections remain native Lua.
 Direct `Pipeline` users inherit function selection defaults from their configured
 `FunctionObfuscationPass` instance, including disabled features and nesting limits.
 
