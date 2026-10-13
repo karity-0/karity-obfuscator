@@ -16,7 +16,7 @@ from dataclasses import dataclass
 
 import tree_sitter as ts
 
-from ..passes.boolean_obfuscation import generate_rand_xor
+from ..passes.boolean_expressions import BooleanExpressionEngine
 from ..passes.base import Replacement
 from ..passes.number_obfuscation import NumberObfuscationPass
 from ..passes.meme_strings import MemeStringsPass
@@ -311,13 +311,9 @@ def _emit_string(token: str, allocator: NameAllocator) -> list[Fragment]:
 
 
 def _emit_boolean(value: bool) -> list[Fragment]:
-    first, second, xor = generate_rand_xor()
-    expected = xor if value else xor + 1
-    return [
-        "((", NumberLiteral(str(first)), "~",
-        NumberLiteral(str(second)), ")==",
-        NumberLiteral(str(expected)), ")",
-    ]
+    # Shared bounded scalar engine: handled numeric operands carry provenance
+    # and need neither another parse nor a second NumberObf expansion.
+    return [BooleanExpressionEngine().generate(value)]
 
 
 def _render(parts: list[Fragment]) -> str:

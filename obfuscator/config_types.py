@@ -127,6 +127,8 @@ class DebugDumps(TypedDict, total=False):
 
 class ObfuscatorConfig(TypedDict, total=False):
     string_obf_options: dict[str, int]
+    boolean_obf_options: dict[str, str]
+    table_obf_options: dict[str, str | int | bool]
     literal_mosaic: LiteralMosaicOptions
     passes: list[str]
     vm_output_passes: list[str]

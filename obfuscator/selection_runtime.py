@@ -95,8 +95,7 @@ class SelectionRuntime:
                     validate_pass_target(feature, getattr(self.pipeline, "target_profile", TargetProfile()))
                 except ValueError as error:
                     raise SelectionError(f"line {targets[0].line}: {error}") from error
-                pass_options = (self.config.get('function_obf_options', {}) if feature == 'function_obf'
-                                else self.config.get('string_obf_options', {}) if feature == 'string_obf' else {})
+                pass_options = self.config.get(feature+'_options', {})
                 extra.append(PASS_REGISTRY[feature]["cls"](**pass_options))
                 self.names[type(extra[-1])] = feature
                 self.plan.modes.setdefault(feature, "marked")

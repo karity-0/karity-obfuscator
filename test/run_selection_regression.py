@@ -57,7 +57,9 @@ print(plain, #s, n, b, t[1], t[2], t.key)
 
     def test_table_macro(self):
         output, report = self.equivalent('local t=TABLE_OBF({1,2,3,key="literal"}); print(t[1],t[2],t[3],t.key)')
-        self.assertIn('[1]=1', output)
+        # Keep list construction so sparse-array length/expansion semantics
+        # are not changed by replacing list fields with explicit numeric keys.
+        self.assertIn('{1,2,3', output)
         self.assertEqual("applied", report[0]["status"])
 
     def test_tokens_and_comments(self):

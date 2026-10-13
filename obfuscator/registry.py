@@ -476,6 +476,7 @@ def validate_config(config: object) -> None:
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_literal_mosaic(config.get('literal_mosaic',{}))
     _validate_string_obf_options(config.get('string_obf_options', {}))
+    _validate_literal_pass_options(config)
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
     _validate_debug_dumps(config.get("debug_dumps", {}))
@@ -530,6 +531,18 @@ def _validate_string_obf_options(options):
     from .passes.string_reconstruction import validate_options
     try:
         validate_options(options)
+    except ValueError as error:
+        raise ConfigError(str(error)) from error
+
+
+def _validate_literal_pass_options(config):
+    try:
+        if 'boolean_obf_options' in config:
+            from .passes.boolean_expressions import validate_options as boolean_options
+            boolean_options(config['boolean_obf_options'])
+        if 'table_obf_options' in config:
+            from .passes.table_obfuscation import validate_options as table_options
+            table_options(config['table_obf_options'])
     except ValueError as error:
         raise ConfigError(str(error)) from error
 
@@ -912,6 +925,10 @@ def build_pipeline_from_config[P: Pipeline](
             pipeline.add(function_pass)
         elif name == 'string_obf':
             pipeline.add(cls(**config.get('string_obf_options', {})))
+        elif name == 'boolean_obf':
+            pipeline.add(cls(**config.get('boolean_obf_options', {})))
+        elif name == 'table_obf':
+            pipeline.add(cls(**config.get('table_obf_options', {})))
         else:
             pipeline.add(cls())
 
