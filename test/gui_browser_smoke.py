@@ -177,8 +177,8 @@ def main() -> int:
         page.locator("#marker-advanced").evaluate("el => {el.open=true}")
         page.locator("#marker-options").fill('profile="fast-vm", junk_rate=0.05')
         page.locator("#insert-marker-btn").click()
-        expected = '-- @VM_START(profile="fast-vm", junk_rate=0.05)\nlocal x = 1\nprint(x)\n-- @VM_END\nprint("tail")\n'
-        page.wait_for_function("document.querySelector('#input-script').value.startsWith('-- @VM_START')")
+        expected = '--@VM_START(profile="fast-vm", junk_rate=0.05)\nlocal x = 1\nprint(x)\n--@VM_END\nprint("tail")\n'
+        page.wait_for_function("document.querySelector('#input-script').value.startsWith('--@VM_START')")
         assert page.locator("#input-script").input_value() == expected
         page.locator("#run-btn").click()
         page.wait_for_function("!document.querySelector('#run-btn').disabled", timeout=300000)
@@ -234,7 +234,7 @@ def main() -> int:
         if len(sys.argv) > 1:
             page.screenshot(path=str(Path(sys.argv[1]).with_stem("preferences-themes")))
         page.locator("#preferences-close").click()
-        example = '-- @VM_START\nlocal function greet(name)\n  local message = STRING_OBF("hello, " .. name)\n  return message, 42\nend\n-- @VM_END\n'
+        example = '--@VM_START\nlocal function greet(name)\n  local message = STRING_OBF("hello, " .. name)\n  return message, 42\nend\n--@VM_END\n'
         page.locator("#input-script").fill(example)
         page.wait_for_function("document.querySelector('.token-keyword')?.textContent === 'local'")
         assert page.locator('.code-surface .token-marker-start').count() >= 1

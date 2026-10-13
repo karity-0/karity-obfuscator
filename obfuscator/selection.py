@@ -127,22 +127,18 @@ class SelectionPlan:
         edits = []
         directives = []
         tokens = list(_TOKEN.finditer(source))
-        ignored_end = -1
         for token in tokens:
-            if token.start() < ignored_end:
-                continue
             kind = token.lastgroup
             position = token.start()
             text = token.group()
             if kind == "comment":
-                candidate = text[2:].strip()
-                if not candidate.startswith("@"):
+                if not text.startswith('--@'):
+                    if text[2:].lstrip().startswith('@'):
+                        _error(source, position, 'use --@DIRECTIVE without whitespace after --')
                     continue
+                candidate = text[2:].strip()
             elif kind == "other" and text == "@":
-                end = source.find("\n", position)
-                end = len(source) if end < 0 else end
-                candidate = source[position:end].strip()
-                ignored_end = end
+                _error(source, position, 'use --@DIRECTIVE; bare @ directives are not supported')
             else:
                 continue
             # A directive occupies its own physical line. Long comments and

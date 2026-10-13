@@ -82,7 +82,7 @@ print(text)
         self.assertNotIn('a="plain"', all_output)
 
     def test_function_features(self):
-        source = '''-- @FUNCTION_OBF(cff, wrapper, junk=false, nested=false)
+        source = '''--@FUNCTION_OBF(cff, wrapper, junk=false, nested=false)
 local function selected(x)
  local y=x+1
  if y>3 then y=y*2 end
@@ -98,11 +98,11 @@ print(selected(4),plain(5))
 
     def test_function_body_directives_and_wrapper_disabled(self):
         source = '''local function f(x)
- @FUNCTION_OBF_START(cff=true, junk=false, inline=false, wrapper=false)
+ --@FUNCTION_OBF_START(cff=true, junk=false, inline=false, wrapper=false)
  local y=x+2
  if y>0 then y=y*3 end
  return y
- @FUNCTION_OBF_END
+ --@FUNCTION_OBF_END
 end
 print(f(3))
 '''
@@ -111,11 +111,11 @@ print(f(3))
 
     def test_no_obf_keeps_shared_binding_names(self):
         source = '''local shared=2
--- @NO_OBF_START
+--@NO_OBF_START
 -- preserve this comment and literal
 local keep="keep"
 shared=shared+3
--- @NO_OBF_END
+--@NO_OBF_END
 local hidden=STRING_OBF("hide")
 print(shared,keep,hidden)
 '''
@@ -127,7 +127,7 @@ print(shared,keep,hidden)
 
     def test_positions_follow_prepasses(self):
         source = '''-- lots of comments before annotation
--- @FUNCTION_OBF(cff, junk=false)
+--@FUNCTION_OBF(cff, junk=false)
 local function selected(long_argument)
  local long_local=long_argument+2
  if long_local>3 then long_local=long_local*2 end
@@ -143,15 +143,15 @@ print(selected(5),s)
             'local x=STRING_OBF(getValue())', 'local x=NUMBER_OBF(1+2)',
             'local x=BOOLEAN_OBF(1)', 'local x=TABLE_OBF(t)',
             'local STRING_OBF=function(x) return x end',
-            '@VM_START\nif true then\n@VM_END\nprint(1) end',
-            '@NO_OBF_START\nif true then\n@NO_OBF_END\nprint(1) end',
-            '@NO_VM_END', '@VM_START\nlocal function f() end',
-            '@FUNCTION_OBF(unknown)\nlocal function f() return 1 end',
-            '@FUNCTION_OBF(cff=true,cff=false)\nlocal function f() return 1 end',
-            'print(1)\n@VM',
-            '@VM(vm_count=None)\nprint(1)',
-            '@VM(profile=None)\nprint(1)',
-            '@VM_START(vm_count=None)\nprint(1)\n@VM_END',
+            '--@VM_START\nif true then\n--@VM_END\nprint(1) end',
+            '--@NO_OBF_START\nif true then\n--@NO_OBF_END\nprint(1) end',
+            '--@NO_VM_END', '--@VM_START\nlocal function f() end',
+            '--@FUNCTION_OBF(unknown)\nlocal function f() return 1 end',
+            '--@FUNCTION_OBF(cff=true,cff=false)\nlocal function f() return 1 end',
+            'print(1)\n--@VM',
+            '--@VM(vm_count=None)\nprint(1)',
+            '--@VM(profile=None)\nprint(1)',
+            '--@VM_START(vm_count=None)\nprint(1)\n--@VM_END',
         ]
         for source in invalid:
             with self.subTest(source=source), self.assertRaises((SelectionError, ValueError)):
@@ -159,13 +159,13 @@ print(selected(5),s)
 
     def test_selected_vm_live_captures_recursion_and_varargs(self):
         source = '''local counter=1
-@VM_START
+--@VM_START
 local function selected(n,...)
  counter=counter+1
  if n>0 then return selected(n-1,...) end
  return counter,...
 end
-@VM_END
+--@VM_END
 local function native() counter=counter+10 end
 native()
 print(selected(2,"a",nil,"b"))
@@ -177,18 +177,18 @@ print(counter)
     def test_multiple_vm_functions_and_methods(self):
         source = '''local shared=0
 local obj={}
-@VM_START(junk_rate=0.0)
+--@VM_START(junk_rate=0.0)
 function obj:inc(v) shared=shared+v; self.last=shared; return shared end
 local f=function() shared=shared+1; return shared end
-@VM_END
+--@VM_END
 print(obj:inc(4), f(), obj.last, shared)
 '''
         self.equivalent(source, vm_options=VM)
 
     def test_whole_vm_native_function_exclusion(self):
-        source = '''@VM
+        source = '''--@VM
 local shared=1
-@NO_VM
+--@NO_VM
 local function native(v,...)
  shared=shared+v
  return shared,...
@@ -202,9 +202,9 @@ print(shared)
     def test_vm_environment_reassignment(self):
         source = '''local original=_ENV
 local _ENV=setmetatable({value=3},{__index=original})
-@VM_START
+--@VM_START
 local function f() value=value+2; return value,_ENV end
-@VM_END
+--@VM_END
 local old=_ENV
 _ENV=setmetatable({value=20},{__index=original})
 local v,e=f()
@@ -214,18 +214,18 @@ print(v,e==_ENV,old.value)
 
     def test_real_backends_and_signature(self):
         source = '''local shared=1
--- @VM_START
+--@VM_START
 local function f(v) shared=shared+v; return shared end
--- @VM_END
+--@VM_END
 print(f(4),shared)
 '''
         for backend in ("karity", "mov"):
             with self.subTest(backend=backend):
                 self.equivalent(source, vm_options={**VM, "backend": backend}, signature={"mode": "default"},
                                 vm_output_passes=["rename_obf", "minify"])
-                native = '''@VM
+                native = '''--@VM
 local shared=1
-@NO_VM
+--@NO_VM
 local function f(v) shared=shared+v; return shared end
 print(f(4),shared)
 '''
@@ -233,10 +233,10 @@ print(f(4),shared)
                                 vm_output_passes=["rename_obf", "minify"])
 
     def test_whole_vm_nested_native_and_recursion(self):
-        source = '''@VM
+        source = '''--@VM
 local function outer(self)
  local counter=1
- @NO_VM
+ --@NO_VM
  local function inner(n)
   counter=counter+1
   if n>0 then return inner(n-1) end
@@ -254,13 +254,13 @@ print(f(2),f(1),obj.value)
     def test_selected_nested_method_self_and_captured_declaration(self):
         source = '''local object={}
 function object:outer()
- @VM_START
+ --@VM_START
  local function inner(v)
   function object:update(v) self.value=v end
   object:update(v)
   return self.value
  end
- @VM_END
+ --@VM_END
  return inner
 end
 local f=object:outer()
@@ -269,7 +269,7 @@ print(f(7),object.value)
         self.equivalent(source, vm_options=VM)
 
     def test_function_before_macro_pass_and_reuse(self):
-        source = '''@FUNCTION_OBF(cff,junk=false)
+        source = '''--@FUNCTION_OBF(cff,junk=false)
 local function f(v)
  local text=STRING_OBF("secret")
  if v then return text end
@@ -305,11 +305,11 @@ print(f(true))
     def test_existing_profiles_for_vm_selection(self):
         config = resolve_config_profile({"profile": "source", "profiles": {
             "source": {"passes": []}, "fast-vm": {"vm_options": VM}}})
-        source = '@VM_START(profile="fast-vm")\nlocal function f() return 7 end\n@VM_END\nprint(f())'
+        source = '--@VM_START(profile="fast-vm")\nlocal function f() return 7 end\n--@VM_END\nprint(f())'
         self.equivalent(source, **config)
 
     def test_no_obf_overrides_macros(self):
-        source = '@NO_OBF_START\nlocal x=STRING_OBF("keep")\n@NO_OBF_END\nprint(x)'
+        source = '--@NO_OBF_START\nlocal x=STRING_OBF("keep")\n--@NO_OBF_END\nprint(x)'
         output, report = self.equivalent(source)
         self.assertIn('"keep"', output)
         self.assertTrue(all(r["status"] == "excluded" for r in report))
@@ -318,9 +318,9 @@ print(f(true))
         source = '''local type=7
 local string={label="local string"}
 local setmetatable=9
-@VM_START
+--@VM_START
 local function f(v) return type+v,string.label,setmetatable end
-@VM_END
+--@VM_END
 print(f(2))
 '''
         self.equivalent(source, vm_options=VM)
@@ -341,7 +341,7 @@ print(f(2))
             self.assertIn("vm", {r["feature"] for r in report})
             self.assertTrue(all(r["line"] > 0 for r in report))
             invalid = Path(directory) / "bad.lua"
-            invalid.write_text('@VM_START\nif true then\n@VM_END\nprint(1) end', encoding="utf-8")
+            invalid.write_text('--@VM_START\nif true then\n--@VM_END\nprint(1) end', encoding="utf-8")
             rejected_path = Path(directory) / "rejected.lua"
             command[2] = str(invalid)
             command[6] = str(rejected_path)
@@ -352,62 +352,62 @@ print(f(2))
             self.assertFalse(rejected_path.exists())
 
     def test_file_vm_options_without_configured_pass(self):
-        _, report = self.equivalent('@VM(backend="classic", fake_handlers=false, mutate_handlers=false)\nprint(7)')
+        _, report = self.equivalent('--@VM(backend="classic", fake_handlers=false, mutate_handlers=false)\nprint(7)')
         self.assertEqual("applied", report[0]["status"])
 
     def test_native_source_minification_preserves_exclusions(self):
         source = '''local outside = "a"
-@NO_OBF_START
+--@NO_OBF_START
 -- keep this
 local readable = "b"
-@NO_OBF_END
+--@NO_OBF_END
 print(outside,readable)
 '''
         output, _ = self.equivalent(source, passes=["minify"])
         self.assertIn('-- keep this\nlocal readable = "b"', output)
 
     def test_vm_region_anonymous_function_with_nested_closure(self):
-        source = '''@VM_START
+        source = '''--@VM_START
 local f=function(v) return function(w) return v+w end end
-@VM_END
+--@VM_END
 print(f(2)(3))
 '''
         self.equivalent(source, vm_options=VM)
 
     def test_nested_vm_options_inherit_and_override(self):
-        source = '''@VM_START(junk_rate=0.0)
+        source = '''--@VM_START(junk_rate=0.0)
 local function outer()
- @VM_START
+ --@VM_START
  local function inner(v) return v+1 end
- @VM_END
+ --@VM_END
  return inner
 end
-@VM_END
+--@VM_END
 print(outer()(5))
 '''
         self.equivalent(source, vm_options=VM)
-        self.equivalent(source.replace('@VM_START\n', '@VM_START(junk_rate=0.5)\n'), vm_options=VM)
+        self.equivalent(source.replace('--@VM_START\n', '--@VM_START(junk_rate=0.5)\n'), vm_options=VM)
 
     def test_nested_native_function_boundary(self):
-        source = '''@VM_START
+        source = '''--@VM_START
 local function outer()
- @NO_VM
+ --@NO_VM
  local function inner() return 1 end
  return inner()
 end
-@VM_END
+--@VM_END
 print(outer())
 '''
         self.equivalent(source, vm_options=VM)
 
     def test_disabled_function_features_report_skipped(self):
-        source = '@FUNCTION_OBF(cff=false,junk=false,inline=false,wrapper=false)\nlocal function f(v) return v+1 end\nprint(f(3))'
+        source = '--@FUNCTION_OBF(cff=false,junk=false,inline=false,wrapper=false)\nlocal function f(v) return v+1 end\nprint(f(3))'
         output, report = self.equivalent(source)
         self.assertIn('local function f(v) return v+1 end', output)
         self.assertEqual("skipped", report[0]["status"])
 
     def test_excluded_macro_does_not_enable_incompatible_pass(self):
-        source = '@NO_OBF_START\nlocal s=STRING_OBF("plain")\n@NO_OBF_END\nprint(s)'
+        source = '--@NO_OBF_START\nlocal s=STRING_OBF("plain")\n--@NO_OBF_END\nprint(s)'
         output, report = build(source, target={"lua_version": "5.1"})
         self.assertIn('"plain"', output)
         self.assertEqual("excluded", report[0]["status"])
@@ -415,14 +415,14 @@ print(outer())
     def test_statement_vm_preserves_shadowing_and_shared_closures(self):
         source = '''local x=4
 local previous=function() return x end
-@VM_START
+--@VM_START
 local x=x+1
 local a,b=2,3
 local empty
 local function bump() x=x+a+b; return x end
 local read=function() return x end
 x=x*2
-@VM_END
+--@VM_END
 print(previous(),x,bump(),read(),x,empty)
 x=100
 print(read(),bump(),previous())
@@ -434,17 +434,17 @@ print(read(),bump(),previous())
         source = '''local function f(limit,...)
 local total=0
 for i=1,5 do
-@VM_START
+--@VM_START
 local delta=i+1
 total=total+delta
 for j=1,3 do if j==2 then break end total=total+j end
 if total>limit then break end
-@VM_END
+--@VM_END
 total=total+1
 end
-@VM_START
+--@VM_START
 if limit<4 then return total,... end
-@VM_END
+--@VM_END
 return total,nil,9,nil
 end
 print(f(2,"한글",nil,3,nil));print(f(100))
@@ -459,22 +459,22 @@ print(f(2,"한글",nil,3,nil));print(f(100))
 
     def test_statement_native_exclusions_in_root_and_selected_functions(self):
         source = '''local total=1
-@VM_START
+--@VM_START
 local function protected(n,...)
-@NO_VM_START
+--@NO_VM_START
 local delta=n+total
 total=delta
 if n>3 then return total,... end
-@NO_VM_END
+--@NO_VM_END
 return delta,total
 end
-@VM_END
+--@VM_END
 print(protected(2));print(protected(5,1,nil,3,nil));print(total)
 '''
         for whole in (False, True):
             for backend in ("classic", "karity", "mov"):
                 with self.subTest(whole=whole, backend=backend):
-                    text = "@VM\n" + source if whole else source
+                    text = "--@VM\n" + source if whole else source
                     _, report = self.equivalent(text, vm_options={**VM, "backend": backend},
                                                vm_output_passes=["rename_obf", "minify"])
                     self.assertIn("partial", [r["status"] for r in report])
@@ -484,16 +484,16 @@ print(protected(2));print(protected(5,1,nil,3,nil));print(total)
 local untouched="outside"
 local total=0
 for i=1,5 do
-@FUNCTION_OBF_START(cff, junk=false)
+--@FUNCTION_OBF_START(cff, junk=false)
 local step=i+1
 total=total+step
 if total>limit then break end
-@FUNCTION_OBF_END
+--@FUNCTION_OBF_END
 total=total+1
 end
-@FUNCTION_OBF_START(cff, junk=false)
+--@FUNCTION_OBF_START(cff, junk=false)
 if limit<4 then return total,... end
-@FUNCTION_OBF_END
+--@FUNCTION_OBF_END
 return untouched,total,nil,7,nil
 end
 print(f(2,1,nil,3,nil));print(f(100))
@@ -514,18 +514,18 @@ print(f(2,1,nil,3,nil));print(f(100))
 local value=7
 local n=0
 repeat
-@VM_START
+--@VM_START
 local done=n>1
 n=n+1
-@VM_END
+--@VM_END
 until done
-@VM_START
+--@VM_START
 local _ENV=setmetatable({value=11,self=31},{__index=original})
 local captured=value
 local global_self=self
 local read=function() return value end
 value=19
-@VM_END
+--@VM_END
 print(n,captured,read(),value,global_self,self)
 _ENV.value=23
 print(read())
@@ -535,12 +535,12 @@ print(read())
     def test_method_self_is_local_to_each_method_inside_region(self):
         source = '''local object={value=5}
 function object:run()
-@VM_START
+--@VM_START
 local other={value=9}
 function other:read() return self.value end
 local inherited=function() return self.value end
 local result=other:read()+inherited()
-@VM_END
+--@VM_END
 return result,other:read()
 end
 print(object:run())
@@ -549,10 +549,10 @@ print(object:run())
 
     def test_cross_boundary_gotos_and_empty_regions_fail(self):
         invalid = [
-            '@VM_START\ngoto outside\n@VM_END\n::outside::\nprint(1)',
-            'goto inside\n@VM_START\n::inside::\nprint(1)\n@VM_END',
-            'local function f()\n@FUNCTION_OBF_START\ngoto outside\n@FUNCTION_OBF_END\n::outside:: return 1 end',
-            '@VM_START\n-- empty\n@VM_END',
+            '--@VM_START\ngoto outside\n--@VM_END\n::outside::\nprint(1)',
+            'goto inside\n--@VM_START\n::inside::\nprint(1)\n--@VM_END',
+            'local function f()\n--@FUNCTION_OBF_START\ngoto outside\n--@FUNCTION_OBF_END\n::outside:: return 1 end',
+            '--@VM_START\n-- empty\n--@VM_END',
         ]
         for source in invalid:
             with self.subTest(source=source), self.assertRaises(SelectionError):
@@ -562,14 +562,14 @@ print(object:run())
     def test_partial_source_exports_live_shadowed_locals(self):
         source = '''local function outer(x)
 local prior=function() return x end
-@FUNCTION_OBF_START(cff, junk=false)
+--@FUNCTION_OBF_START(cff, junk=false)
 local x=x+1
 local y,z=2,3
 local empty
 local function next_value() x=x+y+z; return x end
 local read=function() return x end
 x=x*2
-@FUNCTION_OBF_END
+--@FUNCTION_OBF_END
 print(prior(),next_value(),read(),empty)
 x=100
 return read(),next_value(),prior()
@@ -581,13 +581,13 @@ print(outer(4))
 
     def test_vm_internal_goto_stays_in_domain(self):
         source = '''local sum=0
-@VM_START
+--@VM_START
 local n=0
 ::again::
 n=n+1
 sum=sum+n
 if n<3 then goto again end
-@VM_END
+--@VM_END
 print(sum,n)
 '''
         self.equivalent(source, vm_options=VM)
@@ -596,10 +596,10 @@ print(sum,n)
     def test_region_transport_ignores_shadowed_builtins(self):
         source = '''local function f(n,...)
 local select,unpack,table,getfenv=1,2,3,4
-@FUNCTION_OBF_START(cff, junk=false)
+--@FUNCTION_OBF_START(cff, junk=false)
 if n>3 then return ... end
 n=n+select+unpack+table+getfenv
-@FUNCTION_OBF_END
+--@FUNCTION_OBF_END
 return n
 end
 print(f(1));print(f(5,1,nil,3,nil))
@@ -611,12 +611,12 @@ print(f(1));print(f(5,1,nil,3,nil))
         self.equivalent(source.replace("FUNCTION_OBF", "VM").replace("(cff, junk=false)", ""), vm_options=VM)
 
     def test_fully_excluded_statement_vm_reports_without_runtime(self):
-        source = '''@NO_VM_START
-@VM_START
+        source = '''--@NO_VM_START
+--@VM_START
 local value=7
 print(value)
-@VM_END
-@NO_VM_END
+--@VM_END
+--@NO_VM_END
 '''
         for version in ("5.1", "5.3"):
             for passes in ([], ["vm"]):
@@ -632,12 +632,12 @@ print(value)
     def test_partial_source_keeps_nested_vm_and_excluded_export_provenance(self):
         source = '''local function f(n)
 local plain=n+1
-@FUNCTION_OBF_START(cff, junk=false)
+--@FUNCTION_OBF_START(cff, junk=false)
 local y=plain*3
-@VM_START
+--@VM_START
 y=y+2
-@VM_END
-@FUNCTION_OBF_END
+--@VM_END
+--@FUNCTION_OBF_END
 return y
 end
 print(f(2))
@@ -646,13 +646,13 @@ print(f(2))
         self.assertIn("skipped", [r["status"] for r in report if r["feature"] == "function_obf"])
         source = '''local function f(n)
 local prior=n
-@FUNCTION_OBF_START(cff, junk=false)
+--@FUNCTION_OBF_START(cff, junk=false)
 local visible=n+1
 n=n*2
-@FUNCTION_OBF_END
-@NO_OBF_START
+--@FUNCTION_OBF_END
+--@NO_OBF_START
 print(visible)
-@NO_OBF_END
+--@NO_OBF_END
 return n,prior
 end
 print(f(3))
@@ -664,15 +664,15 @@ print(f(3))
 
     def test_equal_effective_vm_options_share_one_runtime(self):
         source = '''local shared=0
-@VM_START
+--@VM_START
 local function first(v) shared=shared+v; return shared end
-@VM_END
-@VM_START(junk_rate=0.15)
+--@VM_END
+--@VM_START(junk_rate=0.15)
 local function second(v) shared=shared+v; return first(v) end
-@VM_END
-@VM_START
+--@VM_END
+--@VM_START
 local function third(v) shared=shared+v; return second(v) end
-@VM_END
+--@VM_END
 print(first(1),second(2),third(3),shared)
 '''
         from obfuscator import selective_vm
@@ -684,18 +684,18 @@ print(first(1),second(2),third(3),shared)
 
     def test_different_vm_options_and_backends_remain_separate(self):
         source = '''local shared=0
-@VM_START
+--@VM_START
 local function first(v) shared=shared+v; return shared end
-@VM_END
-@VM_START(junk_rate=0.5)
+--@VM_END
+--@VM_START(junk_rate=0.5)
 local function second(v) shared=shared+v; return first(v) end
-@VM_END
-@VM_START(backend="mov")
+--@VM_END
+--@VM_START(backend="mov")
 local function third(v) shared=shared+v; return second(v) end
-@VM_END
-@VM_START
+--@VM_END
+--@VM_START
 local function fourth(v) shared=shared+v; return third(v) end
-@VM_END
+--@VM_END
 print(fourth(3),shared)
 '''
         from obfuscator import selective_vm
@@ -707,21 +707,21 @@ print(fourth(3),shared)
     def test_shared_vm_mutual_recursion_and_coroutines(self):
         source = '''local shared=0
 local first,second
-@VM_START
+--@VM_START
 first=function(n,...)
  shared=shared+1
  if n>0 then return second(n-1,...) end
  return shared,...
 end
-@VM_END
-@VM_START
+--@VM_END
+--@VM_START
 second=function(n,...)
  shared=shared+2
  if n>0 then return first(n-1,...) end
  return shared,...
 end
-@VM_END
-@VM_START
+--@VM_END
+--@VM_START
 local function worker(label)
  for i=1,2 do
   shared=shared+10
@@ -729,7 +729,7 @@ local function worker(label)
  end
  return shared,nil,label,nil
 end
-@VM_END
+--@VM_END
 print(first(6,"x",nil,7,nil))
 local a=coroutine.create(function() return worker("a") end)
 local b=coroutine.create(function() return worker("b") end)
@@ -747,13 +747,13 @@ print(shared)
         source = '''local original=_ENV
 local function run(initial)
  local _ENV={value=initial}
- @VM_START
+ --@VM_START
  local function read() return value end
  local result=value+1
- @NO_VM_START
+ --@NO_VM_START
  result=result+2
- @NO_VM_END
- @VM_END
+ --@NO_VM_END
+ --@VM_END
  value=value+10
  return result,read(),_ENV.value
 end
@@ -762,27 +762,27 @@ original.print(run(7));original.print(run(12))
         for backend in ("classic", "karity", "mov"):
             for whole in (False, True):
                 with self.subTest(backend=backend, whole=whole):
-                    text = "@VM\n" + source if whole else source
+                    text = "--@VM\n" + source if whole else source
                     self.equivalent(text, vm_options={**VM, "backend": backend}, vm_output_passes=["rename_obf", "minify"])
 
 
     def test_shared_runtime_with_vm_distribution_and_protection_options(self):
         source = '''local shared=0
-@VM_START
+--@VM_START
 local function first(n,...)
  shared=shared+n
- @NO_VM_START
+ --@NO_VM_START
  shared=shared+3
- @NO_VM_END
+ --@NO_VM_END
  return shared,...
 end
-@VM_END
-@VM_START
+--@VM_END
+--@VM_START
 local function second(n,...)
  shared=shared+n
  return first(n,...)
 end
-@VM_END
+--@VM_END
 print(first(2,1,nil,3,nil));print(second(5,false,nil));print(shared)
 '''
         from obfuscator import selective_vm
@@ -797,13 +797,13 @@ print(first(2,1,nil,3,nil));print(second(5,false,nil));print(shared)
 
 
     def test_partial_function_options_inherit_disabled_parent_features(self):
-        source = '''@FUNCTION_OBF(cff=false,junk=false,inline=false,wrapper=false)
+        source = '''--@FUNCTION_OBF(cff=false,junk=false,inline=false,wrapper=false)
 local function f(n)
  local prior=n
- @FUNCTION_OBF_START
+ --@FUNCTION_OBF_START
  local result=n*3
  if result>5 then result=result+2 end
- @FUNCTION_OBF_END
+ --@FUNCTION_OBF_END
  return prior,result
 end
 print(f(3))
@@ -811,7 +811,7 @@ print(f(3))
         output, report = self.equivalent(source)
         self.assertEqual(SelectionPlan(source).source, output)
         self.assertEqual(["skipped", "skipped"], [r["status"] for r in report])
-        text = source.replace('@FUNCTION_OBF_START\n', '@FUNCTION_OBF_START(cff, junk=false)\n')
+        text = source.replace('--@FUNCTION_OBF_START\n', '--@FUNCTION_OBF_START(cff, junk=false)\n')
         output, report = self.equivalent(text)
         self.assertNotIn('local result=n*3', output)
         self.assertIn("applied", [r["status"] for r in report])
@@ -819,10 +819,10 @@ print(f(3))
     def test_disabled_partial_marker_blocks_enclosing_all_mode_rewrite(self):
         source = '''local function f(n)
  local prior=n
- @FUNCTION_OBF_START(cff=false,junk=false,inline=false,wrapper=false)
+ --@FUNCTION_OBF_START(cff=false,junk=false,inline=false,wrapper=false)
  local result=n*3
  if result>5 then result=result+2 end
- @FUNCTION_OBF_END
+ --@FUNCTION_OBF_END
  return prior,result
 end
 local function g(n) local x=n+2; if x>3 then x=x*2 end return x end
@@ -840,17 +840,17 @@ print(f(3));print(g(4))
         pipeline = Pipeline().add(VMPass(vm_options=VM)).add(MinifyPass())
         pipeline.selection_config = {"selection_modes": {"vm": "marked"}}
         for source in ('local value = 2\nprint( value )\n',
-                       '@NO_VM_START\n@VM_START\nlocal value = 2\nprint( value )\n@VM_END\n@NO_VM_END\n'):
+                       '--@NO_VM_START\n--@VM_START\nlocal value = 2\nprint( value )\n--@VM_END\n--@NO_VM_END\n'):
             output = pipeline.run(source)
             self.assertEqual(run(SelectionPlan(source).source), run(output))
             self.assertNotEqual(SelectionPlan(source).source, output)
         with self.assertRaisesRegex(SelectionError, "invalidate integrity"):
-            pipeline.run('@VM_START\nprint(2)\n@VM_END\n')
+            pipeline.run('--@VM_START\nprint(2)\n--@VM_END\n')
 
     def test_exclusion_only_marked_vm_reports_without_runtime(self):
-        sources = ('@NO_VM_START\nprint(2)\n@NO_VM_END\n',
-                   '@NO_OBF_START\nprint(2)\n@NO_OBF_END\n',
-                   '@NO_VM\nlocal function f() return 2 end\nprint(f())\n')
+        sources = ('--@NO_VM_START\nprint(2)\n--@NO_VM_END\n',
+                   '--@NO_OBF_START\nprint(2)\n--@NO_OBF_END\n',
+                   '--@NO_VM\nlocal function f() return 2 end\nprint(f())\n')
         for source in sources:
             for version in ("5.1", "5.3"):
                 with self.subTest(source=source, version=version):
@@ -863,12 +863,12 @@ print(f(3));print(g(4))
 
     def test_fully_excluded_whole_vm_skips_runtime(self):
         sources = ('--@NO_VM_START\nprint("hi")\n--@NO_VM_END\n',
-                   '-- outside\n@NO_OBF_START\nprint("한글")\n@NO_OBF_END\n; -- end\n',
-                   '@NO_VM_START\nlocal n=2\n@NO_VM_END\n'
-                   '@NO_OBF_START\nprint(n)\n@NO_OBF_END\n',
-                   '@NO_VM\nlocal function f() return 2 end\n'
-                   '@NO_VM_START\nprint(f())\n@NO_VM_END\n',
-                   '@VM\n@NO_VM_START\n@VM_START\nprint(2)\n@VM_END\n@NO_VM_END\n')
+                   '-- outside\n--@NO_OBF_START\nprint("한글")\n--@NO_OBF_END\n; -- end\n',
+                   '--@NO_VM_START\nlocal n=2\n--@NO_VM_END\n'
+                   '--@NO_OBF_START\nprint(n)\n--@NO_OBF_END\n',
+                   '--@NO_VM\nlocal function f() return 2 end\n'
+                   '--@NO_VM_START\nprint(f())\n--@NO_VM_END\n',
+                   '--@VM\n--@NO_VM_START\n--@VM_START\nprint(2)\n--@VM_END\n--@NO_VM_END\n')
         for source in sources:
             for version in ("5.1", "5.3"):
                 with self.subTest(source=source, version=version), patch(
@@ -894,9 +894,9 @@ print(f(3));print(g(4))
             self.assertEqual([], vm.last_profile)
 
     def test_partial_exclusions_still_build_whole_vm(self):
-        sources = ('@NO_VM_START\nprint("hi")\n@NO_VM_END\nprint("outside")\n',
-                   'local function f()\n@NO_VM_START\nreturn "hi"\n@NO_VM_END\nend\nprint(f())\n',
-                   '@NO_VM\nlocal function f() return "hi" end\nprint(f())\n')
+        sources = ('--@NO_VM_START\nprint("hi")\n--@NO_VM_END\nprint("outside")\n',
+                   'local function f()\n--@NO_VM_START\nreturn "hi"\n--@NO_VM_END\nend\nprint(f())\n',
+                   '--@NO_VM\nlocal function f() return "hi" end\nprint(f())\n')
         from obfuscator import selective_vm
         for source in sources:
             with self.subTest(source=source), patch.object(
@@ -905,7 +905,7 @@ print(f(3));print(g(4))
                 self.assertEqual(1, compile_vm.call_count)
 
     def test_fully_native_source_wrappers_do_not_enable_vm(self):
-        source='-- @NO_VM_START\nx=BOOLEAN_OBF(true)\ny=BOOLEAN_OBF(false)\n-- @NO_VM_END\n'
+        source='--@NO_VM_START\nx=BOOLEAN_OBF(true)\ny=BOOLEAN_OBF(false)\n--@NO_VM_END\n'
         for protection in ('anti_debug','anti_decompile'):
             with self.subTest(protection=protection), patch(
                     'obfuscator.selective_vm._vm_build',side_effect=AssertionError('unexpected VM build')):
@@ -914,12 +914,12 @@ print(f(3));print(g(4))
                 self.assertNotIn('BOOLEAN_OBF',output)
                 self.assertTrue(any(r['feature']=='vm' and r['status']=='excluded' for r in report))
 
-    def test_gui_marker_spacing_and_full_presets_skip_vm(self):
+    def test_compact_markers_and_full_presets_skip_vm(self):
         from obfuscator.presets import user_preset
         from obfuscator.vm.vm_pass import VMPass
         source_body='x=BOOLEAN_OBF(true)\ny=BOOLEAN_OBF(false)\nprint(x,y)\n'
         expected=run('x=true;y=false;print(x,y)')
-        for spacing in ('--@','-- @','--   @'):
+        for spacing in ('--@','  --@','\t--@'):
             source=spacing+'NO_VM_START\n'+source_body+spacing+'NO_VM_END\n'
             plan=SelectionPlan(source)
             self.assertEqual(1,sum(s.feature=='no_vm' for s in plan.spans))
@@ -928,7 +928,7 @@ print(f(3));print(g(4))
                 output,report=self.equivalent(source,passes=['vm'],vm_options=VM)
                 self.assertEqual(run(output),expected)
                 self.assertTrue(any(r['feature']=='vm' and r['status']=='excluded' for r in report))
-        source='-- @NO_VM_START\n'+source_body+'-- @NO_VM_END\n'
+        source='--@NO_VM_START\n'+source_body+'--@NO_VM_END\n'
         for name in ('fast','balanced','strong','maximum'):
             random.seed(19071)
             config=user_preset(name)
@@ -943,14 +943,24 @@ print(f(3));print(g(4))
                 self.assertTrue(any(r['feature']=='vm' and r['status']=='excluded'
                                     for r in pipeline.last_selection_report))
 
+    def test_noncompact_directives_are_rejected(self):
+        for prefix in ('-- @','--   @','--\t@','@'):
+            source=prefix+'NO_VM_START\nprint(1)\n'+prefix+'NO_VM_END\n'
+            with self.subTest(prefix=prefix),self.assertRaisesRegex(SelectionError,'use --@DIRECTIVE'):
+                SelectionPlan(source)
+        for source in ('local text="-- @NO_VM_START";print(text)',
+                       'local text=[=[@NO_VM_END]=];print(text)',
+                       '-- ordinary comment @VM\nprint(1)'):
+            self.assertEqual(SelectionPlan(source).source,source)
+
     def test_manual_function_pass_defaults_apply_to_regions_and_nesting(self):
         from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
         source = '''local function f(n)
  local prior=n+1
- @FUNCTION_OBF_START
+ --@FUNCTION_OBF_START
  local result=prior*3
  if result>5 then result=result+2 end
- @FUNCTION_OBF_END
+ --@FUNCTION_OBF_END
  return result
 end
 print(f(3))
@@ -960,14 +970,14 @@ print(f(3))
         output = pipeline.run(source)
         self.assertEqual(SelectionPlan(source).source, output)
         self.assertEqual("disabled function features", pipeline.last_selection_report[0]["reason"])
-        selected = source.replace('@FUNCTION_OBF_START\n', '@FUNCTION_OBF_START(cff, junk=false)\n')
+        selected = source.replace('--@FUNCTION_OBF_START\n', '--@FUNCTION_OBF_START(cff, junk=false)\n')
         output = pipeline.run(selected)
         self.assertEqual(run(SelectionPlan(selected).source), run(output))
         self.assertEqual("applied", pipeline.last_selection_report[0]["status"])
         self.assertTrue(all(value is False for value in pass_.features.values()))
         self.assertEqual(SelectionPlan(source).source, pipeline.run(source))
 
-        source = '''@FUNCTION_OBF
+        source = '''--@FUNCTION_OBF
 local function f(n)
  local function inner(x) local y=x+1; if y>3 then y=y*2 end return y end
  local result=inner(n)

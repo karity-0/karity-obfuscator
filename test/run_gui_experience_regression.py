@@ -149,7 +149,7 @@ const assert=require('node:assert/strict');
 const m=require('./gui/web/experience.js');
 const source='local x=1\nprint(x)\nprint("tail")\n';
 const edit=m.markerEdit(source,0,19,'VM_START','profile="fast-vm", junk_rate=0.05');
-assert.equal(edit.replacement,'-- @VM_START(profile="fast-vm", junk_rate=0.05)\nlocal x=1\nprint(x)\n-- @VM_END\n');
+assert.equal(edit.replacement,'--@VM_START(profile="fast-vm", junk_rate=0.05)\nlocal x=1\nprint(x)\n--@VM_END\n');
 assert.equal(source.slice(edit.end),'print("tail")\n');
 assert.equal(m.markerEdit('print("🌸")',6,10,'STRING_OBF').replacement,'STRING_OBF("🌸")');
 assert.throws(()=>m.markerEdit('print(1)',0,0,'VM_START'));
@@ -158,6 +158,19 @@ assert.deepEqual(m.configChanges({a:{b:1},x:[1,2]},{x:[1,2],a:{b:2}}),[{path:'a.
 const a={source_hash:'a',config_hash:'b',preset:'fast',backend:'mov',checks:{release:false}};
 assert(m.sameBuild(a,{...a})); assert(!m.sameBuild(a,{...a,source_hash:'different'}));
 assert.equal(m.serializeOptions({cff:true,junk:false}),'cff=true, junk=false');
+const fs=require('node:fs'), vm=require('node:vm');
+const editor={window:{}};
+vm.runInNewContext(fs.readFileSync('./gui/web/editor.js','utf8'),editor);
+const tokens=editor.window.LuaCodeEditor.tokenize;
+assert.equal(tokens('--@NO_VM_START\nx=true\n--@NO_VM_END')[0].kind,'marker-start');
+assert.equal(tokens('--@NO_VM_START\nx=true\n--@NO_VM_END').at(-1).kind,'marker-end');
+assert.equal(tokens('--@VM')[0].kind,'marker');
+assert.equal(tokens('--@VM(profile="NAME_START")')[0].kind,'marker');
+assert.equal(tokens('--@NO_VM_END -- comment_START')[0].kind,'marker-end');
+assert.equal(tokens('-- @NO_VM_START')[0].kind,'comment');
+assert(!tokens('@NO_VM_END').some(t=>t.kind.startsWith('marker')));
+assert.equal(tokens('local text="--@NO_VM_START"').at(-1).kind,'string');
+assert(!tokens('--@NO_OBF').some(t=>t.kind.startsWith('marker')));
 '''
     subprocess.run(['node','-e',script],cwd=ROOT,check=True)
 

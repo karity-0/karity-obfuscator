@@ -440,8 +440,7 @@ html[data-theme="classic"] .preferences-panel { border-radius: 4px; box-shadow: 
 #marker-advanced summary { cursor: pointer; padding: 8px 0; font-size: 11px; color: var(--muted); }
 #marker-advanced-fields { max-height: 120px; overflow: auto; padding-right: 4px; }
 .marker-preview { font: 11px/1.65 var(--mono); color: var(--text); background: var(--editor-bg); border: 1px solid var(--line); border-radius: 8px; padding: 10px; max-height: 120px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
-.token-marker-start, .marker-start-line { color: var(--violet); font-weight: 600; }
-.token-marker-end, .marker-end-line { color: var(--cyan); font-weight: 600; }
+.token-marker-start, .token-marker-end, .marker-start-line, .marker-end-line { color: var(--token-marker); font-weight: 600; }
 .build-dock-wrap { position: relative; flex: 0 0 auto; }
 html[data-gui-version="v2"] .build-dock-wrap { width: min(720px,100%); align-self: center; margin-top: 22px; }
 html[data-gui-version="v2"] .build-dock-wrap .run-dock { width: 100%; margin: 0; }
