@@ -904,6 +904,45 @@ print(f(3));print(g(4))
                 self.equivalent(source, passes=["vm"], vm_options=VM)
                 self.assertEqual(1, compile_vm.call_count)
 
+    def test_fully_native_source_wrappers_do_not_enable_vm(self):
+        source='-- @NO_VM_START\nx=BOOLEAN_OBF(true)\ny=BOOLEAN_OBF(false)\n-- @NO_VM_END\n'
+        for protection in ('anti_debug','anti_decompile'):
+            with self.subTest(protection=protection), patch(
+                    'obfuscator.selective_vm._vm_build',side_effect=AssertionError('unexpected VM build')):
+                output,report=self.equivalent(source,passes=[protection,'vm'],vm_options=VM)
+                self.assertIn('x=',output.replace(' ',''))
+                self.assertNotIn('BOOLEAN_OBF',output)
+                self.assertTrue(any(r['feature']=='vm' and r['status']=='excluded' for r in report))
+
+    def test_gui_marker_spacing_and_full_presets_skip_vm(self):
+        from obfuscator.presets import user_preset
+        from obfuscator.vm.vm_pass import VMPass
+        source_body='x=BOOLEAN_OBF(true)\ny=BOOLEAN_OBF(false)\nprint(x,y)\n'
+        expected=run('x=true;y=false;print(x,y)')
+        for spacing in ('--@','-- @','--   @'):
+            source=spacing+'NO_VM_START\n'+source_body+spacing+'NO_VM_END\n'
+            plan=SelectionPlan(source)
+            self.assertEqual(1,sum(s.feature=='no_vm' for s in plan.spans))
+            with self.subTest(spacing=spacing), patch(
+                    'obfuscator.selective_vm._vm_build',side_effect=AssertionError('unexpected VM build')):
+                output,report=self.equivalent(source,passes=['vm'],vm_options=VM)
+                self.assertEqual(run(output),expected)
+                self.assertTrue(any(r['feature']=='vm' and r['status']=='excluded' for r in report))
+        source='-- @NO_VM_START\n'+source_body+'-- @NO_VM_END\n'
+        for name in ('fast','balanced','strong','maximum'):
+            random.seed(19071)
+            config=user_preset(name)
+            config['signature']={'mode':'none'}
+            with self.subTest(preset=name), patch(
+                    'obfuscator.selective_vm._vm_build',side_effect=AssertionError('unexpected VM build')):
+                pipeline=build_pipeline_from_config(config,Pipeline,show_header=False)
+                output=pipeline.run(source)
+                self.assertEqual(run(output),expected)
+                vm=next(p for p in pipeline._post_passes if isinstance(p,VMPass))
+                self.assertEqual([],vm.last_profile)
+                self.assertTrue(any(r['feature']=='vm' and r['status']=='excluded'
+                                    for r in pipeline.last_selection_report))
+
     def test_manual_function_pass_defaults_apply_to_regions_and_nesting(self):
         from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
         source = '''local function f(n)

@@ -151,6 +151,14 @@ def _whole_chunk_excluded(source, exclusions):
                if node.type not in {"comment", "hash_bang_line", "empty_statement"})
 
 
+def vm_selection_fully_excluded(plan, source):
+    exclusions = [s for s in plan.spans if s.feature in {'no_vm', 'no_obf'}]
+    if plan.file_vm or plan.modes.get('vm', 'all') == 'all':
+        return bool(exclusions) and _whole_chunk_excluded(source, exclusions)
+    return all(any(s.start <= span.start and span.end <= s.end for s in exclusions)
+               for span in plan.spans if span.feature == 'vm')
+
+
 def run_selective_vm(runtime, template, source):
     plan = runtime.plan
     template.last_profile = []
@@ -159,11 +167,10 @@ def run_selective_vm(runtime, template, source):
     whole = plan.file_vm or plan.modes.get("vm", "all") == "all"
     vm_spans = [s for s in plan.spans if s.feature == "vm"]
     exclusions = [s for s in plan.spans if s.feature in {"no_vm", "no_obf"}]
-    if whole:
-        fully_excluded = bool(exclusions) and _whole_chunk_excluded(source, exclusions)
-    else:
-        fully_excluded = all(any(s.start <= span.start and span.end <= s.end for s in exclusions)
-                             for span in vm_spans)
+    # Source protection can wrap the chunk or insert decoys outside a native
+    # range. Such generated code must not re-enable VM when the original user
+    # statements had no VM target. Keep the current-coordinate check as well.
+    fully_excluded = runtime.original_vm_fully_excluded or vm_selection_fully_excluded(plan, source)
     if fully_excluded:
         # No VM/native bridge is needed when every requested region is excluded.
         # Resolve this before checking boundary target support (e.g. Lua 5.1).
