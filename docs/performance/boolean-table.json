@@ -1,0 +1,560 @@
+{
+  "baseline": "69ff179",
+  "python": "3.15.0 (tags/v3.15.0:d220409, Oct  9 2026, 11:55:56) [MSC v.1951 64 bit (AMD64)]",
+  "rows": [
+    {
+      "fixture": "booleans",
+      "number_obf": false,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 105,
+      "output_bytes": 211,
+      "build_seconds": 0.00015980005264282227,
+      "runtime_seconds": 4.042600048705935e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "booleans",
+      "number_obf": false,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 105,
+      "output_bytes": 341,
+      "build_seconds": 0.0006977999582886696,
+      "runtime_seconds": 4.193899920210242e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "boolean_generation",
+          "elapsed": 0.0004472997970879078,
+          "boolean_literals": 4,
+          "dataflow_programs": 0,
+          "strategies": {
+            "sum": 2,
+            "xor": 2
+          }
+        }
+      ]
+    },
+    {
+      "fixture": "booleans",
+      "number_obf": false,
+      "variant": "dataflow",
+      "seed": 7201,
+      "source_bytes": 105,
+      "output_bytes": 551,
+      "build_seconds": 0.0004808001685887575,
+      "runtime_seconds": 1.6539999982342125e-05,
+      "helper_functions": 4,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "boolean_generation",
+          "elapsed": 0.00032679992727935314,
+          "boolean_literals": 4,
+          "dataflow_programs": 4,
+          "strategies": {
+            "product": 1,
+            "sum": 1,
+            "xor": 2
+          }
+        }
+      ]
+    },
+    {
+      "fixture": "booleans",
+      "number_obf": true,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 105,
+      "output_bytes": 1633,
+      "build_seconds": 0.0012459999416023493,
+      "runtime_seconds": 7.715599844232202e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "booleans",
+      "number_obf": true,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 105,
+      "output_bytes": 706,
+      "build_seconds": 0.0009981999173760414,
+      "runtime_seconds": 4.064100096002221e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "boolean_generation",
+          "elapsed": 0.0004197999369353056,
+          "boolean_literals": 4,
+          "dataflow_programs": 0,
+          "strategies": {
+            "sum": 3,
+            "xor": 1
+          }
+        }
+      ]
+    },
+    {
+      "fixture": "booleans",
+      "number_obf": true,
+      "variant": "dataflow",
+      "seed": 7201,
+      "source_bytes": 105,
+      "output_bytes": 658,
+      "build_seconds": 0.0012510998640209436,
+      "runtime_seconds": 1.4107499970123171e-05,
+      "helper_functions": 4,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "boolean_generation",
+          "elapsed": 0.0005498998798429966,
+          "boolean_literals": 4,
+          "dataflow_programs": 4,
+          "strategies": {
+            "product": 2,
+            "xor": 1,
+            "mba": 1
+          }
+        }
+      ]
+    },
+    {
+      "fixture": "records",
+      "number_obf": false,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 91,
+      "output_bytes": 115,
+      "build_seconds": 0.00016639987006783485,
+      "runtime_seconds": 9.369380003772675e-05,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "records",
+      "number_obf": false,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 91,
+      "output_bytes": 115,
+      "build_seconds": 0.0007706000469624996,
+      "runtime_seconds": 7.161260000430048e-05,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0006460000295192003,
+          "tables_seen": 1,
+          "shuffled_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "records",
+      "number_obf": false,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 91,
+      "output_bytes": 216,
+      "build_seconds": 0.00044219987466931343,
+      "runtime_seconds": 0.00012672030017711223,
+      "helper_functions": 1,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0002918001264333725,
+          "tables_seen": 1,
+          "reconstruction_programs": 1,
+          "reconstruction_fields": 6
+        }
+      ]
+    },
+    {
+      "fixture": "records",
+      "number_obf": true,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 91,
+      "output_bytes": 805,
+      "build_seconds": 0.0006160999182611704,
+      "runtime_seconds": 7.870339998044073e-05,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "records",
+      "number_obf": true,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 91,
+      "output_bytes": 1023,
+      "build_seconds": 0.0009133999701589346,
+      "runtime_seconds": 7.986880000680686e-05,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.00028900010511279106,
+          "tables_seen": 1,
+          "shuffled_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "records",
+      "number_obf": true,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 91,
+      "output_bytes": 906,
+      "build_seconds": 0.0021092998795211315,
+      "runtime_seconds": 0.00014394870004616678,
+      "helper_functions": 1,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.000552099896594882,
+          "tables_seen": 1,
+          "reconstruction_programs": 1,
+          "reconstruction_fields": 6
+        }
+      ]
+    },
+    {
+      "fixture": "nested",
+      "number_obf": false,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 60,
+      "output_bytes": 88,
+      "build_seconds": 0.0003098000306636095,
+      "runtime_seconds": 1.7004001419991254e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "nested",
+      "number_obf": false,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 60,
+      "output_bytes": 88,
+      "build_seconds": 0.0005967000033706427,
+      "runtime_seconds": 2.4747001007199286e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0004241999704390764,
+          "tables_seen": 3,
+          "shuffled_constructors": 3
+        }
+      ]
+    },
+    {
+      "fixture": "nested",
+      "number_obf": false,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 60,
+      "output_bytes": 292,
+      "build_seconds": 0.0004390999674797058,
+      "runtime_seconds": 3.444999922066927e-06,
+      "helper_functions": 3,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.00030010007321834564,
+          "tables_seen": 3,
+          "reconstruction_programs": 3,
+          "reconstruction_fields": 7
+        }
+      ]
+    },
+    {
+      "fixture": "nested",
+      "number_obf": true,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 60,
+      "output_bytes": 530,
+      "build_seconds": 0.0005147999618202448,
+      "runtime_seconds": 1.379000023007393e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "nested",
+      "number_obf": true,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 60,
+      "output_bytes": 466,
+      "build_seconds": 0.000722500029951334,
+      "runtime_seconds": 1.4528001192957163e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.00029930006712675095,
+          "tables_seen": 3,
+          "shuffled_constructors": 3
+        }
+      ]
+    },
+    {
+      "fixture": "nested",
+      "number_obf": true,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 60,
+      "output_bytes": 734,
+      "build_seconds": 0.0011257000733166933,
+      "runtime_seconds": 4.870800068601966e-06,
+      "helper_functions": 3,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0003209998831152916,
+          "tables_seen": 3,
+          "reconstruction_programs": 3,
+          "reconstruction_fields": 7
+        }
+      ]
+    },
+    {
+      "fixture": "dense_array",
+      "number_obf": false,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 41,
+      "output_bytes": 65,
+      "build_seconds": 0.00026650005020201206,
+      "runtime_seconds": 1.4023000840097665e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "dense_array",
+      "number_obf": false,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 41,
+      "output_bytes": 41,
+      "build_seconds": 0.0004235999658703804,
+      "runtime_seconds": 1.2083000037819148e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0002530000638216734,
+          "tables_seen": 1,
+          "ordered_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "dense_array",
+      "number_obf": false,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 41,
+      "output_bytes": 188,
+      "build_seconds": 0.0005205001216381788,
+      "runtime_seconds": 2.7008000761270523e-06,
+      "helper_functions": 1,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0003744999412447214,
+          "tables_seen": 1,
+          "reconstruction_programs": 1,
+          "reconstruction_fields": 6
+        }
+      ]
+    },
+    {
+      "fixture": "dense_array",
+      "number_obf": true,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 41,
+      "output_bytes": 1061,
+      "build_seconds": 0.0008882000111043453,
+      "runtime_seconds": 1.4746000524610282e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "dense_array",
+      "number_obf": true,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 41,
+      "output_bytes": 694,
+      "build_seconds": 0.0008787999395281076,
+      "runtime_seconds": 6.604997906833887e-07,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0002368998248130083,
+          "tables_seen": 1,
+          "ordered_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "dense_array",
+      "number_obf": true,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 41,
+      "output_bytes": 813,
+      "build_seconds": 0.001142800087109208,
+      "runtime_seconds": 1.750999828800559e-06,
+      "helper_functions": 1,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.000367600005120039,
+          "tables_seen": 1,
+          "reconstruction_programs": 1,
+          "reconstruction_fields": 6
+        }
+      ]
+    },
+    {
+      "fixture": "sparse_array",
+      "number_obf": false,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 45,
+      "output_bytes": 65,
+      "build_seconds": 0.00013439985923469067,
+      "runtime_seconds": 1.7066998407244683e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "sparse_array",
+      "number_obf": false,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 45,
+      "output_bytes": 45,
+      "build_seconds": 0.0002609000075608492,
+      "runtime_seconds": 6.933000404387713e-07,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.00016409996896982193,
+          "tables_seen": 1,
+          "ordered_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "sparse_array",
+      "number_obf": false,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 45,
+      "output_bytes": 45,
+      "build_seconds": 0.0002388001885265112,
+      "runtime_seconds": 6.766999140381813e-07,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.00014759995974600315,
+          "tables_seen": 1,
+          "ordered_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "sparse_array",
+      "number_obf": true,
+      "variant": "before",
+      "seed": 7201,
+      "source_bytes": 45,
+      "output_bytes": 757,
+      "build_seconds": 0.0005573001690208912,
+      "runtime_seconds": 1.098700100556016e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": []
+    },
+    {
+      "fixture": "sparse_array",
+      "number_obf": true,
+      "variant": "after",
+      "seed": 7201,
+      "source_bytes": 45,
+      "output_bytes": 205,
+      "build_seconds": 0.000530000077560544,
+      "runtime_seconds": 1.0475001763552428e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.00021469988860189915,
+          "tables_seen": 1,
+          "ordered_constructors": 1
+        }
+      ]
+    },
+    {
+      "fixture": "sparse_array",
+      "number_obf": true,
+      "variant": "reconstruct",
+      "seed": 7201,
+      "source_bytes": 45,
+      "output_bytes": 205,
+      "build_seconds": 0.0005721999332308769,
+      "runtime_seconds": 1.0544999968260526e-06,
+      "helper_functions": 0,
+      "semantic_match": true,
+      "profile": [
+        {
+          "phase": "table_generation",
+          "elapsed": 0.0002210000529885292,
+          "tables_seen": 1,
+          "ordered_constructors": 1
+        }
+      ]
+    }
+  ]
+}

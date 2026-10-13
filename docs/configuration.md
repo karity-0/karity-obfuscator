@@ -73,6 +73,18 @@ Optional bounded reconstruction parameters: steps_min/steps_max (2..5),
 slots_min/slots_max (2..4), unroll_bytes (0..16). Omission retains the original generator.
 These also apply to automatically enabled STRING_OBF macros. They do not filter literals.
 
+## boolean_obf_options / table_obf_options
+Boolean `mode` is `expression` (default), `mixed`, or `dataflow`. The shared source/VM
+generator varies arithmetic, XOR, mask and MBA predicates. Dataflow adds bounded
+local assignments for subsequent CFF; VM literal emission always uses scalar expressions.
+Generated numeric operands use NumberObf/Literal Mosaic and provenance prevents re-expansion.
+Table `mode` is `mixed` (default), `shuffle`, or `reconstruct`; `max_fields` defaults to 16 (1..64).
+Optional `string_keys: true` reuses StringObf for staged string keys and requires Lua 5.3.
+Sparse or uncertain list fields retain constructor form. Dense literal arrays can be staged. Calls, global reads, colliding keys and
+uncertain expressions retain their evaluation structure. Budget fallback is recorded in profiling.
+Options also apply to automatically enabled BOOLEAN_OBF/TABLE_OBF macros.
+See [literal reconstruction and cost measurements](passes/boolean-table.md).
+
 ## literal_mosaic
 `literal_mosaic` configures the internal shared generator; it is not a pass.
 It reuses NumberObf/MemeStrings only when those passes are enabled in the
