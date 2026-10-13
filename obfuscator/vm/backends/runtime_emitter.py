@@ -739,6 +739,17 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
             f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
         )
     vm_code = backend_adapter.emit_handlers(vm_code, lowered_ir, planned_runtime_variants)
+    if prepared.vm_count > 1 and backend_adapter.shared_runtime_helpers:
+        emission = lowered_ir.backend_data.setdefault('runtime_emission', {})
+        if not emission.get('skeleton_analyzed'):
+            from .runtime_skeleton import share_runtime_helpers
+            vm_code, skeleton_stats = run_phase('vm:shared_skeleton', share_runtime_helpers,
+                                               vm_code, backend_adapter.shared_runtime_helpers)
+            emission.update(skeleton_stats)
+        skeleton_stats = {k: v for k, v in emission.items() if k.startswith('skeleton_')}
+        context.profile.append({'phase':'shared_runtime_skeleton',
+                                'elapsed':skeleton_stats.get('skeleton_analysis_seconds',0.0),
+                                **skeleton_stats})
 
     # 3a. per-run VM 변형: keystream(_ksm/_kss) + anti-tamper 블록 재생성 후,
     # instruction 레이아웃 토큰(_SH_*/_MASK_OV)을 리터럴로 인라인한다.

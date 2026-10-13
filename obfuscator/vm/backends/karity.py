@@ -5,6 +5,7 @@ from ..protection import BackendCapabilities, option_feature
 
 
 class KarityBackend(VMBackend):
+    shared_runtime_helpers = ('_rmix', '_rslot')
     name = "karity"
     description = 'hardened graph and encoded-register runtime'
     lowered_kind = "karity-handler-graph"
@@ -141,7 +142,9 @@ class KarityBackend(VMBackend):
         # route exists and before keystream/tamper expansion. Those target
         # stages do not introduce handler graph keys or helper callbacks.
         from .karity_runtime_usage import specialize_runtime
-        source, statistics = specialize_runtime(source)
+        source, statistics = specialize_runtime(
+            source, shared_helpers=self.shared_runtime_helpers if count > 1 else (),
+        )
         lowered.backend_data['runtime_emission'] = statistics
         return source
 

@@ -1,5 +1,9 @@
 # Karity VM runtime specialization
 
+Subsequent work now skips construction of unused candidates and shares a small
+set of executor leaves; see [DAG generation and sharing](vm-generation.md).
+The measurements and RNG policy below describe the earlier optimization.
+
 Baseline: f711103, Windows, Python 3.15, seed 9171, PYTHONHASHSEED=0.
 [Lua 5.3 paired measurements](vm-runtime-lua53.json) and
 [Lua 5.1 paired measurements](vm-runtime-lua51.json) contain settings,

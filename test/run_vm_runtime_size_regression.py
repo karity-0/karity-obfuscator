@@ -76,23 +76,42 @@ def graph_checks():
     state = random.getstate()
     random.seed(9921)
     stats = {}
-    with patch.object(graphs, '_compile_integer_graph_func', capture(optimized_functions)):
+    with patch.object(graphs, '_compile_integer_graph_func', capture(optimized_functions)), \
+         patch.object(graphs, '_compile_semantic_ir_func', wraps=graphs._compile_semantic_ir_func) as semantic, \
+         patch.object(graphs, '_compile_loop_ir_func', wraps=graphs._compile_loop_ir_func) as loops:
         after = graphs._apply_handler_graphs(source, representation_routes=routes, stats=stats)
+        assert semantic.call_count == 2 and loops.call_count == 0
     assert random.getstate() == state
-    assert baseline_functions == optimized_functions
+    assert [(kind,code) for kind,code in baseline_functions if kind=='ADD'] == optimized_functions
+    assert len(baseline_functions)==80 and len(optimized_functions)==8
     assert stats['arithmetic_dags_after'] == 8
+    assert stats['arithmetic_dags_generated'] == 8
     assert stats['semantic_variants_after'] == 4
+    assert stats['semantic_variants_generated'] == 4
     assert stats['occurrence_families'] == 8
     assert stats['loop_graphs_after'] == 0
+    assert stats['loop_graphs_generated'] == 0
     for kind, function in baseline_functions:
         assert function in before
         assert (function in after) == (kind == 'ADD')
     assert len(after) < len(before)
     random.seed(9921)
     off = {}
-    graphs._apply_handler_graphs(source, graph_family_count=0, representation_routes=routes, stats=off)
+    with patch.object(graphs, '_compile_integer_graph_func', wraps=compile_graph) as compile:
+        graphs._apply_handler_graphs(source, graph_family_count=0, representation_routes=routes, stats=off)
+        assert compile.call_count == 0
     assert off['arithmetic_dags_after'] == 0
     assert off['native_arithmetic_variants_per_kind'] == 4
+    context_before = graphs._GRAPH_ENCODING_RNG.get()
+    def fail():
+        raise ValueError('candidate failure')
+    try:
+        graphs._graph_candidate(True, fail)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('candidate exception was swallowed')
+    assert graphs._GRAPH_ENCODING_RNG.get() is context_before
 
 
 def main():

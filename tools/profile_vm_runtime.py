@@ -138,7 +138,7 @@ def build(source, options, seed, legacy=None):
         return transform(script, passes, **kwargs)
     random.seed(seed)
     p = VMPass(vm_options={'backend': 'karity', **options},
-               target=TargetProfile(options.get('lua_version', '5.3'), 'karity'))
+               target=TargetProfile(options.get('lua_version', '5.3'), options.get('backend', 'karity')))
     wrap = p._backend.target.wrap
     def observe_wrap(script, *args):
         capture['runtime'] = script
@@ -153,7 +153,7 @@ def build(source, options, seed, legacy=None):
                 kwargs.pop('stats', None)
                 kwargs.pop('requirements', None)
                 return legacy._apply_handler_graphs(*args, **kwargs)
-            stack.enter_context(patch.object(karity_runtime_usage, 'specialize_runtime', lambda s: (s, {})))
+            stack.enter_context(patch.object(karity_runtime_usage, 'specialize_runtime', lambda s, **kw: (s, {})))
             stack.enter_context(patch.object(karity_graphs, '_apply_handler_graphs', old_graphs))
             if p.target_profile.lua_version == '5.1':
                 from obfuscator.vm.targets import lua51
@@ -168,7 +168,8 @@ def build(source, options, seed, legacy=None):
                                    .replace('--[[KARITY_EXACT_END]]', '').encode())
     capture['bank_bytes'] = bank_sizes(capture['runtime'])
     capture['function_counts'] = function_counts(capture['runtime'])
-    capture['emission'] = p.last_lowered_ir.backend_data['runtime_emission']
+    capture['emission'] = p.last_lowered_ir.backend_data.get('runtime_emission', {})
+    capture['effective_vm_count'] = p.last_lowered_ir.backend_data['layout'].vm_count
     capture['plan_sha256'] = hashlib.sha256(p.last_protection_plan.dump().encode()).hexdigest()
     capture['profile'] = p.last_profile
     return capture
