@@ -72,8 +72,7 @@ def inject_handlers(source,lowered,variant,vm_index):
     entries={e.opcode:e for f in iter_functions(lowered.backend_data['layout'].functions)
              if f.vm_id==vm_index for e in f.synthesis}
     if not entries:return source
-    from ..vm_obfuscation import (_find_chain,_parse_handler_blocks,_rebuild_chain,
-        _ST_TRANSITIONS,_ST_TRANSITIONS_NATIVE)
+    from ..vm_obfuscation import _find_chain,_parse_handler_blocks,_rebuild_chain
     a=source.index('--<<FETCH>>')+len('--<<FETCH>>');b=source.index('--<<ENDFETCH>>',a)
     fetch=source[a:b].strip()
     if lowered.backend=='karity':
@@ -94,30 +93,16 @@ def inject_handlers(source,lowered,variant,vm_index):
     source,count=re.subn(r'(local _st\s*=)',lambda m:declaration+m.group(),source,count=1)
     if count!=1:raise ValueError('synthesis frame declaration boundary missing')
     native='--<<TARGET_CLASSIC_EXEC_NATIVE>>' in source or '--<<TARGET_KARITY_EXEC_STATE>>' in source
-    transitions=_ST_TRANSITIONS_NATIVE if native else _ST_TRANSITIONS
     aliases=lowered.backend_data['layout'].vm_maps[vm_index][0]
     defers=lowered.backend_data['layout'].vm_maps[vm_index][3]
-    blocks={}
+    from .kernels import prepare_kernel
+    from ...passes.function_costs import MAX_JUMP
+    blocks={};measurements={};scratch_handlers=0
     for opcode,entry in entries.items():
-        blocks[opcode]=render_kernel(entry,lowered,variant,fetch,aliases,defers,native)
-    scratch_handlers=0
-    if variant['mutate_handlers']:
-        from ..vm_mutation import mutate_handlers,planned_mutation_seeds
-        blocks=mutate_handlers(blocks,native_state=native,planned_seeds=planned_mutation_seeds(
-            variant['mutation_seed'],{op:'synthesis:'+e.recipe.id for op,e in entries.items()}))
-        # Both Lua targets cap simultaneous locals at 200. Keep three quarters
-        # for the enclosing executor. Reuse its existing mutation compactor,
-        # but isolate recipe temporaries from ordinary handler scratch.
-        from ..vm_mutation import _native_scratch_locals
-        for opcode,body in blocks.items():
-            if len(set(re.findall(r'\blocal\s+([A-Za-z_]\w*)',body)))>200//4:
-                blocks[opcode]=_native_scratch_locals(body,0,0,scratch_name='_SYN_TEMPS',rewrite_helpers=False)
-                scratch_handlers+=1
-        if scratch_handlers:
-            source=source.replace(declaration,declaration+'local _SYN_TEMPS={}\n',1)
-    from ...passes.function_costs import measure,MAX_JUMP
-    version='5.1' if native else '5.3'
-    measurements={opcode:measure(body,version=version) for opcode,body in blocks.items()}
+        body,scratch,report,_=prepare_kernel(entry,lowered,variant,fetch,aliases,defers,native)
+        blocks[opcode]=body;measurements[opcode]=report;scratch_handlers+=scratch
+    if scratch_handlers:
+        source=source.replace(declaration,declaration+'local _SYN_TEMPS={}\n',1)
     failures={opcode:report['error'] for opcode,report in measurements.items() if 'error' in report}
     if failures:raise ValueError(f'synthesized handler cannot compile: vm={vm_index} errors={failures!r}')
     instructions=sum(report['total_instructions'] for report in measurements.values())

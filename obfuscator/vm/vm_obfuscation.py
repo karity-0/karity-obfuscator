@@ -637,6 +637,7 @@ def prune_and_inject_handlers(
     native_state: bool = False,
     mutation_seed: int | None = None,
     mutation_identities: dict[int, str] | None = None,
+    reserved_vops: set[int] | None = None,
 ) -> str:
     """
     used_ops에 없는 opcode 핸들러를 제거하고, plan이 정한 가짜 핸들러
@@ -667,7 +668,7 @@ def prune_and_inject_handlers(
             while attempts < 100:
                 attempts += 1
                 fake_vop = random.randint(0, 0x7FFF)
-                if fake_vop not in blocks:
+                if fake_vop not in blocks and (reserved_vops is None or fake_vop not in reserved_vops):
                     blocks[fake_vop] = _make_fake_block(variant, native_state=native_state)
                     identities[fake_vop] = f"fake:{fake_index}"
                     break

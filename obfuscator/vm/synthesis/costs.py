@@ -38,17 +38,12 @@ def kernel_context(lowered,variant,source):
 
 def compile_entry(entry,lowered,variant,source,vm_maps):
     """The same renderer and planned mutation stream as final emission."""
-    from .emission import render_kernel
-    from ..vm_mutation import mutate_handlers,planned_mutation_seeds,_native_scratch_locals
-    import re
+    from .kernels import prepare_kernel
     fetch,native=kernel_context(lowered,variant,source)
-    body=render_kernel(entry,lowered,variant,fetch,vm_maps[0],vm_maps[3],native)
-    if variant['mutate_handlers']:
-        body=mutate_handlers({0:body},native_state=native,planned_seeds=planned_mutation_seeds(
-            variant['mutation_seed'],{0:'synthesis:'+entry.recipe.id}))[0]
-        if len(set(re.findall(r'\blocal\s+([A-Za-z_]\w*)',body)))>200//4:
-            body=_native_scratch_locals(body,0,0,scratch_name='_SYN_TEMPS',rewrite_helpers=False)
-    return compiled(body,'5.1' if native else '5.3')
+    body,_,report,elapsed=prepare_kernel(entry,lowered,variant,fetch,vm_maps[0],vm_maps[3],native)
+    if 'error' in report:return {'bytes':len(body.encode()),'error':report['error']}
+    return {'bytes':len(body.encode()),'instructions':report['total_instructions'],'probe_seconds':elapsed,
+        'max_jump':max(r['max_jump'] for r in report['functions']),'stack':max(r['stack'] for r in report['functions'])}
 
 
 def choose_regions(lowered,targets,vm_maps,context):

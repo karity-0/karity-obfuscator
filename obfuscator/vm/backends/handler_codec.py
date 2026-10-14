@@ -24,6 +24,7 @@ class Writer:
         self._buf = bytearray()
         self.layout = layout or DEFAULT_INSTR_LAYOUT
         self.stats = stats
+        self.storage_sections = []
         used = 0x7F
         for name, width in (("A", 8), ("C", 9), ("B", 9), ("V", 8)):
             shift = self.layout[name]
@@ -126,8 +127,9 @@ class BinReader:
         return v
 
     def header(self) -> None:
-        if self._data[:len(BLOB_MAGIC)] != BLOB_MAGIC:
+        if self._data[:4] not in (BLOB_MAGIC,b'KVM\x03'):
             raise ValueError("unsupported handler blob format")
+        self._version=self._data[3]
         self._pos = len(BLOB_MAGIC)
 
     def skip(self, size: int) -> None:
@@ -379,7 +381,7 @@ def _write_integrity_program(w: Writer, program: list[tuple[int, int | None]]) -
 def serialize(function, *, layout: dict | None = None,
               constant_tags: dict[str, int] | None = None,
               integrity_options: dict | None = None, vm_count: int = 1,
-              stats: dict | None = None) -> bytes:
+              stats: dict | None = None, compact_synthesis: bool = True) -> bytes:
     from .handler_layout import PhysicalFunction
     if not isinstance(function, PhysicalFunction):
         raise ValueError("handler serialization requires physical layout with concrete protection targets")
@@ -419,9 +421,19 @@ def serialize(function, *, layout: dict | None = None,
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
     _write_proto(w, function, acc_state, seed, integrity, constant_tag_values)
+    data=w.data()
+    if compact_synthesis and any(regions for _,_,regions in w.storage_sections):
+        from ..synthesis.storage import pack_sections
+        data,storage=pack_sections(data,w.storage_sections,w.layout)
+        if stats is not None:
+            stats.update(storage)
+            if data[:4]==b'KVM\x03':
+                stats['format_version']=3
+                stats['section_bytes']['instructions']-=storage['synthesis_storage_saved_bytes']+len(w.storage_sections)
+                stats['section_bytes']['instruction_storage_headers']=len(w.storage_sections)
     if stats is not None:
-        stats["bytes"] = len(w._buf)
-    return w.data()
+        stats["bytes"] = len(data)
+    return data
 
 
 def _write_metadata(w: Writer, values, section: str) -> None:
@@ -505,6 +517,7 @@ def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
     for item in function.code:
         _emit_instr(w, item.instruction, item.vop, acc_state)
     w.mark("instructions", start)
+    w.storage_sections.append((start,len(w._buf),tuple((e.start,len(e.recipe.steps)) for e in function.synthesis)))
     emitted_av = [item.avalanche for item in function.code]
     emitted_sites = [item.graph_sites for item in function.code]
     block_routes = function.routes
@@ -670,7 +683,10 @@ def _patch_proto_integrity(
     r.u8(); r.u8(); r.u8()
     vm_id = r.u8()
     code_count = r.uint()
-    r.skip(code_count * INSTRUCTION_BYTES)
+    if getattr(r,'_version',2)==3:
+        from ..synthesis.storage import read_words
+        read_words(r,code_count,collect=False)
+    else:r.skip(code_count * INSTRUCTION_BYTES)
     _skip_metadata(r, code_count, 1)
     _skip_metadata(r, code_count, 12)
     for _ in range(r.uint()):

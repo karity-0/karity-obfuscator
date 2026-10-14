@@ -25,6 +25,49 @@ local mt={__add=function(a,b)return a.x+b.x end};local a=setmetatable({x=3},mt);
 """
 LONG_BODY='local a=i+3;'+''.join('a=a*2;a=a-3;' for _ in range(8))+'sum=sum+a;'
 LONG='local sum=0;for i=1,10 do '+LONG_BODY+' end;print(sum)'
+STORAGE='local s=0;for i=1,3 do local a;'+('a=i*3;a=a+7;a=a*5;s=s+a;'*256)+'end;print(s)'
+
+def storage_checks(backends,versions):
+    count=0
+    for version in versions:
+        for backend in backends:
+            output,data,p=build(STORAGE,backend,version,{**BASE,'opcode_synthesis':True,'synthesis_policy':'efficiency',
+                'synthesis_max_steps':4,'synthesis_max_recipes':64,'synthesis_max_occurrences':1024,'synthesis_max_code_growth':64})
+            assert execute(output,version)[0]==execute(STORAGE,version)[0]
+            storage=next(row for row in p.last_profile if row['phase']=='serialize_blob')
+            assert storage['format_version']==3 and storage['synthesis_storage_saved_bytes']>0
+            if backend!='mov':
+                assert p.last_lowered_ir.backend_data['synthesis_kernel_reuse']['hits']>0
+                retired=p.last_lowered_ir.backend_data['synthesis_pruning'][0]['retired_aliases']
+                assert retired and set(retired)<=p.last_lowered_ir.backend_data['layout'].used_ops[0]
+            assert 'synthesis_kernel_cache' not in p.last_lowered_ir.backend_data
+            count+=1
+            print('synthesis-storage-ok',backend,version,storage['synthesis_storage_saved_bytes'],flush=True)
+            if backend=='karity':
+                from obfuscator.vm.backends import handler_codec
+                settings={**BASE,**PROTECTED,'opcode_synthesis':True,'synthesis_policy':'efficiency',
+                    'synthesis_max_steps':4,'synthesis_max_recipes':64,'synthesis_max_occurrences':1024,
+                    'synthesis_max_code_growth':64,'block_variant_rate':0,'physical_block_permutation_rate':0}
+                source=STORAGE.replace('1,3','1,1')
+                compact,_,protected=build(source,backend,version,settings,event_trace=True)
+                assert next(row for row in protected.last_profile if row['phase']=='serialize_blob')['format_version']==3
+                serialize=handler_codec.serialize
+                with patch.object(handler_codec,'serialize',lambda *args,**kwargs:serialize(*args,**kwargs,compact_synthesis=False)):
+                    legacy,_,_=build(source,backend,version,settings,event_trace=True)
+                assert execute(compact,version)[0]==execute(legacy,version)[0]
+                count+=2
+            if backend=='mov':continue
+            # An ordinary numeric site outside the region must retain all its
+            # planned aliases, even when that operation is also synthesized.
+            source='local n=tonumber("3");'+SOURCE+';print(n*2)'
+            output,data,p=build(source,backend,version,{**BASE,'opcode_synthesis':True})
+            assert data['handlers'] and execute(output,version)[0]==execute(source,version)[0]
+            from obfuscator.vm.backends.handler_ir import OPERATION_IDS
+            kept=p.last_lowered_ir.backend_data['layout'].vm_maps[0][0][OPERATION_IDS['MUL']]
+            retired=p.last_lowered_ir.backend_data['synthesis_pruning'][0]['retired_aliases']
+            assert not set(kept).intersection(retired)
+            count+=1
+    return count
 
 def hidden_dispatch_checks(backends,versions):
     from obfuscator.presets import user_preset
@@ -65,7 +108,11 @@ def main():
     parser.add_argument('--lua',nargs='+',choices=('5.1','5.3'),default=('5.1','5.3'))
     parser.add_argument('--dispatch-only',action='store_true')
     parser.add_argument('--maximum-only',action='store_true')
+    parser.add_argument('--storage-only',action='store_true')
     arguments=parser.parse_args()
+    if arguments.storage_only:
+        print('opcode-synthesis-storage-regression-ok',storage_checks(arguments.backends,arguments.lua))
+        return
     if arguments.maximum_only:
         print('opcode-synthesis-maximum-regression-ok',maximum_checks(arguments.backends,arguments.lua))
         return
@@ -74,6 +121,7 @@ def main():
         print('opcode-synthesis-hidden-dispatch-regression-ok',count)
         return
     count+=maximum_checks(arguments.backends,arguments.lua)
+    count+=storage_checks(arguments.backends,arguments.lua)
     for version in arguments.lua:
         for backend in arguments.backends:
             off,data,_=build(SOURCE,backend,version,BASE)

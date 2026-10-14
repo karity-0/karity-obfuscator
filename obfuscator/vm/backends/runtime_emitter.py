@@ -277,11 +277,12 @@ _VM_RENAME_KEYS = [
 ]
 
 
-def _rename_vm_keys(src: str) -> str:
+def _rename_vm_keys(src: str, *, names: dict | None = None) -> str:
     """vm.lua 내의 테이블 키 및 reader 메서드명을 랜덤 이름으로 치환."""
     import re
     allocator = NameAllocator.for_source(src, seed=random.getrandbits(64))
     rename_map = {k: allocator.allocate(k) for k in _VM_RENAME_KEYS}
+    if names is not None:names.update(rename_map)
     for orig, new in rename_map.items():
         src = re.sub(rf'\b{re.escape(orig)}\b', new, src)
         src = src.replace(f'["{orig}"]', f'["{new}"]')
@@ -723,14 +724,18 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     runtime_source = _load_vm(backend_adapter, lowered_ir,
                              target.library_dump_normalization and bool(context.toolchain.lua_library),
                              target=target)
+    from ..synthesis.storage import prepare_reader
+    runtime_source=prepare_reader(runtime_source,blob,instr_layout)
     if materialization is not None:
         runtime_source = materialization.prepare_runtime(runtime_source)
         context.profile.append({"phase": "materialize_host_constants", "elapsed": 0.0,
                                 "constants": len(materialization.references)})
+    key_names={}
     vm_code = _rename_vm_keys(apply_runtime_trace(
         target.prepare_runtime(runtime_source, lowered_ir),
         enabled=bool(lowered_ir.policy.get("runtime_trace", False)),
-    ))
+    ),names=key_names)
+    lowered_ir.backend_data['vm_key_renames']=key_names
     for name in constant_tag_names:
         vm_code = vm_code.replace(
             f"__VM_CTAG_{name.upper()}__", str(constant_tags[name])
@@ -741,6 +746,16 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     vm_code = backend_adapter.emit_handlers(vm_code, lowered_ir, planned_runtime_variants)
     for record in lowered_ir.backend_data.get('synthesis_emission',{}).values():
         context.profile.append({'phase':'synthesis_emission','elapsed':0.0,**record})
+    for record in lowered_ir.backend_data.get('synthesis_pruning',{}).values():
+        context.profile.append({'phase':'synthesis_dispatch_pruning','elapsed':0.0,**record})
+    if 'synthesis_kernel_reuse' in lowered_ir.backend_data:
+        context.profile.append({'phase':'synthesis_kernel_reuse','elapsed':0.0,**lowered_ir.backend_data['synthesis_kernel_reuse']})
+    # Admission/final emission share these bodies only within this build.
+    # Debug state retains statistics, rather than duplicate mutated Lua text.
+    lowered_ir.backend_data.pop('synthesis_kernel_cache',None)
+    # Admission/final emission share these bodies only within this build.
+    # Debug state retains statistics, rather than duplicate mutated Lua text.
+    lowered_ir.backend_data.pop('synthesis_kernel_cache',None)
     if prepared.vm_count > 1 and backend_adapter.shared_runtime_helpers:
         emission = lowered_ir.backend_data.setdefault('runtime_emission', {})
         if not emission.get('skeleton_analyzed'):

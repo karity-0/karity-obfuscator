@@ -5,6 +5,10 @@ in [prototype measurements](../performance/opcode-synthesis-prototype.md).
 Production measurements are in [VM measurements](../performance/opcode-synthesis.md).
 Actual built-in protection settings are measured separately in
 [preset measurements](../performance/synthesis-presets.md).
+The runtime/storage follow-up is measured against `a1ab669` in
+[numeric DAG measurements](../performance/synthesis-storage.md). This first
+implementation has a conservative numeric DAG vocabulary; it does not yet
+synthesize arbitrary table/call/control operations.
 
 ## Common contract
 
@@ -34,12 +38,29 @@ Each admitted region gets a program-specific, collision-free 15-bit vop. Origina
 48-bit instruction words remain as operand and logical-event records. Only the
 head vop changes; interior words are consumed inside the recipe, not independently
 dispatched. Existing rolling word encoding and sparse graph/avalanche metadata
-remain in use. There is no new serializer ABI and no claim of blob compression.
+remain in use at execution time. Storage may use KVM3 below; runtime instruction
+count and logical PCs remain unchanged.
 
 Bindings are encoded in those existing operand words; the emitted sparse head
 lookup and recipe bodies define their interpretation. Keeping the words preserves
 original PC-based decoder, integrity, state and graph contracts. The standalone
 prototype's compact binding encoding is not the production storage format.
+
+KVM3 stores repeated A/B/C operand triples in a per-prototype dictionary.
+Synthesized spans carry ULEB dictionary indices plus three bytes containing all
+15 rolling opcode bits and seven randomized padding bits. Ordinary slots remain
+six-byte words. A span directory and dictionary are sized from the actual legacy
+serialized bytes; adjacent synthesized spans may share one storage block. The
+reader restores every original bit before accumulator decoding and memory-key
+masking. Graph/avalanche metadata, routes, constants, PC counts and MOV extension
+data retain their original meaning. Integrity patching understands both versions.
+
+Serialization first follows the legacy RNG/order and then rewrites storage without
+consuming RNG. KVM3 is selected only when net blob savings exceed the complete added
+reader source cost, including call sites. Small or poorly repeated inputs retain
+the byte-identical KVM2 storage path. This is a storage optimization, not deletion
+of logical protection events. Subsequent output-pass costs are outside that source
+budget; final VM-only output sizes are measured separately.
 
 Regions are atomic physical layout units. Existing pair fusion and splitting
 remain available outside them; the region replaces those competing forms inside.
@@ -84,6 +105,14 @@ not disabled by synthesis. MOV's pre-existing unsupported options are still
 reported by the capability system. MOV has no legacy physical pair-fusion/splitting
 backend; those controls are explicitly marked unsupported there.
 
+Handler-based emission distinguishes logical event aliases from executable
+dispatch targets. Numeric operations wholly consumed by synthesis no longer need
+their ordinary alias bodies or unused competing split/fuse/defer bodies. All
+logical maps and transitions remain available to recipes. An operation still
+executed elsewhere retains its planned aliases; split parts remain executable.
+Planned fake handlers remain generated, with real/composite/synthesis IDs reserved
+against collisions. MOV's number-only HOST fallbacks retain their ordinary bodies.
+
 ## Cost and sharing policies
 
 All policies use identical semantic/protection gates. They differ in sharing and
@@ -127,6 +156,14 @@ discovery and validation of the same immutable IR, including cached SCC sizes.
 The model accounts for code/compiled work and reports probe build time; it is not
 a prediction of nanoseconds spent in every runtime branch. Runtime benchmarks
 remain necessary to evaluate that tradeoff.
+
+Admission and emission reuse exact rendered kernels, planned mutation and compiler
+reports within one build. The generator's explicit injective key-renaming map
+allows reuse across its later identifier spelling change; arbitrary source-pattern
+equivalence is never assumed. Different recipes, forms, alias transitions, seeds
+and target dialects keep distinct entries. Cached bodies are released after
+emission, leaving reuse statistics in the profile. Fewer probes do not guarantee
+lower total build time when storage/other stages add work.
 
 Maximum settings are 16/256/4096. Admission includes physical
 alias/defer specializations, not just semantic recipe count. These limits bound
@@ -209,3 +246,8 @@ pass and runtime regression suites remain in place with unchanged timeouts.
 Real protected Karity route/state event traces are compared before/after synthesis
 on both Lua targets. MOV integer continuation/proof corruption and zero-budget
 unchanged operand/physical forms are also covered.
+KVM3 regression coverage includes 100 randomized layouts, exact padding/word
+restoration, both native readers, malformed dictionaries/spans/indices, nested
+prototypes, unchanged RNG consumption, format-aware integrity patching and actual
+compressed VM outputs on all three backends. Additional tests retain ordinary
+numeric handlers outside synthesized spans and verify real kernel cache hits.
