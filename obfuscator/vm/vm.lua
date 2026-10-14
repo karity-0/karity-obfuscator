@@ -546,8 +546,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="k"})
     local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
-    -- Native reads may be shared across instructions until a representation
-    -- write, rotation, pending producer, or native escape boundary occurs.
+    -- Open-upvalue getters can retain an earlier exec invocation and cache.
+    -- Validate entries against the resumed frame's shared representation state.
     local _RC    = {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
                    (--<<TARGET_PRIVATE_EXPRESSION>>
@@ -859,17 +859,22 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<RGET>>
     local function rget(i)
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
+        local generation=_MG[1]
         local cached=_RC[i]
-        if cached then return cached[1] end
+        -- The cached epoch-bank address is valid only in this generation.
+        -- Reuse it on hits instead of computing all four bank addresses.
+        if cached and cached[3]==generation and cached[2]==_RE[cached[4]] then
+            return cached[1]
+        end
         local p1,p2,p3,p4=_rpositions(i)
         local epoch=_RE[p3]
-        if epoch==nil then _RC[i]={nil}; return nil end
+        if epoch==nil then _RC[i]={nil,nil,generation,p3}; return nil end
         local _,b,inv=_rparams(i,epoch)
         local value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
                               ((regs[p1]+_RS[p2])-b)*inv
                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
                              ),_RT[p4])
-        _RC[i]={value}
+        _RC[i]={value,epoch,generation,p3}
         return value
     end
     --<<ENDRGET>>

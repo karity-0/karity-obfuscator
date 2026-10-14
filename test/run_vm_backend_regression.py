@@ -105,21 +105,22 @@ def check_karity_cross_instruction_cache() -> None:
             if name != "vm.lua":
                 return template
             reads = f"local cached={cache}[i]"
-            hit = "if cached then return cached[1] end"
-            store = f"{cache}[i]={{value}}"
-            nil_store = f"{cache}[i]={{nil}}"
+            hit = "return cached[1]"
+            store = f"{cache}[i]={{value,epoch,generation,p3}}"
+            nil_store = f"{cache}[i]={{nil,nil,generation,p3}}"
             for marker in (reads, hit, store, nil_store):
                 if template.count(marker) != 1:
                     raise AssertionError(f"Karity cache instrumentation lost {marker}")
             if mode == "cross":
-                check = ("if cached then if cached[2]~=pc then "
-                         "error('cross-instruction-cache-hit') end; return cached[1] end")
+                check = ("if cached[5]~=pc then "
+                         "error('cross-instruction-cache-hit') end; return cached[1]")
             else:
-                check = ("if cached then if cached[3]~=_RE[_rpos(3,i)] then "
-                         "error('stale-register-cache') end; return cached[1] end")
+                check = ("if cached[2]~=_RE[_rpos(3,i)] or cached[3]~=_MG[1] "
+                         "or cached[4]~=_rpos(3,i) then "
+                         "error('stale-register-cache') end; return cached[1]")
             template = template.replace(hit, check)
-            return (template.replace(store, f"{cache}[i]={{value,pc,_RE[_rpos(3,i)]}}")
-                    .replace(nil_store, f"{cache}[i]={{nil,pc,_RE[_rpos(3,i)]}}"))
+            return (template.replace(store, f"{cache}[i]={{value,epoch,generation,p3,pc}}")
+                    .replace(nil_store, f"{cache}[i]={{nil,nil,generation,p3,pc}}"))
 
         random.seed(7719)
         normal_output = VMPass(

@@ -835,7 +835,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _S     = _fr and _fr[__VM_FR_SCRATCH__] or {[611]=_zz or 0}
     local _MJ    = {}
     -- Reuse executor scratch to stay below Lua 5.1's local limit.
-    -- Cached native reads are invalidated at representation/escape boundaries.
+    -- Open-upvalue getters can retain older invocations; validate shared versions.
     _MJ._RC={}
     --<<TARGET_KARITY_EXEC_STATE>>
     -- Store helpers as table fields so protected executor branches do not
@@ -1200,17 +1200,22 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<RGET>>
     local function rget(i)
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
+        local generation=_MG[1]
         local cached=_MJ._RC[i]
-        if cached then return cached[1] end
+        -- The cached epoch-bank address is valid only in this generation.
+        -- Reuse it on hits instead of computing all four bank addresses.
+        if cached and cached[3]==generation and cached[2]==_RE[cached[4]] then
+            return cached[1]
+        end
         local p1,p2,p3,p4=_rpositions(i)
         local epoch=_RE[p3]
-        if epoch==nil then _MJ._RC[i]={nil}; return nil end
+        if epoch==nil then _MJ._RC[i]={nil,nil,generation,p3}; return nil end
         local _,b,inv=_rparams(i,epoch)
         local value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
                               ((regs[p1]+_RS[p2])-b)*inv
                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
                              ),_RT[p4])
-        _MJ._RC[i]={value}
+        _MJ._RC[i]={value,epoch,generation,p3}
         return value
     end
     --<<ENDRGET>>
