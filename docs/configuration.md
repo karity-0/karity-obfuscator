@@ -28,6 +28,7 @@
 - [vm_options](#vm_options)
   - [opcode_synthesis](#opcode_synthesis)
   - [synthesis_policy](#synthesis_policy)
+  - [synthesis_max_code_growth](#synthesis_max_code_growth)
   - [synthesis_max_steps](#synthesis_max_steps)
   - [synthesis_max_recipes](#synthesis_max_recipes)
   - [synthesis_max_occurrences](#synthesis_max_occurrences)
@@ -683,6 +684,14 @@ Choose estimated work savings or bounded regional opcode diversity. All policies
 | `protection` | Prefer bounded region-specific recipes |
 
 default: `balanced`
+
+---
+
+### synthesis_max_code_growth
+
+Per-VM additional kernel source budget relative to the target loader. Efficiency uses half, Balanced the full budget and Protection twice this allowance; compiler safety bounds always apply.
+
+default: `0.1`
 
 ---
 

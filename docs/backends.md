@@ -137,6 +137,7 @@ unsupported controls, including values inherited from a profile.
 |---|---|---|---|
 | `opcode_synthesis` | Yes | Yes | Yes |
 | `synthesis_policy` | Yes | Yes | Yes |
+| `synthesis_max_code_growth` | Yes | Yes | Yes |
 | `synthesis_max_steps` | Yes | Yes | Yes |
 | `synthesis_max_recipes` | Yes | Yes | Yes |
 | `synthesis_max_occurrences` | Yes | Yes | Yes |

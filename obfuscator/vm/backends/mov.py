@@ -45,6 +45,8 @@ class MovBackend(VMBackend):
         return source
 
     def validate_lowered(self, lowered):
+        from ..synthesis.lowering import validate_physical_plan
+        validate_physical_plan(lowered)
         from .runtime_layout import iter_functions
         from ..mov.adapter import bind_slots
         from ..mov.validate import validate_host_bindings, validate_linked

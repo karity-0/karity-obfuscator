@@ -117,9 +117,6 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None
         "local metadata={sub,new_uv}\n        local fn=function(...)\n"
         "            local sub,new_uv=metadata[1],metadata[2]\n            local w=",
     )
-    if synthesis is not None:
-        from ..synthesis.mov_lowering import wire_runtime
-        runtime=wire_runtime(runtime,synthesis)
     start = runtime.index("--<<EXEC>>") + len("--<<EXEC>>")
     end = runtime.index("--<<ENDEXEC>>")
     body = runtime[start:end]
@@ -127,6 +124,9 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None
     host_keys = random.sample(range(0x100, 0x10000), len(kits))
     for vm_id, kit in enumerate(kits, 1):
         definition = body.replace("exec = function", f"_mov_dispatch[{vm_id}] = function", 1)
+        if synthesis is not None:
+            from ..synthesis.mov_lowering import wire_runtime
+            definition=wire_runtime(definition,synthesis,vm_index=vm_id-1)
         definition = definition.replace("--<<FLOAT_TABLES>>", float_tables(kit.encode))
         definition = definition.replace("--<<MIXED_TABLES>>", mixed_tables(kit.encode))
         definition = definition.replace("--<<SHIFT_TABLES>>", shift_tables(kit.encode))

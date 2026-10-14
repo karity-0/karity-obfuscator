@@ -63,6 +63,7 @@ class ProtectionOptions(TypedDict, total=False):
 class VMOptions(ProtectionOptions, total=False):
     opcode_synthesis: bool
     synthesis_policy: str
+    synthesis_max_code_growth: float
     synthesis_max_steps: int
     synthesis_max_recipes: int
     synthesis_max_occurrences: int

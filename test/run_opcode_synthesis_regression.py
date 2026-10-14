@@ -11,7 +11,7 @@ from obfuscator.vm.ir.optimize import optimize_semantic_ir
 from obfuscator.vm.protection import ProtectionPlanner
 from obfuscator.vm.synthesis.planner import build_plan,validate_plan
 from obfuscator.vm.synthesis.model import Ref,Binding
-from obfuscator.vm.synthesis.prototype import emit_region_benchmark,emit_kernel,allocate_opcodes,encode_occurrence
+from obfuscator.vm.synthesis.prototype import emit_region_benchmark,emit_kernel,allocate_opcodes,encode_occurrence,encode_bindings
 from profile_vm_runtime import execute
 
 SOURCE='local sum=0;for i=1,20 do local a=i*3;local b=a+7;local c=b*5;sum=sum+c end;print(sum)'
@@ -24,6 +24,11 @@ def must_fail(fn):
     raise AssertionError('invalid synthesis accepted')
 
 def main():
+    from obfuscator.registry import validate_config
+    for value in (True,False,float('nan'),float('inf'),-.1,64.1,'1'):
+        must_fail(lambda:validate_config({'passes':['vm'],'vm_options':{'synthesis_max_code_growth':value}}))
+    for value in (0,.1,64):
+        validate_config({'passes':['vm'],'vm_options':{'synthesis_max_code_growth':value}})
     for version in ('5.1','5.3'):
         ir=frontend(SOURCE,version);original=ir.dump()
         before=random.getstate()
@@ -47,6 +52,8 @@ def main():
         must_fail(lambda:allocate_opcodes(plan.recipes,reserved=range(32768)))
         word,bindings=encode_occurrence(occurrence,codes[recipe.id])
         assert len(word)==6 and len(bindings)==13
+        before=random.getstate()
+        assert encode_bindings(occurrence)==bindings and random.getstate()==before
         from obfuscator.vm.backends.handler_codec import DEFAULT_INSTR_LAYOUT
         packed=int.from_bytes(word,'little')
         assert ((packed&127)|(((packed>>DEFAULT_INSTR_LAYOUT['V'])&255)<<7))==codes[recipe.id]

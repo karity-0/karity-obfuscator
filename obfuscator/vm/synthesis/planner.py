@@ -2,12 +2,19 @@
 from collections import Counter
 from dataclasses import replace
 import hashlib
-import random
 from .model import Ref, Step, Binding, Recipe, Occurrence, Cost, SynthesisPlan
 from ..ir.facts import analyze_function
 
 SCALAR=frozenset(('ADD','SUB','MUL','NEGATE'))
 POLICIES=('efficiency','balanced','protection')
+
+
+def _facts(function,version,cache,liveness_cache=None):
+    facts=cache.get(function.id)
+    if facts is None or facts.function is not function or facts.version!=version:
+        facts=analyze_function(function,version,liveness=(liveness_cache or {}).get(function.id))
+        cache[function.id]=facts
+    return facts
 
 
 def backend_work(occurrence,backend):
@@ -58,18 +65,21 @@ def _region(function,block,instructions,facts,version,materialize=False):
     recipe=replace(recipe,id='recipe:'+_signature(recipe))
     output_regs=tuple(r for i,r in output_pairs)
     component=facts.components[block.id]
-    hot=sum(v==component for v in facts.components.values())>1 or block.id in block.successors
+    hot=facts.component_sizes[component]>1 or block.id in block.successors
     cost=Cost(len(steps),(len(steps)+1)//2,1,reads,
               reads if materialize else sum(v.kind=='register' for v in bindings),len(steps),len(steps) if materialize else len(output_regs),
               # Conservative prototype estimate: tag + up to two uint bytes.
               3*len(bindings)+2*len(output_regs),hot,len(steps),6*len(steps))
     occurrence=Occurrence(function.id,block.id,tuple(i.id for i in instructions),
-                          recipe.id,tuple(bindings),output_regs,cost,'shared',materialize)
+                          recipe.id,tuple(bindings),output_regs,cost,'shared',materialize,
+                          'integer' if version=='5.3' and all(
+                              facts.operand(ins,v.role).kind=='integer'
+                              for ins in instructions for v in ins.operands if v.role!='destination') else 'number')
     return (recipe,occurrence),None
 
 
 def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max_steps=8,
-               max_recipes=32,max_occurrences=512,protection_plan=None,backend='prototype'):
+               max_recipes=32,max_occurrences=512,protection_plan=None,backend='prototype',analysis_cache=None,liveness_cache=None):
     if policy not in POLICIES:raise ValueError('unknown synthesis policy')
     if lua_version not in ('5.1','5.3'):raise ValueError('unknown Lua target')
     if backend not in ('prototype','classic','karity','mov'):raise ValueError('unknown synthesis backend')
@@ -78,10 +88,10 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
     if protection_plan is not None and protection_plan.generation!=ir.generation:
         raise ValueError('synthesis/protection generation mismatch')
     if not enabled:return SynthesisPlan(ir.generation,lua_version,(),(),())
-    rejected=Counter();candidates=[]
+    rejected=Counter();candidates=[];analyses={} if analysis_cache is None else analysis_cache
     for function in ir.functions():
         if not any(i.operation in SCALAR for b in function.blocks for i in b.instructions):continue
-        facts=analyze_function(function,lua_version)
+        facts=_facts(function,lua_version,analyses,liveness_cache)
         if facts.liveness.open_extents:
             rejected['open_register_top']+=1;continue
         # The prototype cannot replay private production dispatch/epoch events.
@@ -114,7 +124,7 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
                 run.append(ins)
                 if len(run)==max_steps:flush();run=[]
             flush()
-    definitions={};occurrences=[];rng=random.Random(seed)
+    definitions={};occurrences=[]
     repetitions=Counter(recipe.id for recipe,_ in candidates)
     regional_count=0
     if policy=='efficiency' and backend!='prototype':
@@ -130,7 +140,9 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
             rejected['cold_single_use_cost']+=1;continue
         if backend!='prototype' and policy=='efficiency' and backend_work(occurrence,backend)['net_work_estimate']<=0:
             rejected['backend_event_cost']+=1;continue
-        regional=policy=='protection' or policy=='balanced' and regional_count<max(1,max_recipes//4) and rng.random()<.25
+        # Regional forms are selected later with actual emitted/compiler costs.
+        # The standalone prototype keeps the policy's simple regional contract.
+        regional=policy=='protection'
         if regional:
             recipe=replace(recipe,id=recipe.id+':region:'+occurrence.source_ids[0])
             occurrence=replace(occurrence,recipe=recipe.id,scope='regional')
@@ -143,11 +155,11 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
     plan=SynthesisPlan(ir.generation,lua_version,tuple(definitions.values()),
                        tuple(occurrences),tuple(sorted(rejected.items())),backend,
                        hashlib.sha256(protection_plan.dump().encode()).hexdigest() if protection_plan else '')
-    validate_plan(ir,plan,lua_version=lua_version,protection_plan=protection_plan)
+    validate_plan(ir,plan,lua_version=lua_version,protection_plan=protection_plan,analysis_cache=analyses)
     return plan
 
 
-def validate_plan(ir,plan,*,lua_version=None,protection_plan=None):
+def validate_plan(ir,plan,*,lua_version=None,protection_plan=None,analysis_cache=None):
     if plan.backend not in ('prototype','classic','karity','mov'):
         raise ValueError('unknown synthesis backend contract')
     if ir.generation!=plan.generation or plan.version not in ('5.1','5.3') or lua_version is not None and lua_version!=plan.version:
@@ -158,7 +170,7 @@ def validate_plan(ir,plan,*,lua_version=None,protection_plan=None):
     functions={f.id:f for f in ir.functions()};recipes={r.id:r for r in plan.recipes}
     if len(plan.recipes)>256 or len(plan.occurrences)>4096:raise ValueError('synthesis plan exceeds bounds')
     if len(recipes)!=len(plan.recipes):raise ValueError('duplicate recipe ID')
-    consumed=set();used=set();analyses={}
+    consumed=set();used=set();analyses={} if analysis_cache is None else analysis_cache
     for occurrence in plan.occurrences:
         function=functions.get(occurrence.function)
         if function is None:raise ValueError('unknown synthesis function')
@@ -170,8 +182,7 @@ def validate_plan(ir,plan,*,lua_version=None,protection_plan=None):
             raise ValueError('non-contiguous or reordered synthesis region')
         if consumed.intersection(occurrence.source_ids):raise ValueError('overlapping synthesis regions')
         consumed.update(occurrence.source_ids)
-        facts=analyses.setdefault(function.id,None)
-        if facts is None:facts=analyses[function.id]=analyze_function(function,plan.version)
+        facts=_facts(function,plan.version,analyses)
         original=tuple(block.instructions[n] for n in indices)
         if any(i.operation not in SCALAR or i.metadata.get('protection_origin') and plan.backend=='prototype'
                or i.id not in facts.effects or not facts.effects[i.id].pure

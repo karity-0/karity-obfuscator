@@ -96,6 +96,12 @@ class FunctionFacts:
     liveness: object
     components: dict
 
+    @property
+    def component_sizes(self):
+        from collections import Counter
+        if not hasattr(self,'_component_sizes'):self._component_sizes=Counter(self.components.values())
+        return self._component_sizes
+
     def operand(self, instruction, role):
         operand=next(v for v in instruction.operands if v.role==role)
         if operand.kind=='constant':return self.constants[operand.value]
@@ -105,10 +111,10 @@ class FunctionFacts:
     def dominates(self, first, second):
         return bool(self.dominance.get(second,0) & (1 << self.block_indices[first]))
 
-def analyze_function(function, version, *, cfg=None):
+def analyze_function(function, version, *, cfg=None, liveness=None):
     blocks={b.id:b for b in function.blocks}
     predecessors,components=cfg or cfg_components(function)
-    live=analyze_liveness(function)
+    live=analyze_liveness(function) if liveness is None else liveness
     constants={v.index:literal_fact(v.literal,version) for v in function.values if v.kind=='constant'}
     registers=tuple(v.index for v in function.values if v.kind=='register')
     reg_index={v.id:v.index for v in function.values if v.kind=='register'}

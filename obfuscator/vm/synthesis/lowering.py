@@ -13,6 +13,7 @@ class PhysicalRecipe:
     opcode: int
     original_vops: tuple[int,...]
     destinations: tuple[int,...]
+    execution_form: str = 'locals'
 
 
 def plan_synthesis(lowered,context):
@@ -24,7 +25,8 @@ def plan_synthesis(lowered,context):
         max_steps=int(context.options.get('synthesis_max_steps',6)),
         max_recipes=int(context.options.get('synthesis_max_recipes',32)),
         max_occurrences=int(context.options.get('synthesis_max_occurrences',512)),
-        protection_plan=lowered.protection_plan,backend=lowered.backend)
+        protection_plan=lowered.protection_plan,backend=lowered.backend,
+        analysis_cache=lowered.backend_data.setdefault('synthesis_analysis',{}),liveness_cache=lowered.backend_data['liveness'])
     lowered.backend_data['synthesis_plan']=plan
     lowered.backend_data['synthesis_handler_budget']=int(context.options.get('synthesis_max_recipes',32))
     context.profile.append({'phase':'opcode_synthesis','elapsed':time.perf_counter()-started,
@@ -41,11 +43,15 @@ def plan_synthesis(lowered,context):
         'cost_basis':'structural VM bank accesses; helper calls, load and graphs measured separately'})
 
 
-def prepare_ranges(lowered,targets):
+def prepare_ranges(lowered,targets,vm_maps=None,context=None):
     plan=lowered.backend_data.get('synthesis_plan')
     if plan is None:return
+    if vm_maps is not None:
+        from .costs import choose_regions
+        choose_regions(lowered,targets,vm_maps,context)
+        plan=lowered.backend_data['synthesis_plan']
     if plan.backend!=lowered.backend:raise ValueError('synthesis/backend contract mismatch')
-    validate_plan(lowered.semantic_ir,plan,protection_plan=lowered.protection_plan)
+    validate_plan(lowered.semantic_ir,plan,protection_plan=lowered.protection_plan,analysis_cache=lowered.backend_data.get('synthesis_analysis'))
     occurrences={}
     for o in plan.occurrences:occurrences.setdefault(o.function,[]).append(o)
     groups=set();fallbacks=0;admitted=set();diagnostics=[]
@@ -61,10 +67,14 @@ def prepare_ranges(lowered,targets):
                 continue # Exact source fallback, no code mutated.
             start=indexes[0];end=indexes[-1]+1
             vm=state['vm_assignment'];counts=dict(root['alias_requirements'][vm]['operations'])
+            if vm_maps is not None:
+                counts={fn.code[i].operation:len(vm_maps[vm][0][fn.code[i].op]) for i in indexes}
             signatures=set()
             for variant in range(len(state['instruction_forms'][start])):
                 signature=tuple((fn.code[i].operation,'defer' if lowered.backend=='karity' and state['instruction_forms'][i][variant][0]=='defer' else state['alias_variants'][i]%counts[fn.code[i].operation]) for i in indexes)
-                signatures.add((vm,occurrence.recipe,signature,occurrence.materialize))
+                signatures.add((vm,occurrence.recipe,signature,occurrence.materialize,
+                    lowered.backend_data.get('synthesis_execution_forms',{}).get(occurrence.source_ids,'locals'),
+                    occurrence.numeric_domain if lowered.backend=='mov' else None))
             if len(groups|signatures)>lowered.backend_data['synthesis_handler_budget']:
                 diagnostics.append({'function':fn.id,'sources':occurrence.source_ids,'reason':'physical_handler_budget'})
                 fallbacks+=1;continue
@@ -87,13 +97,16 @@ def install_regions(lowered,functions,vm_maps,context):
     plan=lowered.backend_data.get('synthesis_plan')
     if plan is None:return
     recipes={r.id:r for r in plan.recipes}
-    heads={(o.function,o.source_ids[0]):o for o in plan.occurrences}
+    admitted=lowered.backend_data['synthesis_admitted']
+    heads={(o.function,o.source_ids[0]):o for o in plan.occurrences if (o.function,o.source_ids) in admitted}
     from ..backends.runtime_layout import iter_functions
     used={v for aliases,splits,fuses,defers in vm_maps for values in aliases.values() for v in values}
     for _,splits,fuses,defers in vm_maps:
         used.update(v for forms in splits.values() for values in forms.values() for v in values)
         used.update(fuses.values());used.update(defers.values())
-    seed=int.from_bytes(hashlib.blake2b(plan.dump().encode(),digest_size=8).digest(),'little')
+    # Diagnostics contain measured elapsed times; they must never seed ISA RNG.
+    identity=repr((plan.generation,plan.version,plan.recipes,plan.occurrences,plan.backend,plan.protection_signature))
+    seed=int.from_bytes(hashlib.blake2b(identity.encode(),digest_size=8).digest(),'little')
     rng=random.Random(seed);available=[v for v in range(32768) if v not in used];rng.shuffle(available)
     definitions={};slots=0;installed=set()
     for fn in iter_functions(functions):
@@ -113,12 +126,14 @@ def install_regions(lowered,functions,vm_maps,context):
             if matched is None:i+=1;continue
             group=code[i:i+len(matched.source_ids)];vops=tuple(s.vop for s in group)
             # Original alias transitions are part of recipe specialization.
-            key=(fn.vm_id,matched.recipe,vops,matched.materialize)
+            form=lowered.backend_data.get('synthesis_execution_forms',{}).get(matched.source_ids,'locals')
+            key=(fn.vm_id,matched.recipe,vops,matched.materialize,form,matched.numeric_domain if lowered.backend=='mov' else None)
             if key not in definitions:
                 if not available:raise ValueError('synthesis opcode space exhausted after layout admission')
                 definitions[key]=available.pop()
             vop=definitions[key]
-            entry=PhysicalRecipe(matched,recipes[matched.recipe],i,vop,vops,tuple(s.instruction.a for s in group))
+            entry=PhysicalRecipe(matched,recipes[matched.recipe],i,vop,vops,tuple(s.instruction.a for s in group),
+                form)
             regions.append(entry);code[i]=replace(code[i],vop=vop);i+=len(group);slots+=1
             installed.add((matched.function,matched.source_ids))
         fn.synthesis=tuple(regions)
@@ -137,6 +152,20 @@ def first_aliases(lowered,vm_index):
             if f.vm_id==vm_index for e in f.synthesis}
 
 
+def validate_physical_plan(lowered):
+    """A physical clone may not invent a numeric proof or a new semantic recipe."""
+    plan=lowered.backend_data.get('synthesis_plan')
+    if plan is None:return
+    from ..backends.runtime_layout import iter_functions
+    expected={(o.function,o.source_ids):o for o in plan.occurrences}
+    recipes={r.id:r for r in plan.recipes}
+    for function in iter_functions(lowered.backend_data['layout'].functions):
+        for entry in function.synthesis:
+            if (entry.occurrence!=expected.get((function.source.id,entry.occurrence.source_ids))
+                or entry.recipe!=recipes.get(entry.occurrence.recipe)):
+                raise ValueError('physical synthesis proof differs from validated semantic plan')
+
+
 def dump_plan(lowered):
     import json
     from dataclasses import asdict
@@ -146,7 +175,7 @@ def dump_plan(lowered):
     data={'enabled':True,**asdict(plan)}
     data['physical']=[{'function':f.source.id,'vm':f.vm_id,'start':e.start,'vop':e.opcode,
         'recipe':e.recipe.id,'sources':e.occurrence.source_ids,'original_vops':e.original_vops,
-        'materialize':e.occurrence.materialize} for f in iter_functions(lowered.backend_data['layout'].functions) for e in f.synthesis]
+        'materialize':e.occurrence.materialize,'execution_form':e.execution_form} for f in iter_functions(lowered.backend_data['layout'].functions) for e in f.synthesis]
     data['fallback_diagnostics']=lowered.backend_data.get('synthesis_fallback_diagnostics',[])
     data['emission']=list(lowered.backend_data.get('synthesis_emission',{}).values())
     return json.dumps(data,indent=2,sort_keys=True)+'\n'

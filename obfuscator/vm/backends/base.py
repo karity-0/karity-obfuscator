@@ -207,6 +207,8 @@ class VMBackend:
         from .handler_layout import validate_layout
         layout = lowered.backend_data["layout"]
         validate_layout(layout.functions, layout.vm_maps)
+        from ..synthesis.lowering import validate_physical_plan
+        validate_physical_plan(lowered)
         self.validate_lowered(lowered)
         return lowered
 
@@ -285,7 +287,7 @@ class VMBackend:
 
 
 SHARED_OPTIONS = frozenset((
-    "opcode_synthesis", "synthesis_policy", "synthesis_max_steps", "synthesis_max_recipes", "synthesis_max_occurrences",
+    "opcode_synthesis", "synthesis_policy", "synthesis_max_steps", "synthesis_max_recipes", "synthesis_max_occurrences", "synthesis_max_code_growth",
     "ir_mba_rate", "ir_test_set_rate", "ir_tail_duplication_rate", "ir_rematerialization_rate",
     "ir_morph_max_growth", "ir_morph_max_added_instructions", "ir_morph_max_added_blocks",
     "ir_morph_max_transforms", "ir_morph_max_depth", "ir_morph_pass_max_added_instructions",

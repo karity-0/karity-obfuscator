@@ -57,6 +57,7 @@ class Occurrence:
     cost: Cost
     scope: str
     materialize: bool = False
+    numeric_domain: str = 'number'
 
 
 @dataclass(frozen=True)
@@ -68,6 +69,7 @@ class SynthesisPlan:
     rejected: tuple[tuple[str, int], ...]
     backend: str = 'prototype'
     protection_signature: str = ''
+    decisions: tuple[dict, ...] = ()
 
     def dump(self):
         from dataclasses import asdict

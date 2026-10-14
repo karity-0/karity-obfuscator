@@ -5,6 +5,69 @@ from .lowering import first_aliases
 SLOTS={'ADD':'ADD','SUB':'SUB','MUL':'MUL','NEGATE':'UNM'}
 
 
+def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
+    import re
+    from ..vm_obfuscation import _ST_TRANSITIONS,_ST_TRANSITIONS_NATIVE
+    transitions=_ST_TRANSITIONS_NATIVE if native else _ST_TRANSITIONS
+    recipe=entry.recipe;lines=[]
+    cells=entry.execution_form=='cells'
+    def temporary(index):return f'_sv[{index+1}]' if cells else f'_sv{index}'
+    def input_value(index):return f'_si[{index+1}]' if cells else f'_si{index}'
+    if not entry.occurrence.materialize:
+        if cells:lines.append('local _si,_sv={},{}')
+        else:
+            lines.append('local '+','.join(f'_si{i}' for i in range(len(recipe.input_kinds))))
+            lines.append('local '+','.join(f'_sv{i}' for i in range(len(recipe.steps))))
+    elif cells:lines.append('local _sx={}')
+    for index,step in enumerate(recipe.steps):
+        lines.append('do')
+        fetch_names=('_ip','_dk','_dw','_lo','_hi','ins','op','A','B','C','Bx','sBx','_av')
+        rename={name:f'_syn_{name.lstrip("_")}{index}' for name in fetch_names} if index else {}
+        def fields(value):
+            return re.sub(r'\b(?:_ip|_dk|_dw|_lo|_hi|ins|op|A|B|C|Bx|sBx|_av)\b',lambda m:rename.get(m.group(),m.group()),value)
+        if index:
+            event_fetch=fetch
+            if lowered.backend=='karity' and not lowered.policy.get('semantic_state_threading',False):
+                event_fetch=event_fetch.replace('; _ss_step(_ip,op,A,B,C)','')
+            lines.append(fields(event_fetch))
+        original=entry.original_vops[index]
+        from ..backends.handler_ir import OPERATION_IDS
+        op=OPERATION_IDS[step.operation];deferred=defers.get(op)==original
+        ordinal=0 if deferred else aliases[op].index(original)
+        transition='' if deferred else transitions[variant['alias_transition_indices'][op][ordinal]]
+        pre=ordinal%2==0
+        if pre:lines.append(fields(transition))
+        slot='__VM_SLOT_'+SLOTS[step.operation]+'__'
+        if entry.occurrence.materialize:
+            if cells:lines.append(fields('_sx[1],_sx[2],_sx[3]=A,B,C'))
+            if deferred:
+                token='__VM_PENDING_'+('UNM' if step.operation=='NEGATE' else step.operation)+'__'
+                body=f'_defer1r(A,B,_av,{slot},{token})' if step.operation=='NEGATE' else f'_defer2r(A,B,C,_av,{slot},{token})'
+                lines.append(fields(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]').replace('A,B','_sx[1],_sx[2]') if cells else body))
+            elif step.operation=='NEGATE':
+                extra=',-1' if lowered.backend=='karity' else ''
+                body=f'_arith1r(A,B,_av,{slot}{extra})'
+                lines.append(fields(body.replace('A,B','_sx[1],_sx[2]') if cells else body))
+            else:
+                extra=(',1' if step.operation=='ADD' else ',-1' if step.operation=='SUB' else ',nil') if lowered.backend=='karity' else ''
+                body=f'_arith2r(A,B,C,_av,{slot}{extra})'
+                lines.append(fields(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]') if cells else body))
+        else:
+            values=[]
+            for arg,ref in enumerate(step.inputs):
+                if ref.kind=='temporary':values.append(temporary(ref.index))
+                else:
+                    field='B' if arg==0 else 'C';name=input_value(ref.index)
+                    lines.append(fields(f'if {name}==nil then {name}=rget({field}) end'))
+                    values.append(name)
+            expr=f'_arith1({values[0]},_av,{slot})' if step.operation=='NEGATE' else f'_arith2({values[0]},{values[1]},_av,{slot})'
+            lines.append(fields(f'{temporary(index)}={expr}'))
+            if index in recipe.outputs:lines.append(fields(f'rset(A,{temporary(index)})'))
+        if not pre:lines.append(fields(transition))
+        lines.append('end')
+    return '\n'+'\n'.join(lines)+'\n'
+
+
 def inject_handlers(source,lowered,variant,vm_index):
     entries={e.opcode:e for f in iter_functions(lowered.backend_data['layout'].functions)
              if f.vm_id==vm_index for e in f.synthesis}
@@ -36,54 +99,7 @@ def inject_handlers(source,lowered,variant,vm_index):
     defers=lowered.backend_data['layout'].vm_maps[vm_index][3]
     blocks={}
     for opcode,entry in entries.items():
-        recipe=entry.recipe;lines=[]
-        if not entry.occurrence.materialize:
-            lines.append('local '+','.join(f'_si{i}' for i in range(len(recipe.input_kinds))))
-            lines.append('local '+','.join(f'_sv{i}' for i in range(len(recipe.steps))))
-        for index,step in enumerate(recipe.steps):
-            lines.append('do')
-            fetch_names=('_ip','_dk','_dw','_lo','_hi','ins','op','A','B','C','Bx','sBx','_av')
-            rename={name:f'_syn_{name.lstrip("_")}{index}' for name in fetch_names} if index else {}
-            def fields(value):
-                return re.sub(r'\b(?:_ip|_dk|_dw|_lo|_hi|ins|op|A|B|C|Bx|sBx|_av)\b',lambda m:rename.get(m.group(),m.group()),value)
-            if index:
-                event_fetch=fetch
-                if lowered.backend=='karity' and not lowered.policy.get('semantic_state_threading',False):
-                    event_fetch=event_fetch.replace('; _ss_step(_ip,op,A,B,C)','')
-                lines.append(fields(event_fetch))
-            original=entry.original_vops[index]
-            from ..backends.handler_ir import OPERATION_IDS
-            op=OPERATION_IDS[step.operation];deferred=defers.get(op)==original
-            ordinal=0 if deferred else aliases[op].index(original)
-            transition='' if deferred else transitions[variant['alias_transition_indices'][op][ordinal]]
-            pre=ordinal%2==0
-            if pre:lines.append(fields(transition))
-            slot='__VM_SLOT_'+SLOTS[step.operation]+'__'
-            if entry.occurrence.materialize:
-                if deferred:
-                    token='__VM_PENDING_'+('UNM' if step.operation=='NEGATE' else step.operation)+'__'
-                    body=f'_defer1r(A,B,_av,{slot},{token})' if step.operation=='NEGATE' else f'_defer2r(A,B,C,_av,{slot},{token})'
-                    lines.append(fields(body))
-                elif step.operation=='NEGATE':
-                    extra=',-1' if lowered.backend=='karity' else ''
-                    lines.append(fields(f'_arith1r(A,B,_av,{slot}{extra})'))
-                else:
-                    extra=(',1' if step.operation=='ADD' else ',-1' if step.operation=='SUB' else ',nil') if lowered.backend=='karity' else ''
-                    lines.append(fields(f'_arith2r(A,B,C,_av,{slot}{extra})'))
-            else:
-                values=[]
-                for arg,ref in enumerate(step.inputs):
-                    if ref.kind=='temporary':values.append(f'_sv{ref.index}')
-                    else:
-                        field='B' if arg==0 else 'C';name=f'_si{ref.index}'
-                        lines.append(fields(f'if {name}==nil then {name}=rget({field}) end'))
-                        values.append(name)
-                expr=f'_arith1({values[0]},_av,{slot})' if step.operation=='NEGATE' else f'_arith2({values[0]},{values[1]},_av,{slot})'
-                lines.append(fields(f'_sv{index}={expr}'))
-                if index in recipe.outputs:lines.append(fields(f'rset(A,_sv{index})'))
-            if not pre:lines.append(fields(transition))
-            lines.append('end')
-        blocks[opcode]='\n'+'\n'.join(lines)+'\n'
+        blocks[opcode]=render_kernel(entry,lowered,variant,fetch,aliases,defers,native)
     scratch_handlers=0
     if variant['mutate_handlers']:
         from ..vm_mutation import mutate_handlers,planned_mutation_seeds

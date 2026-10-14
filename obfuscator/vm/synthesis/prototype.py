@@ -28,6 +28,12 @@ def encode_occurrence(occurrence,opcode):
     """Prototype 6-byte record plus sparse ULEB binding; production ABI unchanged."""
     if type(opcode) is not int or not 0<=opcode<32768:raise ValueError('opcode range')
     words=Writer();words.instr(HandlerInstruction(0).with_bx(0),opcode&127,opcode>>7)
+    assert len(words.data())==INSTRUCTION_BYTES
+    return words.data(),encode_bindings(occurrence)
+
+
+def encode_bindings(occurrence):
+    """Binding bytes alone are deterministic; no random instruction padding."""
     binding=Writer();binding.uint(len(occurrence.inputs))
     for v in occurrence.inputs:
         if v.kind not in ('register','constant') or type(v.index) is not int or v.index<0:
@@ -37,8 +43,7 @@ def encode_occurrence(occurrence,opcode):
     for r in occurrence.output_registers:
         if type(r) is not int or not 0<=r<255:raise ValueError('invalid output register')
         binding.uint(r)
-    assert len(words.data())==INSTRUCTION_BYTES
-    return words.data(),binding.data()
+    return binding.data()
 
 
 def emit_kernel(recipe):

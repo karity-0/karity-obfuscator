@@ -45,6 +45,8 @@ def main():
         assert 'string_encode' not in config['passes']
         assert 'function_obf' not in config['vm_output_passes']
         assert {'number_obf','meme_strings'} <= set(config['vm_output_passes'])
+        assert config['vm_options']['opcode_synthesis'] is True
+        assert config['vm_options']['synthesis_policy']=={'fast':'efficiency','balanced':'balanced','strong':'protection','maximum':'protection'}[name]
         validate_config(config)
         validate_deployment_config(config)
     try:

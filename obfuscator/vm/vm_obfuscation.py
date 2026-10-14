@@ -824,7 +824,12 @@ def apply_dispatch_target_hiding(vm_code: str, *, native_state: bool = False) ->
         )
     semantic_step = "_ss_step(_ip,op,A,B,C)"
     state_step = "_MJ._ds(op)" if native_state else "_ds(op)"
-    if semantic_step in transformed:
+    if 'op=_syn_dispatch' in transformed:
+        # Routing/semantic events use the original alias, but dispatch compares
+        # the synthesized opcode. Couple the hidden target only after restoring
+        # that opcode; otherwise ordered/tail dispatch rejects a valid kernel.
+        transformed=transformed.replace('op=_syn_dispatch','op=_syn_dispatch;'+state_step,1)
+    elif semantic_step in transformed:
         transformed = transformed.replace(
             semantic_step, f"{semantic_step};{state_step}", 1
         )

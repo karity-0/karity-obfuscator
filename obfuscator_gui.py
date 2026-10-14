@@ -62,7 +62,7 @@ _DEFAULT_PREFERENCES = {
 }
 
 _OPTION_GROUPS = {
-    **dict.fromkeys(('opcode_synthesis','synthesis_policy','synthesis_max_steps','synthesis_max_recipes','synthesis_max_occurrences'),'Opcode synthesis'),
+    **dict.fromkeys(('opcode_synthesis','synthesis_policy','synthesis_max_steps','synthesis_max_recipes','synthesis_max_occurrences','synthesis_max_code_growth'),'Opcode synthesis'),
     "physical_block_permutation_rate": "Physical layout", "physical_block_permutation_max_jumps": "Physical layout",
     "ir_mba_rate": "IR morphing", "ir_test_set_rate": "IR morphing",
     "ir_tail_duplication_rate": "IR morphing", "ir_rematerialization_rate": "IR morphing",
@@ -88,6 +88,7 @@ _OPTION_LABELS = {
     'opcode_synthesis':'Adaptive opcodes','synthesis_policy':'Opcode policy',
     'synthesis_max_steps':'Region operation limit','synthesis_max_recipes':'Recipe limit',
     'synthesis_max_occurrences':'Region limit',
+    'synthesis_max_code_growth':'Kernel code budget',
     "physical_block_permutation_rate": "Block permutation rate",
     "physical_block_permutation_max_jumps": "Permutation bridge limit",
     "ir_mba_rate": "Integer substitution",

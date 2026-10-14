@@ -468,12 +468,13 @@
       }
       const profile = lastSuccess.profile;
       const phases = (profile?.passes || []).flatMap(pass => pass.details || []);
-      const synthesis = phases.filter(phase => phase.phase === 'opcode_synthesis');
+      const selected = phases.filter(phase => phase.phase === 'synthesis_cost_selection');
+      const synthesis = selected.length ? selected : phases.filter(phase => phase.phase === 'opcode_synthesis');
       const physical = phases.filter(phase => phase.phase === 'synthesis_physical');
       if (synthesis.length) {
         const sum = (records, key) => records.reduce((total, record) => total + (record[key] || 0), 0);
         body.append(element('h3', tr('Opcode synthesis')),
-          element('p', `${tr('Recipes')}: ${sum(synthesis, 'recipes')} · ${tr('Synthesized regions')}: ${sum(physical, 'regions')} · ${tr('Handlers')}: ${sum(physical, 'handlers')} · ${tr('Fallback regions')}: ${sum(physical, 'fallback_regions')}`));
+          element('p', `${tr('Recipes')}: ${sum(synthesis, 'recipes')} · ${tr('Synthesized regions')}: ${sum(physical, 'regions')} · ${tr('Handlers')}: ${sum(physical, 'handlers')} · ${tr('Fallback regions')}: ${sum(physical, 'fallback_regions') + selected.reduce((n, phase) => n + (phase.decisions || []).filter(d => d.fallback).length, 0)}`));
       }
       if (profile?.passes?.length) {
         body.append(element('h3', tr('Profiling details')), element('p', `${tr('Profiled pass time')}: ${timeText(profile.total_elapsed)}`));

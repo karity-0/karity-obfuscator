@@ -3,6 +3,8 @@
 Implemented for 1.4.0 on dev. The Phase A/B decoded prototype remains documented
 in [prototype measurements](../performance/opcode-synthesis-prototype.md).
 Production measurements are in [VM measurements](../performance/opcode-synthesis.md).
+Actual built-in protection settings are measured separately in
+[preset measurements](../performance/synthesis-presets.md).
 
 ## Common contract
 
@@ -62,7 +64,16 @@ source-ID-bearing diagnostic rather than a silently weakened fallback.
   bind the dynamic head to its program-specific recipe. Dead intermediate native
   values or encoded digit vectors live in frame-local temporary banks; live outputs
   use the original register representation. PREPARE/COMMIT guards, LOOKUP/SELECT
-  arithmetic recipes and their original native fallback remain. There is no
+  arithmetic recipes and their original native fallback remain for unknown or
+  floating numeric representations. Proven Lua 5.3 integer DAGs use a specialized
+  PREPARE continuation: the two unreachable representation-guard/fallback records
+  per step are removed while the encoded LOOKUP arithmetic remains. A runtime
+  assertion and semantic/physical proof binding guard this direct path. The common
+  recipe's explicit input/temporary references feed private SSA digit-value banks,
+  caching external inputs and retaining distinct value versions across register
+  overwrites. These kernels execute the discovered DAG through existing lookup
+  primitives. VM/number domains own separate heads and each VM emits only its
+  used synthesis bank; number-only scopes omit the integer-DAG helper. There is no
   replacement of MOV arithmetic with a generic Lua calculation kernel.
 
 New handler bodies receive the existing planned mutation machinery. Original alias
@@ -81,15 +92,41 @@ admission, not correctness.
 | Policy | Selection and sharing |
 |---|---|
 | Efficiency | Share equivalent DAGs/event contracts; require a loop region or repeated structural use to amortize generated code. |
-| Balanced | Shared by default; deterministic bounded regional specialization, at most a quarter of the recipe budget (minimum one). |
-| Protection | Region-specific definitions within the same explicit budgets. |
+| Balanced | Shared by default; additional execution forms and regional kernels consume measured remaining code capacity. |
+| Protection | Region-specific definitions and independently seeded execution forms, even without speed/size savings, within explicit budgets. |
 
-Default limits are 6 steps per region, 32 recipe/physical-handler groups and 512
-source occurrences. Efficiency ranks loop/repeated candidates by retained-event
-and bank-access savings; MOV includes its two extra scope microinstructions,
-while Karity includes no speculative register-access saving. Nonpositive
-structural work falls back under Efficiency. This is an explicit work estimate,
-not a calibrated prediction of nanoseconds or a guarantee of faster execution.
+Default explicit-config limits are 6 steps, 32 recipe/physical-handler groups and
+512 occurrences. Admission compiles the same renderer and planned mutation stream
+used by final emission, comparing local-value and indexed-cell forms. Compiler
+instructions, source bytes, actual register-helper bodies, loop/repeated use,
+head/binding overhead and retained graph/pending events are recorded separately.
+MOV probes the actual target runtime additions and ULEB microcode cost; direct
+integer continuations save two boundary records per step. Karity encoded writes
+remain mandatory because their epochs/seals and lazy producers are protection
+effects, not ordinary dead stores. Removing them is an invalid optimization under
+the current contract. No policy assumes those effects disappear.
+
+`synthesis_max_code_growth` is an additional kernel-source allowance relative to
+the target loader, per VM (default 0.1, range 0–64). Efficiency uses half,
+Balanced the full allowance and Protection twice it. This is not a promised final
+file-size percentage. Zero rejects before physical forms are changed. Failed
+physical admission cannot be reinstalled later, even on MOV's unsplit stream.
+Hard per-handler compiler bounds remain independent of this configurable allowance.
+Large handler banks retain their existing closure/scratch fallback.
+Admission reserves the measured representative body for each planned alias/defer
+specialization. Variant-specific transitions and final renaming can change actual
+bytes; the emission profile records all actual bodies and applies the hard compiler
+check to their combined instruction count. The admission allowance is an estimate,
+not a hard final-output byte cap.
+
+Balanced specialization no longer uses a fixed 25% RNG chance or quarter-recipe
+cap. Different intermediate storage forms are selected reproducibly using private
+plan entropy, and each regional mutation is measured and charged. Measurement
+elapsed times never seed the dynamic ISA. Analysis/liveness is shared through
+discovery and validation of the same immutable IR, including cached SCC sizes.
+The model accounts for code/compiled work and reports probe build time; it is not
+a prediction of nanoseconds spent in every runtime branch. Runtime benchmarks
+remain necessary to evaluate that tradeoff.
 
 Maximum settings are 16/256/4096. Admission includes physical
 alias/defer specializations, not just semantic recipe count. These limits bound
@@ -106,10 +143,29 @@ enclosing executor. Neither adjustment disables mutation or arithmetic events.
 Karity materialized mode reports no register-access saving. MOV reports microcode
 cost separately: its scope instructions can increase microdispatch count.
 
-Measurements show that loading/initialization can dominate small programs and
-that preserving encoded/pending state limits execution savings. Default user and
-legacy presets therefore remain opt-in. Higher diversity is not proof of greater
-security, and lower dispatch counts are not proof of lower total runtime.
+The four built-in user presets enable synthesis independently of the backend:
+
+| Preset | Policy | Steps | Recipe groups | Occurrences | Code allowance |
+|---|---|---:|---:|---:|---:|
+| Fast | Efficiency | 4 | 8 | 128 | 0.4 × 0.5 |
+| Balanced | Balanced | 6 | 16 | 256 | 0.6 |
+| Strong | Protection | 8 | 24 | 512 | 0.8 × 2 |
+| Maximum | Protection | 10 | 32 | 512 | 1.0 × 2 |
+
+VM-only trials with the actual protected presets showed that allowances below
+0.2 often rejected the first mutated kernel. These larger allowances admit the
+numeric loop and multi-function fixtures while retaining mutation and encoded
+events; measured final output overhead is recorded in the preset report. An
+enabled feature still requires a safe numeric region: earlier IR morphing can
+replace a candidate with operations outside the current recipe scope.
+
+Legacy/project profiles and saved custom configurations retain their explicit
+settings. Generic configuration remains opt-in for compatibility. Built-in preset
+revision 3 carries the new defaults; backend selection is still independent.
+Loading/initialization and encoded/pending state can limit execution savings.
+Higher diversity is not proof of greater security, and lower dispatch counts are
+not proof of lower total runtime. Protection admission intentionally permits a
+bounded size/time cost for a less uniform ISA.
 
 ## Controls and diagnostics
 
@@ -121,7 +177,8 @@ Use GUI advanced settings **Opcode synthesis** or JSON `vm_options`:
   "synthesis_policy": "balanced",
   "synthesis_max_steps": 6,
   "synthesis_max_recipes": 32,
-  "synthesis_max_occurrences": 512
+  "synthesis_max_occurrences": 512,
+  "synthesis_max_code_growth": 0.1
 }
 ```
 
@@ -131,7 +188,9 @@ and the existing `--vm-option KEY=VALUE`. Policy alone does not enable the featu
 costs; `--dump-backend-ir PATH` adds actual dynamic opcodes and physical spans.
 The profile includes discovery rejection counts, physical fallback diagnostics,
 clone/handler counts and emitted handler size. GUI result inspection shows the
-summary and the existing expandable profile. Backend/Lua choices and saved custom
+selected summary and the existing expandable profile, including policy reason,
+execution form, compiler/code budgets, exact binding alternatives and fallback.
+Backend/Lua choices and saved custom
 settings remain independent of synthesis controls.
 
 Disabled builds bypass discovery and emission, consume no synthesis RNG and retain
@@ -147,3 +206,6 @@ IR morphing/junk, physical permutation, multi-VM, closures/upvalues, varargs,
 trailing nil, coroutines/errors/metamethod fallback, malformed bindings/scopes and
 budget fallback. Existing frontend, protected backend, release-check, GUI, source
 pass and runtime regression suites remain in place with unchanged timeouts.
+Real protected Karity route/state event traces are compared before/after synthesis
+on both Lua targets. MOV integer continuation/proof corruption and zero-budget
+unchanged operand/physical forms are also covered.

@@ -97,7 +97,7 @@
     ['Added block limit', '추가 블록 제한'], ['Strategy application limit', '전략 적용 제한'],
     ['Composition depth', '변형 조합 깊이'], ['Program growth limit', '전체 확장 제한'],
     ['New operation limit', '신규 연산 제한'], ['Unavailable for Lua 5.1; saved value retained', 'Lua 5.1 미지원 · 설정값 유지'],
-    ['Opcode synthesis','Opcode 합성'],['Adaptive opcodes','적응형 Opcode'],['Opcode policy','Opcode 정책'],
+    ['Opcode synthesis','Opcode 합성'],['Adaptive opcodes','적응형 Opcode'],['Opcode policy','Opcode 정책'],['Kernel code budget','커널 코드 예산'],
     ['Region operation limit','구간 연산 제한'],['Recipe limit','Recipe 제한'],['Region limit','구간 수 제한'],
     ['efficiency','효율'],['balanced','균형'],['protection','보호'],
     ['Recipes','Recipe 수'],['Synthesized regions','합성 구간'],['Fallback regions','기존 처리 구간'],

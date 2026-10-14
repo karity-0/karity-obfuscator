@@ -40,9 +40,10 @@ def _validate_code(code, entry_count: int) -> None:
                 raise ValueError("invalid MOV host boundary") from exc
             if instruction.mode:
                 raise ValueError("invalid MOV host mode")
-            if instruction.a in (Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE, Host.SYNTH_BEGIN):
+            if instruction.a in (Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE, Host.SYNTH_BEGIN, Host.SYNTH_PREPARE):
                 if not 1 <= instruction.b <= entry_count:
                     raise ValueError("invalid MOV host instruction reference")
+            if instruction.a==Host.SYNTH_PREPARE:address(instruction.c)
             if instruction.a == Host.PREPARE:
                 if index + 2 >= size:
                     raise ValueError("missing MOV representation guard")
@@ -116,11 +117,12 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
     if len(program.entries) != len(host_slots) + 1:
         raise ValueError("MOV entry count differs from physical host slots")
 
-    expected_headers={}
+    expected_headers={};integer_steps=set()
     for region in synthesis:
         start=region.start+1;end=start+len(region.occurrence.source_ids)
         expected_headers.setdefault(start,[]).append((Host.SYNTH_BEGIN,start))
         expected_headers.setdefault(end,[]).insert(0,(Host.SYNTH_END,0))
+        if region.occurrence.numeric_domain=='integer':integer_steps.update(range(start,end))
     observed=set()
     for ip,address in enumerate(program.entries,1):
         headers=[]
@@ -142,7 +144,7 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
         first = program.code[body_entry(ip)-1]
         operation = raw.operation
         if operation in LOWERED:
-            expected = Host.PREPARE
+            expected = Host.SYNTH_PREPARE if ip in integer_steps else Host.PREPARE
         elif operation == "MOVE":
             expected = Host.COPY
         elif operation in {"LOGICAL_NOT", "TEST", "TEST_SET"}:
@@ -182,7 +184,7 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
     allowed_exec_addresses = entry_addresses | fallback_addresses
     for index, instruction in enumerate(program.code):
         if instruction.op != Op.HOST or instruction.a not in (
-                Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE):
+                Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE, Host.SYNTH_PREPARE):
             continue
         ip = instruction.b
         if ip == len(program.entries):
@@ -192,6 +194,7 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
         operation = host_slots[ip - 1].operation
         expected = {
             Host.PREPARE: operation in LOWERED,
+            Host.SYNTH_PREPARE: ip in integer_steps and operation in {'ADD','SUB','MUL','NEGATE'},
             Host.COPY: operation in {"MOVE", "TEST_SET"},
             Host.READ_TRUTH: operation in {"LOGICAL_NOT", "TEST", "TEST_SET"},
             Host.CLOSE: operation == "JUMP" and host_slots[ip - 1].close_from is not None,
@@ -208,3 +211,6 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
             if (recipe is None or guard.b != recipe
                     or guard.c != index + 3):
                 raise ValueError("MOV recipe continuation differs from operation")
+        elif instruction.a==Host.SYNTH_PREPARE:
+            if instruction.c!=program.recipe_offsets.get(_recipe(operation)):
+                raise ValueError('MOV synthesized arithmetic continuation differs from DAG')

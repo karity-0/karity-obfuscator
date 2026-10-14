@@ -200,6 +200,8 @@ def validate_layout(function: PhysicalFunction, vm_maps: list) -> None:
     by_source={ins.source_id:ins for ins in function.source.code if not ins.linker_owned} if function.synthesis else {}
     owned=set()
     for entry in function.synthesis:
+        if entry.execution_form not in ('locals','cells'):
+            raise ValueError('invalid synthesis execution form')
         if type(entry.opcode) is not int or not 0<=entry.opcode<32768 or entry.opcode in original_targets:
             raise ValueError('invalid or colliding synthesis opcode')
         width=len(entry.occurrence.source_ids)

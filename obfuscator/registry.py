@@ -193,6 +193,7 @@ PASS_DESCRIPTIONS = {
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
     "opcode_synthesis": {"description": "Synthesize connected numeric IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.", "default": False},
     "synthesis_policy": {"description": "Choose estimated work savings or bounded regional opcode diversity. All policies enforce the same semantic and protection gates.", "default": "balanced", "values": [("efficiency","Prefer shared recipes and low overhead"),("balanced","Share common recipes with bounded regional forms"),("protection","Prefer bounded region-specific recipes")]},
+    "synthesis_max_code_growth": {"description": "Per-VM additional kernel source budget relative to the target loader. Efficiency uses half, Balanced the full budget and Protection twice this allowance; compiler safety bounds always apply.", "default": 0.1, "min": 0.0, "max": 64.0},
     "synthesis_max_steps": {"description": "Maximum scalar operations in an atomic synthesized region.", "default": 6, "range": "3 to 16"},
     "synthesis_max_recipes": {"description": "Maximum generated recipe/physical handler groups per program.", "default": 32, "range": "1 to 256"},
     "synthesis_max_occurrences": {"description": "Maximum synthesized source regions per program.", "default": 512, "range": "1 to 4096"},
@@ -833,6 +834,9 @@ def _validate_vm_options(options: dict) -> None:
                 )
 
     growth = options.get('ir_morph_max_growth',1.35)
+    synthesis_growth=options.get('synthesis_max_code_growth',.1)
+    if type(synthesis_growth) not in (int,float) or not 0 <= synthesis_growth <= 64:
+        raise ConfigError('vm_options.synthesis_max_code_growth must be between 0.0 and 64.0')
     if options.get('synthesis_policy','balanced') not in ('efficiency','balanced','protection'):
         raise ConfigError('vm_options.synthesis_policy must be efficiency, balanced or protection')
     if type(growth) not in (int,float) or not 1 <= growth <= 4:

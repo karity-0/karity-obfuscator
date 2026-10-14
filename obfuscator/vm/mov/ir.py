@@ -29,6 +29,7 @@ class Host(IntEnum):
     COMMIT_FLOAT = 9
     SYNTH_BEGIN = 10
     SYNTH_END = 11
+    SYNTH_PREPARE = 12
 
 
 @dataclass(frozen=True)
