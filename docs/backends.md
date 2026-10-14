@@ -135,6 +135,13 @@ unsupported controls, including values inherited from a profile.
 
 | Option | Karity | Classic | MOV |
 |---|---|---|---|
+| `opcode_synthesis` | Yes | Yes | Yes |
+| `synthesis_policy` | Yes | Yes | Yes |
+| `synthesis_max_steps` | Yes | Yes | Yes |
+| `synthesis_max_recipes` | Yes | Yes | Yes |
+| `synthesis_max_occurrences` | Yes | Yes | Yes |
+| `opcode_splitting` | Yes | Yes | No |
+| `opcode_fusion` | Yes | Yes | No |
 | `ir_mba_rate` | Yes | Yes | Yes |
 | `ir_test_set_rate` | Yes | Yes | Yes |
 | `ir_tail_duplication_rate` | Yes | Yes | Yes |

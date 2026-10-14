@@ -739,6 +739,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
             f"__VM_CK_{name.upper()}__", str(constant_kinds[name])
         )
     vm_code = backend_adapter.emit_handlers(vm_code, lowered_ir, planned_runtime_variants)
+    for record in lowered_ir.backend_data.get('synthesis_emission',{}).values():
+        context.profile.append({'phase':'synthesis_emission','elapsed':0.0,**record})
     if prepared.vm_count > 1 and backend_adapter.shared_runtime_helpers:
         emission = lowered_ir.backend_data.setdefault('runtime_emission', {})
         if not emission.get('skeleton_analyzed'):

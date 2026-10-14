@@ -299,6 +299,7 @@ def _forms(function: PhysicalFunction, vm_map) -> tuple[dict[int, tuple[int, int
     fused = {index for index, item in enumerate(function.code) if item.vop in fuses}
     internal = {index + 1 for index in fused if index + 1 < len(function.code)}
     deferred = set(defers.values())
+    deferred.update(e.opcode for e in function.synthesis if e.original_vops[0] in deferred)
     return split_parts, internal, deferred
 
 

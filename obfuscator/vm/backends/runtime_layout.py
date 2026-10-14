@@ -27,6 +27,8 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
     # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
     #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
     protection_targets = backend_adapter.serialization_targets(lowered_ir)
+    from ..synthesis.lowering import prepare_ranges,install_regions
+    prepare_ranges(lowered_ir,protection_targets)
     vm_assign = {key: target["vm_assignment"] for key, target in protection_targets.items()}
     n = protection_plan.functions[protected_semantic_ir.root.id]["vm_count"]
 
@@ -84,6 +86,7 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
         function.children = [lower(child) for child in proto.protos]
         return function
     functions = lower(proto)
+    install_regions(lowered_ir,functions,vm_maps,context)
     validate_layout(functions, vm_maps)
     return RuntimeLayout(functions, vm_maps, used_ops_list, instr_layout, constant_tags,
                          constant_kinds, graph_sites, n)

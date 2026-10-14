@@ -65,6 +65,8 @@ def parse_args():
     parser.add_argument("--compatibility", choices=("portable", "runtime_specific", "binary_specific"),
                         help="maximum allowed runtime or binary dependency")
     parser.add_argument("--host-image", action="append", help="CE executable or DLL for constant references; repeat for multiple modules")
+    parser.add_argument('--opcode-synthesis',action='store_true',default=None,help='enable adaptive semantic opcode synthesis')
+    parser.add_argument('--synthesis-policy',choices=('efficiency','balanced','protection'),help='choose opcode sharing/cost policy; does not enable synthesis by itself')
     parser.add_argument(
         "--vm-option",
         action="append",
@@ -82,6 +84,7 @@ def parse_args():
     parser.add_argument("--dump-protected-ir", metavar="PATH", help="write normalized IR after protection transforms to PATH")
     parser.add_argument("--dump-ir", metavar="PATH", help="write deterministic Semantic IR to PATH")
     parser.add_argument("--dump-morphed-ir", metavar="PATH", help="write Semantic IR after independent morphing strategies to PATH")
+    parser.add_argument('--dump-synthesis-plan',metavar='PATH',help='write synthesized recipes, operand bindings, costs and fallback diagnostics')
     parser.add_argument(
         "--dump-protection-plan", metavar="PATH",
         help="write the resolved backend-neutral protection plan to PATH",
@@ -144,9 +147,13 @@ def apply_cli_overrides(config: dict, args) -> dict:
             vm_options[key] = parse_option_value(value.strip())
         config["vm_options"] = vm_options
 
+    for name in ('opcode_synthesis','synthesis_policy'):
+        value=getattr(args,name,None)
+        if value is not None:config.setdefault('vm_options',{})[name]=value
+
     debug_dumps = {
         name: getattr(args, f"dump_{name}", None)
-        for name in ("ir", "morphed_ir", "protected_ir", "protection_plan", "backend_ir")
+        for name in ("ir", "morphed_ir", "protected_ir", "protection_plan", "backend_ir", "synthesis_plan")
     }
     debug_dumps = {name: path for name, path in debug_dumps.items() if path}
     if debug_dumps:

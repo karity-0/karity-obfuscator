@@ -15,6 +15,7 @@ REGRESSIONS = (
     "ir_morphing",
     "ir_options",
     "opcode_synthesis",
+    "opcode_synthesis_backend",
     "selection",
     "strip_info",
     "minify",

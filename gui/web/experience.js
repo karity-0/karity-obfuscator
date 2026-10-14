@@ -325,6 +325,7 @@
       configuration: 'Configuration validation', selection: 'Protection markers',
       'vm:compile': 'Lua compilation', 'vm:ir': 'VM intermediate representation',
       'vm:optimize': 'VM optimization', 'vm:protection': 'VM protection',
+      'vm:synthesis': 'Opcode synthesis',
       'vm:lowering': 'Backend lowering', 'vm:generation': 'VM generation',
       'vm:serialization': 'Serialization', 'vm:graphs': 'Runtime graphs',
       'vm:integrity': 'Integrity finalization', 'output:transforms': 'Output transformations',
@@ -466,6 +467,14 @@
         lastSuccess.warnings.forEach(warning => body.append(element('p', warning, 'capability-warning')));
       }
       const profile = lastSuccess.profile;
+      const phases = (profile?.passes || []).flatMap(pass => pass.details || []);
+      const synthesis = phases.filter(phase => phase.phase === 'opcode_synthesis');
+      const physical = phases.filter(phase => phase.phase === 'synthesis_physical');
+      if (synthesis.length) {
+        const sum = (records, key) => records.reduce((total, record) => total + (record[key] || 0), 0);
+        body.append(element('h3', tr('Opcode synthesis')),
+          element('p', `${tr('Recipes')}: ${sum(synthesis, 'recipes')} · ${tr('Synthesized regions')}: ${sum(physical, 'regions')} · ${tr('Handlers')}: ${sum(physical, 'handlers')} · ${tr('Fallback regions')}: ${sum(physical, 'fallback_regions')}`));
+      }
       if (profile?.passes?.length) {
         body.append(element('h3', tr('Profiling details')), element('p', `${tr('Profiled pass time')}: ${timeText(profile.total_elapsed)}`));
         for (const pass of profile.passes) {

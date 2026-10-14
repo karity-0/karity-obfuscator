@@ -41,6 +41,9 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
                               mutation_seed=mutation_seed)
     source = apply_defer_to_vm(source, defers, mutate=mutate, native_state=native_state,
                                mutation_seed=mutation_seed)
+    if lowered.backend_data.get('synthesis_definitions'):
+        from ..synthesis.emission import inject_handlers
+        source=inject_handlers(source,lowered,variant,vm_index)
     if executor_name is not None:
         source = source.replace('exec = function', f'{executor_name} = function', 1)
     return apply_dispatch(source, variant['dispatcher'])

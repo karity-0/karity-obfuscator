@@ -1,8 +1,4 @@
-"""Phase B: bounded numeric DAG discovery, with explicit protection barriers.
-
-No production fallback is edited: occurrences retain their ordered source IDs.
-Cost numbers are structural estimates, not calibrated runtime predictions.
-"""
+"""Bounded numeric DAG discovery with explicit proof and event obligations."""
 from collections import Counter
 from dataclasses import replace
 import hashlib
@@ -14,12 +10,24 @@ SCALAR=frozenset(('ADD','SUB','MUL','NEGATE'))
 POLICIES=('efficiency','balanced','protection')
 
 
+def backend_work(occurrence,backend):
+    """Structural work, deliberately not an unverified nanosecond model."""
+    cost=occurrence.cost
+    saved_dispatch=0 if backend=='mov' else cost.dispatch_before-cost.dispatch_after
+    saved_reads=cost.reads_before-cost.reads_after
+    saved_writes=cost.writes_before-cost.writes_after
+    extra_scope=2 if backend=='mov' else 0
+    return {'dispatch_saved':saved_dispatch,'bank_reads_saved':saved_reads,
+        'bank_writes_saved':saved_writes,'scope_instructions_added':extra_scope,
+        'net_work_estimate':saved_dispatch+saved_reads+saved_writes-extra_scope}
+
+
 def _signature(recipe):
     return hashlib.sha256(repr((recipe.domain,recipe.input_kinds,recipe.steps,
                                 recipe.outputs,recipe.edges)).encode()).hexdigest()[:24]
 
 
-def _region(function,block,instructions,facts,version):
+def _region(function,block,instructions,facts,version,materialize=False):
     """Convert register aliases to ordered value versions, never reassociate."""
     bindings=[];input_indices={};values={};last_write={};steps=[];edges=[];reads=0
     for index,ins in enumerate(instructions):
@@ -49,19 +57,22 @@ def _region(function,block,instructions,facts,version):
                   tuple(i for i,r in output_pairs),tuple(edges))
     recipe=replace(recipe,id='recipe:'+_signature(recipe))
     output_regs=tuple(r for i,r in output_pairs)
+    component=facts.components[block.id]
+    hot=sum(v==component for v in facts.components.values())>1 or block.id in block.successors
     cost=Cost(len(steps),(len(steps)+1)//2,1,reads,
-              sum(v.kind=='register' for v in bindings),len(steps),len(output_regs),
+              reads if materialize else sum(v.kind=='register' for v in bindings),len(steps),len(steps) if materialize else len(output_regs),
               # Conservative prototype estimate: tag + up to two uint bytes.
-              3*len(bindings)+2*len(output_regs))
+              3*len(bindings)+2*len(output_regs),hot,len(steps),6*len(steps))
     occurrence=Occurrence(function.id,block.id,tuple(i.id for i in instructions),
-                          recipe.id,tuple(bindings),output_regs,cost,'shared')
+                          recipe.id,tuple(bindings),output_regs,cost,'shared',materialize)
     return (recipe,occurrence),None
 
 
 def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max_steps=8,
-               max_recipes=32,max_occurrences=512,protection_plan=None):
+               max_recipes=32,max_occurrences=512,protection_plan=None,backend='prototype'):
     if policy not in POLICIES:raise ValueError('unknown synthesis policy')
     if lua_version not in ('5.1','5.3'):raise ValueError('unknown Lua target')
+    if backend not in ('prototype','classic','karity','mov'):raise ValueError('unknown synthesis backend')
     if not 3<=max_steps<=16 or not 1<=max_recipes<=256 or not 1<=max_occurrences<=4096:
         raise ValueError('invalid synthesis budget')
     if protection_plan is not None and protection_plan.generation!=ir.generation:
@@ -75,19 +86,20 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
             rejected['open_register_top']+=1;continue
         # The prototype cannot replay private production dispatch/epoch events.
         # Refuse planned regions rather than drop arbitrary protection fields.
-        if protection_plan is not None:
+        if protection_plan is not None and backend=='prototype':
             rejected['production_event_lowering_not_implemented']+=1;continue
         for block in function.blocks:
             run=[]
             def flush():
                 if len(run)<3:return
-                found,reason=_region(function,block,run,facts,lua_version)
+                materialize=backend=='karity' or any(i.metadata.get('protection_origin') for i in run)
+                found,reason=_region(function,block,run,facts,lua_version,materialize)
                 if found:candidates.append(found)
                 else:rejected[reason]+=1
             for ins in block.instructions:
                 reason=None
                 if ins.operation not in SCALAR:reason='non_scalar_boundary'
-                elif ins.metadata.get('protection_origin'):reason='protection_origin'
+                elif ins.metadata.get('protection_origin') and backend=='prototype':reason='protection_origin'
                 elif ins.id not in facts.effects:reason='unreachable'
                 elif facts.effects[ins.id].boundaries:reason='lifetime_or_effect_boundary'
                 elif facts.liveness.captured_before[ins.id]:reason='active_capture'
@@ -103,14 +115,22 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
                 if len(run)==max_steps:flush();run=[]
             flush()
     definitions={};occurrences=[];rng=random.Random(seed)
+    repetitions=Counter(recipe.id for recipe,_ in candidates)
+    regional_count=0
+    if policy=='efficiency' and backend!='prototype':
+        candidates.sort(key=lambda item:(item[1].cost.loop_region,repetitions[item[0].id],backend_work(item[1],backend)['net_work_estimate']),reverse=True)
     for recipe,occurrence in candidates:
-        # Prototype gates use measurable structural savings only. Backend costs,
-        # event replay and existing selected fusion must calibrate this later.
+        # No claimed nanosecond speedup: retain structural dispatch/access
+        # costs separately from the logical events that must still run.
         if occurrence.cost.dispatch_before<=occurrence.cost.dispatch_after:
             rejected['no_dispatch_saving']+=1;continue
-        if occurrence.cost.writes_before<=occurrence.cost.writes_after:
+        if occurrence.cost.writes_before<=occurrence.cost.writes_after and backend=='prototype':
             rejected['no_register_local_saving']+=1;continue
-        regional=policy=='protection' or policy=='balanced' and rng.random()<.25
+        if backend!='prototype' and policy=='efficiency' and not occurrence.cost.loop_region and repetitions[recipe.id]<2:
+            rejected['cold_single_use_cost']+=1;continue
+        if backend!='prototype' and policy=='efficiency' and backend_work(occurrence,backend)['net_work_estimate']<=0:
+            rejected['backend_event_cost']+=1;continue
+        regional=policy=='protection' or policy=='balanced' and regional_count<max(1,max_recipes//4) and rng.random()<.25
         if regional:
             recipe=replace(recipe,id=recipe.id+':region:'+occurrence.source_ids[0])
             occurrence=replace(occurrence,recipe=recipe.id,scope='regional')
@@ -119,15 +139,22 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
         if len(occurrences)>=max_occurrences:
             rejected['occurrence_budget']+=1;continue
         definitions[recipe.id]=recipe;occurrences.append(occurrence)
+        regional_count+=int(regional)
     plan=SynthesisPlan(ir.generation,lua_version,tuple(definitions.values()),
-                       tuple(occurrences),tuple(sorted(rejected.items())))
-    validate_plan(ir,plan,lua_version=lua_version)
+                       tuple(occurrences),tuple(sorted(rejected.items())),backend,
+                       hashlib.sha256(protection_plan.dump().encode()).hexdigest() if protection_plan else '')
+    validate_plan(ir,plan,lua_version=lua_version,protection_plan=protection_plan)
     return plan
 
 
-def validate_plan(ir,plan,*,lua_version=None):
+def validate_plan(ir,plan,*,lua_version=None,protection_plan=None):
+    if plan.backend not in ('prototype','classic','karity','mov'):
+        raise ValueError('unknown synthesis backend contract')
     if ir.generation!=plan.generation or plan.version not in ('5.1','5.3') or lua_version is not None and lua_version!=plan.version:
         raise ValueError('synthesis generation/version mismatch')
+    if plan.protection_signature:
+        if protection_plan is None or protection_plan.generation!=ir.generation or hashlib.sha256(protection_plan.dump().encode()).hexdigest()!=plan.protection_signature:
+            raise ValueError('synthesis protection contract mismatch')
     functions={f.id:f for f in ir.functions()};recipes={r.id:r for r in plan.recipes}
     if len(plan.recipes)>256 or len(plan.occurrences)>4096:raise ValueError('synthesis plan exceeds bounds')
     if len(recipes)!=len(plan.recipes):raise ValueError('duplicate recipe ID')
@@ -146,12 +173,14 @@ def validate_plan(ir,plan,*,lua_version=None):
         facts=analyses.setdefault(function.id,None)
         if facts is None:facts=analyses[function.id]=analyze_function(function,plan.version)
         original=tuple(block.instructions[n] for n in indices)
-        if any(i.operation not in SCALAR or i.metadata.get('protection_origin')
+        if any(i.operation not in SCALAR or i.metadata.get('protection_origin') and plan.backend=='prototype'
                or i.id not in facts.effects or not facts.effects[i.id].pure
                or facts.effects[i.id].boundaries or facts.liveness.captured_before[i.id]
                for i in original) or facts.liveness.open_extents:
             raise ValueError('unsafe synthesis region')
-        expected,reason=_region(function,block,original,facts,plan.version)
+        materialize=plan.backend=='karity' or any(i.metadata.get('protection_origin') for i in original)
+        if plan.backend=='prototype':materialize=False
+        expected,reason=_region(function,block,original,facts,plan.version,materialize)
         if expected is None:raise ValueError('invalid synthesis DAG: '+reason)
         expected_recipe,expected_occurrence=expected
         actual=recipes.get(occurrence.recipe)

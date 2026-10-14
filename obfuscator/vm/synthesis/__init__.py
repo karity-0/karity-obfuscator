@@ -1,1 +1,1 @@
-"""Opt-in research primitives; production lowering does not consume these yet."""
+"""Opt-in common semantic recipes and event-preserving backend lowering."""

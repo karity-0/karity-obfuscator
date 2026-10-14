@@ -26,9 +26,10 @@ class MovBackend(VMBackend):
         # executor boundary.
         executor_template = executor_template.replace('--<<TARGET_CLASSIC_EXEC_NATIVE>>', '')
         executor_template = executor_template.replace('--<<ENDTARGET_CLASSIC_EXEC_NATIVE>>', '')
+        synthesis_options={'synthesis':lowered} if lowered.backend_data.get('synthesis_definitions') else {}
         executor = build_runtime(executor_template, lowered.backend_data['kits'],
                                  template=target.runtime_template('mov_exec.lua') if target else None,
-                                 target=target)
+                                 target=target,**synthesis_options)
         source = direct_executor(source, executor, target=target)
         source = source.replace('local proto=read_proto(r,acc_state)',
                                 'local proto=read_proto(r,acc_state); _mov_read(r,proto)')
@@ -62,7 +63,7 @@ class MovBackend(VMBackend):
             if len(bound.slots) != len(function.code):
                 raise ValueError("MOV HOST slot count differs from physical function")
             validate_host_bindings(
-                program, bound.slots,
+                program, bound.slots, synthesis=function.synthesis,
             )
         kits = lowered.backend_data.get("kits")
         linked = lowered.backend_data.get("linked")
@@ -115,6 +116,10 @@ class MovBackend(VMBackend):
         lowered.backend_data["programs"] = tuple(
             lower(bound.slots, bound.vm_id)
             for bound in lowered.backend_data["mov_slots"])
+        from ..synthesis.mov_lowering import lower_regions
+        from .runtime_layout import iter_functions
+        lowered.backend_data['programs']=tuple(lower_regions(p,f) for p,f in zip(
+            lowered.backend_data['programs'],iter_functions(lowered.backend_data['layout'].functions)))
         self.validate_lowered(lowered)
         return lowered
 

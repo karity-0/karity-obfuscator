@@ -26,6 +26,7 @@ class PhysicalFunction:
     canonical: tuple[int, ...] = ()
     chunks: tuple[tuple[int, int], ...] = ()
     permutation: dict = field(default_factory=dict)
+    synthesis: tuple = ()
 
 
 def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
@@ -50,6 +51,7 @@ def lower_function(proto: HandlerFunction, vm_id: int, vm_map, targets: dict,
         block_variant_max_instructions,
         targets["instruction_forms"] if targets is not None else None,
         targets["block_variants"] if targets is not None else None,
+        targets.get('synthesis_ranges',{}) if targets is not None else None,
     )
     code          = proto.code
     add_slots = targets["avalanche_slots"] if graph_execution_rate > 0 else {}
@@ -183,15 +185,47 @@ def validate_layout(function: PhysicalFunction, vm_maps: list) -> None:
     if not 0 <= function.vm_id < len(vm_maps):
         raise ValueError(f"invalid physical VM assignment: {function.source.id}")
     aliases, splits, fuses, defers = vm_maps[function.vm_id]
+    original_targets=set()
+    if function.synthesis:
+        for a,s,f,d in vm_maps:
+            original_targets.update(v for values in a.values() for v in values)
+            original_targets.update(v for forms in s.values() for values in forms.values() for v in values)
+            original_targets.update((*f.values(),*d.values()))
     allowed = {vop for values in (aliases or {}).values() for vop in values}
     allowed.update(vop for forms in (splits or {}).values() for values in forms.values() for vop in values)
     allowed.update((fuses or {}).values())
     allowed.update((defers or {}).values())
+    allowed.update(e.opcode for e in function.synthesis)
     size = len(function.code)
+    by_source={ins.source_id:ins for ins in function.source.code if not ins.linker_owned} if function.synthesis else {}
+    owned=set()
+    for entry in function.synthesis:
+        if type(entry.opcode) is not int or not 0<=entry.opcode<32768 or entry.opcode in original_targets:
+            raise ValueError('invalid or colliding synthesis opcode')
+        width=len(entry.occurrence.source_ids)
+        if not 0<=entry.start<entry.start+width<=size:raise ValueError('synthesis region outside physical code')
+        group=function.code[entry.start:entry.start+width]
+        if tuple(s.instruction.source_id for s in group)!=entry.occurrence.source_ids:
+            raise ValueError('synthesis physical/source ownership mismatch')
+        if group[0].vop!=entry.opcode or tuple(s.vop for s in group[1:])!=entry.original_vops[1:]:
+            raise ValueError('synthesis operand event slots changed')
+        if (len(entry.original_vops)!=width or entry.destinations!=tuple(s.instruction.a for s in group)
+                or tuple(s.instruction.operation for s in group)!=tuple(s.operation for s in entry.recipe.steps)
+                or any(s.instruction!=by_source.get(s.instruction.source_id) for s in group)):
+            raise ValueError('synthesis physical operand binding differs from source')
+        slots=set(range(entry.start,entry.start+width))
+        if slots&owned:raise ValueError('overlapping physical synthesis regions')
+        owned.update(slots)
+    interiors={pc for entry in function.synthesis for pc in range(entry.start+1,entry.start+len(entry.occurrence.source_ids))}
+    def check_entry(pc):
+        if pc in interiors:raise ValueError('physical control flow enters synthesis interior')
     for index, item in enumerate(function.code):
         if aliases and item.vop not in allowed:
             raise ValueError(f"missing handler target: {function.source.id}:{index}")
         instruction = item.instruction
+        if instruction.operation in {'JUMP','FOR_LOOP','FOR_PREP','ITER_LOOP'}:check_entry(index+1+instruction.sbx)
+        elif instruction.operation=='BLOCK_GOTO':check_entry(instruction.bx)
+        elif instruction.operation in {'EQUAL','LESS_THAN','LESS_EQUAL','TEST','TEST_SET'} or instruction.operation=='LOAD_BOOL' and instruction.c:check_entry(index+2)
         if instruction.operation == "BLOCK_ROUTE":
             if not 0 <= instruction.a < len(function.routes):
                 raise ValueError("invalid block route index")
@@ -210,6 +244,7 @@ def validate_layout(function: PhysicalFunction, vm_maps: list) -> None:
                     and 0 <= policy <= 3):
                 raise ValueError("invalid graph descriptor")
     for route in function.routes:
+        for target in route:check_entry(target-1)
         if not 1 <= len(route) <= 255:
             raise ValueError("invalid block route length")
         if any(type(target) is not int or not 1 <= target <= size for target in route):
@@ -399,7 +434,7 @@ def _cfg_blocks(code: list[HandlerInstruction]) -> list[tuple[int, int]]:
     ]
 
 
-def _block_chunks(code: list[HandlerInstruction], max_instructions: int) -> list[tuple[int, int, bool]]:
+def _block_chunks(code: list[HandlerInstruction], max_instructions: int, synthesis_ranges=None) -> list[tuple[int, int, bool]]:
     """Split CFG blocks into small straight-line candidate runs.
 
     The bool marks chunks that may be cloned. LOADKX/EXTRAARG remains adjacent,
@@ -407,6 +442,14 @@ def _block_chunks(code: list[HandlerInstruction], max_instructions: int) -> list
     """
     chunks: list[tuple[int, int, bool]] = []
     limit = max(2, max_instructions)
+    if synthesis_ranges:
+        base=_block_chunks(code,max_instructions)
+        cuts={i for start,(end,_) in synthesis_ranges.items() for i in (start,end)}
+        cuts.update(i for a,b,_ in base for i in (a,b))
+        cuts={i for i in cuts if not any(a<i<b for a,(b,_) in synthesis_ranges.items())}
+        ordered=sorted(cuts)
+        return [(a,b,all(code[i].op in _BLOCK_VARIANT_SAFE_OPS for i in range(a,b)) and b-a>=2)
+                for a,b in zip(ordered,ordered[1:])]
     for block_start, block_end in _cfg_blocks(code):
         i = block_start
         while i < block_end:
@@ -551,8 +594,9 @@ def _make_block_layout(
     block_variant_max_instructions: int,
     instruction_forms: dict | None = None,
     block_variants: dict | None = None,
+    synthesis_ranges: dict | None = None,
 ) -> tuple[list[dict], list[int], int, list[list[int]]]:
-    chunks = _block_chunks(code, block_variant_max_instructions)
+    chunks = _block_chunks(code, block_variant_max_instructions,synthesis_ranges)
     block_layout: list[dict] = []
     route_count = 0
     for start, end, eligible in chunks:
@@ -608,7 +652,7 @@ def _make_block_layout(
         return _make_block_layout(
             code, split_map, fuse_map, defer_map,
             cross_instruction_rate, protected, iexpr_indices, stream_enabled,
-            0.0, block_variant_count, block_variant_max_instructions, instruction_forms, block_variants,
+            0.0, block_variant_count, block_variant_max_instructions, instruction_forms, block_variants,synthesis_ranges,
         )
 
     routes: list[list[int]] = [[] for _ in range(route_count)]

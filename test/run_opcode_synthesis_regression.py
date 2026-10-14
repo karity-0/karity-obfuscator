@@ -84,6 +84,10 @@ def main():
         regional=build_plan(repeated,lua_version=version,enabled=True,policy='protection')
         assert len(shared.occurrences)==2 and len(shared.recipes)==1
         assert len(regional.recipes)==2 and all(o.scope=='regional' for o in regional.occurrences)
+        capped=build_plan(repeated,lua_version=version,enabled=True,policy='efficiency',max_occurrences=1)
+        assert len(capped.occurrences)==1 and dict(capped.rejected)['occurrence_budget']==1
+        capped=build_plan(repeated,lua_version=version,enabled=True,policy='protection',max_recipes=1)
+        assert len(capped.recipes)==1 and dict(capped.rejected)['recipe_budget']==1
         for body in (
             'local a=i*3;a=a+7;a=a*5;sum=sum+a',
             'local a=i*1.5;local b=a-3.0;local c=-b;sum=sum+c',
@@ -101,6 +105,6 @@ def main():
                 actual=execute(emit_region_benchmark(variant,selected,selected.occurrences[0],mode=mode,iterations=1000),version)[0]
                 assert float(actual.split(b'\t')[0])==float(expected),(version,body,mode,actual,expected)
         print('opcode-prototype-ok',version,'DAG, dispatch/rget/rset, bindings, sharing, guards',flush=True)
-    print('opcode-synthesis-regression-ok prototype only; production backends unchanged')
+    print('opcode-synthesis-regression-ok decoded prototype; production checked by backend regression')
 
 if __name__=='__main__':main()

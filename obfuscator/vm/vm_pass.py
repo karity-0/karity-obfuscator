@@ -200,7 +200,9 @@ class VMBuildPipeline(PostPass):
             "phase": "backend_emit", "elapsed": round(time.perf_counter() - started, 6),
             "backend": backend.name,
         })
+        from .synthesis.lowering import dump_plan
         dumps = {
+            'synthesis_plan':lambda:dump_plan(lowered),
             "morphed_ir": lambda: morphed_ir.dump(),
             "ir": source_ir.dump, "optimized_ir": optimized_ir.dump, "protected_ir": semantic_ir.dump,
             "protection_plan": lambda: plan.dump() + lowered.resolution.dump(),

@@ -1,118 +1,149 @@
-# Adaptive semantic opcode synthesis: initial design
+# Adaptive semantic opcode synthesis
 
-Baseline: dev `d690710` (1.3.0). First milestone is Phase A/B: shared semantic
-planning plus an executable dispatch/register-local prototype. This is not yet
-enabled in the production VM pipeline or user presets. Source passes, VM blob
-ABI and release version remain unchanged during this milestone.
+Implemented for 1.4.0 on dev. The Phase A/B decoded prototype remains documented
+in [prototype measurements](../performance/opcode-synthesis-prototype.md).
+Production measurements are in [VM measurements](../performance/opcode-synthesis.md).
 
-## Existing pipeline and reuse
+## Common contract
 
-`VMBuildPipeline` compiles Lua, normalizes/optimizes SemanticIR, runs independent
-morphing strategies, builds/applies the initial ProtectionPlan, builds the final
-plan, and then lowers/optimizes/emits through a backend. Candidate synthesis
-belongs after the final semantic protection plan, before backend lowering.
-It should retain an immutable SynthesisPlan alongside SemanticIR rather than
-add arbitrary operations to the fixed semantic operation contract.
+Synthesis runs after semantic morphing and the final ProtectionPlan, before
+physical lowering. It leaves SemanticIR and its source IDs intact and attaches
+an immutable SynthesisPlan to LoweredIR. All backends use the same discovery,
+value/effect facts, liveness, DAG registry and safety validator.
 
-Reuse `ir/facts.py` (value/effect/definitions/CFG/dominance), `ir/liveness.py`
-(liveness/captures/open top), source IDs and `ProtectionPlan.generation`.
-Physical lowering already owns split/fuse/defer/variant bundles and canonical
-address relocation. The writer already uses 6-byte instruction words, bounded
-ULEB128 counts, sparse auxiliary tables and per-VM disjoint 15-bit vop allocation.
-MOV appends separate microcode tapes to that shared blob.
+A recipe contains at least three ordered ADD/SUB/MUL/NEGATE steps. Inputs refer
+to registers/constants or prior temporary values; edges can cross intervening
+independent calculations. Signatures retain operation order, input aliasing and
+output topology while abstracting concrete register/constant indices. Occurrences
+retain their exact source instruction sequence, operand bindings, live outputs,
+sharing scope and protection-plan signature. Register overwrites create new value
+versions. Arithmetic is never reassociated.
 
-Existing fusion consumes an adjacent pair and retains a second operand slot.
-Its body decodes that slot and sequentially executes both ordinary operations.
-It does not discover a larger def-use DAG or eliminate an intermediate rset/rget.
-The prototype must demonstrate at least three operations in one semantic recipe,
-one dispatch record, and local temporary values with dead VM writes removed.
+Candidates stay within one basic block. Unknown types, metamethods, calls,
+yield/close/capture boundaries and open stack tops cause explicit source fallback.
+Lua 5.1 floating-number facts and Lua 5.3 integer/float facts remain distinct.
+Provenance-marked calculations are eligible only with all original writes kept.
+Calls, table access, comparisons and control operations retain ordinary lowering;
+this is deliberately a bounded numeric recipe vocabulary, not a new Lua compiler.
 
-## Shared recipe contract
+## Actual physical representation
 
-A recipe contains ordered scalar steps over input/temporary references, inputs,
-outputs, dependency edges, a semantic signature and estimated execution/storage
-costs. An occurrence binds input registers/constants and output registers and
-retains the exact ordered source instruction IDs and original fallback sequence.
-Structural signatures abstract register numbers and constant-pool indices, but
-retain input kind, input aliasing, operation ordering and output topology.
-Shared definitions never erase occurrence-specific provenance or protection.
+Each admitted region gets a program-specific, collision-free 15-bit vop. Original
+48-bit instruction words remain as operand and logical-event records. Only the
+head vop changes; interior words are consumed inside the recipe, not independently
+dispatched. Existing rolling word encoding and sparse graph/avalanche metadata
+remain in use. There is no new serializer ABI and no claim of blob compression.
 
-Safety precedes cost. The first prototype restricts local execution to proven
-numeric scalar operations within one basic block. It does not reassociate Lua
-arithmetic. Lua 5.3 integer and Lua 5.1 number semantics remain distinct.
-Unknown operands, potential metamethods, capture/close/top/vararg/call boundaries
-and protection-origin instructions are barriers. Only values dead at region exit
-may omit VM writes; live outputs are committed in original definition order.
+Bindings are encoded in those existing operand words; the emitted sparse head
+lookup and recipe bodies define their interpretation. Keeping the words preserves
+original PC-based decoder, integrity, state and graph contracts. The standalone
+prototype's compact binding encoding is not the production storage format.
 
-Recipe ownership, generation, source order, value-reference topology, operand
-binding ranges, writes and fallback IDs are validated before use. Bad recipes
-must not be silently accepted. Backend lowering may reject individual valid
-recipes with an explicit fallback reason. It may not silently reject a whole
-backend or weaken enabled protections.
+Regions are atomic physical layout units. Existing pair fusion and splitting
+remain available outside them; the region replaces those competing forms inside.
+Karity deferred forms remain deferred inside a region. Clone routing/permutation
+moves the complete region. No jump, skip or route may enter its interior.
+Budget rejection happens before effective forms change, so a rejected occurrence
+retains its original lowering. An admitted region lost during layout is a hard,
+source-ID-bearing diagnostic rather than a silently weakened fallback.
 
-## Protection preservation is a gate
+## Backend lowering and protection
 
-Karity rset does more than store a number: it changes encoded epochs/representations
-and `_ss_value` state. `_route_step`/`_ss_step` run at dispatch boundaries and
-depend on PC, vop, operands and representation/state banks. Graph occurrences
-have concrete identities, selector/state keys and avalanche scratch dependencies.
-Even family-zero descriptors are not a license to omit those events. Deferred
-reads can materialize pending values. Classic also has per-dispatch routing/state
-updates. MOV HOST PREPARE/COMMIT boundaries are part of its operand/representation
-contract, not just slow Lua calls.
+- **Classic:** generated DAG bodies cache numeric external inputs, use local
+  intermediate values and commit only live outputs. Each original logical fetch,
+  arithmetic primitive, avalanche record and alias-state transition still runs.
+  Provenance-marked regions instead materialize every original register write.
+- **Karity:** generated bodies retain encoded-register commits, graph occurrences,
+  epochs and pending producers via the existing arithmetic/defer helpers. The head
+  is restored to its original vop for routing/state events before recipe dispatch.
+  Every interior instruction runs its own original fetch and state event. Register
+  writes are retained even when liveness alone would permit their removal.
+- **MOV:** the same region is lowered to scoped microcode. BEGIN/END boundaries
+  bind the dynamic head to its program-specific recipe. Dead intermediate native
+  values or encoded digit vectors live in frame-local temporary banks; live outputs
+  use the original register representation. PREPARE/COMMIT guards, LOOKUP/SELECT
+  arithmetic recipes and their original native fallback remain. There is no
+  replacement of MOV arithmetic with a generic Lua calculation kernel.
 
-Consequently a plain local-arithmetic handler cannot safely replace arbitrary
-protected production sequences. The prototype records/rejects pending protection
-obligations instead of disabling their settings to obtain a better benchmark.
-Full integration needs backend event lowering that consumes all original logical
-events, with trace assertions and explicit register-local/materialized modes.
-Mutation, decoys and aliases must cover newly generated handlers too. Unknown
-protection fields are rejected until their preservation contract is implemented.
+New handler bodies receive the existing planned mutation machinery. Original alias
+transitions remain specialized; semantically different alias-event contracts cannot
+share a physical body merely because their numeric DAGs match. Fake handlers,
+graph families, helper variants, state coupling, integrity and multi-VM options are
+not disabled by synthesis. MOV's pre-existing unsupported options are still
+reported by the capability system. MOV has no legacy physical pair-fusion/splitting
+backend; those controls are explicitly marked unsupported there.
 
-## Physical lowering proposal for Phase C/D
+## Cost and sharing policies
 
-Prefer one normal 48-bit slot with Bx indexing a sparse per-prototype occurrence
-operand table. Inputs/outputs are ULEB descriptors; normal instructions pay no
-per-slot field. Extension slots are the fallback when descriptor-table storage
-loses against an inline bounded binding. Per-VM registries allocate collision-free
-vops alongside current aliases/split/fuse/defer vops. Definitions may be reused
-across prototypes, while bindings and original logical event sequences stay local.
-Consumed semantic regions become atomic layout units: interior entries are
-forbidden, existing fusion is excluded inside, canonical/branch/route addresses
-are relinked once. Unselected sequences keep the existing layout.
+All policies use identical semantic/protection gates. They differ in sharing and
+admission, not correctness.
 
-Classic generates direct bodies from recipes, rather than concatenating existing
-handlers. Karity emits graph/representation/state events around the same ordered
-steps and commits. MOV lowers that same DAG to its MOVE/LOOKUP/SELECT/HOST model;
-unprofitable or unsupported individual steps/recipes retain the exact original
-lowering. This requires extending MOV slot/entry validation and HOST binding,
-not routing all arithmetic through a generic Lua handler under another name.
+| Policy | Selection and sharing |
+|---|---|
+| Efficiency | Share equivalent DAGs/event contracts; require a loop region or repeated structural use to amortize generated code. |
+| Balanced | Shared by default; deterministic bounded regional specialization, at most a quarter of the recipe budget (minimum one). |
+| Protection | Region-specific definitions within the same explicit budgets. |
 
-## Cost and sharing
+Default limits are 6 steps per region, 32 recipe/physical-handler groups and 512
+source occurrences. Efficiency ranks loop/repeated candidates by retained-event
+and bank-access savings; MOV includes its two extra scope microinstructions,
+while Karity includes no speculative register-access saving. Nonpositive
+structural work falls back under Efficiency. This is an explicit work estimate,
+not a calibrated prediction of nanoseconds or a guarantee of faster execution.
 
-Measure dispatch, register accesses, binding bytes and handler bytes separately.
-Include selected existing fusion, state replay, graph/pending overhead and
-backend emission cost. Static hotness/repetition are estimates, not profiling.
-Efficiency shares equivalent recipes; Balanced permits bounded regional forms;
-Protection specializes regions within handler/storage/build budgets. All policies
-share the same proof/protection gates. Prototype cost weights are explicitly
-uncalibrated and cannot justify production preset defaults.
+Maximum settings are 16/256/4096. Admission includes physical
+alias/defer specializations, not just semantic recipe count. These limits bound
+handler generation; they are not a prediction that every admitted region is faster.
 
-Phase B benchmarks compare ordinary scalar dispatch, two-slot fusion-shaped
-execution and generated recipe execution with actual read/write counters.
-These are mechanism measurements, not full Karity/Classic/MOV performance claims.
-Phase D/F must repeat measurements in all three real runtimes, Lua 5.1/5.3,
-with the five requested execution modes and all protection options held fixed.
+Costs separately report ordinary dispatches, a pair-fusion dispatch estimate,
+recipe dispatches, register reads/writes, retained logical events, loop membership
+and operand bytes. Actual emitted handler/head-table bytes are profiled separately.
+The existing compiler cost probe measures each generated body. Large aggregate
+handler sets use private per-frame closure banks once they exceed a quarter of
+Lua's 131071-instruction signed jump range. Large mutated bodies reuse the existing
+scratch compactor to reserve three quarters of Lua's 200-local limit for the
+enclosing executor. Neither adjustment disables mutation or arithmetic events.
+Karity materialized mode reports no register-access saving. MOV reports microcode
+cost separately: its scope instructions can increase microdispatch count.
 
-## Milestones after the prototype
+Measurements show that loading/initialization can dominate small programs and
+that preserving encoded/pending state limits execution savings. Default user and
+legacy presets therefore remain opt-in. Higher diversity is not proof of greater
+security, and lower dispatch counts are not proof of lower total runtime.
 
-- C: occurrence registry, strict plan validation, backend preservation contracts,
-  original-sequence fallback and generation-aware diagnostics.
-- D: actual physical lowering/codec/dispatch/relocation for all three backends;
-  retain full register writes where state preservation requires them.
-- E: calibrate backend costs, implement the three sharing policies and explicitly
-  compare existing fusion against synthesis.
-- F: native differential tests, bad-binding/layout cases, full protection traces,
-  coroutine/error/capture/top/multi-VM tests and per-backend benchmarks.
-- G: opt-in CLI/JSON/GUI controls, dumps and docs, then measured preset integration
-  and the 1.4.0 version bump. Off-path bytecode/runtime equivalence is mandatory.
+## Controls and diagnostics
+
+Use GUI advanced settings **Opcode synthesis** or JSON `vm_options`:
+
+```json
+{
+  "opcode_synthesis": true,
+  "synthesis_policy": "balanced",
+  "synthesis_max_steps": 6,
+  "synthesis_max_recipes": 32,
+  "synthesis_max_occurrences": 512
+}
+```
+
+CLI supports `--opcode-synthesis`, `--synthesis-policy efficiency|balanced|protection`
+and the existing `--vm-option KEY=VALUE`. Policy alone does not enable the feature.
+`--dump-synthesis-plan PATH` emits recipes, bindings, source IDs and structural
+costs; `--dump-backend-ir PATH` adds actual dynamic opcodes and physical spans.
+The profile includes discovery rejection counts, physical fallback diagnostics,
+clone/handler counts and emitted handler size. GUI result inspection shows the
+summary and the existing expandable profile. Backend/Lua choices and saved custom
+settings remain independent of synthesis controls.
+
+Disabled builds bypass discovery and emission, consume no synthesis RNG and retain
+old VM output. Benchmark tests freeze OS nonce/wrapper entropy only to verify
+byte identity; production retains the existing independent security entropy.
+
+## Verification
+
+The shared CI manifest runs prototype proof tests and real backend regressions.
+Coverage includes all three backends and both Lua targets, differential execution,
+register overwrite, floating arithmetic, pending heads, graph/block variants,
+IR morphing/junk, physical permutation, multi-VM, closures/upvalues, varargs,
+trailing nil, coroutines/errors/metamethod fallback, malformed bindings/scopes and
+budget fallback. Existing frontend, protected backend, release-check, GUI, source
+pass and runtime regression suites remain in place with unchanged timeouts.

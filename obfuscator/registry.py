@@ -191,6 +191,13 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    "opcode_synthesis": {"description": "Synthesize connected numeric IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.", "default": False},
+    "synthesis_policy": {"description": "Choose estimated work savings or bounded regional opcode diversity. All policies enforce the same semantic and protection gates.", "default": "balanced", "values": [("efficiency","Prefer shared recipes and low overhead"),("balanced","Share common recipes with bounded regional forms"),("protection","Prefer bounded region-specific recipes")]},
+    "synthesis_max_steps": {"description": "Maximum scalar operations in an atomic synthesized region.", "default": 6, "range": "3 to 16"},
+    "synthesis_max_recipes": {"description": "Maximum generated recipe/physical handler groups per program.", "default": 32, "range": "1 to 256"},
+    "synthesis_max_occurrences": {"description": "Maximum synthesized source regions per program.", "default": 512, "range": "1 to 4096"},
+    "opcode_splitting": {"description": "Allow legacy physical instruction splitting outside synthesized regions.", "default": True},
+    "opcode_fusion": {"description": "Allow legacy two-slot pair fusion outside synthesized regions.", "default": True},
     "ir_mba_rate": {"description": "Replace proven dynamic Lua 5.3 integer operations with bounded multi-instruction identities. Lua 5.1 reports this strategy unavailable.", "default": 0.0, "range": "0.0 to 1.0"},
     "ir_test_set_rate": {"description": "Decompose TEST_SET into a truth branch and edge-local operand assignment before protection planning.", "default": 0.0, "range": "0.0 to 1.0"},
     "ir_tail_duplication_rate": {"description": "Clone safe acyclic join blocks and redirect one predecessor, preserving execution counts.", "default": 0.0, "range": "0.0 to 1.0"},
@@ -793,6 +800,7 @@ def _validate_vm_options(options: dict) -> None:
                 raise ConfigError(f"vm_options.{key} must be between 0.0 and 1.0")
 
     for key in ("fake_handlers", "mutate_handlers", "junk_instructions",
+                "opcode_synthesis", "opcode_splitting", "opcode_fusion",
                 "integrity_constants", "runtime_trace",
                 "dispatcher_target_hiding", "semantic_state_threading",
                 "argument_virtualization", "upvalue_virtualization",
@@ -802,6 +810,7 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError(f"vm_options.{key} must be true or false")
 
     for key, minimum, maximum in (
+        ("synthesis_max_steps",3,16), ("synthesis_max_recipes",1,256), ("synthesis_max_occurrences",1,4096),
         ("ir_morph_max_added_instructions", 0, 4096),
         ("ir_morph_max_added_blocks", 0, 256),
         ("ir_morph_max_transforms", 0, 256),
@@ -824,6 +833,8 @@ def _validate_vm_options(options: dict) -> None:
                 )
 
     growth = options.get('ir_morph_max_growth',1.35)
+    if options.get('synthesis_policy','balanced') not in ('efficiency','balanced','protection'):
+        raise ConfigError('vm_options.synthesis_policy must be efficiency, balanced or protection')
     if type(growth) not in (int,float) or not 1 <= growth <= 4:
         raise ConfigError('vm_options.ir_morph_max_growth must be between 1.0 and 4.0')
 
@@ -841,7 +852,7 @@ def _validate_vm_options(options: dict) -> None:
 def _validate_debug_dumps(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'debug_dumps' must be an object")
-    allowed = {"ir", "optimized_ir", "morphed_ir", "protected_ir", "protection_plan", "backend_ir"}
+    allowed = {"ir", "optimized_ir", "morphed_ir", "protected_ir", "protection_plan", "backend_ir", "synthesis_plan"}
     unknown = sorted(set(options) - allowed)
     if unknown:
         raise ConfigError("unknown debug dumps: " + ", ".join(unknown))

@@ -1229,6 +1229,9 @@ def _inline_fetch_decode(vm_code: str, variant: int | None = None) -> str:
             ),
         ]
     selected = random.choice(layouts) if variant is None else layouts[variant % len(layouts)]
+    if 'local _SYN_HEAD=' in vm_code:
+        selected=selected.replace('_route_step(_ip,op,A,B,C)',
+            'local _syn_dispatch=op; if _SYN_HEAD[op] then op=_SYN_HEAD[op] end; _route_step(_ip,op,A,B,C)',1)+'; op=_syn_dispatch'
     if native_exact_state:
         selected = ('--<<TARGET_51_KARITY_FETCH>>\n' + selected +
                     '\n--<<ENDTARGET_51_KARITY_FETCH>>')

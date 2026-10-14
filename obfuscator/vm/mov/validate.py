@@ -40,7 +40,7 @@ def _validate_code(code, entry_count: int) -> None:
                 raise ValueError("invalid MOV host boundary") from exc
             if instruction.mode:
                 raise ValueError("invalid MOV host mode")
-            if instruction.a in (Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE):
+            if instruction.a in (Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE, Host.SYNTH_BEGIN):
                 if not 1 <= instruction.b <= entry_count:
                     raise ValueError("invalid MOV host instruction reference")
             if instruction.a == Host.PREPARE:
@@ -108,7 +108,7 @@ def validate_linked(programs, kits, linked) -> None:
             raise ValueError("MOV linked entry is outside its VM tape")
 
 
-def validate_host_bindings(program: Program, host_slots) -> None:
+def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> None:
     """Bind microcode HOST references to semantic/control adapter slots."""
     from .lower import LOWERED, _recipe
 
@@ -116,8 +116,30 @@ def validate_host_bindings(program: Program, host_slots) -> None:
     if len(program.entries) != len(host_slots) + 1:
         raise ValueError("MOV entry count differs from physical host slots")
 
+    expected_headers={}
+    for region in synthesis:
+        start=region.start+1;end=start+len(region.occurrence.source_ids)
+        expected_headers.setdefault(start,[]).append((Host.SYNTH_BEGIN,start))
+        expected_headers.setdefault(end,[]).insert(0,(Host.SYNTH_END,0))
+    observed=set()
+    for ip,address in enumerate(program.entries,1):
+        headers=[]
+        while address<=len(program.code):
+            header=program.code[address-1]
+            if header.op!=Op.HOST or header.a not in (Host.SYNTH_BEGIN,Host.SYNTH_END):break
+            observed.add(address);headers.append((Host(header.a),header.b));address+=1
+        if headers!=expected_headers.get(ip,[]):
+            raise ValueError('MOV synthesis scope differs from physical recipe')
+    if any(index not in observed for index,ins in enumerate(program.code,1)
+           if ins.op==Op.HOST and ins.a in (Host.SYNTH_BEGIN,Host.SYNTH_END)):
+        raise ValueError('MOV synthesis scope header outside a physical entry')
+
+    def body_entry(ip):
+        address=program.entries[ip-1]
+        while program.code[address-1].op==Op.HOST and program.code[address-1].a in (Host.SYNTH_BEGIN,Host.SYNTH_END):address+=1
+        return address
     for ip, raw in enumerate(host_slots, 1):
-        first = program.code[program.entries[ip - 1] - 1]
+        first = program.code[body_entry(ip)-1]
         operation = raw.operation
         if operation in LOWERED:
             expected = Host.PREPARE
@@ -139,21 +161,21 @@ def validate_host_bindings(program: Program, host_slots) -> None:
             target = raw.target_pc
             if target is None or not 1 <= target <= len(program.entries):
                 raise ValueError("MOV semantic jump target is invalid")
-            address = program.entries[ip - 1] + int(raw.close_from is not None)
+            address = body_entry(ip) + int(raw.close_from is not None)
             branch = program.code[address - 1]
             destination = program.entries[target - 1]
             if (branch.op != Op.SELECT or branch.a != 30 or branch.mode
                     or branch.b != destination or branch.c != destination):
                 raise ValueError("MOV jump continuation differs from semantic target")
 
-    sentinel = program.code[program.entries[-1] - 1]
+    sentinel = program.code[body_entry(len(program.entries))-1]
     if (sentinel.op != Op.HOST or sentinel.a != Host.EXEC
             or sentinel.b != len(program.entries)):
         raise ValueError("MOV terminal host entry is invalid")
 
-    entry_addresses = set(program.entries)
+    entry_addresses = {body_entry(i) for i in range(1,len(program.entries)+1)}
     fallback_addresses = {
-        program.entries[ip - 1] + 2
+        body_entry(ip) + 2
         for ip, raw in enumerate(host_slots, 1)
         if raw.operation in LOWERED
     }

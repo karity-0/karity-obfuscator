@@ -48,6 +48,7 @@ def optimize_layout(layout) -> tuple[
     coalesced = []
     for function in iter_functions(layout.functions):
         referenced[function.vm_id].update(item.vop for item in function.code)
+        referenced[function.vm_id].update(vop for entry in function.synthesis for vop in entry.original_vops)
         aliases = layout.vm_maps[function.vm_id][0]
         for pc, item in enumerate(function.code):
             instruction = item.instruction

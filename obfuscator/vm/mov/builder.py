@@ -50,7 +50,7 @@ def _native_arithmetic(runtime: str, *, binary64_target: bool = False) -> str:
     return runtime[:start] + arithmetic_body + runtime[end:]
 
 
-def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None) -> str:
+def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None, synthesis=None) -> str:
     binary64_target = bool(target and target.user_number_model == "binary64")
     if template is None:
         template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
@@ -117,6 +117,9 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None
         "local metadata={sub,new_uv}\n        local fn=function(...)\n"
         "            local sub,new_uv=metadata[1],metadata[2]\n            local w=",
     )
+    if synthesis is not None:
+        from ..synthesis.mov_lowering import wire_runtime
+        runtime=wire_runtime(runtime,synthesis)
     start = runtime.index("--<<EXEC>>") + len("--<<EXEC>>")
     end = runtime.index("--<<ENDEXEC>>")
     body = runtime[start:end]

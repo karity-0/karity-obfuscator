@@ -41,6 +41,9 @@ class Cost:
     writes_before: int
     writes_after: int
     binding_bytes_estimate: int
+    loop_region: bool = False
+    logical_events_after: int = 0
+    operand_slot_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -53,6 +56,7 @@ class Occurrence:
     output_registers: tuple[int, ...]
     cost: Cost
     scope: str
+    materialize: bool = False
 
 
 @dataclass(frozen=True)
@@ -62,6 +66,8 @@ class SynthesisPlan:
     recipes: tuple[Recipe, ...]
     occurrences: tuple[Occurrence, ...]
     rejected: tuple[tuple[str, int], ...]
+    backend: str = 'prototype'
+    protection_signature: str = ''
 
     def dump(self):
         from dataclasses import asdict
