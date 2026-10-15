@@ -175,7 +175,8 @@ def dump_plan(lowered):
     data={'enabled':True,**asdict(plan)}
     data['physical']=[{'function':f.source.id,'vm':f.vm_id,'start':e.start,'vop':e.opcode,
         'recipe':e.recipe.id,'sources':e.occurrence.source_ids,'original_vops':e.original_vops,
-        'materialize':e.occurrence.materialize,'execution_form':e.execution_form} for f in iter_functions(lowered.backend_data['layout'].functions) for e in f.synthesis]
+        'materialize':e.occurrence.materialize,'local_values':e.occurrence.local_values,
+        'execution_form':e.execution_form} for f in iter_functions(lowered.backend_data['layout'].functions) for e in f.synthesis]
     data['fallback_diagnostics']=lowered.backend_data.get('synthesis_fallback_diagnostics',[])
     data['emission']=list(lowered.backend_data.get('synthesis_emission',{}).values())
     return json.dumps(data,indent=2,sort_keys=True)+'\n'

@@ -72,6 +72,7 @@ pay for distinct forms even without a performance saving. Efficiency never does.
     target=context.target
     loader=target.runtime_template('vm.lua') if target else (Path(__file__).parents[1]/'vm.lua').read_text(encoding='utf-8')
     source=loader if lowered.backend=='karity' else target.runtime_template('classic_exec.lua') if target else classic_executor()
+    lowered.backend_data['synthesis_template']=source
     policy=context.options.get('synthesis_policy','balanced')
     # Growth is an explicit cost allowance, independent of hard compiler safety.
     multiplier={'efficiency':.5,'balanced':1.,'protection':2.}[policy]
@@ -164,7 +165,7 @@ pay for distinct forms even without a performance saving. Efficiency never does.
                 'micro_blob_delta':tape_bytes(specialized)-tape_bytes(plain),
                 'instructions':2-saved,'max_jump':0,'stack':0,'runtime_shared':mov_runtime_cost}
         else:
-            for form in ('locals','cells'):
+            for form in (('locals','cells','materialized') if occurrence.local_values else ('locals','cells')):
                 key=(vm,recipe.id,tuple(original),occurrence.materialize,form)
                 if key not in measured:measured[key]=compile_entry(replace(entry,execution_form=form),lowered,variants[vm],source,vm_maps[vm])
                 reports[form]=measured[key]
@@ -219,6 +220,18 @@ pay for distinct forms even without a performance saving. Efficiency never does.
         specializations=len({tuple('defer' if state['instruction_forms'][indexes[s]][variant_index][0]=='defer' else 'normal'
             for s in occurrence.source_ids) for variant_index in range(len(state['instruction_forms'][indexes[occurrence.source_ids[0]]]))})
         extra=0 if key in forms else (report['bytes']+24)*specializations
+        if occurrence.local_values and form!='materialized':
+            from .register_local import helper_source,helper_arities
+            arities=set().union(*(helper_arities(replace(entry,original_vops=signature[2]),vm_maps[vm][3])
+                for signature in signatures))
+            shared=helper_source(source,arities)
+            # Charge the complete helper set per new physical kernel. Final
+            # emission shares it per VM; this conservative reservation also
+            # survives later Efficiency removals without an uncharged owner.
+            decision['guarded_local_helpers']={'bytes':len(shared.encode()),'arities':sorted(arities),
+                'candidate_edges':sum(a in occurrence.local_values for a,b in recipe.edges),
+                'bank_commits_elided':0,'reads_saved':'runtime epoch/pending guards decide'}
+            if key not in forms:extra+=len(shared.encode())
         if lowered.backend=='mov':extra+=max(0,mov_runtime_cost['bytes']-mov_shared_reserved[vm])
         saved_helper_work=sum(decision['work'][key]*helper_costs.get(helper,0) for key,helper in
             (('bank_reads_saved','rget'),('bank_writes_saved','rset')))

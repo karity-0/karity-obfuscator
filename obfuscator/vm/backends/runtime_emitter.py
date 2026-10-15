@@ -753,9 +753,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # Admission/final emission share these bodies only within this build.
     # Debug state retains statistics, rather than duplicate mutated Lua text.
     lowered_ir.backend_data.pop('synthesis_kernel_cache',None)
-    # Admission/final emission share these bodies only within this build.
-    # Debug state retains statistics, rather than duplicate mutated Lua text.
-    lowered_ir.backend_data.pop('synthesis_kernel_cache',None)
+    lowered_ir.backend_data.pop('synthesis_ordered_bodies',None)
+    lowered_ir.backend_data.pop('synthesis_template',None)
     if prepared.vm_count > 1 and backend_adapter.shared_runtime_helpers:
         emission = lowered_ir.backend_data.setdefault('runtime_emission', {})
         if not emission.get('skeleton_analyzed'):

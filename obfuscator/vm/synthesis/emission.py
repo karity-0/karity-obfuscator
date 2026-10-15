@@ -7,7 +7,7 @@ SLOTS={'ADD':'ADD','SUB':'SUB','MUL':'MUL','NEGATE':'UNM','BIT_NOT':'BNOT',
 UNARY=frozenset(('NEGATE','BIT_NOT'))
 
 
-def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
+def render_kernel(entry,lowered,variant,fetch,aliases,defers,native,ordinary=None):
     import re
     from ..vm_obfuscation import _ST_TRANSITIONS,_ST_TRANSITIONS_NATIVE
     transitions=_ST_TRANSITIONS_NATIVE if native else _ST_TRANSITIONS
@@ -21,6 +21,17 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
             lines.append('local '+','.join(f'_si{i}' for i in range(len(recipe.input_kinds))))
             lines.append('local '+','.join(f'_sv{i}' for i in range(len(recipe.steps))))
     elif cells:lines.append('local _sx={}')
+    from .register_local import active_values,guarded_read
+    local_values=active_values(entry,defers) if entry.execution_form!='materialized' else set()
+    if local_values:
+        if cells:lines.append('local _sl,_se,_sg,_sp={},{},{},{}')
+        else:
+            # One four-field cache per initializer: the all-cache parallel
+            # assignment exceeds Lua 5.1's expression stack after banking,
+            # while one statement per field needlessly multiplies CFF states.
+            lines.extend('local '+','.join(f'_{prefix}{n}' for prefix in ('sl','se','sg','sp'))
+                         for n in sorted(local_values))
+    def cached(prefix,n):return f'_{prefix}[{n+1}]' if cells else f'_{prefix}{n}'
     for index,step in enumerate(recipe.steps):
         lines.append('do')
         fetch_names=('_ip','_dk','_dw','_lo','_hi','ins','op','A','B','C','Bx','sBx','_av')
@@ -35,12 +46,36 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
         original=entry.original_vops[index]
         from ..backends.handler_ir import OPERATION_IDS
         op=OPERATION_IDS[step.operation];deferred=defers.get(op)==original
+        if ordinary is not None and not deferred:
+            # Reuse the actual planned alias, including its semantic route and
+            # before/after state transition. No cached reads across calls.
+            lines.append(fields(ordinary[original]));lines.append('end');continue
         ordinal=0 if deferred else aliases[op].index(original)
         transition='' if deferred else transitions[variant['alias_transition_indices'][op][ordinal]]
         pre=ordinal%2==0
         if pre:lines.append(fields(transition))
         slot='__VM_SLOT_'+SLOTS[step.operation]+'__'
         if entry.occurrence.materialize:
+            arguments=[]
+            if local_values and not deferred:
+                for arg,ref in enumerate(step.inputs):
+                    if ref.kind!='temporary' or ref.index not in local_values:
+                        arguments.append('nil');continue
+                    n=ref.index;field='B' if arg==0 else 'C';name=f'_slv{arg}'
+                    value,epoch,generation,position=(cached(prefix,n) for prefix in ('sl','se','sg','sp'))
+                    lines.append(fields(guarded_read(value,epoch,generation,position,field,name)))
+                    arguments.append(name)
+            use_local=bool(local_values) and not deferred
+            def emit_commit(body):
+                if use_local:
+                    body=body.replace('_arith','_syn_arith',1)
+                    body=body[:-1]+','+','.join(arguments)+')'
+                    if index in local_values:body=cached('sl',index)+'='+body
+                lines.append(fields(body))
+                if use_local and index in local_values:
+                    value,epoch,generation,position=(cached(prefix,index) for prefix in ('sl','se','sg','sp'))
+                    lines.append(fields(f'if {value}~=nil then {position}=_rpos(3,A); '
+                        f'{epoch}=_RE[{position}]; {generation}=_MG[1] end'))
             if cells:lines.append(fields('_sx[1],_sx[2],_sx[3]=A,B,C'))
             if deferred:
                 token='__VM_PENDING_'+('UNM' if step.operation=='NEGATE' else step.operation)+'__'
@@ -49,11 +84,11 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
             elif step.operation in UNARY:
                 extra=(',-1' if step.operation=='NEGATE' else ',nil') if lowered.backend=='karity' else ''
                 body=f'_arith1r(A,B,_av,{slot}{extra})'
-                lines.append(fields(body.replace('A,B','_sx[1],_sx[2]') if cells else body))
+                emit_commit(body.replace('A,B','_sx[1],_sx[2]') if cells else body)
             else:
                 extra=(',1' if step.operation=='ADD' else ',-1' if step.operation=='SUB' else ',nil') if lowered.backend=='karity' else ''
                 body=f'_arith2r(A,B,C,_av,{slot}{extra})'
-                lines.append(fields(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]') if cells else body))
+                emit_commit(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]') if cells else body)
         else:
             values=[]
             for arg,ref in enumerate(step.inputs):
@@ -98,6 +133,16 @@ def inject_handlers(source,lowered,variant,vm_index):
     aliases=lowered.backend_data['layout'].vm_maps[vm_index][0]
     defers=lowered.backend_data['layout'].vm_maps[vm_index][3]
     from .kernels import prepare_kernel
+    from .register_local import helper_source,helper_arities,active_values
+    from .kernels import generated_names
+    local_entries=[e for e in entries.values() if active_values(e,defers) and e.execution_form!='materialized']
+    arities=set().union(*(helper_arities(e,defers) for e in local_entries)) if local_entries else set()
+    helpers=helper_source(lowered.backend_data['synthesis_template'],arities) if arities else ''
+    if helpers:
+        helpers=generated_names(helpers,lowered.backend_data.get('vm_key_renames',{}))
+        anchor='local function _arith2s('
+        if anchor not in source:raise ValueError('register-local helper boundary missing')
+        source=source.replace(anchor,helpers+'\n    '+anchor,1)
     from ...passes.function_costs import MAX_JUMP
     blocks={};measurements={};scratch_handlers=0
     for opcode,entry in entries.items():
@@ -126,6 +171,8 @@ def inject_handlers(source,lowered,variant,vm_index):
         'scratch_handlers':scratch_handlers,
         'kernel_instructions':instructions,'storage':'closure_bank' if bank else 'inline',
         'register_local_handlers':sum(not e.occurrence.materialize for e in entries.values()),
+        'guarded_register_local_handlers':len(local_entries),'guarded_local_helper_bytes':len(helpers.encode()),
+        'guarded_local_edges':sum(sum(a in active_values(e,defers) for a,b in e.recipe.edges) for e in local_entries),
         'materialized_handlers':sum(e.occurrence.materialize for e in entries.values()),
         'logical_events':sum(len(e.recipe.steps) for e in entries.values())}
     start,end=_find_chain(source);original=_parse_handler_blocks(source[start:end]);original.update(blocks)

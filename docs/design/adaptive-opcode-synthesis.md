@@ -7,11 +7,14 @@ Actual built-in protection settings are measured separately in
 [preset measurements](../performance/synthesis-presets.md).
 The runtime/storage follow-up is measured against `a1ab669` in
 [numeric DAG measurements](../performance/synthesis-storage.md). This first
-implementation has a conservative numeric DAG vocabulary; it does not yet
-synthesize arbitrary table/call/control operations.
+implementation began with a conservative numeric DAG vocabulary. The ordered
+DAG follow-up adds table/upvalue reads, moves and further scalar operations;
+direct VM calls and control operations are still region boundaries.
 The expanded integer-bit vocabulary and revised admission model are compared in
 [cost selection measurements](../performance/synthesis-cost-selection.md) and
 [full user-preset pipeline measurements](../performance/synthesis-pipeline.md).
+The ordered-DAG follow-up is measured separately in
+[ordered DAG measurements](../performance/synthesis-dag.md).
 
 ## Common contract
 
@@ -20,10 +23,10 @@ physical lowering. It leaves SemanticIR and its source IDs intact and attaches
 an immutable SynthesisPlan to LoweredIR. All backends use the same discovery,
 value/effect facts, liveness, DAG registry and safety validator.
 
-A recipe contains at least three ordered numeric steps: ADD/SUB/MUL/NEGATE,
+A recipe contains at least three connected, ordered steps. Proven numeric steps are ADD/SUB/MUL/NEGATE,
 plus Lua 5.3 BIT_AND/BIT_OR/BIT_XOR/BIT_NOT/SHIFT_LEFT/SHIFT_RIGHT when every
 operand is proven integer. Integral floats, coercions and bit metamethods do not
-qualify. Shift direction, negative/large counts and overflow keep the original
+qualify for the proven-integer strategy. Shift direction, negative/large counts and overflow keep the original
 Lua operation order; no algebraic reassociation or masking is introduced. Inputs refer
 to registers/constants or prior temporary values; edges can cross intervening
 independent calculations. Signatures retain operation order, input aliasing and
@@ -32,12 +35,26 @@ retain their exact source instruction sequence, operand bindings, live outputs,
 sharing scope and protection-plan signature. Register overwrites create new value
 versions. Arithmetic is never reassociated.
 
-Candidates stay within one basic block. Unknown types, metamethods, calls,
-yield/close/capture boundaries and open stack tops cause explicit source fallback.
+The additional ordered strategy supports GET_TABLE, GET_UPVALUE_TABLE,
+GET_UPVALUE, GLOBAL_GET, MOVE, MOD, POW, DIV, FLOOR_DIV, LENGTH and LOGICAL_NOT,
+as well as scalar arithmetic with unknown/metamethod-capable operands. These
+regions replay the actual planned alias bodies and semantic routes, with every
+original write retained. They do not cache operands across a possible user call.
+May-call steps invalidate captured value versions and upvalue input observations
+in the DAG itself, so later reads are not represented as stale dependency edges.
+
+Candidates stay within one basic block and retain their exact contiguous source
+order. Bounded subwindows can find a useful DAG beside an unrelated read/move;
+no instruction is moved across an effect. VM CALL/TAIL_CALL/RETURN, closure
+creation, vararg/top instructions and close/control boundaries still fall back.
+Active captures no longer reject an entire numeric run: captured destination
+writes are materialized, while unrelated captures do not prevent local execution.
+Functions with open top ranges retain every candidate write; the top-changing
+instructions themselves cannot enter a region.
 Lua 5.1 floating-number facts and Lua 5.3 integer/float facts remain distinct.
 Provenance-marked calculations are eligible only with all original writes kept.
-Calls, table access, comparisons and control operations retain ordinary lowering;
-this is deliberately a bounded numeric recipe vocabulary, not a new Lua compiler.
+Comparisons and control operations retain ordinary lowering. Strategy selection
+uses the same facts/def-use/liveness analysis, not independent backend analyzers.
 
 ## Actual physical representation
 
@@ -88,6 +105,20 @@ source-ID-bearing diagnostic rather than a silently weakened fallback.
   is restored to its original vop for routing/state events before recipe dispatch.
   Every interior instruction runs its own original fetch and state event. Register
   writes are retained even when liveness alone would permit their removal.
+  Proven pure scalar producers can additionally forward raw intermediate values
+  through local variables or indexed local cells. Before each reuse, the consumer
+  checks the shared mapping generation, register epoch and absence of a pending
+  producer; a miss uses the original register helper. Generation is checked before
+  dereferencing the cached epoch address. The value-returning helpers are derived
+  from the existing arithmetic helpers and retain their encoded-linear fast path,
+  graph routing, seals, writes and epoch updates. Deferred producers are not
+  eagerly forced to obtain a raw value. Helpers with no usable local edge are not
+  emitted. This bypasses some reads; it does **not** remove encoded materialization.
+  Each four-field cache initializes separately: a 16-step region can forward 15 values,
+  and banking one wide parallel nil assignment exceeds Lua 5.1's expression
+  register limit. Proven scalar kernels also reuse the existing scratch-local
+  reservation when mutation is disabled; ordered/userdata locals keep their
+  lexical lifetimes. Mutation settings are not changed to obtain that fallback.
 - **MOV:** the same region is lowered to scoped microcode. BEGIN/END boundaries
   bind the dynamic head to its program-specific recipe. Dead intermediate native
   values or encoded digit vectors live in frame-local temporary banks; live outputs
@@ -102,7 +133,9 @@ source-ID-bearing diagnostic rather than a silently weakened fallback.
   overwrites. These kernels execute the discovered DAG through existing lookup
   primitives. VM/number domains own separate heads and each VM emits only its
   used synthesis bank; number-only scopes omit the integer-DAG helper. There is no
-  replacement of MOV arithmetic with a generic Lua calculation kernel.
+  replacement of MOV arithmetic with a generic Lua calculation kernel. Ordered
+  mixed regions retain every store and every original HOST/lookup boundary;
+  unknown results never gain a false integer proof.
 
 New handler bodies receive the existing planned mutation machinery. Original alias
 transitions remain specialized; semantically different alias-event contracts cannot
@@ -133,7 +166,11 @@ admission, not correctness.
 
 Default explicit-config limits are 6 steps, 32 recipe/physical-handler groups and
 512 occurrences. Admission compiles the same renderer and planned mutation stream
-used by final emission, comparing local-value and indexed-cell forms. Compiler
+used by final emission, comparing local-value and indexed-cell forms. Karity
+also compares the original fully materialized kernel against guarded raw-value
+forms; paying for guards is optional, rather than rejecting useful dispatch
+synthesis when forwarding is too expensive. Complete helper-source costs are
+conservatively reserved per physical kernel and shared in final emission. Compiler
 instructions, source bytes, actual register-helper bodies, loop/repeated use,
 head/binding overhead and retained graph/pending events are recorded separately.
 MOV probes the actual target runtime additions and ULEB microcode cost; direct
@@ -286,3 +323,14 @@ compressed VM outputs on all three backends. Additional tests cover mixed numeri
 bit DAGs, negative and at-least-64 shift counts, overflow, integral-float and
 metamethod fallback, and actual Fusion-versus-synthesis cost decisions. They retain ordinary
 numeric handlers outside synthesized spans and verify real kernel cache hits.
+
+`run_synthesis_dag_regression.py` exercises actual ordered mixed regions on all
+three backends and both Lua targets, with bare and protected/multi-VM settings.
+It covers captured owner writes, unrelated captures, callback clobbers, open
+multiple-return tails, false/nil indexing, further arithmetic, table/upvalue
+reads, metamethod ordering/errors and Lua 5.3 metamethod yield/resume. Both raw
+temporary forms receive independent execution tests, stale epoch/mapping/pending
+guards are exercised, and actual Karity reads decrease while write counts and
+logical route/state traces are preserved. Direct VM calls, top/control changes,
+cross-block candidates and arbitrary instruction motion remain outside the
+supported recipe vocabulary. The original broad roadmap is not claimed complete.

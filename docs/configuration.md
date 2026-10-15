@@ -667,7 +667,7 @@ See [`pack` design and implementation notes](passes/packer.md) for architecture,
 
 ### opcode_synthesis
 
-Synthesize connected numeric IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.
+Synthesize connected arithmetic, bitwise and ordered table/upvalue IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.
 
 default: false
 

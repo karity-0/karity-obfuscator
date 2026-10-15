@@ -37,9 +37,9 @@ def encode_bindings(occurrence):
     """Binding bytes alone are deterministic; no random instruction padding."""
     binding=Writer();binding.uint(len(occurrence.inputs))
     for v in occurrence.inputs:
-        if v.kind not in ('register','constant') or type(v.index) is not int or v.index<0:
+        if v.kind not in ('register','constant','upvalue') or type(v.index) is not int or v.index<0:
             raise ValueError('invalid operand binding')
-        binding.u8(0 if v.kind=='register' else 1);binding.uint(v.index)
+        binding.u8({'register':0,'constant':1,'upvalue':2}[v.kind]);binding.uint(v.index)
     binding.uint(len(occurrence.output_registers))
     for r in occurrence.output_registers:
         if type(r) is not int or not 0<=r<255:raise ValueError('invalid output register')

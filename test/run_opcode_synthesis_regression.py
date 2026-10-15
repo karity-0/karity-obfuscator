@@ -41,6 +41,10 @@ def main():
         assert occurrence.cost.reads_before==5 and occurrence.cost.reads_after==2
         assert occurrence.cost.writes_before==4 and occurrence.cost.writes_after==1
         assert not build_plan(ir,lua_version=version).occurrences
+        disjoint=frontend('for i=1,3 do local a=i*3;local b=a+7;local c=i*5;local d=c+9;print(b,d) end',version)
+        assert not build_plan(disjoint,lua_version=version,enabled=True).occurrences,'independent pairs are not one connected DAG'
+        prefix=frontend('local sum=0;for i=1,3 do local unrelated=i;local a=i*3;local b=a+7;local c=b*5;sum=sum+c end;print(sum)',version)
+        assert build_plan(prefix,lua_version=version,enabled=True).occurrences,'unrelated move must not hide the connected suffix'
         assert build_plan(ir,lua_version=version,enabled=True,policy='efficiency',seed=19).dump()==plan.dump()
         for mode,expected in (('ordinary',(4000,5000,4000)),('fusion',(2000,5000,4000)),('synthesis',(1000,2000,1000))):
             actual,_=execute(emit_region_benchmark(ir,plan,occurrence,mode=mode,iterations=1000,instrument=True),version)

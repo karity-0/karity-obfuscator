@@ -7,7 +7,7 @@ includes loading and initialization. Ordinary timed builds omit the Profiler.
 from contextlib import ExitStack, contextmanager
 from pathlib import Path
 from unittest.mock import patch
-import argparse, importlib, json, random, statistics, subprocess, sys, time, types
+import argparse, json, random, statistics, subprocess, sys, time, types
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'tools')]
@@ -24,13 +24,23 @@ REF='d7ec9ca'
 def historical(enabled):
     if not enabled:
         yield;return
-    name='obfuscator.vm.synthesis.costs';module=importlib.import_module(name)
-    source=subprocess.run(['git','-c',f'safe.directory={ROOT.as_posix()}','show',
-        REF+':'+name.replace('.','/')+'.py'],capture_output=True,check=True).stdout.decode()
-    old=types.ModuleType(name);old.__package__=module.__package__;old.__file__=module.__file__
-    exec(compile(source,'<baseline-selection>','exec'),old.__dict__)
-    from obfuscator.vm.synthesis import planner
-    with patch.object(module,'choose_regions',old.choose_regions),patch.object(planner,'SCALAR',planner.NUMERIC):yield
+    from obfuscator.vm.synthesis import planner,lowering,costs
+    old={}
+    for short,current in (('planner',planner),('costs',costs)):
+        name=current.__name__
+        source=subprocess.run(['git','-c',f'safe.directory={ROOT.as_posix()}','show',
+            REF+':'+name.replace('.','/')+'.py'],capture_output=True,check=True).stdout.decode()
+        module=types.ModuleType(name);module.__package__=current.__package__;module.__file__=current.__file__
+        exec(compile(source,'<baseline-'+short+'>','exec'),module.__dict__);old[short]=module
+    # Restore discovery/proof too: strategy-owned sets no longer read a
+    # patched planner.SCALAR alias dynamically.
+    old['costs'].validate_plan=old['planner'].validate_plan
+    with ExitStack() as stack:
+        for module in (planner,lowering):
+            for name in ('build_plan','validate_plan'):
+                stack.enter_context(patch.object(module,name,getattr(old['planner'],name)))
+        stack.enter_context(patch.object(costs,'choose_regions',old['costs'].choose_regions))
+        yield
 
 
 def compact_vm_profile(rows):

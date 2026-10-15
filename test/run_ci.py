@@ -16,6 +16,7 @@ REGRESSIONS = (
     "ir_options",
     "opcode_synthesis",
     "opcode_synthesis_backend",
+    "synthesis_dag",
     "selection",
     "strip_info",
     "minify",

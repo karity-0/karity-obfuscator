@@ -1,13 +1,11 @@
-"""Bounded numeric DAG discovery with explicit proof and event obligations."""
+"""Bounded ordered DAG discovery with explicit proof and event obligations."""
 from collections import Counter
 from dataclasses import replace
 import hashlib
 from .model import Ref, Step, Binding, Recipe, Occurrence, Cost, SynthesisPlan
 from ..ir.facts import analyze_function
 
-NUMERIC=frozenset(('ADD','SUB','MUL','NEGATE'))
-INTEGER_BITS=frozenset(('BIT_AND','BIT_OR','BIT_XOR','BIT_NOT','SHIFT_LEFT','SHIFT_RIGHT'))
-SCALAR=NUMERIC|INTEGER_BITS
+from .strategies import NUMERIC, INTEGER_BITS, SCALAR, SUPPORTED, rejection, ordered, materialized
 POLICIES=('efficiency','balanced','protection')
 
 
@@ -32,11 +30,12 @@ def backend_work(occurrence,backend):
 
 
 def _signature(recipe):
-    return hashlib.sha256(repr((recipe.domain,recipe.input_kinds,recipe.steps,
-                                recipe.outputs,recipe.edges)).encode()).hexdigest()[:24]
+    shape=(recipe.domain,recipe.input_kinds,recipe.steps,recipe.outputs,recipe.edges)
+    if recipe.ordered:shape+=('ordered',)
+    return hashlib.sha256(repr(shape).encode()).hexdigest()[:24]
 
 
-def _region(function,block,instructions,facts,version,materialize=False):
+def _region(function,block,instructions,facts,version,materialize=False,backend='prototype'):
     """Convert register aliases to ordered value versions, never reassociate."""
     bindings=[];input_indices={};values={};last_write={};steps=[];edges=[];reads=0
     for index,ins in enumerate(instructions):
@@ -53,19 +52,36 @@ def _region(function,block,instructions,facts,version,materialize=False):
             else:edges.append((reference.index,index))
             args.append(reference)
         steps.append(Step(ins.operation,tuple(args)))
+        if facts.effects[ins.id].may_call:
+            # A metamethod can write an owner's captured locals. Later reads
+            # are fresh observations, never edges to a stale value version.
+            for name in facts.liveness.captured_before[ins.id]:
+                reg=int(name.rsplit(':r',1)[1]);values.pop(reg,None);last_write.pop(reg,None)
+                input_indices.pop(('register',reg),None)
+            input_indices={key:value for key,value in input_indices.items() if key[0]!='upvalue'}
         dst=next(v.value for v in ins.operands if v.role=='destination')
         values[dst]=Ref('temporary',index);last_write[dst]=index
     # A dataflow-connected multi-operation region differs from concatenation.
     connected={x for edge in edges for x in edge}
     if len(steps)<3 or len(connected)!=len(steps):return None,'no_connected_dag'
+    reachable={0};pending=[0];neighbors={n:set() for n in connected}
+    for a,b in edges:neighbors[a].add(b);neighbors[b].add(a)
+    while pending:
+        for n in neighbors[pending.pop()]-reachable:reachable.add(n);pending.append(n)
+    if len(reachable)!=len(steps):return None,'disconnected_dags'
     live=facts.liveness.after[instructions[-1].id]
     output_pairs=sorted((index,r) for r,index in last_write.items()
                         if f'{function.id}:r{r}' in live)
     if not output_pairs:return None,'no_live_output'
     recipe=Recipe('',version,tuple(v.kind for v in bindings),tuple(steps),
-                  tuple(i for i,r in output_pairs),tuple(edges))
+                  tuple(i for i,r in output_pairs),tuple(edges),ordered(instructions,facts))
     recipe=replace(recipe,id='recipe:'+_signature(recipe))
     output_regs=tuple(r for i,r in output_pairs)
+    # Karity keeps every encoded commit. Only proven scalar producers can
+    # lend raw intermediate values, guarded by the shared epoch/map state.
+    local_values=tuple(n for n,i in enumerate(instructions) if backend=='karity' and not ordered(instructions,facts)
+        and i.operation in SCALAR and facts.effects[i.id].pure
+        and any(a==n for a,b in edges))
     component=facts.components[block.id]
     hot=facts.component_sizes[component]>1 or block.id in block.successors
     cost=Cost(len(steps),(len(steps)+1)//2,1,reads,
@@ -74,9 +90,9 @@ def _region(function,block,instructions,facts,version,materialize=False):
               3*len(bindings)+2*len(output_regs),hot,len(steps),6*len(steps))
     occurrence=Occurrence(function.id,block.id,tuple(i.id for i in instructions),
                           recipe.id,tuple(bindings),output_regs,cost,'shared',materialize,
-                          'integer' if version=='5.3' and all(
+                          'ordered' if ordered(instructions,facts) else 'integer' if version=='5.3' and all(
                               facts.operand(ins,v.role).kind=='integer'
-                              for ins in instructions for v in ins.operands if v.role!='destination') else 'number')
+                              for ins in instructions for v in ins.operands if v.role!='destination') else 'number',local_values)
     return (recipe,occurrence),None
 
 
@@ -92,9 +108,9 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
     if not enabled:return SynthesisPlan(ir.generation,lua_version,(),(),())
     rejected=Counter();candidates=[];analyses={} if analysis_cache is None else analysis_cache
     for function in ir.functions():
-        if not any(i.operation in SCALAR for b in function.blocks for i in b.instructions):continue
+        if not any(i.operation in SUPPORTED for b in function.blocks for i in b.instructions):continue
         facts=_facts(function,lua_version,analyses,liveness_cache)
-        if facts.liveness.open_extents:
+        if facts.liveness.open_extents and backend=='prototype':
             rejected['open_register_top']+=1;continue
         # The prototype cannot replay private production dispatch/epoch events.
         # Refuse planned regions rather than drop arbitrary protection fields.
@@ -104,27 +120,25 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
             run=[]
             def flush():
                 if len(run)<3:return
-                materialize=backend=='karity' or any(i.metadata.get('protection_origin') for i in run)
-                found,reason=_region(function,block,run,facts,lua_version,materialize)
-                if found:candidates.append(found)
-                else:rejected[reason]+=1
+                start=0;failure=None
+                # Bounded contiguous windows can retain a useful DAG beside
+                # an unrelated move/read without moving any effectful step.
+                while start+3<=len(run):
+                    for end in range(len(run),start+2,-1):
+                        window=run[start:end]
+                        materialize=materialized(window,facts,backend)
+                        found,reason=_region(function,block,window,facts,lua_version,materialize,backend)
+                        if found:
+                            candidates.append(found);start=end;break
+                        failure=reason
+                    else:
+                        start+=1;continue
+                if failure:rejected[failure]+=1
             for ins in block.instructions:
-                reason=None
-                if ins.operation not in SCALAR:reason='non_scalar_boundary'
-                elif ins.metadata.get('protection_origin') and backend=='prototype':reason='protection_origin'
-                elif ins.id not in facts.effects:reason='unreachable'
-                elif facts.effects[ins.id].boundaries:reason='lifetime_or_effect_boundary'
-                elif facts.liveness.captured_before[ins.id]:reason='active_capture'
-                elif not facts.effects[ins.id].pure:reason='unknown_or_metamethod'
-                elif ins.operation in INTEGER_BITS and (lua_version!='5.3' or any(
-                         facts.operand(ins,v.role).kind!='integer' for v in ins.operands if v.role!='destination')):
-                    reason='unproven_integer_bit_operation'
-                elif any(facts.operand(ins,v.role).kind not in ('integer','float','number')
-                         for v in ins.operands if v.role!='destination'):
-                    reason='unproven_numeric'
+                reason=rejection(ins,facts,lua_version,backend)
                 if reason:
                     flush();run=[]
-                    if ins.operation in SCALAR:rejected[reason]+=1
+                    if ins.operation in SUPPORTED:rejected[reason]+=1
                     continue
                 run.append(ins)
                 if len(run)==max_steps:flush();run=[]
@@ -189,14 +203,10 @@ def validate_plan(ir,plan,*,lua_version=None,protection_plan=None,analysis_cache
         consumed.update(occurrence.source_ids)
         facts=_facts(function,plan.version,analyses)
         original=tuple(block.instructions[n] for n in indices)
-        if any(i.operation not in SCALAR or i.metadata.get('protection_origin') and plan.backend=='prototype'
-               or i.id not in facts.effects or not facts.effects[i.id].pure
-               or facts.effects[i.id].boundaries or facts.liveness.captured_before[i.id]
-               for i in original) or facts.liveness.open_extents:
+        if any(rejection(i,facts,plan.version,plan.backend) for i in original):
             raise ValueError('unsafe synthesis region')
-        materialize=plan.backend=='karity' or any(i.metadata.get('protection_origin') for i in original)
-        if plan.backend=='prototype':materialize=False
-        expected,reason=_region(function,block,original,facts,plan.version,materialize)
+        materialize=materialized(original,facts,plan.backend)
+        expected,reason=_region(function,block,original,facts,plan.version,materialize,plan.backend)
         if expected is None:raise ValueError('invalid synthesis DAG: '+reason)
         expected_recipe,expected_occurrence=expected
         actual=recipes.get(occurrence.recipe)

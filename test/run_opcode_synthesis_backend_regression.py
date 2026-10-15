@@ -54,7 +54,8 @@ def vocabulary_checks(backends,versions):
                 'local a=1.5;local ok=pcall(function()local b=a~3;local c=b&7;local d=c|16;return d end);print(ok)',
             ):
                 output,data,p=build(source,backend,version,{**BASE,'opcode_synthesis':True})
-                assert not data['regions'],(backend,source)
+                plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                assert all(o.numeric_domain!='integer' and o.materialize for o in plan.occurrences),(backend,source)
                 assert execute(output,version)[0]==execute(source,version)[0],(backend,source)
                 count+=1
             if backend=='karity':
@@ -256,7 +257,8 @@ def main():
                         assert data['regions']>0 and data['handlers']>0,(backend,version,name,data)
                     if name=='shared' and policy=='efficiency' and not data['regions']:
                         assert dict(p.last_lowered_ir.backend_data['synthesis_plan'].rejected).get('measured_kernel_work'),data
-                    if name=='semantics':assert not data['regions']
+                    if name=='semantics' and data['regions']:
+                        assert any(r.ordered for r in p.last_lowered_ir.backend_data['synthesis_plan'].recipes)
                     if name=='multivm':
                         assert data['regions']==2 and data['handlers']>=2
                         assert p.last_lowered_ir.backend_data['layout'].vm_count==3

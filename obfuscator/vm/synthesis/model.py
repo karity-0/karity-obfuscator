@@ -29,6 +29,7 @@ class Recipe:
     steps: tuple[Step, ...]
     outputs: tuple[int, ...]
     edges: tuple[tuple[int, int], ...]
+    ordered: bool = False
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class Occurrence:
     scope: str
     materialize: bool = False
     numeric_domain: str = 'number'
+    local_values: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
