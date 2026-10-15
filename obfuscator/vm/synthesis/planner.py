@@ -5,7 +5,7 @@ import hashlib
 from .model import Ref, Step, Binding, Recipe, Occurrence, Cost, SynthesisPlan
 from ..ir.facts import analyze_function
 
-from .strategies import NUMERIC, INTEGER_BITS, SCALAR, SUPPORTED, rejection, ordered, materialized
+from .strategies import NUMERIC, INTEGER_BITS, SCALAR, SUPPORTED, TERMINAL, inputs, rejection, ordered, materialized, linear_chains
 POLICIES=('efficiency','balanced','protection')
 
 
@@ -38,10 +38,11 @@ def _signature(recipe):
 def _region(function,block,instructions,facts,version,materialize=False,backend='prototype'):
     """Convert register aliases to ordered value versions, never reassociate."""
     bindings=[];input_indices={};values={};last_write={};steps=[];edges=[];reads=0
+    if any(i.operation in TERMINAL for i in instructions[:-1]):
+        return None,'nonterminal_control_or_call'
     for index,ins in enumerate(instructions):
         args=[]
-        for operand in ins.operands:
-            if operand.role=='destination':continue
+        for operand in inputs(ins):
             if operand.kind=='register':reads+=1
             reference=values.get(operand.value) if operand.kind=='register' else None
             if reference is None:
@@ -59,8 +60,15 @@ def _region(function,block,instructions,facts,version,materialize=False,backend=
                 reg=int(name.rsplit(':r',1)[1]);values.pop(reg,None);last_write.pop(reg,None)
                 input_indices.pop(('register',reg),None)
             input_indices={key:value for key,value in input_indices.items() if key[0]!='upvalue'}
-        dst=next(v.value for v in ins.operands if v.role=='destination')
-        values[dst]=Ref('temporary',index);last_write[dst]=index
+        if ins.operation not in TERMINAL:
+            dst=next(v.value for v in ins.operands if v.role=='destination')
+            values[dst]=Ref('temporary',index);last_write[dst]=index
+        else:
+            # Calls can overwrite several registers (or runtime top). Their
+            # results never become local SSA temporaries in a terminal recipe.
+            for name in ins.outputs:
+                if name.startswith(function.id+':r'):
+                    last_write.pop(int(name.rsplit(':r',1)[1]),None)
     # A dataflow-connected multi-operation region differs from concatenation.
     connected={x for edge in edges for x in edge}
     if len(steps)<3 or len(connected)!=len(steps):return None,'no_connected_dag'
@@ -72,7 +80,7 @@ def _region(function,block,instructions,facts,version,materialize=False,backend=
     live=facts.liveness.after[instructions[-1].id]
     output_pairs=sorted((index,r) for r,index in last_write.items()
                         if f'{function.id}:r{r}' in live)
-    if not output_pairs:return None,'no_live_output'
+    if not output_pairs and instructions[-1].operation not in TERMINAL:return None,'no_live_output'
     recipe=Recipe('',version,tuple(v.kind for v in bindings),tuple(steps),
                   tuple(i for i,r in output_pairs),tuple(edges),ordered(instructions,facts))
     recipe=replace(recipe,id='recipe:'+_signature(recipe))
@@ -82,18 +90,36 @@ def _region(function,block,instructions,facts,version,materialize=False,backend=
     local_values=tuple(n for n,i in enumerate(instructions) if backend=='karity' and not ordered(instructions,facts)
         and i.operation in SCALAR and facts.effects[i.id].pure
         and any(a==n for a,b in edges))
-    component=facts.components[block.id]
-    hot=facts.component_sizes[component]>1 or block.id in block.successors
+    block_ids={facts.locations[i.id][0] for i in instructions}
+    hot=any(facts.component_sizes[facts.components[b]]>1 or
+            b in function.blocks[facts.block_indices[b]].successors for b in block_ids)
+    writes=sum(len(i.outputs) for i in instructions)
     cost=Cost(len(steps),(len(steps)+1)//2,1,reads,
-              reads if materialize else sum(v.kind=='register' for v in bindings),len(steps),len(steps) if materialize else len(output_regs),
+              reads if materialize else sum(v.kind=='register' for v in bindings),writes,writes if materialize else len(output_regs),
               # Conservative prototype estimate: tag + up to two uint bytes.
               3*len(bindings)+2*len(output_regs),hot,len(steps),6*len(steps))
-    occurrence=Occurrence(function.id,block.id,tuple(i.id for i in instructions),
+    occurrence=Occurrence(function.id,facts.locations[instructions[0].id][0],tuple(i.id for i in instructions),
                           recipe.id,tuple(bindings),output_regs,cost,'shared',materialize,
                           'ordered' if ordered(instructions,facts) else 'integer' if version=='5.3' and all(
                               facts.operand(ins,v.role).kind=='integer'
                               for ins in instructions for v in ins.operands if v.role!='destination') else 'number',local_values)
     return (recipe,occurrence),None
+
+
+def discover_windows(function,block,run,facts,version,backend):
+    """Bounded contiguous discovery, also used when a larger candidate falls back."""
+    found=[];start=0;failure=None
+    while start+3<=len(run):
+        for end in range(len(run),start+2,-1):
+            window=run[start:end]
+            item,reason=_region(function,block,window,facts,version,
+                                materialized(window,facts,backend),backend)
+            if item:
+                found.append(item);start=end;break
+            failure=reason
+        else:
+            start+=1
+    return found,failure
 
 
 def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max_steps=8,
@@ -116,37 +142,30 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
         # Refuse planned regions rather than drop arbitrary protection fields.
         if protection_plan is not None and backend=='prototype':
             rejected['production_event_lowering_not_implemented']+=1;continue
-        for block in function.blocks:
+        for chain in linear_chains(function,facts,backend):
+            block=chain[0]
             run=[]
             def flush():
-                if len(run)<3:return
-                start=0;failure=None
                 # Bounded contiguous windows can retain a useful DAG beside
                 # an unrelated move/read without moving any effectful step.
-                while start+3<=len(run):
-                    for end in range(len(run),start+2,-1):
-                        window=run[start:end]
-                        materialize=materialized(window,facts,backend)
-                        found,reason=_region(function,block,window,facts,lua_version,materialize,backend)
-                        if found:
-                            candidates.append(found);start=end;break
-                        failure=reason
-                    else:
-                        start+=1;continue
+                found,failure=discover_windows(function,block,run,facts,lua_version,backend)
+                candidates.extend(found)
                 if failure:rejected[failure]+=1
-            for ins in block.instructions:
+            for ins in (i for b in chain for i in b.instructions):
                 reason=rejection(ins,facts,lua_version,backend)
                 if reason:
                     flush();run=[]
                     if ins.operation in SUPPORTED:rejected[reason]+=1
                     continue
                 run.append(ins)
-                if len(run)==max_steps:flush();run=[]
+                if len(run)==max_steps or ins.operation in TERMINAL:flush();run=[]
             flush()
     definitions={};occurrences=[]
     repetitions=Counter(recipe.id for recipe,_ in candidates)
     regional_count=0
-    if policy=='efficiency' and backend!='prototype':
+    if backend!='prototype':
+        # A newly supported cold call/branch must not consume a small recipe
+        # budget before recurring loop DAGs in child functions are considered.
         candidates.sort(key=lambda item:(item[1].cost.loop_region,repetitions[item[0].id],backend_work(item[1],backend)['net_work_estimate']),reverse=True)
     for recipe,occurrence in candidates:
         # No claimed nanosecond speedup: retain structural dispatch/access
@@ -190,19 +209,27 @@ def validate_plan(ir,plan,*,lua_version=None,protection_plan=None,analysis_cache
     if len(plan.recipes)>256 or len(plan.occurrences)>4096:raise ValueError('synthesis plan exceeds bounds')
     if len(recipes)!=len(plan.recipes):raise ValueError('duplicate recipe ID')
     consumed=set();used=set();analyses={} if analysis_cache is None else analysis_cache
+    chain_positions={}
     for occurrence in plan.occurrences:
         function=functions.get(occurrence.function)
         if function is None:raise ValueError('unknown synthesis function')
         block=next((b for b in function.blocks if b.id==occurrence.block),None)
         if block is None:raise ValueError('unknown synthesis block')
-        positions={i.id:n for n,i in enumerate(block.instructions)}
+        facts=_facts(function,plan.version,analyses)
+        if function.id not in chain_positions:
+            records={}
+            for chain in linear_chains(function,facts,plan.backend):
+                instructions=tuple(i for b in chain for i in b.instructions)
+                positions={i.id:n for n,i in enumerate(instructions)}
+                records.update((b.id,(instructions,positions)) for b in chain)
+            chain_positions[function.id]=records
+        instructions,positions=chain_positions[function.id][block.id]
         indices=[positions.get(i,-1) for i in occurrence.source_ids]
         if not 3<=len(indices)<=16 or any(i<0 for i in indices) or indices!=list(range(indices[0],indices[0]+len(indices))):
             raise ValueError('non-contiguous or reordered synthesis region')
         if consumed.intersection(occurrence.source_ids):raise ValueError('overlapping synthesis regions')
         consumed.update(occurrence.source_ids)
-        facts=_facts(function,plan.version,analyses)
-        original=tuple(block.instructions[n] for n in indices)
+        original=tuple(instructions[n] for n in indices)
         if any(rejection(i,facts,plan.version,plan.backend) for i in original):
             raise ValueError('unsafe synthesis region')
         materialize=materialized(original,facts,plan.backend)

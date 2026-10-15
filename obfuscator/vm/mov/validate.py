@@ -118,11 +118,12 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
         raise ValueError("MOV entry count differs from physical host slots")
 
     from ..synthesis.planner import SCALAR
+    from ..synthesis.mov_lowering import scope_end
     expected_headers={};integer_steps=set()
     for region in synthesis:
         start=region.start+1;end=start+len(region.occurrence.source_ids)
         expected_headers.setdefault(start,[]).append((Host.SYNTH_BEGIN,start))
-        expected_headers.setdefault(end,[]).insert(0,(Host.SYNTH_END,0))
+        expected_headers.setdefault(scope_end(region),[]).insert(0,(Host.SYNTH_END,0))
         if region.occurrence.numeric_domain=='integer':integer_steps.update(range(start,end))
     observed=set()
     for ip,address in enumerate(program.entries,1):

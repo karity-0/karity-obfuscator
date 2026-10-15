@@ -3,6 +3,13 @@ from ..mov.ir import Host,Op,Instruction,Program
 
 INTEGER_PROOF='local node=_syn_nodes[ip-_syn_start+1]\nassert(node and op==node[3],"invalid integer DAG binding")'
 
+
+def scope_end(entry):
+    from .strategies import TERMINAL
+    # Branches can skip the next entry, and a call can leave this executor.
+    # Materialized terminal recipes must release their scope before either.
+    return entry.start+1+len(entry.recipe.steps)-(entry.recipe.steps[-1].operation in TERMINAL)
+
 def scope_cost(source,compile_body):
     """Mandatory scope work, separate from shared definitions/microcode size."""
     start='elseif kind==__MOV_HOST__ and q[2]==10 then'
@@ -36,7 +43,7 @@ def lower_regions(program,function):
     for e in function.synthesis:
         start=e.start+1;end=start+len(e.occurrence.source_ids)
         prefixes.setdefault(program.entries[start-1],[]).append(Instruction(Op.HOST,Host.SYNTH_BEGIN,start))
-        prefixes.setdefault(program.entries[end-1],[]).insert(0,Instruction(Op.HOST,Host.SYNTH_END))
+        prefixes.setdefault(program.entries[scope_end(e)-1],[]).insert(0,Instruction(Op.HOST,Host.SYNTH_END))
         if e.occurrence.numeric_domain=='integer':
             for ip in range(start,end):
                 address=program.entries[ip-1];prepare=program.code[address-1]

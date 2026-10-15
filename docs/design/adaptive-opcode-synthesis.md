@@ -9,12 +9,13 @@ The runtime/storage follow-up is measured against `a1ab669` in
 [numeric DAG measurements](../performance/synthesis-storage.md). This first
 implementation began with a conservative numeric DAG vocabulary. The ordered
 DAG follow-up adds table/upvalue reads, moves and further scalar operations;
-direct VM calls and control operations are still region boundaries.
+the next extension admits terminal VM calls/comparisons and proven linear block chains.
 The expanded integer-bit vocabulary and revised admission model are compared in
 [cost selection measurements](../performance/synthesis-cost-selection.md) and
 [full user-preset pipeline measurements](../performance/synthesis-pipeline.md).
 The ordered-DAG follow-up is measured separately in
 [ordered DAG measurements](../performance/synthesis-dag.md).
+Terminal-call/branch measurements are in [control measurements](../performance/synthesis-control.md).
 
 ## Common contract
 
@@ -43,17 +44,39 @@ original write retained. They do not cache operands across a possible user call.
 May-call steps invalidate captured value versions and upvalue input observations
 in the DAG itself, so later reads are not represented as stale dependency edges.
 
-Candidates stay within one basic block and retain their exact contiguous source
-order. Bounded subwindows can find a useful DAG beside an unrelated read/move;
-no instruction is moved across an effect. VM CALL/TAIL_CALL/RETURN, closure
-creation, vararg/top instructions and close/control boundaries still fall back.
+Candidates retain their exact contiguous source order. Adjacent blocks may share
+a region only across a single-successor fallthrough whose destination has exactly
+one predecessor. Joins, back edges, explicit jumps and speculative branch paths
+are not traversed. Bounded subwindows can find a useful DAG beside an unrelated
+read/move; no instruction is moved across an effect.
+
+CALL, TEST, EQUAL, LESS_THAN and LESS_EQUAL may be the last step of a connected
+recipe. Their actual planned alias handlers execute with every original write
+and protection event retained. CALL accepts fixed argument ranges, including
+zero arguments; fixed/open result ranges keep the original runtime-top and nil
+semantics. Open argument ranges still fall back rather than inferring top from
+the static frame. There are no following recipe steps to lose across a VM call's
+executor exit/resume. Private closure-bank dispatch propagates the original call
+transition packet. MOV releases its materialized scope before the terminal call
+or branch; its validator verifies this cleanup boundary. No terminal region borrows
+raw temporaries. If grouping a terminal would remove selected ordinary block
+variants, admission keeps the original transformations and records
+`terminal_block_variants`; it does not reduce those execution paths silently.
+The shared window discovery recovers eligible prefix DAGs before cost selection,
+so rejecting a larger terminal candidate does not discard its useful smaller
+regions. Recovered candidates retain the normal recipe/occurrence/compiler budgets.
+All production policies prioritize hot/repeated DAGs before cold single-use
+terminal candidates when assigning a limited recipe budget.
+
+TAIL_CALL/RETURN, closure creation, vararg instructions, internal calls/branches,
+and upvalue-close boundaries still fall back.
 Active captures no longer reject an entire numeric run: captured destination
 writes are materialized, while unrelated captures do not prevent local execution.
 Functions with open top ranges retain every candidate write; the top-changing
-instructions themselves cannot enter a region.
+instructions themselves remain boundaries except for the terminal CALL contract.
 Lua 5.1 floating-number facts and Lua 5.3 integer/float facts remain distinct.
 Provenance-marked calculations are eligible only with all original writes kept.
-Comparisons and control operations retain ordinary lowering. Strategy selection
+Terminal comparisons retain their ordinary handler/control semantics. Strategy selection
 uses the same facts/def-use/liveness analysis, not independent backend analyzers.
 
 ## Actual physical representation
@@ -331,6 +354,16 @@ multiple-return tails, false/nil indexing, further arithmetic, table/upvalue
 reads, metamethod ordering/errors and Lua 5.3 metamethod yield/resume. Both raw
 temporary forms receive independent execution tests, stale epoch/mapping/pending
 guards are exercised, and actual Karity reads decrease while write counts and
-logical route/state traces are preserved. Direct VM calls, top/control changes,
-cross-block candidates and arbitrary instruction motion remain outside the
-supported recipe vocabulary. The original broad roadmap is not claimed complete.
+logical route/state traces are preserved.
+
+`run_synthesis_control_regression.py` covers terminal VM/native calls, fixed/open
+results, trailing nil/false, captured owner writes, errors, coroutine resume,
+comparison metamethod order, all supported conditional predicates, and forced
+closure banks. It checks single-entry three-block fallthrough chains, rejects
+extra entries and open call arguments, verifies clone-preserving fallback, and
+compares actual Karity logical route/state traces. Both Lua targets and all three
+backends execute these cases. Diagnostics count terminal calls, terminal branches
+and multi-block candidates separately. Calls/branches in the middle of recipes,
+diamonds/loops spanning multiple paths, explicit-jump chains and arbitrary
+instruction motion remain outside the supported vocabulary. The original broad
+roadmap is not claimed complete.

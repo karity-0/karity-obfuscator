@@ -29,8 +29,14 @@ def plan_synthesis(lowered,context):
         analysis_cache=lowered.backend_data.setdefault('synthesis_analysis',{}),liveness_cache=lowered.backend_data['liveness'])
     lowered.backend_data['synthesis_plan']=plan
     lowered.backend_data['synthesis_handler_budget']=int(context.options.get('synthesis_max_recipes',32))
+    recipes={r.id:r for r in plan.recipes}
+    blocks={i.id:b.id for f in lowered.semantic_ir.functions() for b in f.blocks for i in b.instructions}
+    from .strategies import TERMINAL
     context.profile.append({'phase':'opcode_synthesis','elapsed':time.perf_counter()-started,
         'recipes':len(plan.recipes),'regions':len(plan.occurrences),'rejected':dict(plan.rejected),
+        'terminal_call_regions':sum(recipes[o.recipe].steps[-1].operation=='CALL' for o in plan.occurrences),
+        'terminal_branch_regions':sum(recipes[o.recipe].steps[-1].operation in TERMINAL-{'CALL'} for o in plan.occurrences),
+        'multi_block_regions':sum(len({blocks[s] for s in o.source_ids})>1 for o in plan.occurrences),
         'policy':context.options.get('synthesis_policy','balanced'),
         'dispatch_saved_static':sum(o.cost.dispatch_before-o.cost.dispatch_after for o in plan.occurrences),
         'saved_vs_pair_fusion_estimate':sum(o.cost.fusion_dispatch_estimate-o.cost.dispatch_after for o in plan.occurrences),

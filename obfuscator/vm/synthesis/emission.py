@@ -163,7 +163,10 @@ def inject_handlers(source,lowered,variant,vm_index):
         anchor='--[[VM_DISPATCH_ENTRY]]'
         if anchor not in source:raise ValueError('synthesis closure bank boundary missing')
         source=source.replace(anchor,definitions+anchor,1)
-        blocks={opcode:f'\n_SYN_HANDLERS[{opcode}](op,A,B,C,Bx,sBx,_av)\n' for opcode in blocks}
+        blocks={opcode:(f'\nlocal _syn_exit=_SYN_HANDLERS[{opcode}](op,A,B,C,Bx,sBx,_av)\n'
+                        'if _syn_exit~=nil then return _syn_exit end\n'
+                        if entries[opcode].recipe.steps[-1].operation=='CALL' else
+                        f'\n_SYN_HANDLERS[{opcode}](op,A,B,C,Bx,sBx,_av)\n') for opcode in blocks}
     lowered.backend_data.setdefault('synthesis_emission',{})[vm_index]={
         'vm':vm_index,'handlers':len(blocks),'handler_bytes':kernel_bytes,'closure_bank_bytes':bank_bytes,
         'dispatch_stub_bytes':sum(len(body.encode()) for body in blocks.values()) if bank else 0,

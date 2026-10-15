@@ -133,7 +133,7 @@ def main():
                     assert execute(output,version)[0]==execute(source,version)[0],(backend,version,name,protected)
                     assert data['regions'] and data['handlers'],(backend,version,name,protected,data['rejected'])
                     plan=p.last_lowered_ir.backend_data['synthesis_plan']
-                    assert all(s.operation not in ('CALL','TAIL_CALL','RETURN','CLOSURE','VARARG')
+                    assert all(s.operation not in ('TAIL_CALL','RETURN','CLOSURE','VARARG')
                                for r in plan.recipes for s in r.steps)
                     if name=='mixed_proofs':
                         assert {r.ordered for r in plan.recipes}=={False,True},(backend,version,protected)

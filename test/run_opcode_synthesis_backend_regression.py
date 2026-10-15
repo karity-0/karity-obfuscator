@@ -44,7 +44,11 @@ def vocabulary_checks(backends,versions):
                     assert data['regions'] and data['handlers'],(backend,source,protected)
                     assert execute(output,version)[0]==execute(source,version)[0],(backend,source,protected)
                     plan=p.last_lowered_ir.backend_data['synthesis_plan']
-                    assert all(o.numeric_domain=='integer' for o in plan.occurrences)
+                    recipes={r.id:r for r in plan.recipes}
+                    from obfuscator.vm.synthesis.strategies import TERMINAL
+                    numeric=[o for o in plan.occurrences if recipes[o.recipe].steps[-1].operation not in TERMINAL]
+                    assert numeric and all(o.numeric_domain=='integer' for o in numeric)
+                    assert all(o.materialize and o.numeric_domain=='ordered' for o in plan.occurrences if o not in numeric)
                     count+=1
             # Valid Lua can coerce integral floats or invoke bit metamethods.
             # Neither is an integer proof suitable for direct MOV continuations.
@@ -149,7 +153,9 @@ def storage_checks(backends,versions):
             if backend=='mov':continue
             # An ordinary numeric site outside the region must retain all its
             # planned aliases, even when that operation is also synthesized.
-            source='local n=tonumber("3");'+SOURCE+';print(n*2)'
+            # The terminal CALL strategy can now absorb print(n*2). Keep this
+            # MUL in a separate two-step block to test actual ordinary dispatch.
+            source='local n=tonumber("3");'+SOURCE+';local value=n*2;if value then print(value)end'
             output,data,p=build(source,backend,version,{**BASE,'opcode_synthesis':True})
             assert data['handlers'] and execute(output,version)[0]==execute(source,version)[0]
             from obfuscator.vm.backends.handler_ir import OPERATION_IDS
@@ -260,7 +266,9 @@ def main():
                     if name=='semantics' and data['regions']:
                         assert any(r.ordered for r in p.last_lowered_ir.backend_data['synthesis_plan'].recipes)
                     if name=='multivm':
-                        assert data['regions']==2 and data['handlers']>=2
+                        plan=p.last_lowered_ir.backend_data['synthesis_plan'];recipes={r.id:r for r in plan.recipes}
+                        assert sum(not recipes[o.recipe].ordered for o in plan.occurrences)==2
+                        assert data['regions']>=2 and data['handlers']>=2
                         assert p.last_lowered_ir.backend_data['layout'].vm_count==3
                     if name=='dag':
                         plan=p.last_lowered_ir.backend_data['synthesis_plan']

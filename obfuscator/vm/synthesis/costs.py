@@ -46,6 +46,51 @@ def compile_entry(entry,lowered,variant,source,vm_maps):
         'max_jump':max(r['max_jump'] for r in report['functions']),'stack':max(r['stack'] for r in report['functions'])}
 
 
+def preserve_terminal_variants(lowered,plan,targets,functions,indexes,options):
+    """Retain prefix DAGs when a terminal would swallow selected block clones."""
+    if options.get('block_variant_rate',0)<=0:return plan
+    from .strategies import TERMINAL
+    from .planner import _facts,discover_windows
+    from ..backends.handler_layout import _block_chunks
+    semantic={f.id:f for f in lowered.semantic_ir.functions()}
+    recipes={r.id:r for r in plan.recipes};chunks={};candidates=[]
+    rejected=Counter(dict(plan.rejected));decisions=list(plan.decisions)
+    for o in plan.occurrences:
+        if recipes[o.recipe].steps[-1].operation not in TERMINAL:
+            candidates.append((recipes[o.recipe],o));continue
+        fn=functions[o.function];state=targets[id(fn)];owned={indexes[fn.id][s] for s in o.source_ids}
+        if fn.id not in chunks:
+            chunks[fn.id]=_block_chunks(fn.code,int(options.get('block_variant_max_instructions',6)))
+        if not any(eligible and state['block_variants'].get(a,False) and owned.intersection(range(a,b))
+                   for a,b,eligible in chunks[fn.id]):
+            candidates.append((recipes[o.recipe],o));continue
+        function=semantic[o.function]
+        facts=_facts(function,plan.version,lowered.backend_data['synthesis_analysis'])
+        run=[facts.producers[s] for s in o.source_ids[:-1]]
+        block=function.blocks[facts.block_indices[o.block]]
+        prefixes,_=discover_windows(function,block,run,facts,plan.version,plan.backend)
+        for recipe,prefix in prefixes:
+            if o.scope=='regional':
+                recipe=replace(recipe,id=recipe.id+':region:'+prefix.source_ids[0])
+                prefix=replace(prefix,recipe=recipe.id,scope='regional')
+            candidates.append((recipe,prefix))
+        rejected['terminal_block_variants']+=1
+        decisions.append({'sources':o.source_ids,'vm':state['vm_assignment'],
+            'fallback':'terminal_block_variants','recovered_prefix_candidates':len(prefixes)})
+    definitions={};occurrences=[]
+    for recipe,o in candidates:
+        if (recipe.id not in definitions and len(definitions)>=int(options.get('synthesis_max_recipes',32))
+                or len(occurrences)>=int(options.get('synthesis_max_occurrences',512))):
+            rejected['terminal_prefix_budget']+=1
+            decisions.append({'sources':o.source_ids,'fallback':'terminal_prefix_budget'});continue
+        definitions[recipe.id]=recipe;occurrences.append(o)
+    result=replace(plan,recipes=tuple(definitions.values()),occurrences=tuple(occurrences),
+                   rejected=tuple(sorted(rejected.items())),decisions=tuple(decisions))
+    validate_plan(lowered.semantic_ir,result,protection_plan=lowered.protection_plan,
+                  analysis_cache=lowered.backend_data['synthesis_analysis'])
+    return result
+
+
 def choose_regions(lowered,targets,vm_maps,context):
     """Measure both execution forms and admit within per-VM code/compiler budgets.
 
@@ -83,13 +128,14 @@ pay for distinct forms even without a performance saving. Efficiency never does.
         indexes_by_function[fn.id]={ins.source_id:n for n,ins in enumerate(fn.code) if not ins.linker_owned}
         for child in fn.protos:visit(child)
     visit(lowered.program)
+    plan=preserve_terminal_variants(lowered,plan,targets,fn_by_id,indexes_by_function,context.options)
     helper_costs={}
     if lowered.backend=='classic':
         for name in ('RGET','RSET'):
             body=source.split('--<<'+name+'>>',1)[1].split('--<<END'+name+'>>',1)[0]
             report=measure(body,version=plan.version,minimum_paths=True)
             helper_costs[name.lower()]=report['functions'][1]['minimum_path_instructions']
-    definitions={};occurrences=[];decisions=[];rejected=Counter(dict(plan.rejected))
+    definitions={};occurrences=[];decisions=list(plan.decisions);rejected=Counter(dict(plan.rejected))
     spent=Counter();compiler_spent=Counter();measured={};forms={};repeats=Counter(o.recipe for o in plan.occurrences)
     reservations={};reservation_owner={}
     mov_runtime_costs={};mov_shared_reserved=Counter()
@@ -100,9 +146,10 @@ pay for distinct forms even without a performance saving. Efficiency never does.
         if body not in probe_cache:probe_cache[body]=compiled(body,plan.version)
         return probe_cache[body]
     frames={};frame_keys={}
+    semantic_functions={f.id:f for f in lowered.semantic_ir.functions()}
+    semantic_instructions={i.id:i for f in semantic_functions.values() for b in f.blocks for i in b.instructions}
     if lowered.backend!='mov':
         from .planner import _facts
-        semantic_functions={f.id:f for f in lowered.semantic_ir.functions()}
         for o in plan.occurrences:
             semantic=semantic_functions[o.function]
             if o.function not in frame_costs:
@@ -174,7 +221,9 @@ pay for distinct forms even without a performance saving. Efficiency never does.
         available={k:v for k,v in reports.items() if 'error' not in v and v['max_jump']<=MAX_JUMP//4}
         decision={'sources':occurrence.source_ids,'vm':vm,'policy':policy,'domain':occurrence.numeric_domain,
             'forms':reports,'code_budget_bytes':byte_budget,
-            'retained_events':{'logical':len(recipe.steps),'encoded_writes':len(recipe.steps) if lowered.backend=='karity' else 0,
+            'retained_events':{'logical':len(recipe.steps),'encoded_writes':occurrence.cost.writes_before if lowered.backend=='karity' else 0,
+                'open_result_top':any(v.role=='results' and v.count is None
+                                      for source_id in occurrence.source_ids for v in semantic_instructions[source_id].operands),
                 'graph_candidates':sum(bool(targets[id(fn)]['graph_families'].get(indexes[s],0)) for s in occurrence.source_ids),
                 'pending_producers':sum(v in vm_maps[vm][3].values() for v in original)},
             'work':backend_work(occurrence,lowered.backend)}
