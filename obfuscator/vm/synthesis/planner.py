@@ -5,7 +5,9 @@ import hashlib
 from .model import Ref, Step, Binding, Recipe, Occurrence, Cost, SynthesisPlan
 from ..ir.facts import analyze_function
 
-SCALAR=frozenset(('ADD','SUB','MUL','NEGATE'))
+NUMERIC=frozenset(('ADD','SUB','MUL','NEGATE'))
+INTEGER_BITS=frozenset(('BIT_AND','BIT_OR','BIT_XOR','BIT_NOT','SHIFT_LEFT','SHIFT_RIGHT'))
+SCALAR=NUMERIC|INTEGER_BITS
 POLICIES=('efficiency','balanced','protection')
 
 
@@ -114,6 +116,9 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
                 elif facts.effects[ins.id].boundaries:reason='lifetime_or_effect_boundary'
                 elif facts.liveness.captured_before[ins.id]:reason='active_capture'
                 elif not facts.effects[ins.id].pure:reason='unknown_or_metamethod'
+                elif ins.operation in INTEGER_BITS and (lua_version!='5.3' or any(
+                         facts.operand(ins,v.role).kind!='integer' for v in ins.operands if v.role!='destination')):
+                    reason='unproven_integer_bit_operation'
                 elif any(facts.operand(ins,v.role).kind not in ('integer','float','number')
                          for v in ins.operands if v.role!='destination'):
                     reason='unproven_numeric'

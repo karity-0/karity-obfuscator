@@ -27,11 +27,100 @@ LONG_BODY='local a=i+3;'+''.join('a=a*2;a=a-3;' for _ in range(8))+'sum=sum+a;'
 LONG='local sum=0;for i=1,10 do '+LONG_BODY+' end;print(sum)'
 STORAGE='local s=0;for i=1,3 do local a;'+('a=i*3;a=a+7;a=a*5;s=s+a;'*256)+'end;print(s)'
 
+BITS='local s=0;for i=1,7 do local a=i~3;local b=~a;local c=b&255;local d=c|16;local e=d<<2;local f=e>>1;s=s+f end;print(s)'
+
+def vocabulary_checks(backends,versions):
+    count=0
+    for version in versions:
+        for backend in backends:
+            if version!='5.3':continue
+            fixtures=(BITS,
+                'local s=0;for i=1,7 do local a=i<<(-1);local b=a>>64;local c=~b;s=s+c end;print(s)',
+                'local s=0;for i=1,7 do local a=i<<63;local b=a>>(-65);local c=b~0x7fffffffffffffff;s=s+c end;print(s)')
+            for source in fixtures:
+                for protected in (False,True):
+                    output,data,p=build(source,backend,version,{**BASE,**(PROTECTED if protected else {}),
+                        'opcode_synthesis':True,'synthesis_max_steps':8,'synthesis_max_code_growth':64})
+                    assert data['regions'] and data['handlers'],(backend,source,protected)
+                    assert execute(output,version)[0]==execute(source,version)[0],(backend,source,protected)
+                    plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                    assert all(o.numeric_domain=='integer' for o in plan.occurrences)
+                    count+=1
+            # Valid Lua can coerce integral floats or invoke bit metamethods.
+            # Neither is an integer proof suitable for direct MOV continuations.
+            for source in (
+                'local a=1.0;for i=1,3 do local b=a~i;local c=b&7;local d=c|16;print(d) end',
+                'local a=setmetatable({},{__bxor=function()return 7 end});local b=a~3;local c=b&7;local d=c|16;print(d)',
+                'local a=1.5;local ok=pcall(function()local b=a~3;local c=b&7;local d=c|16;return d end);print(ok)',
+            ):
+                output,data,p=build(source,backend,version,{**BASE,'opcode_synthesis':True})
+                assert not data['regions'],(backend,source)
+                assert execute(output,version)[0]==execute(source,version)[0],(backend,source)
+                count+=1
+            if backend=='karity':
+                settings={**BASE,**PROTECTED,'block_variant_rate':0,'physical_block_permutation_rate':0}
+                ordinary,_,_=build(BITS,backend,version,settings,event_trace=True)
+                synthesized,data,_=build(BITS,backend,version,{**settings,'opcode_synthesis':True,
+                    'synthesis_max_steps':8,'synthesis_policy':'protection','synthesis_max_code_growth':64},event_trace=True)
+                assert data['handlers'] and execute(ordinary,version)[0]==execute(synthesized,version)[0]
+                count+=2
+    return count
+
+def cost_checks(backends,versions):
+    count=0
+    for version in versions:
+        for backend in backends:
+            output,data,p=build(SOURCE,backend,version,{**BASE,'opcode_synthesis':True,
+                'opcode_fusion':True,'synthesis_policy':'efficiency'})
+            assert execute(output,version)[0]==execute(SOURCE,version)[0]
+            plan=p.last_lowered_ir.backend_data['synthesis_plan']
+            for decision in plan.decisions:
+                alternatives=decision['alternatives']
+                assert {'ordinary','fusion','planned','synthesis','baseline'}<=alternatives.keys()
+                if decision.get('accepted_for'):
+                    assert decision['compiler_work_delta']>0
+                else:assert decision.get('fallback')
+                if backend=='mov':assert alternatives['fusion']['unavailable']=='MOV_has_no_pair_fusion'
+                else:
+                    assert 'work' in alternatives['fusion'],'fixture must cost actual planned fusion'
+                    assert alternatives['fusion']['dispatches']<len(decision['sources'])
+                    assert decision['frame_head_remapping']['work_added']>0
+                    assert decision['frame_head_remapping']['shared_regions']==1
+                    assert not decision.get('accepted_for'),'this pair Fusion is cheaper than the full-frame synthesis cost'
+            count+=1
+            output,data,p=build(FUNCTIONS,backend,version,{**BASE,'opcode_synthesis':True,
+                'synthesis_policy':'balanced','vm_count':3,'synthesis_max_recipes':1,
+                'synthesis_max_code_growth':.00001})
+            assert execute(output,version)[0]==execute(FUNCTIONS,version)[0]
+            plan=p.last_lowered_ir.backend_data['synthesis_plan']
+            assert not data['handlers'] and dict(plan.rejected).get('cost_probe_handler_budget')
+            selection=next(r for r in p.last_profile if r['phase']=='synthesis_cost_selection')
+            assert selection['physical_signatures_probed']<=1
+            count+=1
+    if 'karity' in backends and '5.3' in versions:
+        source='local s=0;for i=1,40 do local a=i*3;local b=a+7;local c=b*5;s=s+c;local d=i*4;local e=d-9;local f=e*6;s=s+f end;print(s)'
+        settings={**BASE,'opcode_synthesis':True,'synthesis_policy':'efficiency','synthesis_max_steps':4}
+        output,data,p=build(source,'karity','5.3',{**settings,'synthesis_max_code_growth':64})
+        assert data['regions']==2 and execute(output,'5.3')[0]==execute(source,'5.3')[0]
+        first=p.last_lowered_ir.backend_data['synthesis_plan'].decisions[0]['incremental_bytes']
+        allowance=first*1.02/(len(p._backend.target.runtime_template('vm.lua').encode())*.5)
+        output,data,p=build(source,'karity','5.3',{**settings,'synthesis_max_code_growth':allowance})
+        assert not data['regions'] and execute(output,'5.3')[0]==execute(source,'5.3')[0]
+        plan=p.last_lowered_ir.backend_data['synthesis_plan']
+        assert dict(plan.rejected).get('frame_head_work'),'budget fallbacks must be repriced as ordinary dispatches'
+        selection=next(row for row in p.last_profile if row['phase']=='synthesis_cost_selection')
+        assert not selection['code_bytes_reserved']
+        count+=2
+    return count
+
 def storage_checks(backends,versions):
     count=0
     for version in versions:
         for backend in backends:
-            output,data,p=build(STORAGE,backend,version,{**BASE,'opcode_synthesis':True,'synthesis_policy':'efficiency',
+            # This exercises dictionary storage, not Efficiency admission. MOV
+            # can now reject short DAGs whose mandatory host scope costs more
+            # than its removed guards; explicitly retain Balanced coverage.
+            output,data,p=build(STORAGE,backend,version,{**BASE,'opcode_synthesis':True,'synthesis_policy':'balanced' if backend=='mov' else 'efficiency',
                 'synthesis_max_steps':4,'synthesis_max_recipes':64,'synthesis_max_occurrences':1024,'synthesis_max_code_growth':64})
             assert execute(output,version)[0]==execute(STORAGE,version)[0]
             storage=next(row for row in p.last_profile if row['phase']=='serialize_blob')
@@ -109,14 +198,23 @@ def main():
     parser.add_argument('--dispatch-only',action='store_true')
     parser.add_argument('--maximum-only',action='store_true')
     parser.add_argument('--storage-only',action='store_true')
+    parser.add_argument('--cost-only',action='store_true')
+    parser.add_argument('--vocabulary-only',action='store_true')
     arguments=parser.parse_args()
+    if arguments.cost_only:
+        print('opcode-synthesis-cost-regression-ok',cost_checks(arguments.backends,arguments.lua))
+        return
+    if arguments.vocabulary_only:
+        print('opcode-synthesis-vocabulary-regression-ok',vocabulary_checks(arguments.backends,arguments.lua))
+        return
     if arguments.storage_only:
         print('opcode-synthesis-storage-regression-ok',storage_checks(arguments.backends,arguments.lua))
         return
     if arguments.maximum_only:
         print('opcode-synthesis-maximum-regression-ok',maximum_checks(arguments.backends,arguments.lua))
         return
-    count=hidden_dispatch_checks(arguments.backends,arguments.lua)
+    count=cost_checks(arguments.backends,arguments.lua)+vocabulary_checks(arguments.backends,arguments.lua)
+    count+=hidden_dispatch_checks(arguments.backends,arguments.lua)
     if arguments.dispatch_only:
         print('opcode-synthesis-hidden-dispatch-regression-ok',count)
         return
@@ -154,7 +252,10 @@ def main():
                             if decision.get('accepted_for'):
                                 assert decision['incremental_bytes']<=decision['code_budget_bytes']
                                 assert decision['operand_encodings']['event_slots']['bytes']<decision['operand_encodings']['recipe_table_with_event_slots']['bytes']
-                    if name in ('dag','shared','overwrite','float','pending_head'):assert data['regions']>0 and data['handlers']>0,(backend,version,name,data)
+                    if name in ('dag','overwrite','float','pending_head') or name=='shared' and policy!='efficiency':
+                        assert data['regions']>0 and data['handlers']>0,(backend,version,name,data)
+                    if name=='shared' and policy=='efficiency' and not data['regions']:
+                        assert dict(p.last_lowered_ir.backend_data['synthesis_plan'].rejected).get('measured_kernel_work'),data
                     if name=='semantics':assert not data['regions']
                     if name=='multivm':
                         assert data['regions']==2 and data['handlers']>=2
@@ -197,10 +298,10 @@ def main():
                     print('synthesis-backend-ok',backend,version,name,policy,data['regions'],data['handlers'],flush=True)
             # Independent VMs necessarily require independent physical handlers;
             # two repeats in one VM may legitimately share the sole handler.
-            output,data,_=build(FUNCTIONS,backend,version,{**BASE,'vm_count':3,'opcode_fusion':True,'opcode_splitting':True,'opcode_synthesis':True,'synthesis_policy':'efficiency','synthesis_max_recipes':1})
+            output,data,p=build(FUNCTIONS,backend,version,{**BASE,'vm_count':3,'opcode_fusion':True,'opcode_splitting':True,'opcode_synthesis':True,'synthesis_policy':'balanced','synthesis_max_recipes':1})
             assert execute(output,version)[0]==execute(FUNCTIONS,version)[0]
             assert data['handlers']<=1
-            assert data['fallbacks']>0
+            assert data['fallbacks']>0 or dict(p.last_lowered_ir.backend_data['synthesis_plan'].rejected).get('cost_probe_handler_budget')
             count+=1
             baseline,base_data,base_pass=build(SOURCE,backend,version,BASE)
             output,data,p=build(SOURCE,backend,version,{**BASE,'opcode_synthesis':True,'synthesis_max_code_growth':0})

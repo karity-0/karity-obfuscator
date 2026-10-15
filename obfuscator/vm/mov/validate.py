@@ -117,6 +117,7 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
     if len(program.entries) != len(host_slots) + 1:
         raise ValueError("MOV entry count differs from physical host slots")
 
+    from ..synthesis.planner import SCALAR
     expected_headers={};integer_steps=set()
     for region in synthesis:
         start=region.start+1;end=start+len(region.occurrence.source_ids)
@@ -194,7 +195,7 @@ def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> Non
         operation = host_slots[ip - 1].operation
         expected = {
             Host.PREPARE: operation in LOWERED,
-            Host.SYNTH_PREPARE: ip in integer_steps and operation in {'ADD','SUB','MUL','NEGATE'},
+            Host.SYNTH_PREPARE: ip in integer_steps and operation in SCALAR,
             Host.COPY: operation in {"MOVE", "TEST_SET"},
             Host.READ_TRUTH: operation in {"LOGICAL_NOT", "TEST", "TEST_SET"},
             Host.CLOSE: operation == "JUMP" and host_slots[ip - 1].close_from is not None,

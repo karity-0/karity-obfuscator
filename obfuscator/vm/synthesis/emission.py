@@ -2,7 +2,9 @@
 from ..backends.runtime_layout import iter_functions
 from .lowering import first_aliases
 
-SLOTS={'ADD':'ADD','SUB':'SUB','MUL':'MUL','NEGATE':'UNM'}
+SLOTS={'ADD':'ADD','SUB':'SUB','MUL':'MUL','NEGATE':'UNM','BIT_NOT':'BNOT',
+       'BIT_AND':'BAND','BIT_OR':'BOR','BIT_XOR':'BXOR','SHIFT_LEFT':'SHL','SHIFT_RIGHT':'SHR'}
+UNARY=frozenset(('NEGATE','BIT_NOT'))
 
 
 def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
@@ -44,8 +46,8 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
                 token='__VM_PENDING_'+('UNM' if step.operation=='NEGATE' else step.operation)+'__'
                 body=f'_defer1r(A,B,_av,{slot},{token})' if step.operation=='NEGATE' else f'_defer2r(A,B,C,_av,{slot},{token})'
                 lines.append(fields(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]').replace('A,B','_sx[1],_sx[2]') if cells else body))
-            elif step.operation=='NEGATE':
-                extra=',-1' if lowered.backend=='karity' else ''
+            elif step.operation in UNARY:
+                extra=(',-1' if step.operation=='NEGATE' else ',nil') if lowered.backend=='karity' else ''
                 body=f'_arith1r(A,B,_av,{slot}{extra})'
                 lines.append(fields(body.replace('A,B','_sx[1],_sx[2]') if cells else body))
             else:
@@ -60,7 +62,7 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native):
                     field='B' if arg==0 else 'C';name=input_value(ref.index)
                     lines.append(fields(f'if {name}==nil then {name}=rget({field}) end'))
                     values.append(name)
-            expr=f'_arith1({values[0]},_av,{slot})' if step.operation=='NEGATE' else f'_arith2({values[0]},{values[1]},_av,{slot})'
+            expr=f'_arith1({values[0]},_av,{slot})' if step.operation in UNARY else f'_arith2({values[0]},{values[1]},_av,{slot})'
             lines.append(fields(f'{temporary(index)}={expr}'))
             if index in recipe.outputs:lines.append(fields(f'rset(A,{temporary(index)})'))
         if not pre:lines.append(fields(transition))

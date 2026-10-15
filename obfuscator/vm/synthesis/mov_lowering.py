@@ -1,6 +1,19 @@
 """Lower common regions to MOV microcode scopes and local representation banks."""
 from ..mov.ir import Host,Op,Instruction,Program
 
+INTEGER_PROOF='local node=_syn_nodes[ip-_syn_start+1]\nassert(node and op==node[3],"invalid integer DAG binding")'
+
+def scope_cost(source,compile_body):
+    """Mandatory scope work, separate from shared definitions/microcode size."""
+    start='elseif kind==__MOV_HOST__ and q[2]==10 then'
+    finish='elseif kind==__MOV_HOST__ and q[2]==11 then'
+    end='elseif kind==__MOV_HOST__ and q[2]==0 then'
+    begin=source.split(start,1)[1].split(finish,1)[0]
+    cleanup=source.split(finish,1)[1].split(end,1)[0]
+    empty=compile_body('')['instructions']
+    return {'scope_instructions':compile_body(begin+cleanup)['instructions']-empty,
+            'integer_proof_per_step':compile_body(INTEGER_PROOF)['instructions']-empty}
+
 
 def recipe_spec(entry):
     from ..backends.handler_ir import OPERATION_IDS
@@ -103,9 +116,9 @@ def wire_runtime(source,lowered,vm_index=None):
         source=source.replace('q[2]==1 then','(q[2]==1 or q[2]==12) then',1)
         source=source.replace('local x,y\n            if op==28 then',
         'local x,y\n            if q[2]==12 then\n'
-        '                local node=_syn_nodes[ip-_syn_start+1]\n'
-        '                assert(node and op==node[3],"invalid integer DAG binding")\n'
+        '                '+INTEGER_PROOF+'\n'
         '                if op==25 then x=_mzero; y=_syn_operand(B,node[1])\n'
+        '                elseif op==26 then x=_syn_operand(B,node[1]); y=_mones\n'
         '                else x=_syn_operand(B,node[1]); y=_syn_operand(C,node[2]) end\n'
             '            elseif op==28 then',1)
         source=source.replace('elseif kind==__MOV_HOST__ and q[2]==2 then',

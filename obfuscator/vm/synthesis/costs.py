@@ -86,13 +86,32 @@ pay for distinct forms even without a performance saving. Efficiency never does.
     if lowered.backend=='classic':
         for name in ('RGET','RSET'):
             body=source.split('--<<'+name+'>>',1)[1].split('--<<END'+name+'>>',1)[0]
-            report=measure(body,version=plan.version)
-            helper_costs[name.lower()]=report['functions'][1]['instructions']
+            report=measure(body,version=plan.version,minimum_paths=True)
+            helper_costs[name.lower()]=report['functions'][1]['minimum_path_instructions']
     definitions={};occurrences=[];decisions=[];rejected=Counter(dict(plan.rejected))
     spent=Counter();compiler_spent=Counter();measured={};forms={};repeats=Counter(o.recipe for o in plan.occurrences)
+    reservations={};reservation_owner={}
     mov_runtime_costs={};mov_shared_reserved=Counter()
     recipes={r.id:r for r in plan.recipes}
     dispatch=compiled('while true do if op==selector then work() else break end end',plan.version)['instructions']
+    alternatives={};probe_cache={};probed_signatures=set();frame_costs={}
+    def probe(body):
+        if body not in probe_cache:probe_cache[body]=compiled(body,plan.version)
+        return probe_cache[body]
+    frames={};frame_keys={}
+    if lowered.backend!='mov':
+        from .planner import _facts
+        semantic_functions={f.id:f for f in lowered.semantic_ir.functions()}
+        for o in plan.occurrences:
+            semantic=semantic_functions[o.function]
+            if o.function not in frame_costs:
+                frame_costs[o.function]=_facts(semantic,plan.version,lowered.backend_data['synthesis_analysis'])
+            facts=frame_costs[o.function];component=facts.components[o.block] if o.cost.loop_region else None
+            key=(o.function,component);frame_keys[o.source_ids]=key
+            if key not in frames:
+                frames[key]={'sites':sum(len(b.instructions) for b in semantic.blocks if component is None or
+                    facts.components[b.id]==component),'candidates':0,'covered':set()}
+            frames[key]['candidates']+=1;frames[key]['covered'].update(o.source_ids)
     for occurrence in plan.occurrences:
         fn=fn_by_id[occurrence.function];state=targets[id(fn)];vm=state['vm_assignment']
         indexes=indexes_by_function[fn.id]
@@ -103,13 +122,27 @@ pay for distinct forms even without a performance saving. Efficiency never does.
             original.append(vm_maps[vm][3][op] if lowered.backend=='karity' and state['instruction_forms'][n][0][0]=='defer'
                             else vm_maps[vm][0][op][state['alias_variants'][n]%len(vm_maps[vm][0][op])])
         recipe=recipes[occurrence.recipe]
+        signatures=set()
+        for block_variant in range(len(state['instruction_forms'][indexes[occurrence.source_ids[0]]])):
+            event_aliases=tuple(vm_maps[vm][3][i.op] if lowered.backend=='karity' and
+                state['instruction_forms'][indexes[i.source_id]][block_variant][0]=='defer' else
+                vm_maps[vm][0][i.op][state['alias_variants'][indexes[i.source_id]]%len(vm_maps[vm][0][i.op])] for i in raw)
+            signatures.add((vm,recipe.id,event_aliases,occurrence.materialize))
+        # Bound explored physical event contracts by the existing handler limit.
+        # Failed kernels consume exploration capacity too; shared signatures
+        # can reuse probes. Every budget fallback remains explicit in diagnostics.
+        if len(probed_signatures|signatures)>int(context.options.get('synthesis_max_recipes',32)):
+            rejected['cost_probe_handler_budget']+=1
+            decisions.append({'sources':occurrence.source_ids,'vm':vm,'fallback':'cost_probe_handler_budget'})
+            continue
+        probed_signatures.update(signatures)
         entry=PhysicalRecipe(occurrence,recipe,0,0,tuple(original),tuple(i.a for i in raw))
         reports={}
         if lowered.backend=='mov':
             from types import SimpleNamespace
             from ..mov.adapter import MovHostSlot
             from ..mov.lower import lower
-            from .mov_lowering import lower_regions,wire_runtime,recipe_spec
+            from .mov_lowering import lower_regions,wire_runtime,recipe_spec,scope_cost
             plain=lower(tuple(MovHostSlot(i.operation,None,0,i.source_id,'source') for i in raw))
             specialized=lower_regions(plain,SimpleNamespace(synthesis=(entry,)))
             def tape_bytes(program):
@@ -117,9 +150,11 @@ pay for distinct forms even without a performance saving. Efficiency never does.
             if occurrence.numeric_domain not in mov_runtime_costs:
                 template=target.runtime_template('mov_exec.lua')
                 preview=SimpleNamespace(backend_data={'layout':SimpleNamespace(functions=SimpleNamespace(synthesis=(entry,),children=()))})
-                normal=compiled(template,plan.version);wired=compiled(wire_runtime(template,preview),plan.version)
+                wired_source=wire_runtime(template,preview)
+                normal=compiled(template,plan.version);wired=compiled(wired_source,plan.version)
                 mov_runtime_costs[occurrence.numeric_domain]={'bytes':max(0,wired['bytes']-normal['bytes']-len(recipe_spec(entry).encode())-24),
-                    'instructions':wired['instructions']-normal['instructions'],'probe_seconds':wired['probe_seconds']+normal['probe_seconds']}
+                    'instructions':wired['instructions']-normal['instructions'],'probe_seconds':wired['probe_seconds']+normal['probe_seconds'],
+                    **scope_cost(wired_source,probe)}
             mov_runtime_cost=mov_runtime_costs[occurrence.numeric_domain]
             # Cost the actual target fragment and ULEB-serialized microcode.
             # Proven integer DAGs keep LOOKUP arithmetic, eliminating two
@@ -128,21 +163,16 @@ pay for distinct forms even without a performance saving. Efficiency never does.
             reports['locals']={'bytes':len(recipe_spec(entry).encode())+max(0,tape_bytes(specialized)-tape_bytes(plain)),
                 'micro_blob_delta':tape_bytes(specialized)-tape_bytes(plain),
                 'instructions':2-saved,'max_jump':0,'stack':0,'runtime_shared':mov_runtime_cost}
-            baseline={'bytes':0,'instructions':0,'max_jump':0,'stack':0}
         else:
             for form in ('locals','cells'):
                 key=(vm,recipe.id,tuple(original),occurrence.materialize,form)
                 if key not in measured:measured[key]=compile_entry(replace(entry,execution_form=form),lowered,variants[vm],source,vm_maps[vm])
                 reports[form]=measured[key]
-            # Same event replay with every value materialized is the reference
-            # kernel. Ordinary dispatch is charged separately for every step.
-            reference_key=(vm,recipe.id,tuple(original),True,'locals')
-            if reference_key not in measured:
-                measured[reference_key]=compile_entry(replace(entry,occurrence=replace(occurrence,materialize=True)),lowered,variants[vm],source,vm_maps[vm])
-            baseline=measured[reference_key]
+            # Actual fallback handlers below replace the old materialized
+            # synthesis proxy. Do not generate a third unused kernel to cost it.
         available={k:v for k,v in reports.items() if 'error' not in v and v['max_jump']<=MAX_JUMP//4}
         decision={'sources':occurrence.source_ids,'vm':vm,'policy':policy,'domain':occurrence.numeric_domain,
-            'forms':reports,'reference_replay':baseline,'code_budget_bytes':byte_budget,
+            'forms':reports,'code_budget_bytes':byte_budget,
             'retained_events':{'logical':len(recipe.steps),'encoded_writes':len(recipe.steps) if lowered.backend=='karity' else 0,
                 'graph_candidates':sum(bool(targets[id(fn)]['graph_families'].get(indexes[s],0)) for s in occurrence.source_ids),
                 'pending_producers':sum(v in vm_maps[vm][3].values() for v in original)},
@@ -167,6 +197,16 @@ pay for distinct forms even without a performance saving. Efficiency never does.
             proposed=ordered[selector%len(ordered)]
             if spent[vm]+available[proposed]['bytes']<=byte_budget:form=proposed
         report=available[form]
+        if lowered.backend!='mov':
+            from .alternatives import Alternatives
+            if vm not in alternatives:
+                alternatives[vm]=Alternatives(source,variants[vm],vm_maps[vm],
+                    probe,kernel_context(lowered,variants[vm],source)[0],lowered.policy)
+            comparison=alternatives[vm].compare(fn,state,[indexes[s] for s in occurrence.source_ids],dispatch)
+        else:
+            comparison={'ordinary':{'work':len(plain.code)},'fusion':{'unavailable':'MOV_has_no_pair_fusion'},
+                'planned':{'work':len(plain.code)},'baseline':'planned'}
+        decision['alternatives']=comparison
         key=(vm,recipe.id,tuple(original),occurrence.materialize,form,occurrence.numeric_domain if lowered.backend=='mov' else None)
         regional=policy=='balanced' and any(k[:2]==key[:2] and k[4]!=form for k in forms)
         if regional and lowered.backend!='mov':
@@ -182,16 +222,40 @@ pay for distinct forms even without a performance saving. Efficiency never does.
         if lowered.backend=='mov':extra+=max(0,mov_runtime_cost['bytes']-mov_shared_reserved[vm])
         saved_helper_work=sum(decision['work'][key]*helper_costs.get(helper,0) for key,helper in
             (('bank_reads_saved','rget'),('bank_writes_saved','rset')))
-        before=baseline.get('instructions',0)+len(recipe.steps)*dispatch+saved_helper_work
-        after=report['instructions']+dispatch
+        before=comparison['planned']['work']+saved_helper_work
+        if lowered.backend=='mov':
+            host_work=mov_runtime_cost['scope_instructions']
+            if occurrence.numeric_domain=='integer':host_work+=len(recipe.steps)*mov_runtime_cost['integer_proof_per_step']
+            after=len(specialized.code)+host_work
+            decision['mov_host_work_added']=host_work
+        else:
+            # The outer fetch and head restoration are outside render_kernel.
+            fetch=kernel_context(lowered,variants[vm],source)[0]
+            outer=probe(fetch+'; local _syn_dispatch=op; if _SYN_HEAD[op] then op=_SYN_HEAD[op] end; op=_syn_dispatch')
+            after=report['instructions']+outer['instructions']-2*probe('')['instructions']+dispatch
+            # Head remapping also runs on ordinary instructions in this frame.
+            # Charge remaining sites in the same loop SCC (or the whole cold
+            # function); do not assume they vanish with the numeric region.
+            frame=frames[frame_keys[occurrence.source_ids]]
+            other_sites=frame['sites']-len(frame['covered'])
+            remap=probe('local saved=op; if _SYN_HEAD[op] then op=_SYN_HEAD[op] end; op=saved')['instructions']-probe('')['instructions']
+            surcharge=(max(0,other_sites)*remap+frame['candidates']-1)//frame['candidates']
+            decision['compiled_work_after_without_frame_remapping']=after
+            after+=surcharge
+            decision['frame_head_remapping']={'other_sites':max(0,other_sites),'work_per_site':remap,
+                'work_added':surcharge,'shared_regions':frame['candidates'],
+                'frequency_basis':'same_loop_SCC' if occurrence.cost.loop_region else 'cold_function'}
+        decision['alternatives']['synthesis']={'work':after,'form':form}
         decision.update(form=form,compiled_work_before=before,compiled_work_after=after,
             compiler_work_delta=before-after,incremental_bytes=extra,helper_instruction_costs=helper_costs,event_specializations=specializations,
             amortization={'loop':occurrence.cost.loop_region,'static_uses':repeats[occurrence.recipe],
-                'minimum_replays_for_extra_bytecode':max(1,(max(0,report['instructions']-baseline.get('instructions',0))+max(1,before-after)-1)//max(1,before-after))})
+                'work_saving_proxy_per_replay':before-after,'extra_kernel_bytes':extra,
+                'dynamic_execution_count':'unknown'})
         reason=None
         if (regional_recipe.id if regional and lowered.backend!='mov' else recipe.id) not in definitions and len(definitions)>=int(context.options.get('synthesis_max_recipes',32)):
             reason='recipe_budget'
         if policy=='efficiency' and (before<=after or decision['work']['net_work_estimate']<=0):reason='measured_kernel_work'
+        if policy=='efficiency' and comparison.get('cross_region_unit'):reason='planned_unit_boundary'
         if spent[vm]+extra>byte_budget:reason='emitted_code_budget'
         reserved_instructions=0 if not extra else max(0,report['instructions'])*specializations
         decision['dispatcher_storage']='closure_bank' if compiler_spent[vm]+reserved_instructions>MAX_JUMP//4 else 'inline'
@@ -204,16 +268,53 @@ pay for distinct forms even without a performance saving. Efficiency never does.
             recipe=replace(recipe,id=recipe.id+':region:'+occurrence.source_ids[0])
             occurrence=replace(occurrence,recipe=recipe.id,scope='regional')
         definitions[recipe.id]=recipe;occurrences.append(occurrence)
+        reservation_owner[occurrence.source_ids]=key
+        if key not in reservations:reservations[key]=(vm,extra,reserved_instructions)
         forms[key]=form;spent[vm]+=extra;compiler_spent[vm]+=reserved_instructions
         if lowered.backend=='mov':mov_shared_reserved[vm]=max(mov_shared_reserved[vm],mov_runtime_cost['bytes'])
         lowered.backend_data.setdefault('synthesis_execution_forms',{})[occurrence.source_ids]=form
         decision['accepted_for']='work_saving' if policy=='efficiency' else 'bounded_structure_diversity'
         decisions.append(decision)
+    # Reprice the shared frame overhead using *admitted* regions. Each failed
+    # budget/compiler candidate remains an ordinary site. Efficiency removals
+    # can only increase that overhead: this fixed point terminates in <=N rounds
+    # and never retries generation or relaxes a protection/compile constraint.
+    frame_rounds=0
+    if lowered.backend!='mov':
+        decision_by_source={d['sources']:d for d in decisions}
+        while occurrences:
+            frame_rounds+=1;active=Counter();covered={}
+            for o in occurrences:
+                key=frame_keys[o.source_ids];active[key]+=1
+                covered.setdefault(key,set()).update(o.source_ids)
+            kept=[]
+            for o in occurrences:
+                d=decision_by_source[o.source_ids];key=frame_keys[o.source_ids];head=d['frame_head_remapping']
+                sites=max(0,frames[key]['sites']-len(covered[key]))
+                charge=(sites*head['work_per_site']+active[key]-1)//active[key]
+                head.update(other_sites=sites,shared_regions=active[key],work_added=charge)
+                after=d['compiled_work_after_without_frame_remapping']+charge
+                d.update(compiled_work_after=after,compiler_work_delta=d['compiled_work_before']-after)
+                d['alternatives']['synthesis']['work']=after
+                d['amortization']['work_saving_proxy_per_replay']=d['compiler_work_delta']
+                if policy=='efficiency' and d['compiler_work_delta']<=0:
+                    d.pop('accepted_for',None);d['fallback']='frame_head_work';rejected['frame_head_work']+=1
+                else:kept.append(o)
+            if len(kept)==len(occurrences):break
+            occurrences=kept
+        used={o.recipe for o in occurrences}
+        definitions={key:value for key,value in definitions.items() if key in used}
     plan=replace(plan,recipes=tuple(definitions.values()),occurrences=tuple(occurrences),
                  rejected=tuple(sorted(rejected.items())),decisions=tuple(decisions))
     validate_plan(lowered.semantic_ir,plan,protection_plan=lowered.protection_plan,analysis_cache=lowered.backend_data.get('synthesis_analysis'))
     lowered.backend_data['synthesis_plan']=plan
+    live_bytes=Counter();live_instructions=Counter()
+    for key in {reservation_owner[o.source_ids] for o in occurrences}:
+        vm,size,count=reservations[key];live_bytes[vm]+=size;live_instructions[vm]+=count
     context.profile.append({'phase':'synthesis_cost_selection','elapsed':time.perf_counter()-started,
-        'recipes':len(plan.recipes),'regions':len(plan.occurrences),'code_bytes_reserved':dict(spent),
-        'compiler_instructions_reserved':dict(compiler_spent),'cost_model':'compiler-measured representative kernels; estimated alias/defer group costs; retained helper events; independent diversity budget',
+        'recipes':len(plan.recipes),'regions':len(plan.occurrences),'code_bytes_reserved':dict(live_bytes),
+        'compiler_instructions_reserved':dict(live_instructions),'probe_code_bytes_reserved':dict(spent),'fallback_probes':len(probe_cache),
+        'physical_signatures_probed':len(probed_signatures),
+        'frame_admission_rounds':frame_rounds,
+        'cost_model':'compiler-measured planned alias/split/fuse/defer bodies and synthesis; retained helper events; independent diversity budget',
         'decisions':decisions})

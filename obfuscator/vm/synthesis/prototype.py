@@ -9,7 +9,8 @@ from ..backends.handler_codec import Writer,INSTRUCTION_BYTES
 from ..backends.handler_ir import HandlerInstruction
 from .planner import validate_plan
 
-OPERATORS={'ADD':'+','SUB':'-','MUL':'*','NEGATE':'-'}
+OPERATORS={'ADD':'+','SUB':'-','MUL':'*','NEGATE':'-','BIT_NOT':'~',
+           'BIT_AND':'&','BIT_OR':'|','BIT_XOR':'~','SHIFT_LEFT':'<<','SHIFT_RIGHT':'>>'}
 
 
 def allocate_opcodes(recipes,seed=0,reserved=()):
@@ -53,7 +54,7 @@ def emit_kernel(recipe):
         lines.append(f'local i{index}={getter}')
     for index,step in enumerate(recipe.steps):
         args=[('i' if v.kind=='input' else 't')+str(v.index) for v in step.inputs]
-        if step.operation=='NEGATE':expr='-'+args[0]
+        if step.operation in ('NEGATE','BIT_NOT'):expr=OPERATORS[step.operation]+args[0]
         else:expr=args[0]+OPERATORS[step.operation]+args[1]
         lines.append(f'local t{index}={expr}')
     for index,value in enumerate(recipe.outputs):lines.append(f'rset(binding.outputs[{index+1}],t{value})')
@@ -104,7 +105,7 @@ def emit_region_benchmark(ir,plan,occurrence,*,mode='synthesis',iterations=10000
             def value(role):
                 v=operands[role]
                 return f'rget({v.value})' if v.kind=='register' else f'K[{v.value+1}]'
-            expr='-'+value('source') if i.operation=='NEGATE' else value('left')+OPERATORS[i.operation]+value('right')
+            expr=OPERATORS[i.operation]+value('source') if i.operation in ('NEGATE','BIT_NOT') else value('left')+OPERATORS[i.operation]+value('right')
             return f'rset({operands["destination"].value},{expr})'
         width=2 if mode=='fusion' else 1
         for index in range(0,len(source),width):

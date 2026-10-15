@@ -9,6 +9,9 @@ The runtime/storage follow-up is measured against `a1ab669` in
 [numeric DAG measurements](../performance/synthesis-storage.md). This first
 implementation has a conservative numeric DAG vocabulary; it does not yet
 synthesize arbitrary table/call/control operations.
+The expanded integer-bit vocabulary and revised admission model are compared in
+[cost selection measurements](../performance/synthesis-cost-selection.md) and
+[full user-preset pipeline measurements](../performance/synthesis-pipeline.md).
 
 ## Common contract
 
@@ -17,7 +20,11 @@ physical lowering. It leaves SemanticIR and its source IDs intact and attaches
 an immutable SynthesisPlan to LoweredIR. All backends use the same discovery,
 value/effect facts, liveness, DAG registry and safety validator.
 
-A recipe contains at least three ordered ADD/SUB/MUL/NEGATE steps. Inputs refer
+A recipe contains at least three ordered numeric steps: ADD/SUB/MUL/NEGATE,
+plus Lua 5.3 BIT_AND/BIT_OR/BIT_XOR/BIT_NOT/SHIFT_LEFT/SHIFT_RIGHT when every
+operand is proven integer. Integral floats, coercions and bit metamethods do not
+qualify. Shift direction, negative/large counts and overflow keep the original
+Lua operation order; no algebraic reassociation or masking is introduced. Inputs refer
 to registers/constants or prior temporary values; edges can cross intervening
 independent calculations. Signatures retain operation order, input aliasing and
 output topology while abstracting concrete register/constant indices. Occurrences
@@ -153,6 +160,32 @@ cap. Different intermediate storage forms are selected reproducibly using privat
 plan entropy, and each regional mutation is measured and charged. Measurement
 elapsed times never seed the dynamic ISA. Analysis/liveness is shared through
 discovery and validation of the same immutable IR, including cached SCC sizes.
+Admission compares the actual planned alias/split/fuse/defer bodies, including
+their emitter-owned mutation seeds, with synthesized kernels. Only existing
+planned Fusion pairs are alternatives; no fusion is invented or enabled by the
+cost model. All selectable block variants remain intact on fallback. Efficiency
+must beat the cheapest planned variant; Balanced/Protection can pay their explicit
+diversity allowance. The old materialized-synthesis reference kernel is no longer
+generated just to estimate ordinary execution. MOV separately charges the emitted
+scope initialization/cleanup and mandatory integer proof, rather than equating
+two deleted records with two free runtime operations. These compiler counts are
+conservative proxies, not actual executed instruction counts through every branch.
+Saved Classic helper work uses shortest compiler-CFG completion paths, so unused
+captured-box branches cannot inflate the claimed saving. Head remapping work on
+remaining ordinary instructions in the same loop SCC (or cold function) is also
+charged and shared among admitted regions in that group. Budget/compiler
+fallbacks remain ordinary sites: a bounded removal-only fixed point reprices the
+remaining regions without regenerating kernels. SCC site counts approximate frequency; dynamic invocation counts remain
+unknown. These adjustments are driven by actual paired VM comparisons rather
+than an arbitrary fixed nanosecond multiplier.
+
+Cost discovery also bounds distinct probed physical event signatures by the
+existing recipe/handler-group limit, before expensive mutation/compilation. Failed
+probes consume this deterministic budget; repeated signatures can reuse results.
+`cost_probe_handler_budget` records source fallback explicitly. This avoids
+unbounded exploration of combinations later rejected by physical admission;
+it is not a wall-time deadline and does not alter any preceding protection pass.
+
 The model accounts for code/compiled work and reports probe build time; it is not
 a prediction of nanoseconds spent in every runtime branch. Runtime benchmarks
 remain necessary to evaluate that tradeoff.
@@ -169,7 +202,7 @@ Maximum settings are 16/256/4096. Admission includes physical
 alias/defer specializations, not just semantic recipe count. These limits bound
 handler generation; they are not a prediction that every admitted region is faster.
 
-Costs separately report ordinary dispatches, a pair-fusion dispatch estimate,
+Costs separately report ordinary dispatches, the selected pair-fusion bodies,
 recipe dispatches, register reads/writes, retained logical events, loop membership
 and operand bytes. Actual emitted handler/head-table bytes are profiled separately.
 The existing compiler cost probe measures each generated body. Large aggregate
@@ -249,5 +282,7 @@ unchanged operand/physical forms are also covered.
 KVM3 regression coverage includes 100 randomized layouts, exact padding/word
 restoration, both native readers, malformed dictionaries/spans/indices, nested
 prototypes, unchanged RNG consumption, format-aware integrity patching and actual
-compressed VM outputs on all three backends. Additional tests retain ordinary
+compressed VM outputs on all three backends. Additional tests cover mixed numeric/
+bit DAGs, negative and at-least-64 shift counts, overflow, integral-float and
+metamethod fallback, and actual Fusion-versus-synthesis cost decisions. They retain ordinary
 numeric handlers outside synthesized spans and verify real kernel cache hits.

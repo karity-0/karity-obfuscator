@@ -92,6 +92,25 @@ def write_report(report,path):
 
 
 def write_summary(report,path):
+    if path.stem!='opcode-synthesis':
+        lines=['# Current synthesis cost selection','',
+            f"Python 3.15; seed {report['seed']}; {report['repeats']} repeats per condition. "
+            'VM only, source/output passes and packing excluded. Execution CPU includes loading and initialization. '
+            f"All outputs match native Lua. [Raw samples]({path.with_suffix('.json').name}).",'',
+            '| Backend / Lua / input / mode | Build wall s | Execution CPU s | Output bytes | Regions | Dispatches |',
+            '|---|---|---|---|---|---|']
+        for row in report['records']:
+            m=row['median']
+            lines.append(f"| {row['backend']} / {row['lua']} / {row['fixture']} / {row['mode']} | "
+                f"{m['build_seconds']:.3f} | {m['execution_seconds']:.3f} | {int(m['output_bytes']):,} | "
+                f"{row['regions']} | {row['counters'][0]:,} |")
+        lines+=['','Ordinary, selected pair Fusion and synthesis are distinct modes. MOV has no pair Fusion. '
+            'Efficiency can reject synthesis when existing Fusion or mandatory MOV host scope work is cheaper; '
+            'Balanced/Protection retain bounded diversity. Compiler work remains a proxy, not a runtime speed guarantee. '
+            'Timing differences at millisecond resolution and short-input load costs are noisy. Full preset costs '
+            'are measured separately in [pipeline measurements](synthesis-pipeline.md).','']
+        path.write_text('\n'.join(lines),encoding='utf-8')
+        return
     index={(r['lua'],r['backend'],r['fixture'],r['mode']):r for r in report['records']}
     lines=['# Production opcode synthesis measurements','',
         'Windows, Python 3.15; seed 1400, three runs per condition. VM only: no source/output passes or packing. OS nonce/wrapper entropy is fixed only in the benchmark. Execution CPU includes loading, decryption and initialization; native process launch is excluded. Build wall and Python CPU samples are retained in the [raw report](opcode-synthesis.json).','',
@@ -136,26 +155,33 @@ def main():
     parser.add_argument('--resume',action='store_true',help='Continue a report with the same seed, scope and repeat count.')
     parser.add_argument('--fixtures',nargs='+',choices=('hello','dag','hot','repeated','functions'),default=('hello','dag','hot','repeated','functions'))
     parser.add_argument('--backends',nargs='+',choices=('classic','karity','mov'),default=('classic','karity','mov'))
+    parser.add_argument('--lua',nargs='+',choices=('5.1','5.3'),default=('5.1','5.3'))
+    parser.add_argument('--modes',nargs='+',choices=('ordinary','fusion','synthesis','efficiency_fusion','balanced','combined','protection'),
+        default=('ordinary','fusion','synthesis','balanced','combined','protection'))
     opts=parser.parse_args()
-    report={'python':sys.version,'seed':1400,'repeats':opts.repeats,'scope':'real VM-only, retained operand slots, load/init included','records':[]}
+    report={'python':sys.version,'seed':1400,'repeats':opts.repeats,
+        'register_cache':'epoch/generation validation with cached bank address',
+        'scope':'real VM-only, retained operand slots, load/init included','records':[]}
     if opts.resume:
         previous=json.loads(opts.output.read_text(encoding='utf-8'))
-        assert all(previous[key]==report[key] for key in ('python','seed','repeats','scope'))
+        assert all(previous[key]==report[key] for key in ('python','seed','repeats','scope','register_cache'))
         report=previous
     completed={(r['lua'],r['backend'],r['fixture'],r['mode']) for r in report['records']}
     variants={'ordinary':{},'fusion':{'opcode_fusion':True},
         'synthesis':{'opcode_synthesis':True,'synthesis_policy':'efficiency'},
+        'efficiency_fusion':{'opcode_synthesis':True,'opcode_fusion':True,'synthesis_policy':'efficiency'},
         'balanced':{'opcode_synthesis':True,'synthesis_policy':'balanced'},
         'combined':{'opcode_synthesis':True,'opcode_fusion':True,'synthesis_policy':'balanced'},
         'protection':{'opcode_synthesis':True,'synthesis_policy':'protection'}}
-    for version in ('5.1','5.3'):
+    for version in opts.lua:
         for backend in opts.backends:
             fixtures={'hello':"print('hello')",'dag':SOURCE,'hot':SOURCE.replace('1,40','1,2000'),'repeated':REPEATED,'functions':FUNCTIONS}
             for fixture in opts.fixtures:
                 source=fixtures[fixture]
                 expected=execute(source,version)[0]
                 for name,settings in variants.items():
-                    if backend=='mov' and name=='fusion':continue
+                    if name not in opts.modes:continue
+                    if backend=='mov' and name in ('fusion','efficiency_fusion'):continue
                     if (version,backend,fixture,name) in completed:continue
                     samples=[]
                     for repeat in range(opts.repeats):
