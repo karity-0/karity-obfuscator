@@ -270,6 +270,8 @@ html[data-gui-version="v2"] .editor-card .marker-tools { right: 192px; }
 .button.primary:hover { border-color: #b6a9ff; filter: brightness(1.08); }
 .run-arrow { font: 15px var(--mono); }
 
+.editor-diagnostic { flex: 0 0 auto; max-height: 56px; overflow: auto; padding: 6px 12px; color: var(--danger, #e66); font: 11px/1.4 var(--mono); border-top: 1px solid currentColor; }
+.line-gutter .diagnostic-line { color: var(--danger, #e66); font-weight: bold; }
 .tooltip { position: fixed; z-index: 1000; max-width: 270px; padding: 8px 10px; visibility: hidden; opacity: 0; pointer-events: none; color: var(--text); border: 1px solid var(--line-bright); border-radius: 8px; background: var(--panel-2); box-shadow: 0 10px 35px rgba(0,0,0,.4); font-size: 10px; line-height: 1.45; transition: opacity .1s; }
 .tooltip.active { visibility: visible; opacity: 1; }
 @keyframes pulse { 50% { opacity: .35; } }

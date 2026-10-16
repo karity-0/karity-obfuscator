@@ -450,6 +450,13 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         elseif op==62 then
             local n=_acount(_va);local t={n=_source_value(n)}
             for i=1,n do t[i]=_aget(_va,i) end;rset(A,t)
+        elseif op==63 then _IT.fail("VM execution failed",0)
+        elseif op==64 then _IT.invalid=true; _IT.fail("VM execution failed",0)
+        elseif op==65 then
+            local condition=rget(A); _stack_trim(B)
+            if not condition then _IT.fail("VM execution failed",0) end
+            condition=nil
+            if C==0 then top=B-1 else for i=B,B+C-2 do rset(i,nil) end end
         else error("unknown op "..op) end
     end
     return {r={},n=0}

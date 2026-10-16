@@ -18,6 +18,8 @@ REGRESSIONS = (
     "opcode_synthesis_backend",
     "opcode_edges",
     "vm_lifetime",
+    "kes",
+    "kes_integration",
     "synthesis_dag",
     "synthesis_control",
     "selection",

@@ -306,7 +306,7 @@ def _successors(code: list[HandlerInstruction], index: int) -> set[int]:
     op = raw.op
     n = len(code)
     nxt = index + 1
-    if op in {37, 38}:
+    if op in {37, 38, 63, 64}:
         return set()
     if op in _SBXOPS:
         sbx = raw.bx - 131071

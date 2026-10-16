@@ -34,6 +34,10 @@ class LuaExecution:
                 return {"ok": False, "error": "Code is already running"}
             folder = tempfile.TemporaryDirectory(prefix="karity-run-")
             try:
+                from .kes import lower_source, reject_native_intrinsics
+                toolchain = LuaToolchain.from_config(config)
+                script = lower_source(script, toolchain.lua_version).source
+                reject_native_intrinsics(script)
                 source = Path(folder.name) / "source.lua"
                 source.write_text(script, encoding="utf-8")
                 wrapper = Path(folder.name) / "run.lua"
@@ -42,7 +46,6 @@ class LuaExecution:
                 wrapper.write_text(
                     'io.stdout:setvbuf("no"); io.stderr:setvbuf("no"); '
                     f'arg={{[0]={literal}}}; dofile({literal})', encoding="utf-8")
-                toolchain = LuaToolchain.from_config(config)
                 worker = Path(__file__).with_name("gui_execution_worker.py")
                 python = Path(sys.executable)
                 if python.name.lower() == "pythonw.exe":

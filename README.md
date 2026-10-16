@@ -55,6 +55,7 @@ development and diagnostics. See [user presets](docs/user-presets.md) and the
 
 ## Documentation
 
+- [Karity Extended Syntax and VM intrinsics](docs/kes.md)
 - [Presets and backend selection](docs/user-presets.md)
 - [Configuration reference](docs/configuration.md)
 - [Selective protection](docs/selective-obfuscation.md)

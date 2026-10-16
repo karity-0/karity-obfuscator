@@ -49,7 +49,21 @@ document.addEventListener('DOMContentLoaded', () => {
   const preferenceTabs = ['appearance', 'gui', 'editor', 'general'];
   const editors = [window.LuaCodeEditor.attach(ui.input), window.LuaCodeEditor.attach(ui.output)];
   const tr = text => window.GuiI18n.tr(text, preferences?.language || 'ko');
-  const refreshEditors = () => editors.forEach(editor => editor.refresh());
+  const refreshEditors = () => { editors.forEach(editor => editor.refresh()); scheduleKesValidation(); };
+  let kesTimer = null;
+  let kesRevision = 0;
+  function scheduleKesValidation() {
+    clearTimeout(kesTimer);
+    const revision = ++kesRevision;
+    if (!api?.validate_kes || !state) return;
+    kesTimer = setTimeout(async () => {
+      try {
+        const result = await api.validate_kes({script: ui.input.value, lua_version: state.config.target?.lua_version || '5.3'});
+        if (revision === kesRevision) editors[0].setDiagnostics(result.errors);
+      } catch (_) { /* Build and execution still report errors if the bridge closes. */ }
+    }, 350);
+  }
+  ui.input.addEventListener('input', scheduleKesValidation);
   let preferenceOpener = null;
   let settingsOpener = null;
   let backendOpener = null;

@@ -376,6 +376,11 @@ def check_alias_planning():
             for vm_id, maps in enumerate(lowered.backend_data['layout'].vm_maps):
                 expected = dict(requirements[vm_id]['operations'])
                 for op, operation in enumerate(OPERATIONS):
+                    # Appended failure intrinsics are optional. Reserving
+                    # aliases for unused ones would change legacy RNG/layout.
+                    if op >= 63 and operation not in expected:
+                        assert op not in maps[0]
+                        continue
                     assert len(maps[0][op]) == expected.get(operation, requirements[vm_id]['auxiliary_count'])
     mov = get_backend('mov').lower(protect(ir, plan), BackendContext({}))
     assert any(request.feature == 'handler_aliases' for request in mov.resolution.disabled)

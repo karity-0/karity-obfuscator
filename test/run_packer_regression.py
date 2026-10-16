@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import zlib
+from unittest.mock import patch
 from pathlib import Path
 from lua_runtime import lua_executable
 
@@ -185,6 +186,28 @@ def get_pass_record(profile: dict, name: str) -> dict:
     raise AssertionError(f"{name} record missing from profile report")
 
 
+def test_mask_positions(ctx: Path):
+    sys.path.insert(0, str(ROOT_DIR))
+    from obfuscator.passes.packer import _mask_lua_noncode, _make_depth_lookup, _top_level_locals, _code_substitute
+    pieces = [('local t = {', False), ('"escaped \\\" -- quote"', True),
+              (', ', False), ('[==[long ]=] 中文\ntext]==]', True), ('}; ', False),
+              ('--[=[long comment\n[[]]]=]', True), ('\nreturn t[1] ', False),
+              ('-- line comment', True), ('\n', False)]
+    source = ''.join(text for text, _ in pieces)
+    expected = ''.join(' ' * len(text) if opaque else text for text, opaque in pieces)
+    assert _mask_lua_noncode(source) == expected
+    repeated = source * 4096
+    assert _mask_lua_noncode(repeated) == expected * 4096
+    scoped = ('local outer=1; do local inner=2 end; '
+              'local function f() for i=1,2 do local nested=3 end end; local after=4')
+    masked = _mask_lua_noncode(scoped)
+    depth = _make_depth_lookup(masked)
+    assert [depth(scoped.index(word)) for word in ('local outer', 'local inner', 'local function', 'local nested', 'local after')] == [0,1,0,2,0]
+    assert _top_level_locals(scoped, masked, depth) == {'outer', 'f', 'after'}
+    refs = '_ENV.string.byte(s);_ENV . -- gap\n string.byte(s);string.byte(s);t:type()'
+    assert _code_substitute(refs, {'string.byte':'proxy', 'type':'proxy_type'}) == refs.replace(';string.byte(s)', ';proxy(s)')
+
+
 def test_pack_semantics(ctx: Path):
     source = ctx / "semantic.lua"
     output = ctx / "semantic_pack.lua"
@@ -228,6 +251,28 @@ def test_vm_pack_semantics(ctx: Path):
     make_semantic_source(source)
     build(source, output, config=ARGS.config, timeout=ARGS.timeout, vm=True)
     assert_same_runtime(ARGS.lua_exe, source, output, ARGS.timeout)
+
+
+def test_selective_vm_pack_integrity(ctx: Path):
+    sys.path.insert(0, str(ROOT_DIR))
+    from obfuscator import Pipeline, build_pipeline_from_config
+    from obfuscator.passes.packer import PackerPass, _VM_TAIL_RE
+    from run_vm_backend_regression import options
+    source = ctx / 'selective.lua'
+    source.write_text('--@VM_START\nlocal n=2;print(n,string.byte("A"))\n--@VM_END\n', encoding='utf-8')
+    for backend in ('classic', 'karity', 'mov'):
+        random.seed(124)
+        config = {'passes':['vm'], 'signature':{'mode':'none'},
+                  'vm_options':options(backend), 'selection_modes':{'vm':'marked'}}
+        output = build_pipeline_from_config(config, Pipeline, show_header=False).run(source.read_text(encoding='utf-8'))
+        assert _VM_TAIL_RE.search(output) is None, 'fixture must exercise generic packing'
+        # Force reference proxies to include qualified dotted suffixes. They
+        # must not rewrite _ENV.string.byte inside the finalized runtime.
+        with patch('obfuscator.passes.packer.random.random', return_value=0):
+            packed = PackerPass(packer_output_passes=['minify']).run(output)
+        path = ctx / (backend + '-selective-packed.lua')
+        path.write_text(packed, encoding='utf-8')
+        assert_same_runtime(ARGS.lua_exe, source, path, ARGS.timeout)
 
 
 def test_single_signature_header(ctx: Path):
@@ -329,9 +374,11 @@ def test_vm_packer_performance(ctx: Path):
 
 
 TESTS = [
+    ("mask_positions", test_mask_positions),
     ("inflate window boundaries", test_inflate_window_boundaries),
     ("pack semantics", test_pack_semantics),
     ("vm + pack semantics", test_vm_pack_semantics),
+    ("selective VM pack integrity", test_selective_vm_pack_integrity),
     ("single signature header", test_single_signature_header),
     ("randomized builds", test_randomized_builds),
     ("loader self-hash tamper", test_loader_tamper_breaks_payload),

@@ -101,6 +101,8 @@ class VMBuildPipeline(PostPass):
         self.last_lowered_ir: LoweredIR | None = None
 
     def run(self, script: str) -> str:
+        from ..kes import lower_source
+        script = lower_source(script, self.target_profile.lua_version).source
         self.last_profile = []
         self.last_source_ir = None
         self.last_optimized_ir = None
@@ -137,10 +139,14 @@ class VMBuildPipeline(PostPass):
             constant_provider=constant_provider,
         )
         started = time.perf_counter()
-        bytecode = run_phase('vm:compile', self.target.compile, script, self.toolchain)
+        from .intrinsics import mark_intrinsics
+        compile_source, intrinsic_markers = mark_intrinsics(script, self.target_profile.lua_version)
+        bytecode = run_phase('vm:compile', self.target.compile, compile_source, self.toolchain)
         self.last_profile.append({"phase": "compile_luac", "elapsed": round(time.perf_counter() - started, 6)})
         started = time.perf_counter()
         source_ir = run_phase('vm:ir', self.target.build_ir, bytecode)
+        from .intrinsics import resolve_intrinsics
+        source_ir = run_phase('vm:intrinsics', resolve_intrinsics, source_ir, intrinsic_markers)
         self.last_source_ir = source_ir
         self.last_profile.append({
             "phase": "build_semantic_ir", "elapsed": round(time.perf_counter() - started, 6),

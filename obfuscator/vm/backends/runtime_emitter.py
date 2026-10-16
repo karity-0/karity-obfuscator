@@ -724,6 +724,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     runtime_source = _load_vm(backend_adapter, lowered_ir,
                              target.library_dump_normalization and bool(context.toolchain.lua_library),
                              target=target)
+    from ..intrinsics import prepare_intrinsic_runtime
+    runtime_source = prepare_intrinsic_runtime(runtime_source, protected_semantic_ir)
     from ..synthesis.storage import prepare_reader
     runtime_source=prepare_reader(runtime_source,blob,instr_layout)
     if materialization is not None:

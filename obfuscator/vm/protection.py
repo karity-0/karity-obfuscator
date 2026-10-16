@@ -95,7 +95,8 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
             raise ValueError(
                 f"protection plan references unknown {label}: {', '.join(unknown)}"
             )
-    from .ir.operations import OPERATIONS as semantic_operations
+    from .ir.operations import planned_operations
+    semantic_operations = planned_operations(ir)
     for function_id, state in plan.functions.items():
         requirements = state.get('alias_requirements')
         if requirements is None:
@@ -492,7 +493,8 @@ class ProtectionPlanner:
 
         # Alias multiplicity is a protection decision. Backends only allocate
         # their own opcode identifiers for these semantic requirements.
-        from .ir.operations import OPERATIONS as semantic_operations
+        from .ir.operations import planned_operations
+        semantic_operations = planned_operations(ir)
         functions[ir.root.id]['alias_requirements'] = tuple(
             {'operations': tuple((name, rng.randint(2, 3))
                                  for name in sorted(semantic_operations)),

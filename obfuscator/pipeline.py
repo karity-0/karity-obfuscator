@@ -120,9 +120,28 @@ class Pipeline:
     ) -> str:
         from .selection_runtime import SelectionRuntime
 
+        from .kes import lower_source, reject_native_intrinsics
+        lowered = run_phase('source:kes', lower_source, script,
+                            getattr(getattr(self, 'target_profile', None), 'lua_version', '5.3'))
+        script = lowered.source
+        self.last_kes_result = lowered
+
         selection = run_phase('selection', SelectionRuntime, self, script)
         script = selection.plan.source if selection.enabled else script
         self.last_selection_report = selection.plan.report
+        if lowered.intrinsic_positions:
+            from .kes import INTRINSICS, KESError, lex
+            from .vm.vm_pass import VMPass
+            configured_vm = any(isinstance(p, VMPass) for p in self._post_passes)
+            plan = selection.plan
+            has_vm = configured_vm or plan.explicit('vm')
+            whole = plan.file_vm or plan.modes.get('vm', 'all' if configured_vm else 'marked') == 'all'
+            for token in lex(script):
+                if token.kind != 'name' or token.text not in INTRINSICS:
+                    continue
+                selected = whole or any(s.feature == 'vm' and s.start <= token.start and token.end <= s.end for s in plan.spans)
+                if not has_vm or not selected or plan.excluded(token.start, token.end, vm=True):
+                    raise KESError(script, token.start, token.text + ' requires an actual VM execution region')
         for pre in self._pre_passes:
             with phase_scope('source:' + pre.__class__.__name__):
                 before = _size(script)
@@ -220,7 +239,10 @@ class Pipeline:
                     print(ast.to_pretty_str(new_tree))
 
         post_passes = selection.post_passes(self._post_passes) if selection.enabled else self._post_passes
-        for post in post_passes:
+        for post_index, post in enumerate(post_passes):
+            from .vm.vm_pass import VMPass
+            if not any(isinstance(p, VMPass) for p in post_passes[post_index:]):
+                reject_native_intrinsics(script)
             with phase_scope('post:' + post.__class__.__name__):
                 before = _size(script)
                 start = time.perf_counter()
@@ -252,6 +274,7 @@ class Pipeline:
                                 f"{detail['elapsed']:.3f}s"
                             )
 
+        reject_native_intrinsics(script)
         if self._output_signature is None:
             return script
 

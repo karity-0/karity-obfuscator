@@ -171,6 +171,13 @@ assert.equal(tokens('-- @NO_VM_START')[0].kind,'comment');
 assert(!tokens('@NO_VM_END').some(t=>t.kind.startsWith('marker')));
 assert.equal(tokens('local text="--@NO_VM_START"').at(-1).kind,'string');
 assert(!tokens('--@NO_OBF').some(t=>t.kind.startsWith('marker')));
+assert.equal(tokens('continue')[0].kind,'keyword');
+assert.equal(tokens('KARITY_PANIC()')[0].kind,'builtin');
+assert.equal(tokens('0b10_10')[0].kind,'number');
+assert.equal(tokens('x ??= 1')[0].kind,'operator');
+assert.equal(tokens('x?.name')[0].kind,'operator');
+assert.equal(tokens('s ..= "tail"')[0].kind,'operator');
+assert.equal(tokens('.1_0')[0].kind,'number');
 '''
     subprocess.run(['node','-e',script],cwd=ROOT,check=True)
 

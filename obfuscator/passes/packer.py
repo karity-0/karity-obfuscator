@@ -14,6 +14,7 @@ The packer is intentionally the outer runtime component rather than another VM:
 from __future__ import annotations
 
 import base64
+from bisect import bisect_right
 import os
 import random
 import re
@@ -419,6 +420,10 @@ def _distinct_slots(count: int) -> list[int]:
     return list(used)
 
 
+_LONG_COMMENT_OPEN = re.compile(r"--\[(=*)\[")
+_LONG_STRING_OPEN = re.compile(r"\[(=*)\[")
+
+
 def _mask_lua_noncode(src: str) -> str:
     """Replace comments/string contents with spaces while preserving length."""
     out = list(src)
@@ -446,11 +451,11 @@ def _mask_lua_noncode(src: str) -> str:
 
         if src.startswith("--", i):
             # Long comment --[=[ ... ]=]
-            m = re.match(r"--\[(=*)\[", src[i:])
+            m = _LONG_COMMENT_OPEN.match(src, i)
             if m:
                 eq = m.group(1)
                 close = "]" + eq + "]"
-                j = src.find(close, i + m.end())
+                j = src.find(close, m.end())
                 end = n if j < 0 else j + len(close)
                 for k in range(i, end):
                     out[k] = " "
@@ -465,11 +470,11 @@ def _mask_lua_noncode(src: str) -> str:
             continue
 
         # Long string [=[ ... ]=]
-        m = re.match(r"\[(=*)\[", src[i:])
+        m = _LONG_STRING_OPEN.match(src, i) if ch == '[' else None
         if m:
             eq = m.group(1)
             close = "]" + eq + "]"
-            j = src.find(close, i + m.end())
+            j = src.find(close, m.end())
             end = n if j < 0 else j + len(close)
             for k in range(i, end):
                 out[k] = " "
@@ -486,11 +491,10 @@ def _keyword_tokens(masked: str):
         yield m.group(0), m.start(), m.end()
 
 
-def _depth_before(masked: str, pos: int) -> int:
-    depth = 0
+def _keyword_depths(masked: str):
     pending_do = 0
     stack: list[str] = []
-    for word, start, _ in _keyword_tokens(masked[:pos]):
+    for word, _, end in _keyword_tokens(masked):
         if word == "function":
             stack.append("end")
         elif word == "if":
@@ -511,8 +515,15 @@ def _depth_before(masked: str, pos: int) -> int:
         elif word == "until":
             if stack and stack[-1] == "until":
                 stack.pop()
-        depth = len(stack)
-    return depth
+        yield end, len(stack)
+
+
+def _make_depth_lookup(masked: str):
+    positions, depths = [0], [0]
+    for end, depth in _keyword_depths(masked):
+        positions.append(end)
+        depths.append(depth)
+    return lambda pos: depths[bisect_right(positions, pos) - 1]
 
 
 def _find_function_end(masked: str, function_pos: int) -> int | None:
@@ -556,15 +567,17 @@ def _find_function_end(masked: str, function_pos: int) -> int | None:
     return None
 
 
-def _top_level_locals(src: str, masked: str) -> set[str]:
+def _top_level_locals(src: str, masked: str, depth_before=None) -> set[str]:
+    depth_before = depth_before or _make_depth_lookup(masked)
     names: set[str] = set()
     for m in re.finditer(r"\blocal\s+(?:function\s+)?([A-Za-z_]\w*)", masked):
-        if _depth_before(masked, m.start()) == 0:
+        if depth_before(m.start()) == 0:
             names.add(m.group(1))
     return names
 
 
-def _find_simple_constants(src: str, masked: str) -> list[ExtractedConstant]:
+def _find_simple_constants(src: str, masked: str, depth_before=None) -> list[ExtractedConstant]:
+    depth_before = depth_before or _make_depth_lookup(masked)
     result: list[ExtractedConstant] = []
     pat = re.compile(
         r"\blocal\s+([A-Za-z_]\w*)\s*=\s*"
@@ -574,7 +587,7 @@ def _find_simple_constants(src: str, masked: str) -> list[ExtractedConstant]:
     for m in pat.finditer(src):
         if masked[m.start():m.start()+5] != "local":
             continue
-        if _depth_before(masked, m.start()) != 0:
+        if depth_before(m.start()) != 0:
             continue
         name = m.group(1)
         literal = m.group(2)
@@ -591,7 +604,9 @@ def _find_top_level_functions(
     masked: str,
     top_locals: set[str],
     extractable_names: set[str],
+    depth_before=None,
 ) -> list[ExtractedFunction]:
+    depth_before = depth_before or _make_depth_lookup(masked)
     result: list[ExtractedFunction] = []
 
     patterns = (
@@ -602,7 +617,7 @@ def _find_top_level_functions(
     seen: set[tuple[int, int]] = set()
     for pat in patterns:
         for m in pat.finditer(masked):
-            if _depth_before(masked, m.start()) != 0:
+            if depth_before(m.start()) != 0:
                 continue
             key = (m.start(), m.end())
             if key in seen:
@@ -688,13 +703,13 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     pos = 0
     for m in pattern.finditer(masked):
         key = m.group(0)
-        # Bare identifiers used as fields/methods are not variable refs.
-        if "." not in key:
-            j = m.start() - 1
-            while j >= 0 and masked[j].isspace():
-                j -= 1
-            if j >= 0 and masked[j] in ".:":
-                continue
+        # Neither a bare name nor a dotted suffix is a global reference when
+        # it follows another field/method selector (e.g. _ENV.string.byte).
+        j = m.start() - 1
+        while j >= 0 and masked[j].isspace():
+            j -= 1
+        if j >= 0 and masked[j] in ".:":
+            continue
         out.append(src[pos:m.start()])
         out.append(replacements[key])
         pos = m.end()
@@ -786,8 +801,9 @@ def _alloc_plan(script: str) -> ContextPlan:
         )
 
     masked = _mask_lua_noncode(script)
-    top_locals = _top_level_locals(script, masked)
-    constants = _find_simple_constants(script, masked)
+    depth_before = _make_depth_lookup(masked)
+    top_locals = _top_level_locals(script, masked, depth_before)
+    constants = _find_simple_constants(script, masked, depth_before)
     constant_names = {c.name for c in constants}
 
     # First pass: function names are extractable from one another.
@@ -797,11 +813,11 @@ def _alloc_plan(script: str) -> ContextPlan:
         re.compile(r"\blocal\s+([A-Za-z_]\w*)\s*=\s*function\s*\("),
     ):
         for m in p.finditer(masked):
-            if _depth_before(masked, m.start()) == 0:
+            if depth_before(m.start()) == 0:
                 rough_funcs.append(m.group(1))
     extractable_names = set(rough_funcs) | constant_names
     funcs = _find_top_level_functions(
-        script, masked, top_locals, extractable_names
+        script, masked, top_locals, extractable_names, depth_before
     )
 
     # Random but bounded extraction. Prefer functions with dependencies so the
@@ -1122,7 +1138,10 @@ def _rewrite_generic_payload(script: str, plan: ContextPlan, state: int) -> str:
     )
     # The private context is not part of the user's chunk varargs. Tail-enter
     # a lexical body with only the original arguments, including trailing nil.
-    return prefix + "return (function(...)\n" + body + "\nend)(select(4,...))"
+    # Keep original line numbers and the first environment upvalue stable.
+    # Selective VM capsules can occur in this generic path; their finalized
+    # dump includes line/upvalue descriptors even with debug data stripped.
+    return prefix + "return (function(...)do local _=_ENV end; " + body + "\nend)(select(4,...))"
 
 
 def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:

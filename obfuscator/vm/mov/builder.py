@@ -50,7 +50,7 @@ def _native_arithmetic(runtime: str, *, binary64_target: bool = False) -> str:
     return runtime[:start] + arithmetic_body + runtime[end:]
 
 
-def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None, synthesis=None) -> str:
+def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None, synthesis=None, intrinsic_ops=()) -> str:
     binary64_target = bool(target and target.user_number_model == "binary64")
     if template is None:
         template = (Path(__file__).parents[1] / "runtimes" / "mov_exec.lua").read_text(encoding="utf-8")
@@ -131,7 +131,8 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None
         definition = definition.replace("--<<MIXED_TABLES>>", mixed_tables(kit.encode))
         definition = definition.replace("--<<SHIFT_TABLES>>", shift_tables(kit.encode))
         key = host_keys[vm_id - 1]
-        order = random.sample(list(blocks), len(blocks))
+        active = [op for op in blocks if op < 63 or op in intrinsic_ops]
+        order = random.sample(active, len(active))
         bank = "local _mov_host={\n" + "\n".join(
             f"[{op ^ key}]=function(A,B,C,Bx,sBx,_av)\n{blocks[op]}\nend,"
             for op in order

@@ -115,6 +115,8 @@ def _make_vop_map(used_vops: set[int] | None, alias_requirements) -> dict[int, l
 
     counts = dict(alias_requirements["operations"])
     for orig, name in enumerate(OPERATIONS):
+        if orig >= 63 and name not in counts:
+            continue
         n_aliases = counts.get(name, alias_requirements["auxiliary_count"])
         aliases = []
         for _ in range(n_aliases):
