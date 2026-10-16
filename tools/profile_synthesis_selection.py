@@ -17,7 +17,7 @@ from compare_literal_mosaic import run
 
 FIXTURES={'hello':"print('hi')",'dag':SOURCE,'functions':FUNCTIONS,'long':LONG_DAG,
     'strings':'local t={"hello world","한글 🍤","dependency reconstruction"};for i=1,#t do print(i,#t[i],t[i]:sub(1,4)) end'}
-REF='d7ec9ca'
+REF='8e3d9a0'
 
 
 @contextmanager
@@ -100,7 +100,7 @@ def main():
     parser.add_argument('--fixtures',nargs='+',choices=tuple(FIXTURES),default=['hello','dag','functions','strings','long'])
     parser.add_argument('--backends',nargs='+',choices=('karity','classic','mov'),default=['karity'])
     parser.add_argument('--seed',type=int,default=1400);parser.add_argument('--repeats',type=int,default=3)
-    parser.add_argument('--output',type=Path,default=ROOT/'docs/performance/synthesis-pipeline.json')
+    parser.add_argument('--output',type=Path,default=ROOT/'local/performance/synthesis-pipeline.json')
     parser.add_argument('--resume',action='store_true')
     args=parser.parse_args()
     if args.worker:return worker(args)

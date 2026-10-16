@@ -1,9 +1,9 @@
 # VM output finalization optimization
 
-Baseline: `5118d82`, branch `future`. Measurements use Windows 11, Python
+Baseline: `61d41d8`, branch `future`. Measurements use Windows 11, Python
 3.15.0, native Lua 5.3, `test/scripts/01_helloWorld.lua` (20 bytes), seed 9300,
 and `PYTHONHASHSEED=0`. Builds run serially with diagnostics disabled. The
-[raw report](vm-output-finalization.json) contains wall time, output size,
+raw report (generated locally) contains wall time, output size,
 runtime and child peak working set (sampled every 50 ms, excluding grandchildren).
 Baseline rows were retained from the first isolated comparison; every final
 optimized row was rerun after the last implementation change.
@@ -67,7 +67,7 @@ regressions are retained, including their existing runtime limits.
 
 ## Reproduction and remaining work
 
-Archive `5118d82` to `temp-vm-finalize-baseline`, then run with the same Python
+Archive `61d41d8` to `temp-vm-finalize-baseline`, then run with the same Python
 dependencies and otherwise idle machine:
 
 ```sh

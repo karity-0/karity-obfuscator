@@ -1,6 +1,6 @@
 # Physical permutation and semantic morphing
 
-Baseline: `6c2b7a6` on dev. Source passes remain unchanged.
+Baseline: `92f6544` on dev. Source passes remain unchanged.
 
 ## Placement
 

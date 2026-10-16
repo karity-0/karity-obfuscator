@@ -1,6 +1,6 @@
 # Register cache validation costs
 
-Python 3.15.0, seed 124; 9 rotated-order executions of each generated file. VM-only Karity, synthesis disabled; graph/state/dispatch protection remains enabled in protected cases. CPU includes blob loading and runtime initialization, excluding source parsing/process startup; builder timings are single samples. Lua 5.1 uses 200 arithmetic/comparison / 150 table/closure iterations; Lua 5.3 uses 4000 / 2500. Old cache is correct on these workloads, which never overwrite captured owner slots. [Raw samples](register-cache.json).
+Python 3.15.0, seed 124; 9 rotated-order executions of each generated file. VM-only Karity, synthesis disabled; graph/state/dispatch protection remains enabled in protected cases. CPU includes blob loading and runtime initialization, excluding source parsing/process startup; builder timings are single samples. Lua 5.1 uses 200 arithmetic/comparison / 150 table/closure iterations; Lua 5.3 uses 4000 / 2500. Old cache is correct on these workloads, which never overwrite captured owner slots. Raw samples (generated locally).
 
 | Lua / options / input | Old s | Full-position guard s | Cached-address guard s | Disabled s | Change vs old |
 |---|---:|---:|---:|---:|---:|

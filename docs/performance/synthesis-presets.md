@@ -1,6 +1,6 @@
 # Synthesis under built-in VM protection settings
 
-Karity / Lua 5.3 / Python 3.15, seed 1400, three timed runs per condition. VM only: source/output passes and packing are excluded. All other preset VM options remain enabled. Execution includes loading and initialization; every result matches native Lua. Raw samples and options: [report](synthesis-presets.json).
+Karity / Lua 5.3 / Python 3.15, seed 1400, three timed runs per condition. VM only: source/output passes and packing are excluded. All other preset VM options remain enabled. Execution includes loading and initialization; every result matches native Lua. Raw samples and options: report (generated locally).
 
 | Preset / input | Build wall s, off → on | Execution CPU s, off → on | Output bytes, off → on | Change | Regions / handlers |
 |---|---|---|---|---|---|

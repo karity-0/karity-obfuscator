@@ -15,7 +15,7 @@ from obfuscator.presets import user_preset
 LARGE='local s=0;for i=1,3 do local a;'+('a=i*3;a=a+7;a=a*5;s=s+a;'*256)+'end;print(s)'
 OPTIONS={**BASE,'opcode_synthesis':True,'synthesis_policy':'efficiency','synthesis_max_steps':4,
     'synthesis_max_recipes':64,'synthesis_max_occurrences':1024,'synthesis_max_code_growth':64}
-REF='a1ab669'
+REF='ce20b16'
 
 
 def compact_profile(data):
@@ -56,6 +56,7 @@ def baseline(modules):
 
 
 def main():
+    (ROOT/'local/performance').mkdir(parents=True,exist_ok=True)
     modules=historical();records=[]
     cases=[(backend,version,fixture,source,OPTIONS) for backend in ('classic','karity','mov')
         for version in ('5.1','5.3') for fixture,source in (('dag',SOURCE),('large',LARGE))]
@@ -79,10 +80,10 @@ def main():
         report={'baseline':REF,'seed':1400,'hash_seed':__import__('os').environ.get('PYTHONHASHSEED'),
             'repeats':3,'scope':'VM-only; alternating same-process historical/current builds; loader time included',
             'records':records}
-        Path('docs/performance/synthesis-storage.json').write_text(json.dumps(report,separators=(',',':')),encoding='utf-8')
+        (ROOT/'local/performance/synthesis-storage.json').write_text(json.dumps(report,separators=(',',':')),encoding='utf-8')
         print('synthesis-storage-bench',backend,version,fixture,row['median'],flush=True)
     lines=['# Numeric DAG runtime and storage follow-up','',
-        'Baseline `a1ab669` and current code: same process, Python 3.15, hash seed 0, random seed 1400. '
+        'Baseline `ce20b16` and current code: same process, Python 3.15, hash seed 0, random seed 1400. '
         'Three alternating pairs per case, VM only. Source/output passes and packing are excluded. '
         'Execution includes loading/initialization. All results match native Lua. '
         'Options, samples, pruning/storage/reuse profiles and decision totals/examples: [report](synthesis-storage.json). '
@@ -99,7 +100,7 @@ def main():
         'and reader overhead cannot be recovered. MOV number-only HOST fallback bodies remain required. '
         'Logical PCs, all 48 word bits, accumulator updates, graph/state records and planned protection variants '
         'are retained. Timing differences include startup and scheduling noise; these are not full GUI preset times.','']
-    Path('docs/performance/synthesis-storage.md').write_text('\n'.join(lines),encoding='utf-8')
+    (ROOT/'local/performance/synthesis-storage.md').write_text('\n'.join(lines),encoding='utf-8')
 
 
 if __name__=='__main__':main()

@@ -1,6 +1,6 @@
 # Synthesis selection through full user presets
 
-Python 3.15 / native Lua 5.3, seed 1400. Three alternating historical/current pairs, with identical nonce entropy. Both sides use the corrected epoch/generation-validating register cache; the baseline isolates the historical selector and vocabulary. Source passes, VM output passes and Maximum packing remain enabled. Execution includes loading and initialization. Every timed output matches native Lua. Diagnostics are separate from ordinary timed builds. Native Lua wall time also includes source parsing/process startup; runtime peak memory is sampled separately. Peak builder working set excludes compiler grandchildren. [Raw samples](synthesis-pipeline.json).
+Python 3.15 / native Lua 5.3, seed 1400. Three alternating historical/current pairs, with identical nonce entropy. Both sides use the corrected epoch/generation-validating register cache; the baseline isolates the historical selector and vocabulary. Source passes, VM output passes and Maximum packing remain enabled. Execution includes loading and initialization. Every timed output matches native Lua. Diagnostics are separate from ordinary timed builds. Native Lua wall time also includes source parsing/process startup; runtime peak memory is sampled separately. Peak builder working set excludes compiler grandchildren. Raw samples (generated locally).
 
 | Backend / preset / input | Build wall s | Execution CPU s | Output bytes | Builder MiB | Lua wall s | Lua MiB | Regions / handlers |
 |---|---|---|---|---|---|---|---|
@@ -42,9 +42,9 @@ No source pass, VM protection option, VM output signature pass or packing stage 
 
 ## Findings and limits
 
-Measured implementation: `d249c45`, with register-cache fix `02f7757` shared by
+Measured implementation: `5684193`, with register-cache fix `32ceb0d` shared by
 both sides. The baseline uses the selector and numeric vocabulary from
-`d7ec9ca`; this is not a checkout-wide historical comparison. There are 78
+`8e3d9a0`; this is not a checkout-wide historical comparison. There are 78
 ordinary timed builds and 13 separate diagnostic builds in this report.
 
 Fast/Balanced preserve the same output bytes on all six inputs; these samples

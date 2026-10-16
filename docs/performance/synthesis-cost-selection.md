@@ -1,6 +1,6 @@
 # Current synthesis cost selection
 
-Python 3.15; seed 1400; 3 repeats per condition. VM only, source/output passes and packing excluded. Execution CPU includes loading and initialization. All outputs match native Lua. [Raw samples](synthesis-cost-selection.json).
+Python 3.15; seed 1400; 3 repeats per condition. VM only, source/output passes and packing excluded. Execution CPU includes loading and initialization. All outputs match native Lua. Raw samples (generated locally).
 
 | Backend / Lua / input / mode | Build wall s | Execution CPU s | Output bytes | Regions | Dispatches |
 |---|---|---|---|---|---|

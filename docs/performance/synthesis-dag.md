@@ -1,6 +1,6 @@
 # Ordered DAG and guarded-local measurements
 
-Python 3.15.0, Lua 5.3, karity; seed 1400, 3 alternating samples. Historical synthesis: `cb1d25d`. All other runtime code/options are identical. VM only; generous Protection budgets expose the feature, so these are not full GUI preset timings. Build wall includes synthesis; execution uses Lua os.clock() inside the chunk, including runtime loading/initialization but excluding parsing/process startup. Counter builds are separate and all results match native Lua. Concurrent local CI was running; timings are indicative, not regression thresholds.
+Python 3.15.0, Lua 5.3, karity; seed 1400, 3 alternating samples. Historical synthesis: `2815766`. All other runtime code/options are identical. VM only; generous Protection budgets expose the feature, so these are not full GUI preset timings. Build wall includes synthesis; execution uses Lua os.clock() inside the chunk, including runtime loading/initialization but excluding parsing/process startup. Counter builds are separate and all results match native Lua. Concurrent local CI was running; timings are indicative, not regression thresholds.
 
 | Input / protection | Build wall s | Lua os.clock s | Output bytes | Regions | Reads, median | Writes, median |
 |---|---|---|---|---|---|---|

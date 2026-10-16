@@ -40,7 +40,7 @@ def baseline_class(revision, module_name, class_name):
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--baseline',default='69ff179')
+    parser.add_argument('--baseline',default='5bcef98')
     parser.add_argument('--output',type=Path,required=True)
     args=parser.parse_args()
     old_boolean=baseline_class(args.baseline,'boolean_obfuscation','BooleanObfuscationPass')

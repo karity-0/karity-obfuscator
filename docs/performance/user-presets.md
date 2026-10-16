@@ -1,7 +1,7 @@
 # User preset measurements, 2026-10-11
 
-Catalog revision 1 on `future`, based on `8d1d74e`. Windows, Python 3.15, Lua 5.3, seed 9300.
-[Raw ordinary samples, complete policies and output hashes](user-presets.json).
+Catalog revision 1 on `future`, based on `c3ad4ea`. Windows, Python 3.15, Lua 5.3, seed 9300.
+Raw ordinary samples, complete policies and output hashes (generated locally).
 
 Three inputs cover UTF-8 strings, nested loops, and closures/varargs/trailing nil/coroutines/error handling. All 36 backend/preset/input outputs match original stdout. Each input has **one sample**; ranges below span different inputs, not confidence intervals or paired speedups. Builds were serial with diagnostic profiling disabled; process peak working set excludes compiler grandchildren. Lua runtime wall time includes startup and is sampled at 50 ms.
 

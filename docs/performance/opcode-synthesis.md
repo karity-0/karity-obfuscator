@@ -1,6 +1,6 @@
 # Production opcode synthesis measurements
 
-Windows, Python 3.15; seed 1400, three runs per condition. VM only: no source/output passes or packing. OS nonce/wrapper entropy is fixed only in the benchmark. Execution CPU includes loading, decryption and initialization; native process launch is excluded. Build wall and Python CPU samples are retained in the [raw report](opcode-synthesis.json).
+Windows, Python 3.15; seed 1400, three runs per condition. VM only: no source/output passes or packing. OS nonce/wrapper entropy is fixed only in the benchmark. Execution CPU includes loading, decryption and initialization; native process launch is excluded. Build wall and Python CPU samples are retained in the raw report (generated locally).
 
 Inputs: hello; a four-operation DAG (40 and 2,000 iterations); two repeated DAGs; two numeric functions. The full report has 170 backend/target/input/mode records and 510 timed builds. MOV has no legacy pair fusion, so its combined mode is the Balanced synthesis comparison with fusion explicitly disabled.
 

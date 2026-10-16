@@ -1,6 +1,6 @@
 # Numeric DAG runtime and storage follow-up
 
-Baseline `a1ab669` and current code: same process, Python 3.15, hash seed 0, random seed 1400. Three alternating pairs per case, VM only. Source/output passes and packing are excluded. Execution includes loading/initialization. All results match native Lua. Options, samples, pruning/storage/reuse profiles and decision totals/examples: [report](synthesis-storage.json).
+Baseline `ce20b16` and current code: same process, Python 3.15, hash seed 0, random seed 1400. Three alternating pairs per case, VM only. Source/output passes and packing are excluded. Execution includes loading/initialization. All results match native Lua. Options, samples, pruning/storage/reuse profiles and decision totals/examples: report (generated locally).
 
 | Backend / Lua / input | Build wall s | Execution CPU s | Output bytes | Change | Blob bytes |
 |---|---|---|---|---|---|

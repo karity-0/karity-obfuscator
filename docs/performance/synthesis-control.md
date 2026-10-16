@@ -1,6 +1,6 @@
 # Terminal opcode synthesis measurements
 
-Baseline `b6aceea`; Python 3.15.0, Karity / Lua 5.3, seed 1400, 3 alternating samples. VM only, ample Protection budgets. Block clones and physical permutation are disabled to isolate these recipes; other protected settings retain graphs, alias/state, integrity, mutation and pending work. These are not full GUI preset timings. Concurrent local regressions make timings indicative. Lua os.clock includes initialization, excluding parsing and process launch. All outputs match native Lua.
+Baseline `9af561d`; Python 3.15.0, Karity / Lua 5.3, seed 1400, 3 alternating samples. VM only, ample Protection budgets. Block clones and physical permutation are disabled to isolate these recipes; other protected settings retain graphs, alias/state, integrity, mutation and pending work. These are not full GUI preset timings. Concurrent local regressions make timings indicative. Lua os.clock includes initialization, excluding parsing and process launch. All outputs match native Lua.
 
 | Input / protection | Build s | Execute s | Output bytes | Terminal regions |
 |---|---|---|---|---|

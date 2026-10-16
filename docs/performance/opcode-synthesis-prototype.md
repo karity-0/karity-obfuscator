@@ -1,6 +1,6 @@
 # Adaptive opcode synthesis: Phase A/B results
 
-This is a mechanism prototype on dev `d690710`, not completed 1.4.0 backend
+This is a mechanism prototype on dev `19b7896`, not completed 1.4.0 backend
 integration. Production Karity/Classic/MOV emitters, serialization, source passes,
 GUI presets and version remain unchanged. The common prototype is opt-in through
 its Python API and is not wired into VMPass.
@@ -110,7 +110,7 @@ reduction. Shared definitions can amortize handler cost; the prototype validates
 sharing and distinct occurrence binding, but has not measured full VM amortization.
 
 Raw samples, actual recipe/kernel and packet data:
-[opcode-synthesis-prototype.json](opcode-synthesis-prototype.json).
+The locally generated benchmark report.
 Reproduce with `tools/profile_opcode_synthesis_prototype.py --output REPORT.json`.
 
 ## Protection gate and the next integration work

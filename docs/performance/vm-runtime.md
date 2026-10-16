@@ -4,9 +4,9 @@ Subsequent work now skips construction of unused candidates and shares a small
 set of executor leaves; see [DAG generation and sharing](vm-generation.md).
 The measurements and RNG policy below describe the earlier optimization.
 
-Baseline: f711103, Windows, Python 3.15, seed 9171, PYTHONHASHSEED=0.
-[Lua 5.3 paired measurements](vm-runtime-lua53.json) and
-[Lua 5.1 paired measurements](vm-runtime-lua51.json) contain settings,
+Baseline: b6014aa, Windows, Python 3.15, seed 9171, PYTHONHASHSEED=0.
+Lua 5.3 paired measurements (generated locally) and
+Lua 5.1 paired measurements (generated locally) contain settings,
 individual samples, stage timings, graph-bank sizes and function counts.
 
 These are VM-only builds through VMPass: no source passes, VM output passes
@@ -164,5 +164,5 @@ every possible analysis.
 Reproduce in PowerShell:
 
     $env:PYTHONHASHSEED = '0'
-    python tools/profile_vm_runtime.py --baseline-ref f711103 --output temp-runtime-size/lua53.json --repeats 3
-    python tools/profile_vm_runtime.py --baseline-ref f711103 --output temp-runtime-size/lua51.json --lua-version 5.1 --fixtures hello loops closures --settings default --repeats 3
+    python tools/profile_vm_runtime.py --baseline-ref b6014aa --output temp-runtime-size/lua53.json --repeats 3
+    python tools/profile_vm_runtime.py --baseline-ref b6014aa --output temp-runtime-size/lua51.json --lua-version 5.1 --fixtures hello loops closures --settings default --repeats 3

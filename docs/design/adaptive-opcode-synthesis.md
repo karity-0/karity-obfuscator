@@ -5,7 +5,7 @@ in [prototype measurements](../performance/opcode-synthesis-prototype.md).
 Production measurements are in [VM measurements](../performance/opcode-synthesis.md).
 Actual built-in protection settings are measured separately in
 [preset measurements](../performance/synthesis-presets.md).
-The runtime/storage follow-up is measured against `a1ab669` in
+The runtime/storage follow-up is measured against `ce20b16` in
 [numeric DAG measurements](../performance/synthesis-storage.md). This first
 implementation began with a conservative numeric DAG vocabulary. The ordered
 DAG follow-up adds table/upvalue reads, moves and further scalar operations;

@@ -61,7 +61,7 @@ def worker(args):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--worker',action='store_true')
-    parser.add_argument('--before',default='cb1d25d')
+    parser.add_argument('--before',default='2815766')
     parser.add_argument('--mode',choices=('before','after'),default='after')
     parser.add_argument('--backend',default='karity')
     parser.add_argument('--lua',default='5.3')
@@ -70,7 +70,7 @@ def main():
     parser.add_argument('--seed',type=int,default=1400)
     parser.add_argument('--repeats',type=int,default=3)
     parser.add_argument('--concurrent-ci',action='store_true',help='Record concurrent local CI load in timing provenance.')
-    parser.add_argument('--output',type=Path,default=ROOT/'docs/performance/synthesis-dag.json')
+    parser.add_argument('--output',type=Path,default=ROOT/'local/performance/synthesis-dag.json')
     args=parser.parse_args()
     if args.worker:
         print(json.dumps(worker(args),separators=(',',':')));return

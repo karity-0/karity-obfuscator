@@ -89,10 +89,11 @@ def main():
     parser.add_argument('--lua', nargs='+', choices=('5.1', '5.3'), default=['5.1', '5.3'])
     parser.add_argument('--fixtures', nargs='+', choices=tuple(FIXTURES), default=list(FIXTURES))
     parser.add_argument('--resume', action='store_true')
-    parser.add_argument('--output', type=Path, default=ROOT / 'docs/performance/register-cache.json')
+    parser.add_argument('--output', type=Path, default=ROOT / 'local/performance/register-cache.json')
     args = parser.parse_args()
     if args.repeats < 1:
         parser.error('repeats must be positive')
+    args.output.parent.mkdir(parents=True, exist_ok=True)
     report = {'seed': 124, 'python': sys.version, 'repeats': args.repeats,
               'scope': 'VM-only Karity; no synthesis/source/output passes; identical seed/nonce; CPU includes loading/initialization',
               'records': []}

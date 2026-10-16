@@ -1,8 +1,8 @@
 # Scalar finalization and token Minify
 
-Baseline: `4cb0a92`, branch `future`. Windows 11, CPython 3.15.0, native Lua
+Baseline: `505f39b`, branch `future`. Windows 11, CPython 3.15.0, native Lua
 5.3, `test/scripts/01_helloWorld.lua`, seed 9300, `PYTHONHASHSEED=0`.
-[Raw measurements and code hashes](scalar-finalization.json).
+Raw measurements and code hashes (generated locally).
 
 ## Ordinary builds
 

@@ -58,7 +58,7 @@ def main():
     from obfuscator.vm.backends import get_backend, BackendContext, karity_state
     from obfuscator.vm.backends.runtime_layout import iter_functions
 
-    report = {'python': sys.version, 'checkout': str(args.checkout), 'repeats': args.repeats,
+    report = {'python': sys.version, 'repeats': args.repeats,
               'state': {}, 'number': {}}
     lua = LuaRuntime(encoding=None)
     dump = lua.eval(b'function(s)return string.dump(assert(load(s)))end')

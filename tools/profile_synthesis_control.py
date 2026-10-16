@@ -55,15 +55,16 @@ def worker(args):
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--worker',action='store_true')
-    parser.add_argument('--before',default='b6aceea')
+    parser.add_argument('--before',default='9af561d')
     parser.add_argument('--mode',choices=('before','after'),default='after')
     parser.add_argument('--fixture',choices=FIXTURES,default='call')
     parser.add_argument('--protected',action='store_true')
     parser.add_argument('--seed',type=int,default=1400)
     parser.add_argument('--repeats',type=int,default=3)
-    parser.add_argument('--output',type=Path,default=ROOT/'docs/performance/synthesis-control.json')
+    parser.add_argument('--output',type=Path,default=ROOT/'local/performance/synthesis-control.json')
     args=parser.parse_args()
     if args.worker:print(json.dumps(worker(args)));return
+    args.output.parent.mkdir(parents=True,exist_ok=True)
     report={'before':args.before,'python':sys.version,'seed':args.seed,'repeats':args.repeats,
         'scope':'Karity Lua 5.3, VM only, protection policy with ample budgets, no block clones/permutation',
         'timing':'Lua os.clock inside chunk, including initialization; parsing/process startup excluded; concurrent local regressions',
