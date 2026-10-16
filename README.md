@@ -1,5 +1,7 @@
 # Karity Obfuscator
 
+[**English**](README.md) | [한국어](README.ko.md)
+
 A Lua 5.3 obfuscator with a GUI, selective source protection, and three VM
 backends: **Karity**, **Classic**, and **MOV**.
 
@@ -55,7 +57,7 @@ development and diagnostics. See [user presets](docs/user-presets.md) and the
 
 ## Documentation
 
-- [Karity Extended Syntax and VM intrinsics](docs/kes.md)
+- [KES syntax quick guide](docs/kes-guide.md) · [Full reference](docs/kes.md)
 - [Presets and backend selection](docs/user-presets.md)
 - [Configuration reference](docs/configuration.md)
 - [Selective protection](docs/selective-obfuscation.md)

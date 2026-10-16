@@ -1,5 +1,7 @@
 # Karity Extended Syntax (KES)
 
+For a concise introduction with examples, see the [KES syntax quick guide](kes-guide.md) ([한국어](kes-guide.ko.md)).
+
 KES is enabled automatically in `Pipeline`, the CLI, GUI builds, and GUI source execution. It runs before protection markers, macros and source passes. It also works without a VM pass. Direct VM builds accept KES too. String literals, long strings and comments are lexed as opaque text. Inputs without extensions retain their original source text at this stage.
 
 ## Assignment and evaluation order
