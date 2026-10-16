@@ -5,7 +5,7 @@ to choose an ISA. Peak working set excludes compiler grandchildren; Lua CPU time
 includes loading and initialization. Ordinary timed builds omit the Profiler.
 """
 from contextlib import ExitStack, contextmanager
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from unittest.mock import patch
 import argparse, json, random, statistics, subprocess, sys, time, types
 
@@ -82,6 +82,15 @@ def worker(args):
     args.artifact.with_suffix('.json').write_text(json.dumps(data,ensure_ascii=False),encoding='utf-8')
 
 
+def normalize_lua_paths(report):
+    # Workers keep absolute paths for execution; published reports need only the executable name.
+    # Normalize every sample so --resume also cleans reports written by older workers.
+    for record in report['records']:
+        for samples in record['samples'].values():
+            for sample in samples:
+                sample['lua']=PureWindowsPath(sample['lua']).name
+
+
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--worker',action='store_true');parser.add_argument('--mode',choices=('before','after'))
@@ -141,6 +150,7 @@ def main():
                         medians[mode][key]=statistics.median(values) if values else None
                 row={'backend':backend,'preset':preset,'fixture':fixture,'samples':samples,'diagnostic':diagnostic,'median':medians}
                 report['records'].append(row);args.output.parent.mkdir(parents=True,exist_ok=True)
+                normalize_lua_paths(report)
                 args.output.write_text(json.dumps(report,ensure_ascii=False,separators=(',',':')),encoding='utf-8')
                 print('synthesis-pipeline',backend,preset,fixture,row['median'],flush=True)
     lines=['# Synthesis selection through full user presets','',
