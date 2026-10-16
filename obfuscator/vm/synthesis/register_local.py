@@ -23,7 +23,7 @@ def helper_arities(entry,defers):
 
 
 def guarded_read(value,epoch,generation,position,field,target):
-    return (f'local {target}; if {value}~=nil and {generation}==_MG[1] and '
+    return (f'local {target}; if boxes[{field}]==nil and {value}~=nil and {generation}==_MG[1] and '
             f'{epoch}==_RE[{position}] and _PD[_rpos(5,{field})]==nil then {target}={value} end')
 
 

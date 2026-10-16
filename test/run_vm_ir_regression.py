@@ -1095,6 +1095,7 @@ def check_karity_state_model():
     closure = next(item for item in closure_transitions if item.operation == "CLOSURE")
     closure_pending = next(item for item in closure_transitions if item.pending_write is not None)
     assert closure.captures == (0,)
+    assert closure.boxes_created == (0,), 'only actual captures need shared cells'
     assert closure.boundary_kind == "upvalue-capture"
     assert closure.capture_states[0].representation.value == "maybe-pending"
     assert closure.capture_states[0].producers == (closure_pending.pc,)
@@ -1120,8 +1121,8 @@ def check_karity_state_model():
         if item.operation == "JUMP" and item.close_from == 0
     )
     assert close_boundary.boundary_kind == "upvalue-close"
-    assert close_boundary.open_boxes == (0, 3)
-    assert close_boundary.closed_registers == (0, 3)
+    assert close_boundary.open_boxes == (0,)
+    assert close_boundary.closed_registers == (0,)
     assert 0 in close_boundary.close_materialized
     assert close_boundary.close_states[0].producers == (close_pending.pc,)
     validate_state(close_lowered)

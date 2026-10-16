@@ -501,9 +501,7 @@ def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityF
             (pending_write is not None or direct_linear)
             and ungraphed
         )
-        boxes_created = tuple(sorted(set(
-            captures + (_register(item.instruction.a) if item.instruction.operation == "CLOSURE" else ())
-        )))
+        boxes_created = tuple(sorted(set(captures)))
         close_from = _close_from(item.instruction)
         boundary_kind = _boundary_kind(item.instruction)
         graph_descriptors = tuple(item.graph_sites)

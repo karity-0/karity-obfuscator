@@ -9,6 +9,32 @@ local function _pmix(x)
 end
 --<<ENDTARGET_PRIVATE_MIX>>
 
+local _for_api={tonumber,math.type,math.floor,math.ceil,math.tointeger,math.mininteger,math.maxinteger}
+-- Match Lua 5.3 FORPREP, including integer-limit rounding and saturation.
+local function _for_values(initial,limit,step)
+    local bound=_for_api[1](limit)
+    if _for_api[2](initial)=="integer" and _for_api[2](step)=="integer" and bound then
+        local rounded=step<0 and _for_api[4](bound) or _for_api[3](bound)
+        local integer=_for_api[5](rounded)
+        if integer==nil then
+            if bound>0 then
+                integer=_for_api[7]
+                if step<0 then initial=0 end
+            else
+                integer=_for_api[6]
+                if step>=0 then initial=0 end
+            end
+        end
+        return initial,integer,step
+    end
+    if bound==nil then error("'for' limit must be a number") end
+    step=_for_api[1](step)
+    if step==nil then error("'for' step must be a number") end
+    initial=_for_api[1](initial)
+    if initial==nil then error("'for' initial value must be a number") end
+    return initial*1.0,bound*1.0,step*1.0
+end
+
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _source_parents)
     local regs   = {}
@@ -43,13 +69,16 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     --<<ENDTARGET_USER_STATEMENT>>
 
     --<<RGET>>
-    local function rget(i) return regs[i] end
+    local function rget(i)
+        local box=boxes[i]; if box then return box.v end
+        return regs[i]
+    end
     --<<ENDRGET>>
     --<<RSET>>
     local function rset(i,v)
         regs[i]=v
         local box=boxes[i]
-        if box and not box.set then box.v=v end
+        if box then box.v=v end
     end
     --<<ENDRSET>>
 
@@ -189,10 +218,8 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     --<<TARGET_USER_STATEMENT>>
     local function get_box(slot)
         if not boxes[slot] then
-            boxes[slot]={
-                get=function() return regs[slot] end,
-                set=function(v) regs[slot]=v end,
-            }
+            -- A cell owns only its captured value, never the entire frame.
+            boxes[slot]={v=rget(slot)}
         end
         return boxes[slot]
     end
@@ -210,6 +237,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         for slot,box in pairs(boxes) do
             if slot>=first then
                 local value=get_upvalue(box)
+                rset(slot,value)
                 box.get=nil; box.set=nil
                 set_upvalue(box,value)
                 boxes[slot]=nil
@@ -340,7 +368,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
                 pc=pc+sBx; rset(A+3,idx)
             end
 
-        elseif op==40 then rset(A,rget(A)-rget(A+2)); pc=pc+sBx
+        elseif op==40 then
+            local initial,limit,step=_for_values(rget(A),rget(A+1),rget(A+2))
+            rset(A,initial-step); rset(A+1,limit); rset(A+2,step); pc=pc+sBx
 
         elseif op==41 then
             local res=table.pack(rget(A)(rget(A+1),rget(A+2)))
@@ -359,7 +389,6 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             for i=1,cnt do tbl[base+i]=rget(A+i) end
 
         elseif op==44 then
-            get_box(A)
             local fn=make_closure(_subs[Bx+1])
             rset(A,fn)
 

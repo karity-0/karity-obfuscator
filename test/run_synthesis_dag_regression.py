@@ -17,7 +17,7 @@ from run_opcode_synthesis_regression import must_fail
 def guard_contract(version):
     from obfuscator.vm.synthesis.register_local import guarded_read
     guard=guarded_read('v','epoch','generation','position','slot','candidate')
-    source='''local _MG,_RE,_PD={1},{[7]=10},{};local slot=3
+    source='''local _MG,_RE,_PD={1},{[7]=10},{};local slot=3;local boxes={}
 local function _rpos(_,r)return r end
 local function read(v,epoch,generation,position)
 '''+guard+'''
@@ -28,6 +28,8 @@ _RE[7]=10;_MG[1]=2;assert(read(19,10,1,nil)==nil,'stale mapping before address l
 _MG[1]=1;_PD[slot]={};assert(read(19,10,1,7)==nil,'pending value must finish through original helper')
 _PD[slot]=nil;assert(read(false,10,1,7)==false)
 assert(read(nil,10,1,7)==nil)
+boxes[slot]={v=99}
+assert(read(19,10,1,7)==nil,'captured cell can change without a physical epoch change')
 print('guard-contract-ok')'''
     assert execute(source,version)[0]==b'guard-contract-ok'
 

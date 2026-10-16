@@ -56,6 +56,7 @@ def cache_contract_checks(version):
                     'regs[p1]', source, flags=re.S)
     harness = '''
 local _RC,_MJ={}, {_RC={}}
+local boxes={}
 local _MG,_RE,_RT,regs,_RS,_PD={1},{},{},{},{},{}
 local positions,decoded,pending=0,0,0
 local function _rpos(_,i) return _MG[1]*10+i end

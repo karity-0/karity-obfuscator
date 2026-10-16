@@ -530,7 +530,7 @@ _DIRECT_SEMANTIC_BODIES = {
     34: " if not _branch(_carry(not not rget(A),_av,34),C~=0,_av,34) then pc=pc+1 end\n        ",
     35: " local _v=rget(B); if _branch(_carry(not not _v,_av,35),C~=0,_av,35) then rset(A,_v) else pc=pc+1 end\n        ",
     43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _tset(_t,_b+_i,_v[_i]) end; _touch(_av,43)\n        ",
-    44: " get_box(A); rset(A,_carry(make_closure(_subs[Bx+1]),_av,44))\n        ",
+    44: " rset(A,_carry(make_closure(_subs[Bx+1]),_av,44))\n        ",
     45: " local _n=B==0 and _acount(_va) or B-1; for _i=1,_n do rset(A+_i-1,_aget(_va,_i)) end; _touch(_av,45); if B==0 then top=A+_n-1 end\n        ",
 }
 

@@ -18,8 +18,9 @@ def check_emitted_helpers(asset, region, runtime, helpers):
     for helper in helpers:
         # Keep auditing the authored target contract, and separately verify
         # that pruning never leaves callers of a missing declaration.
-        assert f'function {helper}(' in asset, helper
-        if f'function {helper}(' not in region:
+        declaration=rf'(?:\bfunction\s+{re.escape(helper)}\s*\(|\b{re.escape(helper)}\s*=\s*function\s*\()'
+        assert re.search(declaration, asset), helper
+        if not re.search(declaration, region):
             assert not re.search(rf'\b{helper}\s*\(', runtime), helper
 
 

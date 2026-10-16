@@ -118,6 +118,9 @@ def wire_runtime(source,lowered,vm_index=None):
         'if _syn_nodes then _syn_values[_syn_step-_syn_start+1]=d end\n'
         '            if _syn_tmp and not _syn_live[_syn_step] then _syn_tmp[_ma]=d else if _syn_tmp then _syn_tmp[_ma]=nil end; _mdigits[_ma]=d; _mstrings[_ma]=nil; regs[_ma]=nil end')
     source=source.replace('local ip=q[3]','local ip=q[3]; _syn_step=ip')
+    # Only committed recipe outputs update a shared upvalue cell.
+    source=source.replace('if box then boxes[_ma]=nil; box.v=rget(_ma); boxes[_ma]=box end',
+        'if box and (not _syn_tmp or _syn_live[_syn_step]) then boxes[_ma]=nil; box.v=rget(_ma); boxes[_ma]=box end')
     source=source.replace('pc=q[3]','pc=q[3]; _syn_step=pc')
     if integer_enabled:
         source=source.replace('q[2]==1 then','(q[2]==1 or q[2]==12) then',1)

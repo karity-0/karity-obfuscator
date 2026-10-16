@@ -424,8 +424,14 @@ end''').encode())
     # Use the template's storage/rotation/restore expressions, with random
     # full-width odd affine coefficients and independently calculated inverses.
     def private_expressions_of(name):
-        body=prepared_runtime.split(f'local function {name}(',1)[1].split(
-            'local function ',1)[0]
+        declaration=re.search(
+            rf'^(?P<indent>[ \t]*)(?:local function {re.escape(name)}\('
+            rf'|{re.escape(name)}\s*=\s*function\()',prepared_runtime,re.M)
+        assert declaration is not None, name
+        remainder=prepared_runtime[declaration.end():]
+        ending=re.search(r'^'+re.escape(declaration['indent'])+r'end\s*$',remainder,re.M)
+        assert ending is not None, name
+        body=remainder[:ending.start()]
         return re.findall(r'--<<TARGET_PRIVATE_EXPRESSION>>(.*?)'
                           r'--<<ENDTARGET_PRIVATE_EXPRESSION>>',body,re.S)
     from obfuscator.vm.targets.lua51_syntax import translate_private_graph

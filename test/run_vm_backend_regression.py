@@ -73,10 +73,12 @@ def check_karity_cross_instruction_cache() -> None:
     from obfuscator.vm.targets.lua53 import Lua53Target
     from obfuscator.vm.targets.profile import TargetProfile
 
+    # Several consecutive MOVEs ensure reuse even when a remap falls between
+    # the first pair; helper bytecode changes can shift that alignment.
     source = (
         "local anchor=7; local sum=0; "
-        "for i=1,80 do local a=anchor; local b=anchor; "
-        "sum=sum+a+b end; assert(sum==1120)"
+        "for i=1,80 do local a=anchor; local b=anchor; local c=anchor; local d=anchor; "
+        "sum=sum+a+b+c+d end; assert(sum==2240)"
     )
     def execute(version, output):
         if version == "5.1":

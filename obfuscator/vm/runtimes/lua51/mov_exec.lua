@@ -121,6 +121,7 @@ end
     end
     --<<ENDTARGET_51_MOV_NATIVE>>
     local function rget(i)
+        local box=boxes[i]; if box then return box.v end
         local node=_mstrings[i]
         if node then
             if regs[i]~=nil then return regs[i] end
@@ -152,15 +153,18 @@ else v=hi*4294967296.0+lo end
     local function rset(i,v)
         if i<proto.max_stack_size then v=_source_value(v) end
         _mdigits[i]=nil; _mstrings[i]=nil; regs[i]=v
+        local box=boxes[i]; if box then box.v=v end
     end
     -- Lua 5.1 numbers are binary64 values, never Lua 5.3 integers. Only
     -- explicitly serialized digit values may enter MOV's integer fast path.
     --<<TARGET_51_NATIVE_51_MOV_NATIVE>>
     local function _mov_digits(i)
+        if boxes[i] then rset(i,boxes[i].v) end
         return _mdigits[i]
     end
     --<<ENDTARGET_51_NATIVE_51_MOV_NATIVE>>
     local function _mov_copy(a,b)
+        if boxes[a] or boxes[b] then rset(a,rget(b)); return end
         regs[a]=regs[b]; _mdigits[a]=_mdigits[b]; _mstrings[a]=_mstrings[b]
     end
     local function _mov_float_digits(v)
@@ -178,9 +182,11 @@ else v=hi*4294967296.0+lo end
         return node
     end
     local function _mov_is_string(i)
+        if boxes[i] then rset(i,boxes[i].v) end
         return _mstrings[i]~=nil or type(regs[i])=="string"
     end
     local function _mov_string_copy(i)
+        if boxes[i] then rset(i,boxes[i].v) end
         local node=_mstrings[i]
         if not node then return _mov_string_nodes(regs[i]) end
         local root={}; local tail=root
@@ -194,7 +200,7 @@ else v=hi*4294967296.0+lo end
     local function _mov_close(first)
         for slot,box in pairs(boxes) do
             if slot>=first then
-                box.v=rget(slot); box.get=nil; box.set=nil; boxes[slot]=nil
+                box.v=rget(slot); rset(slot,box.v); box.get=nil; box.set=nil; boxes[slot]=nil
             end
         end
     end
@@ -311,6 +317,8 @@ else v=hi*4294967296.0+lo end
             local d={}
             for j=0,15 do d[j]=_ms[64+j] end
             _mdigits[_ma]=d; _mstrings[_ma]=nil; regs[_ma]=nil
+            local box=boxes[_ma]
+            if box then boxes[_ma]=nil; box.v=rget(_ma); boxes[_ma]=box end
             if _ma<proto.max_stack_size then rset(_ma,_source_value(rget(_ma))) end
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==3 then
@@ -338,6 +346,8 @@ else v=hi*4294967296.0+lo end
             rset(_ma,_ms[11]); _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==8 then
             _mstrings[_ma]=_ms[322][4]; _mdigits[_ma]=nil; regs[_ma]=nil
+            local box=boxes[_ma]
+            if box then boxes[_ma]=nil; box.v=rget(_ma); boxes[_ma]=box end
             _mp=_mresume
         elseif kind==__MOV_HOST__ and q[2]==9 then
             --<<TARGET_FLOAT_RESULT>>
