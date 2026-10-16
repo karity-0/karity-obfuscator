@@ -137,8 +137,8 @@ seconds (maximum), without changing eligible protection scope. Total build times
 still include expensive pre-existing passes. Full mixed morphing takes 1.893/
 2.225 seconds for strong/maximum; this remains a cost worth monitoring.
 
-Reports: [VM-only](ir-morphing-vm-only.json), [full presets](ir-morphing-presets.json),
-[strategy isolation](ir-morphing-ablation.json). Reproduce using
+Reports: VM-only (generated locally), full presets (generated locally),
+strategy isolation (generated locally). Reproduce using
 `tools/profile_ir_morphing.py --output REPORT.json`, with `--full` or
 `--ablation --presets strong --inputs mixed` as appropriate.
 

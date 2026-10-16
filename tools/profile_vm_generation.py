@@ -41,7 +41,7 @@ def measure(source, options, seed, mode, historical):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--baseline-ref', default='ebc237a')
+    parser.add_argument('--baseline-ref', default='bd28f7b')
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=3)
     parser.add_argument('--seed', type=int, default=9171)

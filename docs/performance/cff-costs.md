@@ -4,7 +4,7 @@ The failing `future` input is `test/scripts/01_helloWorld.lua`, a 20-byte
 `print("hello world")` program. The source-pass reproduction uses seed 9300,
 the high/max profiles, and baseline revision `102243e`. The core implementation
 is `2ceea6d`, with target fixes in `2de1a1f` and `f687f17`;
-[cff-costs.json](cff-costs.json) contains pass records, individual
+The locally generated benchmark report contains pass records, individual
 prototype instruction counts, jump PCs/lines, grouping measurements and runtime
 samples. Measurements use Windows, Python 3.15 and native Lua 5.3. Timing samples
 were collected during concurrent verification and are observations, not targets.

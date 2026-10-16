@@ -3,10 +3,10 @@
 The later [DAG generation optimization](vm-generation.md) implements the unused
 candidate work that was still pending in this measurement.
 
-Baseline `4cab9db`; Windows, Python 3.15, native Lua 5.3,
+Baseline `ddcfdd2`; Windows, Python 3.15, native Lua 5.3,
 `PYTHONHASHSEED=0`, seed 8471. The actual GUI API uses built-in presets and
 its ordinary profiler. No source, output or protection settings were reduced.
-[Raw samples and complete configurations](vm-postprocessing.json).
+Raw samples and complete configurations (generated locally).
 
 ## Changes
 

@@ -1,10 +1,10 @@
 # DAG generation and shared executor leaves
 
-Baseline `ebc237a`; VM-only output, seed 9171, three alternating-order samples
+Baseline `bd28f7b`; VM-only output, seed 9171, three alternating-order samples
 per case on Windows. No source/output passes or packing. Serialization, blob
 encoding and protection settings are unchanged. Raw results:
-[Python 3.15 / Lua 5.3](vm-generation-lua53.json),
-[Python 3.12 / Lua 5.1](vm-generation-lua51.json).
+Python 3.15 / Lua 5.3 (generated locally),
+Python 3.12 / Lua 5.1 (generated locally).
 
 ## Generate live candidates
 

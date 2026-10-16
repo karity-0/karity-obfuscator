@@ -1,8 +1,8 @@
 # Compact prototype storage
 
-Baseline: `abdee71` (1.2.0), Windows / Python 3.12, seed 9450.
-[Raw paired storage measurements](serialization.json) and
-[whole-pipeline smoke measurements](serialization-end-to-end.json).
+Baseline: `c4f02f8` (1.2.0), Windows / Python 3.12, seed 9450.
+Raw paired storage measurements (generated locally) and
+whole-pipeline smoke measurements (generated locally).
 
 ## Storage and protection
 
@@ -72,7 +72,7 @@ speedups or statistical confidence intervals.
 Reproduce with a baseline sharing the current physical handler IR:
 
 ```sh
-python tools/profile_serialization.py --baseline-ref abdee71 --output storage.json
+python tools/profile_serialization.py --baseline-ref c4f02f8 --output storage.json
 ```
 
 ## Final artifacts and validation

@@ -75,7 +75,7 @@ def main():
             records.append(record)
             print(json.dumps({k:v for k,v in record.items() if k not in ('profile','stdout')}), flush=True)
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps({'seed': args.seed, 'python': sys.version, 'tree': str(root), 'config': config, 'records': records}, indent=2, ensure_ascii=False), encoding='utf-8')
+    args.output.write_text(json.dumps({'seed': args.seed, 'python': sys.version, 'config': config, 'records': records}, indent=2, ensure_ascii=False), encoding='utf-8')
     api._execution.close()
 
 

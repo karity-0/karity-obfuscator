@@ -47,8 +47,8 @@ string decoder, or name allocator system is introduced.
 
 ## Measurements
 
-[`boolean-table.json`](../performance/boolean-table.json) compares commit
-`69ff179` against this implementation, Python 3.15, Lua 5.3, seed 7201.
+The locally generated benchmark report compares commit
+`5bcef98` against this implementation, Python 3.15, Lua 5.3, seed 7201.
 Build times are medians of three warm samples; execution times are medians
 of three batches of 1,000 executions, excluding Lua compilation. This is a
 microbenchmark of the source passes, not a preset or VM-wide speed claim.
@@ -70,8 +70,8 @@ approximately 127 µs/run versus 94 µs before; nested records 3.4 µs versus 1.
 The seeded default chose constructor mode for those two samples; it can choose
 staged mode on other seeds. No uniform table speed improvement is claimed.
 
-Reproduce with `python tools/profile_boolean_table.py --baseline 69ff179
---output docs/performance/boolean-table.json`. The dedicated regression covers
+Reproduce with `python tools/profile_boolean_table.py --baseline 5bcef98
+--output local/performance/boolean-table.json`. The dedicated regression covers
 predicate families/types, short circuit, numeric provenance, CFF, duplicate keys,
 observable globals, sparse arrays, multireturn/varargs, nested edits, upvalue
 budgets, macros and Classic/Karity/MOV execution. Ordinary table modes compile

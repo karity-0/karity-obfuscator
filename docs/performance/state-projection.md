@@ -1,7 +1,7 @@
 # Stable state detail projection
 
-Baseline: `8fad8cf`, branch `future`, CPython 3.15 on Windows.
-[Raw samples, complete state digests and normalized code hashes](state-projection.json).
+Baseline: `e2a0e96`, branch `future`, CPython 3.15 on Windows.
+Raw samples, complete state digests and normalized code hashes (generated locally).
 
 ## Implementation and protection
 

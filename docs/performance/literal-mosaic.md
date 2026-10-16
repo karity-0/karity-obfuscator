@@ -1,9 +1,9 @@
 # Literal Mosaic measurements and validation
 
-Comparison: `3b8378f` → `d9873d2`, branch `future`. Fixture:
+Comparison: `c60b4ab` → `393a0be`, branch `future`. Fixture:
 `test/scripts/01_helloWorld.lua` (20 bytes), seed 9300, `PYTHONHASHSEED=0`,
 Windows 11, CPython 3.15.0 and the same native Lua 5.3 executable/dependencies.
-The [raw report](literal-mosaic.json) contains every pass, compiler measurements,
+The raw report (generated locally) contains every pass, compiler measurements,
 metrics, runtime samples, environment, hashes and ordinary build measurements.
 Baseline rows were retained from an earlier isolated serial run with the same
 environment/input/seed; all final after rows were rerun serially without other
@@ -168,7 +168,7 @@ full lexical profiling overhead without disturbing generation or PRNG state.
 
 ## Reproduction
 
-Archive baseline `3b8378f` into an isolated checkout under the workspace. Use the
+Archive baseline `c60b4ab` into an isolated checkout under the workspace. Use the
 same interpreter/dependencies and keep other builds idle:
 
 ```sh
