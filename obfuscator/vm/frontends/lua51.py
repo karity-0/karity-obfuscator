@@ -85,6 +85,7 @@ def build_semantic_ir(proto) -> SemanticIR:
             elif name == "RETURN": span("values", a, None if b == 0 else b - 1); targets = ()
             elif name in ("FOR_LOOP", "FOR_PREP"):
                 span("loop_state", a, 3); reg("iteration", a + 3, True); writes.add(a)
+                if name == "FOR_PREP": writes.update((a + 1, a + 2))
                 targets = (following + bx - 131071,) + ((following,) if name == "FOR_LOOP" else ())
             elif name == "ITERATE":
                 # 5.1 combines a call, nil test, control copy and skip. Expand it

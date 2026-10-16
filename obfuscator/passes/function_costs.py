@@ -33,7 +33,33 @@ class CostPolicy:
 POLICY = ContextVar('function_cost_policy',default=CostPolicy())
 
 
-def measure(body, *, version=None):
+def minimum_path(code, version):
+    """Shortest compiler-CFG completion, a conservative saved-work lower bound.
+
+    Conditional feasibility and callee work are deliberately not inferred. This
+    is requested only for tiny helper probes, never every large CFF measurement.
+    """
+    from collections import deque
+    jump=22 if version=='5.1' else 30
+    returns={29,30} if version=='5.1' else {37,38}
+    tests={23,24,25,26,27,33} if version=='5.1' else {31,32,33,34,35}
+    loops={31} if version=='5.1' else {39,42}
+    prep=32 if version=='5.1' else 40
+    loadbool=2 if version=='5.1' else 3
+    pending=deque([(0,0)]);seen=set()
+    while pending:
+        pc,cost=pending.popleft()
+        if pc in seen or not 0<=pc<len(code):continue
+        seen.add(pc);word=code[pc];op=word&63
+        if op in returns:return cost+1
+        target=pc+1+(word>>14)-MAX_JUMP
+        nexts=(target,) if op in (jump,prep) else (pc+1,target) if op in loops else (
+            (pc+1,pc+2) if op in tests else (pc+2,) if op==loadbool and (word>>14)&511 else (pc+1,))
+        pending.extend((p,cost+1) for p in nexts)
+    return 0
+
+
+def measure(body, *, version=None, minimum_paths=False):
     version = version or POLICY.get().lua_version
     runtimes = getattr(_runtimes,'compilers',{})
     if version not in runtimes:
@@ -63,10 +89,12 @@ def measure(body, *, version=None):
     def row(proto,path):
         jumps=[(abs((w >> 14)-MAX_JUMP),pc) for pc,w in enumerate(proto.code) if w & 63 in jump_ops]
         distance, pc = max(jumps,default=(0,0))
-        return {'path':path,'instructions':len(proto.code),
+        result={'path':path,'instructions':len(proto.code),
                 'max_jump':distance, 'jump_pc':pc, 'jump_line':proto.lineinfo[pc]-1 if proto.lineinfo else None,
                 'source_lines':[proto.line_defined-1,proto.last_line_defined-1],
                 'stack':proto.max_stack_size,'upvalues':len(proto.upvalues)}
+        if minimum_paths:result['minimum_path_instructions']=minimum_path(proto.code,version)
+        return result
     rows=[]
     def walk(proto,path):
         rows.append(row(proto,path))

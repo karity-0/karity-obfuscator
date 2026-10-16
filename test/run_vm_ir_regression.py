@@ -376,6 +376,11 @@ def check_alias_planning():
             for vm_id, maps in enumerate(lowered.backend_data['layout'].vm_maps):
                 expected = dict(requirements[vm_id]['operations'])
                 for op, operation in enumerate(OPERATIONS):
+                    # Appended failure intrinsics are optional. Reserving
+                    # aliases for unused ones would change legacy RNG/layout.
+                    if op >= 63 and operation not in expected:
+                        assert op not in maps[0]
+                        continue
                     assert len(maps[0][op]) == expected.get(operation, requirements[vm_id]['auxiliary_count'])
     mov = get_backend('mov').lower(protect(ir, plan), BackendContext({}))
     assert any(request.feature == 'handler_aliases' for request in mov.resolution.disabled)
@@ -1095,6 +1100,7 @@ def check_karity_state_model():
     closure = next(item for item in closure_transitions if item.operation == "CLOSURE")
     closure_pending = next(item for item in closure_transitions if item.pending_write is not None)
     assert closure.captures == (0,)
+    assert closure.boxes_created == (0,), 'only actual captures need shared cells'
     assert closure.boundary_kind == "upvalue-capture"
     assert closure.capture_states[0].representation.value == "maybe-pending"
     assert closure.capture_states[0].producers == (closure_pending.pc,)
@@ -1120,8 +1126,8 @@ def check_karity_state_model():
         if item.operation == "JUMP" and item.close_from == 0
     )
     assert close_boundary.boundary_kind == "upvalue-close"
-    assert close_boundary.open_boxes == (0, 3)
-    assert close_boundary.closed_registers == (0, 3)
+    assert close_boundary.open_boxes == (0,)
+    assert close_boundary.closed_registers == (0,)
     assert 0 in close_boundary.close_materialized
     assert close_boundary.close_states[0].producers == (close_pending.pc,)
     validate_state(close_lowered)

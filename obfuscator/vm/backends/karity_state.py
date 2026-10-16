@@ -299,6 +299,7 @@ def _forms(function: PhysicalFunction, vm_map) -> tuple[dict[int, tuple[int, int
     fused = {index for index, item in enumerate(function.code) if item.vop in fuses}
     internal = {index + 1 for index in fused if index + 1 < len(function.code)}
     deferred = set(defers.values())
+    deferred.update(e.opcode for e in function.synthesis if e.original_vops[0] in deferred)
     return split_parts, internal, deferred
 
 
@@ -500,9 +501,7 @@ def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityF
             (pending_write is not None or direct_linear)
             and ungraphed
         )
-        boxes_created = tuple(sorted(set(
-            captures + (_register(item.instruction.a) if item.instruction.operation == "CLOSURE" else ())
-        )))
+        boxes_created = tuple(sorted(set(captures)))
         close_from = _close_from(item.instruction)
         boundary_kind = _boundary_kind(item.instruction)
         graph_descriptors = tuple(item.graph_sites)

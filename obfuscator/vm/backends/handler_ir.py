@@ -23,6 +23,7 @@ OPERATIONS = (
     "GET_SEED", "GET_VM_ID", "GET_CODE_LENGTH", "INTEGRITY_XOR",
     "INTEGRITY_ADD", "INTEGRITY_MUL", "LOAD_ENCODED_CONSTANT",
     "BLOCK_ROUTE", "BLOCK_GOTO", "GLOBAL_GET", "GLOBAL_SET", "PACK_VARARG",
+    "VM_ABORT", "VM_PANIC", "VM_ASSERT",
 )
 OPERATION_IDS = {name: index for index, name in enumerate(OPERATIONS)}
 
@@ -133,6 +134,10 @@ def _lower_instruction(instruction: IRInstruction) -> list[HandlerInstruction]:
         a=value("destination" if operation=="GLOBAL_GET" else "source")
         b,c=divmod(value("key"),512)
     elif operation == "PACK_VARARG": a=value("destination")
+    elif operation in {"GET_SCRIPT_HASH", "GET_VM_COUNT", "GET_LAYOUT", "GET_VM_ID", "GET_CODE_LENGTH"}:
+        a=value("destination");b=int(bool(instruction.metadata.get('intrinsic_open')))
+    elif operation in {"VM_ABORT", "VM_PANIC"}: pass
+    elif operation == "VM_ASSERT": a,b,c=value("condition"),value("results"),arity("results")
     else: raise ValueError(f"unsupported handler operation: {operation}")
     result = [HandlerInstruction(OPERATION_IDS[operation], a, b, c, instruction.id)]
     if extension is not None:

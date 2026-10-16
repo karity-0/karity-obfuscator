@@ -1,4 +1,4 @@
-return function(_D,_self)
+return function(_D,_self,_args)
 local _load=load
 local _byte=string.byte
 local _char=string.char
@@ -7,6 +7,7 @@ local _dump=string.dump
 local _pcall=pcall
 local _type=type
 local _select=select
+local _unpack=table.unpack
 
 local function _hash(s)
     local h=0x811C9DC5
@@ -200,7 +201,7 @@ local _fp=({[false]=__FP_TYPE_BAD__,[true]=__FP_TYPE_OK__})[_is_function]
 local _enc=_b64(_D)
 local _seed=(_hash(_dump(_self,true))~__SALT__~_fp~((#_enc*0x045D9F3B)&0xFFFFFFFF))&0xFFFFFFFF
 local _src=_inf(_xor(_enc,_seed))
-local _fn=_load(_src,"=(packed)","t")
+local _fn=_load(_src,"=(packed)","t",_ENV)
 
-return _fn(_C,_C[__CTX_STATE_SLOT__],_C[__CTX_DECODE_SLOT__])
+return _fn(_C,_C[__CTX_STATE_SLOT__],_C[__CTX_DECODE_SLOT__],_unpack(_args,1,_args.n))
 end

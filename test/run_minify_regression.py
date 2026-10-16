@@ -3,6 +3,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -50,6 +51,22 @@ def main():
                 source = gap.join(['local', 'x', '=', str(value), ';', 'return',
                                    'x', '-', '-', '2', ',', '"a"', '..', '[=[b]=]'])
                 assert lua.execute(source) == lua.execute(MinifyPass().run(source)), (gap, source)
+    # Selection coordinates must follow lexical edits even in large repetitive
+    # source, while exclusions retain their readable source exactly.
+    from obfuscator.pipeline import Pipeline
+    from obfuscator.selection_runtime import SelectionRuntime
+    source = ('local total = 0\n--@VM_START\n' + 'total = total + 1 -- repeat\n' * 1024
+              + '--@VM_END\n--@NO_OBF_START\nlocal keep = "  readable  " -- keep\n'
+                '--@NO_OBF_END\nreturn total, keep\n')
+    selection = SelectionRuntime(Pipeline(show_header=False), source)
+    before = selection.plan.source
+    with patch('difflib.SequenceMatcher', side_effect=AssertionError('unexpected character diff')):
+        after = selection.run_post(MinifyPass(), before)
+    span = next(s for s in selection.plan.spans if s.feature == 'vm')
+    assert after[span.start:span.end].count('total=total+1') == 1024
+    assert 'local keep = "  readable  " -- keep' in after
+    lua = Lua53(unpack_returned_tuples=True)
+    assert lua.execute(before) == lua.execute(after) == (1024, '  readable  ')
     print(f'minify-regression-ok cases={len(CASES)} strings,numbers,varargs,comments,markers')
     return 0
 

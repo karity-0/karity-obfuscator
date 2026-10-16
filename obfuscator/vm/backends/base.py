@@ -86,10 +86,15 @@ class LoweredIR:
                 dump_function(child)
         dump_function(self.program)
         layout = self.backend_data.get("layout")
+        synthesis=self.backend_data.get('synthesis_plan')
+        if synthesis is not None:
+            lines.append(f'synthesis generation={synthesis.generation} recipes={len(synthesis.recipes)} regions={len(synthesis.occurrences)}')
         if layout is not None:
             from .runtime_layout import iter_functions
             for function in iter_functions(layout.functions):
                 lines.append(f"physical-function {function.source.id} vm={function.vm_id} instructions={len(function.code)}")
+                for entry in function.synthesis:
+                    lines.append(f'  synthesized p{entry.start} vop={entry.opcode} recipe={entry.recipe.id} steps={len(entry.recipe.steps)} materialize={entry.occurrence.materialize} sources={entry.occurrence.source_ids!r}')
                 for index, item in enumerate(function.code):
                     instruction = item.instruction
                     lines.append(f"  p{index} {instruction.operation} vop={item.vop} source={instruction.source_id} "
@@ -176,6 +181,10 @@ class VMBackend:
         )
         from ..ir.liveness import analyze_liveness
         lowered.backend_data["liveness"]={function.id:analyze_liveness(function) for function in ir.functions()}
+        from ..synthesis.lowering import plan_synthesis
+        if context.options.get('opcode_synthesis',False):
+            from ...profiling import run_phase
+            run_phase('vm:synthesis',plan_synthesis,lowered,context)
         from .runtime_layout import prepare_layout
         lowered.backend_data["layout"] = prepare_layout(self, lowered, context)
         if context.constant_provider is not None:
@@ -198,6 +207,8 @@ class VMBackend:
         from .handler_layout import validate_layout
         layout = lowered.backend_data["layout"]
         validate_layout(layout.functions, layout.vm_maps)
+        from ..synthesis.lowering import validate_physical_plan
+        validate_physical_plan(lowered)
         self.validate_lowered(lowered)
         return lowered
 
@@ -276,6 +287,7 @@ class VMBackend:
 
 
 SHARED_OPTIONS = frozenset((
+    "opcode_synthesis", "synthesis_policy", "synthesis_max_steps", "synthesis_max_recipes", "synthesis_max_occurrences", "synthesis_max_code_growth",
     "ir_mba_rate", "ir_test_set_rate", "ir_tail_duplication_rate", "ir_rematerialization_rate",
     "ir_morph_max_growth", "ir_morph_max_added_instructions", "ir_morph_max_added_blocks",
     "ir_morph_max_transforms", "ir_morph_max_depth", "ir_morph_pass_max_added_instructions",
@@ -285,6 +297,7 @@ SHARED_OPTIONS = frozenset((
 ))
 
 CLASSIC_OPTIONS = SHARED_OPTIONS | frozenset((
+    "opcode_splitting", "opcode_fusion",
     "physical_block_permutation_rate", "physical_block_permutation_max_jumps",
     "dispatcher_type", "dispatcher_target_hiding", "fake_handlers",
     "mutate_handlers",

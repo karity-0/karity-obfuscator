@@ -95,7 +95,8 @@ def protect(ir: SemanticIR, plan: ProtectionPlan) -> ProtectedIR:
             raise ValueError(
                 f"protection plan references unknown {label}: {', '.join(unknown)}"
             )
-    from .ir.operations import OPERATIONS as semantic_operations
+    from .ir.operations import planned_operations
+    semantic_operations = planned_operations(ir)
     for function_id, state in plan.functions.items():
         requirements = state.get('alias_requirements')
         if requirements is None:
@@ -231,6 +232,8 @@ class UnsupportedProtectionError(ValueError):
 
 
 _OPTION_FEATURES = {
+    'opcode_synthesis':'opcode_synthesis','synthesis_policy':'opcode_synthesis',
+    'synthesis_max_steps':'opcode_synthesis','synthesis_max_recipes':'opcode_synthesis','synthesis_max_occurrences':'opcode_synthesis','synthesis_max_code_growth':'opcode_synthesis',
     "ir_mba_rate": "semantic_ir_morphing", "ir_test_set_rate": "semantic_ir_morphing",
     "ir_tail_duplication_rate": "semantic_ir_morphing", "ir_rematerialization_rate": "semantic_ir_morphing",
     "ir_morph_max_growth": "semantic_ir_morphing", "ir_morph_max_added_instructions": "semantic_ir_morphing",
@@ -268,6 +271,7 @@ _OPTION_FEATURES = {
 }
 
 _PARAMETER_OPTIONS = frozenset((
+    'synthesis_policy','synthesis_max_steps','synthesis_max_recipes','synthesis_max_occurrences','synthesis_max_code_growth',
     "ir_morph_max_growth", "ir_morph_max_added_instructions", "ir_morph_max_added_blocks",
     "ir_morph_max_transforms", "ir_morph_max_depth", "ir_morph_pass_max_added_instructions",
     "ir_morph_max_new_operations",
@@ -463,9 +467,9 @@ class ProtectionPlanner:
                                 forms.append(("operand", block.instructions[offset - 1].id))
                                 continue
                         choices = [("normal", 1)]
-                        if instruction.operation in split_operations:
+                        if instruction.operation in split_operations and self.options.get('opcode_splitting',True):
                             choices.extend((("split", 2), ("split", 3)))
-                        if (instruction.operation in fuse_operations and offset + 1 < len(block.instructions)
+                        if (self.options.get('opcode_fusion',True) and instruction.operation in fuse_operations and offset + 1 < len(block.instructions)
                                 and block.instructions[offset + 1].operation in fuse_operations):
                             choices.append(("fuse", block.instructions[offset + 1].id))
                         if (instruction.operation in {"ADD", "SUB", "NEGATE"}
@@ -489,7 +493,8 @@ class ProtectionPlanner:
 
         # Alias multiplicity is a protection decision. Backends only allocate
         # their own opcode identifiers for these semantic requirements.
-        from .ir.operations import OPERATIONS as semantic_operations
+        from .ir.operations import planned_operations
+        semantic_operations = planned_operations(ir)
         functions[ir.root.id]['alias_requirements'] = tuple(
             {'operations': tuple((name, rng.randint(2, 3))
                                  for name in sorted(semantic_operations)),

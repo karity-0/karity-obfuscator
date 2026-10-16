@@ -73,10 +73,12 @@ def check_karity_cross_instruction_cache() -> None:
     from obfuscator.vm.targets.lua53 import Lua53Target
     from obfuscator.vm.targets.profile import TargetProfile
 
+    # Several consecutive MOVEs ensure reuse even when a remap falls between
+    # the first pair; helper bytecode changes can shift that alignment.
     source = (
         "local anchor=7; local sum=0; "
-        "for i=1,80 do local a=anchor; local b=anchor; "
-        "sum=sum+a+b end; assert(sum==1120)"
+        "for i=1,80 do local a=anchor; local b=anchor; local c=anchor; local d=anchor; "
+        "sum=sum+a+b+c+d end; assert(sum==2240)"
     )
     def execute(version, output):
         if version == "5.1":
@@ -105,21 +107,22 @@ def check_karity_cross_instruction_cache() -> None:
             if name != "vm.lua":
                 return template
             reads = f"local cached={cache}[i]"
-            hit = "if cached then return cached[1] end"
-            store = f"{cache}[i]={{value}}"
-            nil_store = f"{cache}[i]={{nil}}"
+            hit = "return cached[1]"
+            store = f"{cache}[i]={{value,epoch,generation,p3}}"
+            nil_store = f"{cache}[i]={{nil,nil,generation,p3}}"
             for marker in (reads, hit, store, nil_store):
                 if template.count(marker) != 1:
                     raise AssertionError(f"Karity cache instrumentation lost {marker}")
             if mode == "cross":
-                check = ("if cached then if cached[2]~=pc then "
-                         "error('cross-instruction-cache-hit') end; return cached[1] end")
+                check = ("if cached[5]~=pc then "
+                         "error('cross-instruction-cache-hit') end; return cached[1]")
             else:
-                check = ("if cached then if cached[3]~=_RE[_rpos(3,i)] then "
-                         "error('stale-register-cache') end; return cached[1] end")
+                check = ("if cached[2]~=_RE[_rpos(3,i)] or cached[3]~=_MG[1] "
+                         "or cached[4]~=_rpos(3,i) then "
+                         "error('stale-register-cache') end; return cached[1]")
             template = template.replace(hit, check)
-            return (template.replace(store, f"{cache}[i]={{value,pc,_RE[_rpos(3,i)]}}")
-                    .replace(nil_store, f"{cache}[i]={{nil,pc,_RE[_rpos(3,i)]}}"))
+            return (template.replace(store, f"{cache}[i]={{value,epoch,generation,p3,pc}}")
+                    .replace(nil_store, f"{cache}[i]={{nil,nil,generation,p3,pc}}"))
 
         random.seed(7719)
         normal_output = VMPass(

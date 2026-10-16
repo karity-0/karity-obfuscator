@@ -1,12 +1,13 @@
 """Microcode folding and per-VM recipe sharing before storage emission."""
 from dataclasses import replace
-from .ir import Instruction, Op, Program
+from .ir import Instruction, Op, Host, Program
 from .validate import validate_program
 
 
 def _relocate(code: list[Instruction], address) -> list[Instruction]:
     return [replace(i, b=address(i.b), c=address(i.c))
-            if i.op == Op.SELECT and i.mode == 0 else i for i in code]
+            if i.op == Op.SELECT and i.mode == 0 else
+            replace(i,c=address(i.c)) if i.op==Op.HOST and i.a==Host.SYNTH_PREPARE else i for i in code]
 
 
 def link_programs(programs: list[Program], count: int):
@@ -55,6 +56,8 @@ def optimize_program(program: Program) -> Program:
     for instruction in program.code:
         if instruction.op == Op.SELECT and not instruction.mode:
             targets.update((instruction.b, instruction.c))
+        elif instruction.op==Op.HOST and instruction.a==Host.SYNTH_PREPARE:
+            targets.add(instruction.c)
     kept = []
     addresses = {}
     lookup_candidate: Instruction | None = None

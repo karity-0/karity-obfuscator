@@ -414,6 +414,12 @@ local function _source_value(v) return v end
 --<<ENDTARGET_SOURCE_VALUE>>
 
 local exec, _EX, _NX
+-- Transfer arguments to the actual Lua stack, then empty the staging packet.
+-- The tail call also covers callable tables and native callback boundaries.
+local function _call_packet(packet,fn,...)
+    for key in pairs(packet) do packet[key]=nil end
+    return fn(...)
+end
 -- Closures own their descriptors; this registry must not root environment or
 -- recursive-upvalue cycles on runtimes without ephemeron weak-key tables.
 local _VF=setmetatable({},{__mode="kv"})
@@ -505,11 +511,49 @@ local function _value_key(v)
     if type(v)=="number" and v==0 and 1/v<0 then return _negative_zero_key end
     return v
 end
-local _UO={}
-local _UI=setmetatable({},{__mode="k"})
 local _UC=0
 local _TM=setmetatable({},{__mode="k"})
 local _TC=0
+
+-- A tail bridge removes the wrapper's incoming vararg stack before executing
+-- user code. The callee consumes its private packet after binding parameters.
+local function _invoke_closure(metadata,values,flow,expose,next_route)
+    local packet=_apack(values,values.n,flow)
+    if packet~=values then for key in pairs(values) do values[key]=nil end end
+    local w=_CG[__VM_ROUTE_ENTER__](next_route,{
+        [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=metadata[__VM_META_PROTO__],
+        [__VM_Q_UPVALS__]=metadata[__VM_META_UPVALS__],[__VM_Q_ARGS__]=packet})
+    for i=1,w[__VM_RES_COUNT__] do
+        w[__VM_RES_VALUES__][i]=expose(w[__VM_RES_VALUES__][i])
+    end
+    return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
+end
+
+local _for_api={tonumber,math.type,math.floor,math.ceil,math.tointeger,math.mininteger,math.maxinteger}
+-- Match Lua 5.3 FORPREP, including integer-limit rounding and saturation.
+local function _for_values(initial,limit,step)
+    local bound=_for_api[1](limit)
+    if _for_api[2](initial)=="integer" and _for_api[2](step)=="integer" and bound then
+        local rounded=step<0 and _for_api[4](bound) or _for_api[3](bound)
+        local integer=_for_api[5](rounded)
+        if integer==nil then
+            if bound>0 then
+                integer=_for_api[7]
+                if step<0 then initial=0 end
+            else
+                integer=_for_api[6]
+                if step>=0 then initial=0 end
+            end
+        end
+        return initial,integer,step
+    end
+    if bound==nil then error("'for' limit must be a number") end
+    step=_for_api[1](step)
+    if step==nil then error("'for' step must be a number") end
+    initial=_for_api[1](initial)
+    if initial==nil then error("'for' initial value must be a number") end
+    return initial*1.0,bound*1.0,step*1.0
+end
 
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
@@ -542,12 +586,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RS    = _fr and _fr[__VM_FR_REG_SHARES__] or {}
     local _RE    = _fr and _fr[__VM_FR_REG_EPOCHS__] or {}
     local _RT    = _fr and _fr[__VM_FR_REG_TYPES__] or {}
-    local _RO    = _fr and _fr[__VM_FR_VALUE_VAULT__] or {}
-    local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="k"})
-    local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
+    -- Vault indices do not own values. Live slots own handle objects, so
+    -- overwritten objects/cycles can collect while this frame is still active.
+    local _RO    = _fr and _fr[__VM_FR_VALUE_VAULT__] or setmetatable({},{__mode="v"})
+    local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="kv"})
+    -- Counter, handle ID, strong slot owners, and dynamic open-result packets.
+    local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0,{}, {}}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
-    -- Native reads may be shared across instructions until a representation
-    -- write, rotation, pending producer, or native escape boundary occurs.
+    -- Open-upvalue getters can retain an earlier exec invocation and cache.
+    -- Validate entries against the resumed frame's shared representation state.
     local _RC    = {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
                    (--<<TARGET_PRIVATE_EXPRESSION>>
@@ -818,6 +865,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<ENDTARGET_REGISTER_MAP>>
 
     local function _rstore(slot,encoded,epoch,kind)
+        _RX[3][slot]=nil
         _RC[slot]=nil
         _PD[_rpos(5,slot)]=nil
         local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
@@ -840,42 +888,51 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if kind==1 then return encoded end
         if kind==2 then return encoded~=0 end
         if kind==3 then return nil end
-        return _RO[encoded]
+        return _RO[encoded][1]
     end
 
     local function _rvalue(v,epoch)
         if math.type(v)=="integer" then return v,1 end
         if type(v)=="boolean" then return v and 1 or 0,2 end
         if v==nil then return _rmix(epoch~_RZ~0x4E494C),3 end
-        local id
-        if not (type(v)=="number" and v~=v) then id=_RI[_value_key(v)] end
-        if id==nil then
-            _RX[2]=(_RX[2] or 0)+1; id=_RX[2]; _RO[id]=v
-            if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=id end
+        local ref
+        if not (type(v)=="number" and v~=v) then ref=_RI[_value_key(v)] end
+        if ref==nil then
+            _RX[2]=(_RX[2] or 0)+1; ref={v,_RX[2]}; _RO[ref[2]]=ref
+            if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=ref end
         end
-        return id,4
+        return ref[2],4,ref
     end
+
+    local get_upvalue,set_upvalue
 
     --<<RGET>>
     local function rget(i)
+        local box=boxes[i]; if box then return get_upvalue(box) end
         if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
+        local generation=_MG[1]
         local cached=_RC[i]
-        if cached then return cached[1] end
+        -- The cached epoch-bank address is valid only in this generation.
+        -- Reuse it on hits instead of computing all four bank addresses.
+        if cached and cached[3]==generation and cached[2]==_RE[cached[4]] then
+            return cached[1]
+        end
         local p1,p2,p3,p4=_rpositions(i)
         local epoch=_RE[p3]
-        if epoch==nil then _RC[i]={nil}; return nil end
+        if epoch==nil then _RC[i]={nil,nil,generation,p3}; return nil end
         local _,b,inv=_rparams(i,epoch)
         local value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
                               ((regs[p1]+_RS[p2])-b)*inv
                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
                              ),_RT[p4])
-        _RC[i]={value}
+        _RC[i]={value,epoch,generation,p3}
         return value
     end
     --<<ENDRGET>>
 
     --<<RSET>>
     local function rset(i,v)
+        local box=boxes[i]; if box then set_upvalue(box,v) end
         local seal=_seal_next
         _seal_next=nil
         local salt=0
@@ -887,14 +944,26 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                  )
         end
         local epoch=_rnext(i,salt)
-        local payload,kind=_rvalue(v,epoch)
+        local payload,kind,ref=_rvalue(v,epoch)
         local a,b=_rparams(i,epoch)
         _rstore(i,(--<<TARGET_PRIVATE_EXPRESSION>>
                    a*payload+b
                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
                   ),epoch,kind)
+        _RX[3][i]=not box and ref or nil
     end
     --<<ENDRSET>>
+
+    -- Open result lists can extend past Lua's 256 static register indices.
+    -- Their tail must not overwrite the predecoded RK constant bank.
+    local function _open_get(i)
+        if i<256 then return rget(i) end
+        return _aget(_RX[4][i],1)
+    end
+    local function _open_set(i,v)
+        if i<256 then rset(i,v)
+        else _RX[4][i]=_apack({v},1,(_SS and _SS[1]) or 0) end
+    end
 
     local function _rrotate(slot,salt)
         _RC[slot]=nil
@@ -972,7 +1041,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function _split_set(v)
         local epoch=_rnext(-7,0x53504C49)
-        local payload,kind=_rvalue(v,epoch)
+        local payload,kind,ref=_rvalue(v,epoch)
+        _RX[3][-7]=ref
         local a,b=_rparams(-7,epoch)
         local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
                        a*payload+b
@@ -1010,6 +1080,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
             _va=_apack(_vv,_vn,(_SS and _SS[1]) or (_XF[2] or 0))
         end
+        for key in pairs(args) do args[key]=nil end
+        args=nil
     end
 
     local function _av_read()
@@ -1019,6 +1091,24 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             _XF[1]=((_XF[1] or 0)~v~slot)
             _AA[slot]=nil
         end
+    end
+
+    -- At a call, the compiler's callee/argument area is temporary. Copy the
+    -- arguments first, then discard obsolete slots without logical stores or
+    -- protection events. Constants and open captured locals stay intact.
+    local function _stack_trim(first)
+        _av_read()
+        _RC={}
+        for slot in pairs(_RL) do
+            if slot>=first and slot<256 and not boxes[slot] then
+                local p1,p2,p3,p4=_rpositions(slot)
+                regs[p1]=nil; _RS[p2]=nil; _RE[p3]=nil; _RT[p4]=nil
+                _PD[_rpos(5,slot)]=nil; _RX[3][slot]=nil; _RL[slot]=nil
+            end
+        end
+        _RX[3][-7]=nil
+        for key in pairs(_RX[4]) do _RX[4][key]=nil end
+        _split_tmp=nil; _split_epoch=nil; _split_share=nil; _split_kind=nil
     end
 
     -- 상수 풀을 register 파일 상위(256+)에 미리 풀어 넣는다.
@@ -1037,21 +1127,23 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
 
     local function get_box(slot)
         if not boxes[slot] then
-            boxes[slot]={
-                get=function() return rget(slot) end,
-                set=function(v) rset(slot,v) end
-            }
+            -- Materialize pending arithmetic before sharing an independent cell.
+            local value=rget(slot)
+            boxes[slot]={v=value}
+            set_upvalue(boxes[slot],value)
+            _RX[3][slot]=nil; _RC[slot]=nil
         end
         return boxes[slot]
     end
 
-    local function get_upvalue(box)
+    get_upvalue=function(box)
         _RC={}
         if box.get then return box.get() end
         if not _UY then return box.v end
         local q=_UV[box]
         if not q then
             local v=box.v
+            box.refs=nil
             _UC=_UC+1
             local epoch=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
                               _RZ~_UC~(_SS[1] or 0)~(_XF[2] or 0)~__VM_UV_SEED__
@@ -1065,12 +1157,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                                                   --<<ENDTARGET_PRIVATE_EXPRESSION>>
                                                  )),3
             else
-                if not (type(v)=="number" and v~=v) then payload=_UI[_value_key(v)] end
-                if payload==nil then
-                    payload=#_UO+1; _UO[payload]=v
-                    if not (type(v)=="number" and v~=v) then _UI[_value_key(v)]=payload end
-                end
-                kind=4
+                -- References belong to the cell, not a process-wide strong vault.
+                -- Keep them out of weak-key _UV values (Lua 5.1 has no ephemerons).
+                box.refs={v}; payload=1; kind=4
             end
             local pair=_RP[(--<<TARGET_USER_EXPRESSION>>
                            (--<<TARGET_PRIVATE_LOW_EXPRESSION:16>>
@@ -1122,16 +1211,17 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if kind==1 then return payload end
         if kind==2 then return payload~=0 end
         if kind==3 then return nil end
-        return _UO[payload]
+        return box.refs[payload]
     end
 
-    local function set_upvalue(box,v)
+    set_upvalue=function(box,v)
         _RC={}
         if box.set then box.set(v)
         elseif not _UY then box.v=v
         else box.v=v; _UV[box]=nil; get_upvalue(box) end
     end
 
+    local _texpose
     local function _tnew()
         local t={}
         if not _TY then return t end
@@ -1180,12 +1270,18 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _tset(t,k,v)
         _RC={}
         local m=_TM[t]
-        if not m or m[__VM_TB_EXPOSED__] then t[k]=v; return end
+        if not m or m[__VM_TB_EXPOSED__] then
+            -- Native tables (including weak tables) must receive native values.
+            t[_texpose(k)]=_texpose(v); return
+        end
+        if k==nil or (type(k)=='number' and k~=k) then t[k]=v; return end
         local physical=_tkey(m,k,v~=nil)
         if physical==nil then return end
         if v==nil then
             m[__VM_TB_LEFT__][physical]=nil
             m[__VM_TB_RIGHT__][physical]=nil
+            m[__VM_TB_KEYS__][physical]=nil
+            m[__VM_TB_REVERSE__][k]=nil
             return
         end
         if math.type(v)=="integer" then
@@ -1214,13 +1310,14 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return n
     end
 
-    local function _texpose(v,seen)
+    _texpose=function(v,seen)
         local m=type(v)=="table" and _TM[v] or nil
         if not m or m[__VM_TB_EXPOSED__] then return v end
         seen=seen or {}
         if seen[v] then return v end
         seen[v]=true
         m[__VM_TB_EXPOSED__]=true
+        _TM[v]=nil
         for physical,k in pairs(m[__VM_TB_KEYS__]) do
             local x=m[__VM_TB_LEFT__][physical]
             if x~=nil then
@@ -1240,9 +1337,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         for slot,box in pairs(boxes) do
             if slot>=first then
                 local value=get_upvalue(box)
+                boxes[slot]=nil
+                rset(slot,value)
                 box.get=nil; box.set=nil
                 set_upvalue(box,value)
-                boxes[slot]=nil
             end
         end
     end
@@ -1261,16 +1359,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         local metadata={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
         local fn=function(...)
-            local sub,new_uv=metadata[__VM_META_PROTO__],metadata[__VM_META_UPVALS__]
-            local _av=table.pack(...)
-            local w=_CG[__VM_ROUTE_ENTER__](_NX,{
-                [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=sub,
-                [__VM_Q_UPVALS__]=new_uv,
-                [__VM_Q_ARGS__]=_apack(_av,_av.n,(_SS and _SS[1]) or 0)})
-            for i=1,w[__VM_RES_COUNT__] do
-                w[__VM_RES_VALUES__][i]=_texpose(w[__VM_RES_VALUES__][i])
-            end
-            return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
+            return _invoke_closure(metadata,table.pack(...),(_SS and _SS[1]) or 0,_texpose,_NX)
         end
         _VF[fn]=metadata
         return bind_environment(fn,new_uv,upvals)
@@ -1320,6 +1409,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _leave(r,n,av,tag)
+        if not _kk then
+            for i=1,n do r[i]=_texpose(r[i]) end
+        end
         local q={
             [__VM_Q_KIND__]=__VM_CALL_LEAVE__,[__VM_Q_CONT__]=_kk,
             [__VM_Q_RESULT__]={[__VM_RES_VALUES__]=r,[__VM_RES_COUNT__]=n},
@@ -1542,6 +1634,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _elinear2(dst,lhs,rhs,sign)
+        if boxes[dst] or boxes[lhs] or boxes[rhs] then return false end
         if _PD[_rpos(5,lhs)]~=nil then _pending_finish(lhs) end
         if _PD[_rpos(5,rhs)]~=nil then _pending_finish(rhs) end
         local l1,l2,l3,l4=_rpositions(lhs)
@@ -1562,6 +1655,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _elinear1(dst,src,sign)
+        if boxes[dst] or boxes[src] then return false end
         if _PD[_rpos(5,src)]~=nil then _pending_finish(src) end
         local p1,p2,p3,p4=_rpositions(src)
         local se=_RE[p3]
@@ -1577,6 +1671,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _pending_snapshot(slot)
+        if boxes[slot] then return nil end
         if _PD[_rpos(5,slot)]~=nil then _pending_finish(slot) end
         local p1,p2,p3,p4=_rpositions(slot)
         local epoch=_RE[p3]
@@ -1629,7 +1724,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _defer2r(dst,lhs,rhs,av,slot,token)
         _gq=(_gq or 0)+1
         local desc=_gsl and _gsl[_gq]
-        if not desc or desc[1]==0 then
+        if not boxes[dst] and (not desc or desc[1]==0) then
             local left=_pending_snapshot(lhs)
             local right
             if lhs==rhs then right=left else right=_pending_snapshot(rhs) end
@@ -1653,7 +1748,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _defer1r(dst,src,av,slot,token)
         _gq=(_gq or 0)+1
         local desc=_gsl and _gsl[_gq]
-        if not desc or desc[1]==0 then
+        if not boxes[dst] and (not desc or desc[1]==0) then
             local value=_pending_snapshot(src)
             if value and _poly_lazy(token~dst~src) then
                 local epoch=_rnext(dst,token~src)
@@ -1702,26 +1797,28 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local _rc=_fr[__VM_FR_C__]~_fm
         if _rc==0 then
             for i=1,_rr[__VM_RES_COUNT__] do
-                rset(_ra+i-1,_rr[__VM_RES_VALUES__][i])
+                _open_set(_ra+i-1,_rr[__VM_RES_VALUES__][i])
             end
             top=_ra+_rr[__VM_RES_COUNT__]-1
         elseif _rc>1 then
             for i=1,_rc-1 do rset(_ra+i-1,_rr[__VM_RES_VALUES__][i]) end
         end
     end
+    _rr=nil; _fr=nil
 
     local function _call_args(a,b,...)
         local values={};local count=0
         local last=(b==0 and top) or (b>1 and (a+b-1)) or a
-        for i=a+1,last do count=count+1;values[count]=rget(i) end
+        for i=a+1,last do count=count+1;values[count]=_open_get(i) end
         values.n=count
+        _stack_trim(a)
         return values
     end
 
     local function _return_values(a,b,...)
         if b==1 then return {},0 end
         local result={};local count=(b==0 and (top-a+1)) or (b-1)
-        for i=1,count do result[i]=rget(a+i-1) end
+        for i=1,count do result[i]=_open_get(a+i-1) end
         return result,count
     end
 
@@ -1730,10 +1827,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local count=args.n
         if not tail then _touch(av,tag) end
         for i=1,count do args[i]=_texpose(args[i]) end
-        local result=table.pack(fn(table.unpack(args,1,count)))
+        local result=table.pack(_call_packet(args,fn,table.unpack(args,1,count)))
         if tail then return _leave(result,result.n,av,tag) end
         if c==0 then
-            for i=1,result.n do rset(a+i-1,result[i]) end
+            for i=1,result.n do _open_set(a+i-1,result[i]) end
             top=a+result.n-1
         elseif c>1 then
             for i=1,c-1 do rset(a+i-1,result[i]) end
@@ -1821,8 +1918,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==27 then rset(A,_carry(_sem(__VM_OP_NOT__,rget(B),nil,nil),_av,27))
         elseif op==28 then rset(A,_carry(_sem(__VM_OP_LEN__,rget(B),nil,nil),_av,28))
         elseif op==29 then
-            local t={}; for i=B,C do t[#t+1]=rget(i) end
-            rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,#t),_av,29))
+            local t={}; for i=B,C do t[i-B+1]=rget(i) end
+            rset(A,_carry(_sem(__VM_OP_CONCAT__,t,nil,C-B+1),_av,29))
         elseif op==30 then if A>0 then close_upvalues(A-1) end; pc=_jump(sBx,_av,30)
         elseif op==31 then
             local left=rget(B); local right
@@ -1888,7 +1985,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local k=(_S[611] or 0)~pc~A
             local q={[__VM_CF_KEY__]=k,[__VM_CF_TARGET__]=(pc+sBx)~k,[__VM_CF_A__]=A~k,[__VM_CF_FIELDS__]={__VM_CF_TARGET__,__VM_CF_A__}}
             q=_flow(q,_av,40); local qa=_cf(q,__VM_CF_A__,40)
-            q[__VM_CF_VALUE__]=rget(qa); q[__VM_CF_STEP__]=rget(qa+2)
+            local initial,limit,step=_for_values(rget(qa),rget(qa+1),rget(qa+2))
+            rset(qa+1,limit); rset(qa+2,step)
+            q[__VM_CF_VALUE__]=initial; q[__VM_CF_STEP__]=step
             q=_LG[__VM_LOOP_FORPREP__](q,_S)
             rset(qa,q[__VM_CF_VALUE__]); pc=_cf(q,__VM_CF_TARGET__,40)
 
@@ -1922,12 +2021,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
-            local vals={}; for i=1,cnt do vals[i]=rget(A+i) end
+            local vals={}; for i=1,cnt do vals[i]=_open_get(A+i) end
             _sem(__VM_OP_SETLIST__,tbl,vals,{base,cnt})
             _touch(_av,43)
 
         elseif op==44 then
-            get_box(A)
             local fn=_sem(__VM_OP_CLOSURE__,make_closure,_subs[Bx+1],nil)
             rset(A,_carry(fn,_av,44))
 
@@ -1939,9 +2037,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local qb=_cf(q,__VM_CF_B__,45)
             local qn=_cf(q,__VM_CF_COUNT__,45)
             if _AY then
-                for i=1,qn do rset(qa+i-1,_aget(_va,i)) end
+                for i=1,qn do _open_set(qa+i-1,_aget(_va,i)) end
             else
-                _sem(__VM_OP_VARARG__,rset,qa,{qn,_va})
+                _sem(__VM_OP_VARARG__,_open_set,qa,{qn,_va})
             end
             if qb==0 then
                 top=qa+qn-1
@@ -1966,6 +2064,13 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==62 then
             local n=_acount(_va);local t=_tnew();_tset(t,"n",_source_value(n))
             for i=1,n do _tset(t,i,_aget(_va,i)) end;rset(A,t)
+        elseif op==63 then _IT.fail("VM execution failed",0)
+        elseif op==64 then _IT.invalid=true; _IT.fail("VM execution failed",0)
+        elseif op==65 then
+            local condition=rget(A); _stack_trim(B)
+            if not condition then _IT.fail("VM execution failed",0) end
+            condition=nil
+            if C==0 then top=B-1 else for i=B,B+C-2 do rset(i,nil) end end
         else error("unknown op "..op) end
     end
     return _leave({},0,nil,138)
@@ -1994,7 +2099,8 @@ end
 local function _function_dump(fn) return string.dump(fn,true) end
 --<<ENDTARGET_FUNCTION_DUMP>>
 
-local function run(blob,rand_tail,self_func)
+local function run(blob,rand_tail,self_func,_root_args)
+    _root_args=_root_args or {n=0}
     local dump=_function_dump(self_func)
     local dump_crc=_crc32(dump)
     local crc=(dump_crc~(_LS or 0))&0xFFFFFFFF
@@ -2073,15 +2179,17 @@ local function run(blob,rand_tail,self_func)
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
     --<<RUN_ENTRY>>
-    _CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
+    local _root_result=_CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=_apack({},0,crc)})
+         [__VM_Q_UPVALS__]={env_box,environment=env_box.v},[__VM_Q_ARGS__]=_apack(_root_args,_root_args.n,crc)})
+    local _root_values,_root_count=_root_result[__VM_RES_VALUES__],_root_result[__VM_RES_COUNT__]
     --<<ENDRUN_ENTRY>>
     --<<RUNTIME_TRACE>>
     io.stderr:write("karity-vm-trace:",string.format("%016x",_PX),
                     " blocks:",_PBC," blocktrace:",
                     string.format("%016x",_PBH),"\n")
     --<<ENDRUNTIME_TRACE>>
+    return table.unpack(_root_values,1,_root_count)
 end
 
 if arg and arg[0] and arg[0]:match("vm") then

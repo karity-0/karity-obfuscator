@@ -140,10 +140,10 @@ def build(source, options, seed, legacy=None):
     p = VMPass(vm_options={'backend': 'karity', **options},
                target=TargetProfile(options.get('lua_version', '5.3'), options.get('backend', 'karity')))
     wrap = p._backend.target.wrap
-    def observe_wrap(script, *args):
+    def observe_wrap(script, *args, **kwargs):
         capture['runtime'] = script
         capture['blob_literal_bytes'] = len(args[3].encode())
-        return wrap(script, *args)
+        return wrap(script, *args, **kwargs)
     with ExitStack() as stack:
         stack.enter_context(patch.object(VMBackend, 'serialize_program', observe_blob))
         stack.enter_context(patch.object(vm_pass, '_obfuscate_vm_output', observe_runtime))

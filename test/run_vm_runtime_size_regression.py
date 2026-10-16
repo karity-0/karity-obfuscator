@@ -47,6 +47,21 @@ def dependency_checks():
     free = graph_requirements('return _sem(tag,x),_arith2(x,y,{},slot)')
     assert len(free[0] & {s[0] for s in graphs._ARITH_SPECS.values()}) == 10
     assert free[1] == set(_SEMANTIC_TOKENS)
+    from obfuscator.vm.synthesis.register_local import helper_source
+    template=(ROOT/'obfuscator/vm/vm.lua').read_text(encoding='utf-8')
+    derived='''local function _arith2(a,b,av,slot) return a*b end
+local function _arith1(a,av,slot) return -a end
+'''+helper_source(template,{1,2})
+    finite=derived+'return _syn_arith2r(0,1,2,{},__VM_SLOT_MUL__,nil,3,4)'
+    assert graph_requirements(finite)[0]=={'__VM_SLOT_MUL__'},'derived forwarding must not keep the whole bank'
+    pruned,stats=specialize_runtime(finite)
+    assert {'_arith1','_syn_arith1r'}<=set(stats['removed_helpers'])
+    assert 'local function _syn_arith2r' in pruned and 'local function _arith2(' in pruned
+    finite=derived+'return _syn_arith1r(0,1,{},__VM_SLOT_UNM__,nil,3)'
+    assert graph_requirements(finite)[0]=={'__VM_SLOT_UNM__'}
+    for suffix in ('return {_syn_arith2r}',
+                   'return _syn_arith2r(0,1,2,{},dynamic_slot,nil,3,4)'):
+        assert len(graph_requirements(derived+suffix)[0])==10,'escapes/computed slots must remain conservative'
 
 
 def graph_checks():

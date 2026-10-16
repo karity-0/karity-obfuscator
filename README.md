@@ -1,5 +1,7 @@
 # Karity Obfuscator
 
+[**English**](README.md) | [한국어](README.ko.md)
+
 A Lua 5.3 obfuscator with a GUI, selective source protection, and three VM
 backends: **Karity**, **Classic**, and **MOV**.
 
@@ -55,6 +57,7 @@ development and diagnostics. See [user presets](docs/user-presets.md) and the
 
 ## Documentation
 
+- [KES syntax quick guide](docs/kes-guide.md) · [Full reference](docs/kes.md)
 - [Presets and backend selection](docs/user-presets.md)
 - [Configuration reference](docs/configuration.md)
 - [Selective protection](docs/selective-obfuscation.md)
@@ -81,6 +84,21 @@ python test/run_ci.py
 
 Local verification and CI share the same test manifest. Test protected scripts
 in their intended Lua environment before release.
+
+For a larger native/VM differential corpus with saved inputs, options, generated
+outputs and per-case differences:
+
+```sh
+python tools/explore_vm_semantics.py --seeds 124 7719 20261016 --generated 8 --output local/vm-audit/run
+python tools/explore_vm_semantics.py --inputs my-script.lua --versions 5.3 --generated 0 --output local/vm-audit/my-script
+```
+
+Generated programs and boundary fixtures run on both Lua versions and all three
+backends with fresh runtime processes and execution timeouts. The corpus tests
+finite cases; matching output does not establish complete semantic equivalence.
+Use `--harness test/fixtures/vm_chunk_interface_harness.lua` with the matching
+`vm_chunk_interface.lua` input to observe chunk returns, environments and
+`require`. Add `--pack --versions 5.3` to include the packer boundary.
 
 ## License
 

@@ -532,7 +532,7 @@ def _extract_real_lines(body: str) -> list[str]:
             if ln.strip() and not ln.strip().startswith("--")]
 
 
-def _native_scratch_locals(source: str, first: int, last: int) -> str:
+def _native_scratch_locals(source: str, first: int, last: int, *, scratch_name='_MJ', rewrite_helpers=True) -> str:
     """Move a native CFF's ordinary locals into executor-owned scratch slots.
 
     Lua 5.1 limits a function prototype to 200 local variables.  A mutated
@@ -552,7 +552,7 @@ def _native_scratch_locals(source: str, first: int, last: int) -> str:
             names.append(name)
 
     for index, name in enumerate(names, 1):
-        slot = f"_MJ[{index}]"
+        slot = f"{scratch_name}[{index}]"
         # ``_hoist_locals`` emits declaration-only lines, while the CFF state
         # itself is introduced with an initializer.  Drop the former and turn
         # the latter directly into a scratch-table assignment.  CFF handler
@@ -580,8 +580,9 @@ def _native_scratch_locals(source: str, first: int, last: int) -> str:
                 return match.group(0)
             return slot
         source = reference.sub(replace_reference, source)
-    for helper in ("_c_u32", "_c_xor", "_c_and", "_c_or", "_c_not", "_c_shl", "_c_shr"):
-        source = re.sub(rf"(?<![.\w]){helper}\b", f"_MJ.{helper}", source)
+    if rewrite_helpers:
+        for helper in ("_c_u32", "_c_xor", "_c_and", "_c_or", "_c_not", "_c_shl", "_c_shr"):
+            source = re.sub(rf"(?<![.\w]){helper}\b", f"{scratch_name}.{helper}", source)
     return source
 
 

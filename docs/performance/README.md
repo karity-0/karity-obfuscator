@@ -13,3 +13,6 @@ python tools/profile_synthesis_selection.py --output local/performance/synthesis
 Tools with a default report destination use `local/performance/`. Tools requiring
 `--output` should also use that directory. Keep personal checkout paths out of
 published summaries. Raw reports can be regenerated with the documented tools.
+
+- [VM lifetime corrections and preset measurements (2026-10-16)](vm-lifetimes.md): native equivalence coverage, before/after VM costs and current full preset costs.
+- [KES frontend and VM costs](kes.md): equivalent syntax/API comparisons, reproduction and the cost of explicit output CFF plus packing.

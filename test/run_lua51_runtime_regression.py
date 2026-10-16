@@ -18,8 +18,9 @@ def check_emitted_helpers(asset, region, runtime, helpers):
     for helper in helpers:
         # Keep auditing the authored target contract, and separately verify
         # that pruning never leaves callers of a missing declaration.
-        assert f'function {helper}(' in asset, helper
-        if f'function {helper}(' not in region:
+        declaration=rf'(?:\bfunction\s+{re.escape(helper)}\s*\(|\b{re.escape(helper)}\s*=\s*function\s*\()'
+        assert re.search(declaration, asset), helper
+        if not re.search(declaration, region):
             assert not re.search(rf'\b{helper}\s*\(', runtime), helper
 
 
@@ -103,8 +104,8 @@ return exec({}, {})
 def main():
     from lupa.lua51 import LuaRuntime
     from obfuscator.vm.targets.lua53 import Lua53Target
-    assert '_pack_values(),nil,{})' in Lua51Target().direct_runtime_entry()
-    assert 'table.pack()' in Lua53Target().direct_runtime_entry()
+    assert '_root_args,nil,{})' in Lua51Target().direct_runtime_entry()
+    assert '_root_args)' in Lua53Target().direct_runtime_entry()
     assert Lua51Target().value_packet_api() == ('_pack_values', '_unpack_values')
     assert Lua53Target().value_packet_api() == ('table.pack', 'table.unpack')
     check_native_marker_probe()
@@ -126,10 +127,10 @@ def main():
         assert not re.search(r'\b(?:math\.type|table\.pack|table\.unpack)\b', asset), name
         assert 'ctx.string.format("%016x"' not in asset, name
         if name == 'classic_exec.lua':
-            assert '_source_call(fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))' in asset
-            assert '_EX[sub.vm_id+1](sub, new_uv, _pack_values(...),nil,{})' in asset
+            assert '_call_packet(ca,_source_call,fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))' in asset
+            assert '_invoke_closure(metadata,_pack_values(...))' in asset
         if name == 'vm.lua':
-            assert '_source_call(fn,upvals,_kk,_unpack_values(args,1,count))' in asset
+            assert '_call_packet(args,_source_call,fn,upvals,_kk,_unpack_values(args,1,count))' in asset
             assert 'getfenv(upvals.environment)' in asset
             assert 'setfenv(fn,get_environment(parent))' in asset
             assert '[__VM_Q_UPVALS__]={env_box,environment=self_func}' in asset

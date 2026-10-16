@@ -26,6 +26,14 @@
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
+  - [opcode_synthesis](#opcode_synthesis)
+  - [synthesis_policy](#synthesis_policy)
+  - [synthesis_max_code_growth](#synthesis_max_code_growth)
+  - [synthesis_max_steps](#synthesis_max_steps)
+  - [synthesis_max_recipes](#synthesis_max_recipes)
+  - [synthesis_max_occurrences](#synthesis_max_occurrences)
+  - [opcode_splitting](#opcode_splitting)
+  - [opcode_fusion](#opcode_fusion)
   - [ir_mba_rate](#ir_mba_rate)
   - [ir_test_set_rate](#ir_test_set_rate)
   - [ir_tail_duplication_rate](#ir_tail_duplication_rate)
@@ -656,6 +664,82 @@ Compresses and wraps the final output in a self-extracting loader.
 See [`pack` design and implementation notes](passes/packer.md) for architecture, trade-offs, and future work.
 
 ## vm_options
+
+### opcode_synthesis
+
+Synthesize connected arithmetic, bitwise and ordered table/upvalue IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.
+
+default: false
+
+---
+
+### synthesis_policy
+
+Choose estimated work savings or bounded regional opcode diversity. All policies enforce the same semantic and protection gates.
+
+| Value | Description |
+|---|---|
+| `efficiency` | Prefer shared recipes and low overhead |
+| `balanced` | Share common recipes with bounded regional forms |
+| `protection` | Prefer bounded region-specific recipes |
+
+default: `balanced`
+
+---
+
+### synthesis_max_code_growth
+
+Per-VM additional kernel source budget relative to the target loader. Efficiency uses half, Balanced the full budget and Protection twice this allowance; compiler safety bounds always apply.
+
+default: `0.1`
+
+---
+
+### synthesis_max_steps
+
+Maximum scalar operations in an atomic synthesized region.
+
+range: 3 to 16
+
+default: `6`
+
+---
+
+### synthesis_max_recipes
+
+Maximum generated recipe/physical handler groups per program.
+
+range: 1 to 256
+
+default: `32`
+
+---
+
+### synthesis_max_occurrences
+
+Maximum synthesized source regions per program.
+
+range: 1 to 4096
+
+default: `512`
+
+---
+
+### opcode_splitting
+
+Allow legacy physical instruction splitting outside synthesized regions.
+
+default: true
+
+---
+
+### opcode_fusion
+
+Allow legacy two-slot pair fusion outside synthesized regions.
+
+default: true
+
+---
 
 ### ir_mba_rate
 

@@ -14,6 +14,7 @@ The packer is intentionally the outer runtime component rather than another VM:
 from __future__ import annotations
 
 import base64
+from bisect import bisect_right
 import os
 import random
 import re
@@ -77,7 +78,8 @@ _BARE_REF_PROXY_EXPRESSIONS = {
 
 _VM_TAIL_RE = re.compile(
     r"return\s*\((?P<vmf>[A-Za-z_]\w*)\((?P<args>[^)]*)\)\)"
-    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)\)\s*$",
+    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)"
+    r"(?P<forward_args>,(?:\s*\.{3}|\{n=select\('#',\.{3}\),\.{3}\}))?\)\s*$",
     re.S,
 )
 
@@ -122,6 +124,7 @@ class ContextPlan:
     vm_args: list[str] = field(default_factory=list)
     vm_tail: str | None = None
     is_vm: bool = False
+    forward_args: bool = False
 
     def slot(self, key: str) -> int:
         return self.slots[key]
@@ -417,6 +420,10 @@ def _distinct_slots(count: int) -> list[int]:
     return list(used)
 
 
+_LONG_COMMENT_OPEN = re.compile(r"--\[(=*)\[")
+_LONG_STRING_OPEN = re.compile(r"\[(=*)\[")
+
+
 def _mask_lua_noncode(src: str) -> str:
     """Replace comments/string contents with spaces while preserving length."""
     out = list(src)
@@ -444,11 +451,11 @@ def _mask_lua_noncode(src: str) -> str:
 
         if src.startswith("--", i):
             # Long comment --[=[ ... ]=]
-            m = re.match(r"--\[(=*)\[", src[i:])
+            m = _LONG_COMMENT_OPEN.match(src, i)
             if m:
                 eq = m.group(1)
                 close = "]" + eq + "]"
-                j = src.find(close, i + m.end())
+                j = src.find(close, m.end())
                 end = n if j < 0 else j + len(close)
                 for k in range(i, end):
                     out[k] = " "
@@ -463,11 +470,11 @@ def _mask_lua_noncode(src: str) -> str:
             continue
 
         # Long string [=[ ... ]=]
-        m = re.match(r"\[(=*)\[", src[i:])
+        m = _LONG_STRING_OPEN.match(src, i) if ch == '[' else None
         if m:
             eq = m.group(1)
             close = "]" + eq + "]"
-            j = src.find(close, i + m.end())
+            j = src.find(close, m.end())
             end = n if j < 0 else j + len(close)
             for k in range(i, end):
                 out[k] = " "
@@ -484,11 +491,10 @@ def _keyword_tokens(masked: str):
         yield m.group(0), m.start(), m.end()
 
 
-def _depth_before(masked: str, pos: int) -> int:
-    depth = 0
+def _keyword_depths(masked: str):
     pending_do = 0
     stack: list[str] = []
-    for word, start, _ in _keyword_tokens(masked[:pos]):
+    for word, _, end in _keyword_tokens(masked):
         if word == "function":
             stack.append("end")
         elif word == "if":
@@ -509,8 +515,15 @@ def _depth_before(masked: str, pos: int) -> int:
         elif word == "until":
             if stack and stack[-1] == "until":
                 stack.pop()
-        depth = len(stack)
-    return depth
+        yield end, len(stack)
+
+
+def _make_depth_lookup(masked: str):
+    positions, depths = [0], [0]
+    for end, depth in _keyword_depths(masked):
+        positions.append(end)
+        depths.append(depth)
+    return lambda pos: depths[bisect_right(positions, pos) - 1]
 
 
 def _find_function_end(masked: str, function_pos: int) -> int | None:
@@ -554,15 +567,17 @@ def _find_function_end(masked: str, function_pos: int) -> int | None:
     return None
 
 
-def _top_level_locals(src: str, masked: str) -> set[str]:
+def _top_level_locals(src: str, masked: str, depth_before=None) -> set[str]:
+    depth_before = depth_before or _make_depth_lookup(masked)
     names: set[str] = set()
     for m in re.finditer(r"\blocal\s+(?:function\s+)?([A-Za-z_]\w*)", masked):
-        if _depth_before(masked, m.start()) == 0:
+        if depth_before(m.start()) == 0:
             names.add(m.group(1))
     return names
 
 
-def _find_simple_constants(src: str, masked: str) -> list[ExtractedConstant]:
+def _find_simple_constants(src: str, masked: str, depth_before=None) -> list[ExtractedConstant]:
+    depth_before = depth_before or _make_depth_lookup(masked)
     result: list[ExtractedConstant] = []
     pat = re.compile(
         r"\blocal\s+([A-Za-z_]\w*)\s*=\s*"
@@ -572,7 +587,7 @@ def _find_simple_constants(src: str, masked: str) -> list[ExtractedConstant]:
     for m in pat.finditer(src):
         if masked[m.start():m.start()+5] != "local":
             continue
-        if _depth_before(masked, m.start()) != 0:
+        if depth_before(m.start()) != 0:
             continue
         name = m.group(1)
         literal = m.group(2)
@@ -589,7 +604,9 @@ def _find_top_level_functions(
     masked: str,
     top_locals: set[str],
     extractable_names: set[str],
+    depth_before=None,
 ) -> list[ExtractedFunction]:
+    depth_before = depth_before or _make_depth_lookup(masked)
     result: list[ExtractedFunction] = []
 
     patterns = (
@@ -600,7 +617,7 @@ def _find_top_level_functions(
     seen: set[tuple[int, int]] = set()
     for pat in patterns:
         for m in pat.finditer(masked):
-            if _depth_before(masked, m.start()) != 0:
+            if depth_before(m.start()) != 0:
                 continue
             key = (m.start(), m.end())
             if key in seen:
@@ -686,18 +703,34 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     pos = 0
     for m in pattern.finditer(masked):
         key = m.group(0)
-        # Bare identifiers used as fields/methods are not variable refs.
-        if "." not in key:
-            j = m.start() - 1
-            while j >= 0 and masked[j].isspace():
-                j -= 1
-            if j >= 0 and masked[j] in ".:":
-                continue
+        # Neither a bare name nor a dotted suffix is a global reference when
+        # it follows another field/method selector (e.g. _ENV.string.byte).
+        j = m.start() - 1
+        while j >= 0 and masked[j].isspace():
+            j -= 1
+        if j >= 0 and masked[j] in ".:":
+            continue
         out.append(src[pos:m.start()])
         out.append(replacements[key])
         pos = m.end()
     out.append(src[pos:])
     return "".join(out)
+
+
+def _chunk_uses_varargs(script: str) -> bool:
+    from .ts_utils import parse
+    ctx=parse(script)
+    if ctx.root.has_error:
+        return True
+    pending=list(ctx.root.named_children)
+    while pending:
+        node=pending.pop()
+        if node.type in {'function_definition','function_declaration'}:
+            continue
+        if node.type=='vararg_expression':
+            return True
+        pending.extend(node.named_children)
+    return False
 
 
 def _alloc_plan(script: str) -> ContextPlan:
@@ -764,11 +797,13 @@ def _alloc_plan(script: str) -> ContextPlan:
             vm_args=vm_args,
             vm_tail=vm_tail,
             is_vm=True,
+            forward_args=bool(vm_match.group('forward_args')),
         )
 
     masked = _mask_lua_noncode(script)
-    top_locals = _top_level_locals(script, masked)
-    constants = _find_simple_constants(script, masked)
+    depth_before = _make_depth_lookup(masked)
+    top_locals = _top_level_locals(script, masked, depth_before)
+    constants = _find_simple_constants(script, masked, depth_before)
     constant_names = {c.name for c in constants}
 
     # First pass: function names are extractable from one another.
@@ -778,11 +813,11 @@ def _alloc_plan(script: str) -> ContextPlan:
         re.compile(r"\blocal\s+([A-Za-z_]\w*)\s*=\s*function\s*\("),
     ):
         for m in p.finditer(masked):
-            if _depth_before(masked, m.start()) == 0:
+            if depth_before(m.start()) == 0:
                 rough_funcs.append(m.group(1))
     extractable_names = set(rough_funcs) | constant_names
     funcs = _find_top_level_functions(
-        script, masked, top_locals, extractable_names
+        script, masked, top_locals, extractable_names, depth_before
     )
 
     # Random but bounded extraction. Prefer functions with dependencies so the
@@ -887,6 +922,7 @@ def _alloc_plan(script: str) -> ContextPlan:
         vm_args=vm_args,
         vm_tail=vm_tail,
         is_vm=is_vm,
+        forward_args=_chunk_uses_varargs(script),
     )
 
 
@@ -1097,10 +1133,15 @@ def _rewrite_generic_payload(script: str, plan: ContextPlan, state: int) -> str:
     # The state function itself is supplied as a separate argument so the
     # bootstrap does not expose its sparse context slot in the payload.
     prefix = (
-        "local __KCTX,__KSTATEF=...;"
+        "local __KCTX,__KSTATEF,__KDECODE=...;"
         "local __KSTATE=__KSTATEF(__KCTX);"
     )
-    return prefix + body
+    # The private context is not part of the user's chunk varargs. Tail-enter
+    # a lexical body with only the original arguments, including trailing nil.
+    # Keep original line numbers and the first environment upvalue stable.
+    # Selective VM capsules can occur in this generic path; their finalized
+    # dump includes line/upvalue descriptors even with debug data stripped.
+    return prefix + "return (function(...)do local _=_ENV end; " + body + "\nend)(select(4,...))"
 
 
 def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
@@ -1118,9 +1159,13 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     ).decode("ascii")
     vmf_name = m.group("vmf")
 
+    forwarded=m.group('forward_args')
+    arguments=(",{n=select('#',select(4,...)),select(4,...)}" if forwarded and '{' in forwarded
+               else ',select(4,...)' if forwarded else '')
+
     replacement = (
         f"return ({vmf_name}({','.join(encoded_args)}))"
-        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name})"
+        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name}{arguments})"
     )
     body = script[:m.start()] + replacement + script[m.end():]
 
@@ -1134,10 +1179,11 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 
 
 def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
+    arguments="{n=select('#',...),...}" if plan.forward_args else '{n=0}'
     return (
         f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
-        f"return _P(_D,_P)\n"
+        f"return _P(_D,_P,{arguments})\n"
     )
 
 

@@ -13,6 +13,15 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
         handler_map if handler_map is not None else layout.vm_maps[vm_index]
     )
     used_ops = layout.used_ops[vm_index] if used_ops is None else used_ops
+    from ..synthesis.pruning import handler_inventory
+    inventory=handler_inventory(lowered,vm_index)
+    if inventory is not None:
+        used_ops=set(used_ops)&inventory['used']
+        splits,fuses,defers=inventory['splits'],inventory['fuses'],inventory['defers']
+        lowered.backend_data.setdefault('synthesis_pruning',{})[vm_index]={
+            'vm':vm_index,'retired_aliases':inventory['retired_aliases'],
+            'retired_composite_handlers':inventory['retired_composite_handlers'],
+            'logical_aliases_retained':len(layout.used_ops[vm_index])}
     mutate = variant['mutate_handlers']
     mutation_seed = variant['mutation_seed'] if mutate else None
     mutation_identities = {
@@ -34,13 +43,17 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
         source, used_ops, fake_handlers=bool(variant['decoy_body_variants']),
         mutate=mutate, fake_body_variants=variant['decoy_body_variants'],
         native_state=native_state, mutation_seed=mutation_seed,
-        mutation_identities=mutation_identities)
+        mutation_identities=mutation_identities,
+        reserved_vops=inventory['reserved'] if inventory is not None else None)
     source = apply_split_to_vm(source, splits, mutate=mutate, native_state=native_state,
                                mutation_seed=mutation_seed)
     source = apply_fuse_to_vm(source, fuses, mutate=mutate, native_state=native_state,
                               mutation_seed=mutation_seed)
     source = apply_defer_to_vm(source, defers, mutate=mutate, native_state=native_state,
                                mutation_seed=mutation_seed)
+    if lowered.backend_data.get('synthesis_definitions'):
+        from ..synthesis.emission import inject_handlers
+        source=inject_handlers(source,lowered,variant,vm_index)
     if executor_name is not None:
         source = source.replace('exec = function', f'{executor_name} = function', 1)
     return apply_dispatch(source, variant['dispatcher'])

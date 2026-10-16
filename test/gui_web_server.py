@@ -19,13 +19,23 @@ def main():
         api = gui.Api()
         methods = {name: getattr(api,name) for name in (
             'get_bootstrap','get_version','save_preferences','save_config',
-            'start_build','poll_build','get_build_result','validate_marker_options',
+            'start_build','poll_build','get_build_result','validate_marker_options','validate_kes',
             'start_execution','poll_execution','send_execution_input','stop_execution',
         )}
         class Handler(SimpleHTTPRequestHandler):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=str(gui.WEB_DIR), **kwargs)
             def log_message(self, *args): pass
+            def do_GET(self):
+                if '--bridge' in sys.argv and self.path.split('?')[0] in ('/', '/index.html'):
+                    # Optional real-API bridge for interactive browser QA. The
+                    # server still uses disposable preferences and an allowlist.
+                    bridge='<script>window.pywebview={api:new Proxy({}, {get:(_,method)=>(...args)=>fetch("/api",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({method,args})}).then(r=>r.json())})};</script>'
+                    page=(gui.WEB_DIR/'index.html').read_text(encoding='utf-8').replace('<head>','<head>'+bridge).encode('utf-8')
+                    self.send_response(200);self.send_header('Content-Type','text/html; charset=utf-8')
+                    self.send_header('Content-Length',str(len(page)));self.end_headers();self.wfile.write(page)
+                    return
+                super().do_GET()
             def do_POST(self):
                 try:
                     value=json.loads(self.rfile.read(int(self.headers['Content-Length'])))

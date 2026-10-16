@@ -105,7 +105,7 @@ def _rw(proto: Proto, index: int) -> tuple[set[int], set[int]]:
     elif op == 39:
         reads |= regs(a, a + 3); writes |= reg(a) | reg(a + 3)
     elif op == 40:
-        reads |= reg(a) | reg(a + 2); writes |= reg(a)
+        reads |= regs(a, a + 2); writes |= regs(a, a + 2)
     elif op == 41:
         reads |= regs(a, a + 2); writes |= regs(a + 3, a + 2 + c)
     elif op == 42:

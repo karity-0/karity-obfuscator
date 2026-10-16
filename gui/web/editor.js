@@ -1,9 +1,9 @@
 /* Local Lua highlighting; no network, contenteditable, or source rewriting. */
 (() => {
   const escape = text => text.replace(/[&<>]/g, c => ({'&':'&amp;', '<':'&lt;', '>':'&gt;'}[c]));
-  const keywords = new Set('and break do else elseif end false for function goto if in local nil not or repeat return then true until while'.split(' '));
+  const keywords = new Set('and break continue do else elseif end false for function goto if in local nil not or repeat return then true until while'.split(' '));
   const builtins = new Set('assert collectgarbage coroutine debug error getmetatable ipairs math next pairs pcall print rawequal rawget rawlen rawset require select setmetatable string table tonumber tostring type unpack utf8 xpcall _ENV _G'.split(' '));
-  const pattern = /--\[(=*)\[[\s\S]*?(?:\]\1\]|$)|--[^\r\n]*|\[(=*)\[[\s\S]*?(?:\]\2\]|$)|"(?:\\[\s\S]|[^"\\])*?(?:"|$)|'(?:\\[\s\S]|[^'\\])*?(?:'|$)|\b0[xX][\da-fA-F]+(?:\.(?!\.)[\da-fA-F]*)?(?:[pP][+-]?\d+)?|(?:\b\d+(?:\.(?!\.)\d*)?|\.\d+)(?:[eE][+-]?\d+)?|\b[A-Za-z_][A-Za-z_0-9]*\b|==|~=|<=|>=|\/\/|<<|>>|\.\.|[+*%^#=<>/&|~:-]/g;
+  const pattern = /--\[(=*)\[[\s\S]*?(?:\]\1\]|$)|--[^\r\n]*|\[(=*)\[[\s\S]*?(?:\]\2\]|$)|"(?:\\[\s\S]|[^"\\])*?(?:"|$)|'(?:\\[\s\S]|[^'\\])*?(?:'|$)|\b0[bB][01_]+|\b0[xX][\da-fA-F_]+(?:\.(?!\.)[\da-fA-F_]*)?(?:[pP][+-]?[\d_]+)?|(?:\b\d[\d_]*(?:\.(?!\.)[\d_]*)?|\.\d[\d_]*)(?:[eE][+-]?[\d_]+)?|\b[A-Za-z_][A-Za-z_0-9]*\b|\?\?=|\?\?|\?\.|\.\.=|\/\/=|[+*%/^\-]=|==|~=|<=|>=|\/\/|<<|>>|\.\.|[?+*%^#=<>/&|~:-]/g;
 
   function tokenize(text) {
     const tokens = [];
@@ -19,9 +19,10 @@
           kind = marker[3] === 'START' ? 'marker-start' : marker[3] === 'END' ? 'marker-end' : 'marker';
       }
       else if (/^["'\[]/.test(value)) kind = 'string';
-      else if (/^[\d.]/.test(value) && value !== '..') kind = 'number';
+      else if (/^(?:\d|\.\d)/.test(value)) kind = 'number';
       else if (keywords.has(value)) kind = 'keyword';
       else if (/^(?:STRING|NUMBER|BOOLEAN|TABLE)_OBF$/.test(value)) kind = 'marker';
+      else if (/^KARITY_(?:GET_SCRIPT_HASH|GET_VM_COUNT|GET_VM_ID|GET_LAYOUT_HASH|GET_CODE_LENGTH|ABORT|ASSERT|UNREACHABLE|PANIC)$/.test(value)) kind = 'builtin';
       else if (builtins.has(value)) kind = 'builtin';
       else if (/^[A-Za-z_]/.test(value)) {
         if (/^\s*\(/.test(text.slice(match.index + value.length, match.index + value.length + 40))) kind = 'function';
@@ -62,6 +63,12 @@
       this.gutter.className = 'line-gutter';
       this.gutter.setAttribute('aria-hidden', 'true');
       this.surface.append(this.layer, this.gutter, textarea);
+      this.diagnostics = [];
+      this.diagnostic = document.createElement('div');
+      this.diagnostic.className = 'editor-diagnostic';
+      this.diagnostic.setAttribute('role', 'status');
+      this.diagnostic.hidden = true;
+      this.surface.after(this.diagnostic);
       this.scrollbars = ['vertical', 'horizontal'].map(axis => this.createScrollbar(axis));
       textarea.wrap = 'off';
       textarea.setAttribute('aria-label', textarea.id === 'input-script' ? 'Lua source' : 'Lua output');
@@ -76,6 +83,14 @@
       });
       new ResizeObserver(() => this.schedule()).observe(this.surface);
       this.refresh();
+    }
+
+    setDiagnostics(errors) {
+      this.diagnostics = errors || [];
+      this.diagnostic.hidden = !this.diagnostics.length;
+      this.diagnostic.textContent = this.diagnostics[0]?.message || '';
+      this.input.setAttribute('aria-invalid', String(this.diagnostics.length > 0));
+      this.schedule();
     }
 
     setWordWrap(enabled) {
@@ -293,8 +308,12 @@
         const y = paddingTop + line * lineHeight - this.input.scrollTop;
         lines.push(`<pre style="top:${y}px;left:${paddingLeft + offset - this.input.scrollLeft}px">${html || ' '}</pre>`);
         const marker = this.tokens[lowerBound(this.tokens, lineStart)];
-        const markerClass = marker?.start < lineEnd && ['marker-start', 'marker-end'].includes(marker.kind) ? ` class="${marker.kind}-line"` : '';
-        numbers.push(`<span${markerClass} style="top:${y}px">${line + 1}</span>`);
+        const classes = [];
+        if (marker?.start < lineEnd && ['marker-start', 'marker-end'].includes(marker.kind)) classes.push(`${marker.kind}-line`);
+        const error = this.diagnostics.find(error => error.line === line + 1);
+        if (error) classes.push('diagnostic-line');
+        const title = error ? ` title="${escape(error.message).replace(/"/g, '&quot;')}"` : '';
+        numbers.push(`<span class="${classes.join(' ')}"${title} style="top:${y}px">${line + 1}</span>`);
       }
       this.layer.innerHTML = lines.join('');
       this.gutter.innerHTML = numbers.join('');

@@ -296,11 +296,11 @@ class SelectionRuntime:
             if isinstance(post, MinifyPass):
                 raise SelectionError("minify after a selective VM would invalidate integrity; put it in vm_output_passes")
             return post.run(source)
-        if isinstance(post, MinifyPass) and any(s.feature == "no_obf" for s in self.plan.spans):
-            after = post.run(source)
-            edits = [Replacement(a, b - 1, after[c:d]) for op, a, b, c, d in
-                     difflib.SequenceMatcher(None, source, after, autojunk=False).get_opcodes()
-                     if op != "equal" and not self.plan.excluded(a, b)]
+        if isinstance(post, MinifyPass):
+            # The lexer already knows every removed gap/comment. Carry those
+            # exact edits through selection instead of diffing repetitive CFF.
+            edits = [edit for edit in post.replacements(source)
+                     if not self.plan.excluded(edit.start, edit.end + 1)]
             return self.plan.apply(source, edits)
         if self.original_vm_fully_excluded:
             # Base selections have already been consumed, and no later VM

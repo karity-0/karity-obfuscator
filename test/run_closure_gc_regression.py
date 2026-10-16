@@ -18,17 +18,24 @@ gc_factory=function(value)
         if n==0 then return value end
         return self(n-1)
     end
-    return self
+    return self,function(v) value=v end
 end
 '''
 CHECK = '''function(factory)
     local weak=setmetatable({}, {__mode='v'})
-    local live=factory(42)
+    local live,set=factory(42)
     for i=1,100 do weak[i]=factory(i) end
     collectgarbage('collect');collectgarbage('collect')
     assert(next(weak)==nil, 'unreachable VM closures retained')
     -- Repeated collections must not discard the descriptor of a live closure.
     assert(live(2000)==42)
+    local objects=setmetatable({}, {__mode='v'})
+    local object={};objects[1]=object;set(object);object=nil
+    assert(type(live(0))=='table')
+    set(43)
+    collectgarbage('collect');collectgarbage('collect')
+    assert(objects[1]==nil, 'overwritten captured object retained')
+    assert(live(0)==43)
     live=nil
     collectgarbage('collect');collectgarbage('collect')
 end'''
@@ -63,13 +70,14 @@ def main():
 
         execute(SOURCE)
         for backend in ('classic', 'karity', 'mov'):
-            random.seed(124)
-            vm = VMPass(target=TargetProfile(version, backend), vm_options={
-                'fake_handlers': False, 'mutate_handlers': False,
-                'junk_instructions': False})
-            output = vm.run(SOURCE)
-            execute(output)
-            print('closure-gc-ok', version, backend, flush=True)
+            for virtualized in ((False, True) if backend == 'karity' else (False,)):
+                random.seed(124)
+                vm = VMPass(target=TargetProfile(version, backend), vm_options={
+                    'fake_handlers': False, 'mutate_handlers': False,
+                    'junk_instructions': False, 'upvalue_virtualization': virtualized})
+                output = vm.run(SOURCE)
+                execute(output)
+                print('closure-gc-ok', version, backend, virtualized, flush=True)
     return 0
 
 

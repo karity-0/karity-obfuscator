@@ -27,6 +27,7 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
     # 2b. 멀티VM: proto를 N개 VM에 분산 + VM마다 독립 맵 생성
     #     (vop 공간은 공유 used_vops로 VM 간 disjoint 유지)
     protection_targets = backend_adapter.serialization_targets(lowered_ir)
+    from ..synthesis.lowering import prepare_ranges,install_regions
     vm_assign = {key: target["vm_assignment"] for key, target in protection_targets.items()}
     n = protection_plan.functions[protected_semantic_ir.root.id]["vm_count"]
 
@@ -48,6 +49,8 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
         elif permutation_rate > 0.0:
             used_ops.update(vop_map[59])
         used_ops_list.append(used_ops)
+
+    prepare_ranges(lowered_ir,protection_targets,vm_maps,context)
 
     # instruction 워드 비트 레이아웃: serializer(packing)와 vm.lua(decode)가
     # 동일 레이아웃을 공유해야 하므로 serialize 전에 per-run 생성해 양쪽에 전달.
@@ -84,6 +87,7 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
         function.children = [lower(child) for child in proto.protos]
         return function
     functions = lower(proto)
+    install_regions(lowered_ir,functions,vm_maps,context)
     validate_layout(functions, vm_maps)
     return RuntimeLayout(functions, vm_maps, used_ops_list, instr_layout, constant_tags,
                          constant_kinds, graph_sites, n)
@@ -111,6 +115,8 @@ def _make_vop_map(used_vops: set[int] | None, alias_requirements) -> dict[int, l
 
     counts = dict(alias_requirements["operations"])
     for orig, name in enumerate(OPERATIONS):
+        if orig >= 63 and name not in counts:
+            continue
         n_aliases = counts.get(name, alias_requirements["auxiliary_count"])
         aliases = []
         for _ in range(n_aliases):

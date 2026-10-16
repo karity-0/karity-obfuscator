@@ -40,9 +40,10 @@ def _validate_code(code, entry_count: int) -> None:
                 raise ValueError("invalid MOV host boundary") from exc
             if instruction.mode:
                 raise ValueError("invalid MOV host mode")
-            if instruction.a in (Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE):
+            if instruction.a in (Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE, Host.SYNTH_BEGIN, Host.SYNTH_PREPARE):
                 if not 1 <= instruction.b <= entry_count:
                     raise ValueError("invalid MOV host instruction reference")
+            if instruction.a==Host.SYNTH_PREPARE:address(instruction.c)
             if instruction.a == Host.PREPARE:
                 if index + 2 >= size:
                     raise ValueError("missing MOV representation guard")
@@ -108,7 +109,7 @@ def validate_linked(programs, kits, linked) -> None:
             raise ValueError("MOV linked entry is outside its VM tape")
 
 
-def validate_host_bindings(program: Program, host_slots) -> None:
+def validate_host_bindings(program: Program, host_slots, *, synthesis=()) -> None:
     """Bind microcode HOST references to semantic/control adapter slots."""
     from .lower import LOWERED, _recipe
 
@@ -116,11 +117,36 @@ def validate_host_bindings(program: Program, host_slots) -> None:
     if len(program.entries) != len(host_slots) + 1:
         raise ValueError("MOV entry count differs from physical host slots")
 
+    from ..synthesis.planner import SCALAR
+    from ..synthesis.mov_lowering import scope_end
+    expected_headers={};integer_steps=set()
+    for region in synthesis:
+        start=region.start+1;end=start+len(region.occurrence.source_ids)
+        expected_headers.setdefault(start,[]).append((Host.SYNTH_BEGIN,start))
+        expected_headers.setdefault(scope_end(region),[]).insert(0,(Host.SYNTH_END,0))
+        if region.occurrence.numeric_domain=='integer':integer_steps.update(range(start,end))
+    observed=set()
+    for ip,address in enumerate(program.entries,1):
+        headers=[]
+        while address<=len(program.code):
+            header=program.code[address-1]
+            if header.op!=Op.HOST or header.a not in (Host.SYNTH_BEGIN,Host.SYNTH_END):break
+            observed.add(address);headers.append((Host(header.a),header.b));address+=1
+        if headers!=expected_headers.get(ip,[]):
+            raise ValueError('MOV synthesis scope differs from physical recipe')
+    if any(index not in observed for index,ins in enumerate(program.code,1)
+           if ins.op==Op.HOST and ins.a in (Host.SYNTH_BEGIN,Host.SYNTH_END)):
+        raise ValueError('MOV synthesis scope header outside a physical entry')
+
+    def body_entry(ip):
+        address=program.entries[ip-1]
+        while program.code[address-1].op==Op.HOST and program.code[address-1].a in (Host.SYNTH_BEGIN,Host.SYNTH_END):address+=1
+        return address
     for ip, raw in enumerate(host_slots, 1):
-        first = program.code[program.entries[ip - 1] - 1]
+        first = program.code[body_entry(ip)-1]
         operation = raw.operation
         if operation in LOWERED:
-            expected = Host.PREPARE
+            expected = Host.SYNTH_PREPARE if ip in integer_steps else Host.PREPARE
         elif operation == "MOVE":
             expected = Host.COPY
         elif operation in {"LOGICAL_NOT", "TEST", "TEST_SET"}:
@@ -139,28 +165,28 @@ def validate_host_bindings(program: Program, host_slots) -> None:
             target = raw.target_pc
             if target is None or not 1 <= target <= len(program.entries):
                 raise ValueError("MOV semantic jump target is invalid")
-            address = program.entries[ip - 1] + int(raw.close_from is not None)
+            address = body_entry(ip) + int(raw.close_from is not None)
             branch = program.code[address - 1]
             destination = program.entries[target - 1]
             if (branch.op != Op.SELECT or branch.a != 30 or branch.mode
                     or branch.b != destination or branch.c != destination):
                 raise ValueError("MOV jump continuation differs from semantic target")
 
-    sentinel = program.code[program.entries[-1] - 1]
+    sentinel = program.code[body_entry(len(program.entries))-1]
     if (sentinel.op != Op.HOST or sentinel.a != Host.EXEC
             or sentinel.b != len(program.entries)):
         raise ValueError("MOV terminal host entry is invalid")
 
-    entry_addresses = set(program.entries)
+    entry_addresses = {body_entry(i) for i in range(1,len(program.entries)+1)}
     fallback_addresses = {
-        program.entries[ip - 1] + 2
+        body_entry(ip) + 2
         for ip, raw in enumerate(host_slots, 1)
         if raw.operation in LOWERED
     }
     allowed_exec_addresses = entry_addresses | fallback_addresses
     for index, instruction in enumerate(program.code):
         if instruction.op != Op.HOST or instruction.a not in (
-                Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE):
+                Host.EXEC, Host.PREPARE, Host.COPY, Host.READ_TRUTH, Host.CLOSE, Host.SYNTH_PREPARE):
             continue
         ip = instruction.b
         if ip == len(program.entries):
@@ -170,6 +196,7 @@ def validate_host_bindings(program: Program, host_slots) -> None:
         operation = host_slots[ip - 1].operation
         expected = {
             Host.PREPARE: operation in LOWERED,
+            Host.SYNTH_PREPARE: ip in integer_steps and operation in SCALAR,
             Host.COPY: operation in {"MOVE", "TEST_SET"},
             Host.READ_TRUTH: operation in {"LOGICAL_NOT", "TEST", "TEST_SET"},
             Host.CLOSE: operation == "JUMP" and host_slots[ip - 1].close_from is not None,
@@ -186,3 +213,6 @@ def validate_host_bindings(program: Program, host_slots) -> None:
             if (recipe is None or guard.b != recipe
                     or guard.c != index + 3):
                 raise ValueError("MOV recipe continuation differs from operation")
+        elif instruction.a==Host.SYNTH_PREPARE:
+            if instruction.c!=program.recipe_offsets.get(_recipe(operation)):
+                raise ValueError('MOV synthesized arithmetic continuation differs from DAG')

@@ -62,6 +62,7 @@ _DEFAULT_PREFERENCES = {
 }
 
 _OPTION_GROUPS = {
+    **dict.fromkeys(('opcode_synthesis','synthesis_policy','synthesis_max_steps','synthesis_max_recipes','synthesis_max_occurrences','synthesis_max_code_growth'),'Opcode synthesis'),
     "physical_block_permutation_rate": "Physical layout", "physical_block_permutation_max_jumps": "Physical layout",
     "ir_mba_rate": "IR morphing", "ir_test_set_rate": "IR morphing",
     "ir_tail_duplication_rate": "IR morphing", "ir_rematerialization_rate": "IR morphing",
@@ -84,6 +85,10 @@ _OPTION_GROUPS = {
 }
 
 _OPTION_LABELS = {
+    'opcode_synthesis':'Adaptive opcodes','synthesis_policy':'Opcode policy',
+    'synthesis_max_steps':'Region operation limit','synthesis_max_recipes':'Recipe limit',
+    'synthesis_max_occurrences':'Region limit',
+    'synthesis_max_code_growth':'Kernel code budget',
     "physical_block_permutation_rate": "Block permutation rate",
     "physical_block_permutation_max_jumps": "Permutation bridge limit",
     "ir_mba_rate": "Integer substitution",
@@ -423,6 +428,15 @@ class Api:
     def start_build(self, payload):
         return self._builds.start(payload)
 
+    def validate_kes(self, payload):
+        from obfuscator.kes import KESError, lower_source
+        try:
+            lower_source(payload.get('script', ''), payload.get('lua_version', '5.3'))
+            return {'ok': True, 'errors': []}
+        except KESError as error:
+            return {'ok': False, 'errors': [{'line': error.line, 'column': error.column,
+                                            'message': str(error)}]}
+
     def poll_build(self, identity, cursor=0):
         return self._builds.poll(identity, cursor)
 
@@ -484,7 +498,9 @@ class Api:
             with phase_scope('configuration'):
                 if not config["passes"]:
                     from obfuscator.selection import SelectionPlan
-                    if not SelectionPlan(script, config.get("selection_modes")).active:
+                    from obfuscator.kes import lower_source
+                    standard = lower_source(script, config.get('target', {}).get('lua_version', '5.3')).source
+                    if not SelectionPlan(standard, config.get("selection_modes")).active:
                         raise ValueError("패스를 선택하거나 보호 마커를 추가하세요.")
                 validate_config(config)
                 if payload.get("release_check"):
@@ -521,6 +537,8 @@ class Api:
             config = payload.get("config", {})
             if payload.get("target") == "source":
                 from obfuscator.selection import SelectionPlan
+                from obfuscator.kes import lower_source
+                script = lower_source(script, config.get('target', {}).get('lua_version', '5.3')).source
                 script = SelectionPlan(script, config.get("selection_modes")).source
             return self._execution.start(script, config, payload.get("source_path", ""))
         except Exception as exc:

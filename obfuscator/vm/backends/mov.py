@@ -26,9 +26,20 @@ class MovBackend(VMBackend):
         # executor boundary.
         executor_template = executor_template.replace('--<<TARGET_CLASSIC_EXEC_NATIVE>>', '')
         executor_template = executor_template.replace('--<<ENDTARGET_CLASSIC_EXEC_NATIVE>>', '')
+        from ..intrinsics import prepare_info_runtime
+        from ..vm_obfuscation import collect_used_orig_ops
+        semantic_ir = getattr(lowered, 'semantic_ir', None)
+        if semantic_ir is not None:
+            executor_template = prepare_info_runtime(executor_template, semantic_ir)
+        program = getattr(lowered, 'program', None)
+        intrinsic_ops = collect_used_orig_ops(program) & {63,64,65} if program is not None else ()
+        runtime_options: dict[str, Any] = {'synthesis':lowered} if lowered.backend_data.get('synthesis_definitions') else {}
+        if intrinsic_ops:
+            runtime_options['intrinsic_ops'] = intrinsic_ops
         executor = build_runtime(executor_template, lowered.backend_data['kits'],
                                  template=target.runtime_template('mov_exec.lua') if target else None,
-                                 target=target)
+                                 target=target,
+                                 **runtime_options)
         source = direct_executor(source, executor, target=target)
         source = source.replace('local proto=read_proto(r,acc_state)',
                                 'local proto=read_proto(r,acc_state); _mov_read(r,proto)')
@@ -44,6 +55,8 @@ class MovBackend(VMBackend):
         return source
 
     def validate_lowered(self, lowered):
+        from ..synthesis.lowering import validate_physical_plan
+        validate_physical_plan(lowered)
         from .runtime_layout import iter_functions
         from ..mov.adapter import bind_slots
         from ..mov.validate import validate_host_bindings, validate_linked
@@ -62,7 +75,7 @@ class MovBackend(VMBackend):
             if len(bound.slots) != len(function.code):
                 raise ValueError("MOV HOST slot count differs from physical function")
             validate_host_bindings(
-                program, bound.slots,
+                program, bound.slots, synthesis=function.synthesis,
             )
         kits = lowered.backend_data.get("kits")
         linked = lowered.backend_data.get("linked")
@@ -115,6 +128,10 @@ class MovBackend(VMBackend):
         lowered.backend_data["programs"] = tuple(
             lower(bound.slots, bound.vm_id)
             for bound in lowered.backend_data["mov_slots"])
+        from ..synthesis.mov_lowering import lower_regions
+        from .runtime_layout import iter_functions
+        lowered.backend_data['programs']=tuple(lower_regions(p,f) for p,f in zip(
+            lowered.backend_data['programs'],iter_functions(lowered.backend_data['layout'].functions)))
         self.validate_lowered(lowered)
         return lowered
 

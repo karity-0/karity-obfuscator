@@ -15,9 +15,12 @@ from obfuscator.vm.backends.handler_layout import PhysicalFunction, PhysicalInst
 from obfuscator.vm.vm_variants import make_instr_layout
 
 
-def reader_source(version):
+def reader_source(version, *, compressed=False, layout=None):
     path = ROOT / ('obfuscator/vm/vm.lua' if version == '5.3' else 'obfuscator/vm/runtimes/lua51/vm.lua')
     source = path.read_text(encoding='utf-8')
+    if compressed:
+        from obfuscator.vm.synthesis.storage import prepare_reader,MAGIC
+        source=prepare_reader(source,MAGIC,layout or codec.DEFAULT_INSTR_LAYOUT)
     primitives = source.split('--<<TARGET_READER_PRIMITIVES>>', 1)[1].split('--<<ENDTARGET_READER_PRIMITIVES>>', 1)[0]
     proto = source.split('local function read_proto(r, acc_state)', 1)[1].split('--<<TARGET_INTEGRITY_MIX>>', 1)[0]
     # Isolate storage decoding from instruction/key masking. Complete protected
@@ -33,8 +36,8 @@ def reader_source(version):
     return primitives + xor + helpers + 'local function read_proto(r, acc_state)' + proto
 
 
-def harness(version, layout=None):
-    source = reader_source(version)
+def harness(version, layout=None, *, compressed=False):
+    source = reader_source(version,compressed=compressed,layout=layout)
     if layout:
         from obfuscator.vm.vm_variants import apply_instr_layout
         source = apply_instr_layout(source, layout)
@@ -42,6 +45,11 @@ def harness(version, layout=None):
         local r=make_reader(blob)
         if kind=="uint" then return r.uint() end
         if kind=="metadata" then return r.metadata(n,false) end
+        if kind=="storage" then
+            local get=r.scode(n);local result={}
+            for i=1,n do result[i]=get(i) end
+            return result
+        end
         r.header()
         local seed=r.u16();local layout_hash=r.u32();local vm_count=r.u16()
         for i=1,r.uint() do
@@ -83,6 +91,61 @@ def fixture():
 
 
 class Serialization(unittest.TestCase):
+    def test_synthesis_words_restore_every_bit_across_layouts(self):
+        from obfuscator.vm.synthesis.storage import restore,_pack,read_words
+        for seed in range(100):
+            random.seed(seed);layout=make_instr_layout()
+            fields=[random.getrandbits(26) for _ in range(4)]
+            words=b''.join(restore(fields[i%4],random.getrandbits(22),layout).to_bytes(6,'little') for i in range(200))
+            packed,blocks=_pack(words,((2,96),(101,96)),layout)
+            self.assertTrue(blocks)
+            self.assertEqual(words,read_words(codec.BinReader(packed),200,layout=layout))
+            if seed<4:
+                expected=[int.from_bytes(words[i:i+6],'little') for i in range(0,len(words),6)]
+                for version in ('5.1','5.3'):
+                    actual=harness(version,layout,compressed=True)(packed,b'storage',200)
+                    self.assertEqual(expected,list(actual.values()))
+
+    def test_synthesis_dictionary_rejects_malformed_input(self):
+        from obfuscator.vm.synthesis.storage import read_words
+        prefix=b'\1\1'+bytes(4)+b'\1\1\3'
+        valid=prefix+(b'\1'+bytes(3))*3
+        readers=[harness(version,compressed=True) for version in ('5.1','5.3')]
+        malformed=(b'\2',b'\1\0',b'\1\1\0\0\0\4',
+            prefix[:-2]+b'\0\3',prefix[:-1]+b'\2',prefix[:-1]+b'\4',
+            prefix+b'\0'+bytes(3),prefix+b'\1\0\0\x40',valid[:-1])
+        for data in malformed:
+            with self.assertRaises(ValueError):read_words(codec.BinReader(data),3)
+            for reader in readers:
+                with self.assertRaises(Exception):reader(data,b'storage',3)
+
+    def test_synthesis_storage_nested_protos_rng_and_integrity(self):
+        from types import SimpleNamespace
+        function=fixture()
+        function.code=[PhysicalInstruction(HandlerInstruction(0,i%4,128+i%4,256+i%4),
+            i%32768,(i%255,),((8,1000+i,0xABCDEF00+i,0x1234,3),),i) for i in range(2000)]
+        function.synthesis=tuple(SimpleNamespace(start=i,recipe=SimpleNamespace(steps=range(4))) for i in range(0,2000,4))
+        for version in ('5.1','5.3'):
+            random.seed(174);layout=make_instr_layout();state=random.getstate()
+            legacy=codec.serialize(function,layout=layout,compact_synthesis=False);expected_rng=random.getstate()
+            random.setstate(state);stats={};compact=codec.serialize(function,layout=layout,stats=stats)
+            self.assertEqual(expected_rng,random.getstate())
+            self.assertEqual(b'KVM\3',compact[:4]);self.assertLess(len(compact),len(legacy))
+            def snapshot(value):
+                if hasattr(value,'items'):return sorted([(key,snapshot(v)) for key,v in value.items()],key=lambda row:repr(row[0]))
+                return value
+            before=harness(version,layout)(legacy,b'proto',0)[0]
+            after=harness(version,layout,compressed=True)(compact,b'proto',0)[0]
+            self.assertEqual(snapshot(before),snapshot(after))
+            # Sparse/dense metadata and appended MOV data retain their offsets
+            # through the format-aware integrity walker.
+            patched_legacy=codec.patch_integrity_sources(legacy+b'MOV-extension',123,456)
+            patched_compact=codec.patch_integrity_sources(compact+b'MOV-extension',123,456)
+            self.assertTrue(patched_compact.endswith(b'MOV-extension'))
+            before=harness(version,layout)(patched_legacy,b'proto',0)[0]
+            after=harness(version,layout,compressed=True)(patched_compact,b'proto',0)[0]
+            self.assertEqual(snapshot(before),snapshot(after))
+
     def test_uint32_boundaries_and_native_readers(self):
         probes = {0:b'\0', 127:b'\x7f', 128:b'\x80\x01', 16383:b'\xff\x7f',
                   16384:b'\x80\x80\x01', 0xFFFFFFFF:b'\xff\xff\xff\xff\x0f'}

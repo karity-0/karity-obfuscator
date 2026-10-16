@@ -5,7 +5,7 @@ own the backend, target, signature, toolchain or explicit selection settings.
 """
 from copy import deepcopy
 
-REVISION = 2
+REVISION = 3
 USER_PRESETS = ('fast', 'balanced', 'strong', 'maximum')
 PREFIX = 'builtin:'
 CONTEXT_KEYS = ('target', 'signature', 'lua_executable', 'luac_executable',
@@ -65,6 +65,12 @@ def user_preset(name):
             },
         },
         'vm_options': {
+            'opcode_synthesis': True,
+            'synthesis_policy': ('efficiency','balanced','protection','protection')[index],
+            'synthesis_max_code_growth': (0.4,0.6,0.8,1.0)[index],
+            'synthesis_max_steps': (4,6,8,10)[index],
+            'synthesis_max_recipes': (8,16,24,32)[index],
+            'synthesis_max_occurrences': (128,256,512,512)[index],
             'physical_block_permutation_rate': (0.15, 0.35, 0.6, 0.8)[index],
             'physical_block_permutation_max_jumps': (8, 16, 32, 64)[index],
             'ir_mba_rate': (0.06, 0.2, 0.45, 0.65)[index],

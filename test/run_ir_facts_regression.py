@@ -41,6 +41,9 @@ def main():
     assert literal_fact(True,'5.3').kind=='boolean'
     assert literal_fact(1,'5.1').kind=='float'
     assert merge_facts([INTEGER,UNKNOWN])==UNKNOWN
+    ir,table=analyze('local n=0;for i=1,9 do local a=i*3;n=n+a end;print(n)','5.1')
+    muls=[i for b in ir.root.blocks for i in b.instructions if i.operation=='MUL']
+    assert muls and all(table[ir.root.id].operand(i,'left').kind=='float' for i in muls)
     for version in ('5.1','5.3'):
         ir,table=analyze('local function f(...)return ... end;return f(1,nil,3,nil)',version)
         assert any(info.liveness.open_extents for info in table.values())

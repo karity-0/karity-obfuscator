@@ -57,6 +57,13 @@ def apply(source, edits):
 
 
 def main():
+    for version in ('5.1','5.3'):
+        helper=measure('local function rset(i,v) regs[i]=v; local box=boxes[i]; if box and not box.set then box.v=v end end',
+            version=version,minimum_paths=True)['functions'][1]
+        assert 0<helper['minimum_path_instructions']<helper['instructions']
+        straight=measure('local function rget(i) return regs[i] end',version=version,minimum_paths=True)['functions'][1]
+        # The trailing unreachable RETURN is not part of an execution path.
+        assert straight['minimum_path_instructions']==straight['instructions']-1
     saturated = set(range(100,10000))
     with patch('obfuscator.vm.vm_mutation.random.randint', return_value=100):
         assert _new_state(saturated) == 10000

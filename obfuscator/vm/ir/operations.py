@@ -67,7 +67,12 @@ OPERATIONS = {
     "CLOSURE": spec(D,operand("child","proto"),operand("capture","register|upvalue",repeated=True),effects=("allocation","capture")),
     "VARARG": spec(operand("results",SPAN),effects=("top",)),
     "PACK_VARARG": spec(D,effects=("allocation","top")),
+    "VM_ABORT": spec(edges=0,effects=("call","close_upvalues")),
+    "VM_PANIC": spec(edges=0,effects=("call","close_upvalues","instance_invalidation")),
+    "VM_ASSERT": spec(operand("condition",R),operand("results",SPAN),effects=("call","top")),
 }
+for name in ('GET_SCRIPT_HASH','GET_VM_COUNT','GET_LAYOUT','GET_VM_ID','GET_CODE_LENGTH'):
+    OPERATIONS[name]=spec(D,operand('results',SPAN),effects=('runtime_state_read','top'))
 for name in ("ADD","SUB","MUL","MOD","POW","DIV","FLOOR_DIV","BIT_AND","BIT_OR","BIT_XOR","SHIFT_LEFT","SHIFT_RIGHT"):
     OPERATIONS[name]=spec(D,LEFT,RIGHT,effects=("call",))
 for name in ("NEGATE","BIT_NOT","LENGTH"):
@@ -75,6 +80,19 @@ for name in ("NEGATE","BIT_NOT","LENGTH"):
 OPERATIONS["LOGICAL_NOT"]=spec(D,SOURCE)
 for name in ("EQUAL","LESS_THAN","LESS_EQUAL"):
     OPERATIONS[name]=spec(EXPECTED,LEFT,RIGHT,edges=2,effects=("call",))
+
+
+INTRINSIC_OPERATIONS = frozenset((
+    'GET_SCRIPT_HASH', 'GET_VM_COUNT', 'GET_LAYOUT', 'GET_VM_ID',
+    'GET_CODE_LENGTH', 'VM_ABORT', 'VM_PANIC', 'VM_ASSERT',
+))
+
+
+def planned_operations(ir):
+    """Unused extensions must not change the existing protection RNG stream."""
+    used = {instruction.operation for function in ir.functions()
+            for block in function.blocks for instruction in block.instructions}
+    return (OPERATIONS.keys() - INTRINSIC_OPERATIONS) | (used & INTRINSIC_OPERATIONS)
 
 
 def operation_errors(instruction):

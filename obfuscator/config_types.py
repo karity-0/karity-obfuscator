@@ -61,6 +61,14 @@ class ProtectionOptions(TypedDict, total=False):
 
 
 class VMOptions(ProtectionOptions, total=False):
+    opcode_synthesis: bool
+    synthesis_policy: str
+    synthesis_max_code_growth: float
+    synthesis_max_steps: int
+    synthesis_max_recipes: int
+    synthesis_max_occurrences: int
+    opcode_splitting: bool
+    opcode_fusion: bool
     state_dependency_limit: int
     backend: str | None
     graph_execution_rate: float
@@ -132,6 +140,7 @@ class SignatureConfig(TypedDict, total=False):
 
 
 class DebugDumps(TypedDict, total=False):
+    synthesis_plan: str
     optimized_ir: str
     morphed_ir: str
     ir: str

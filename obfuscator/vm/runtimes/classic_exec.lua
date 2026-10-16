@@ -1,4 +1,12 @@
 local exec, _EX
+local function _call_packet(packet,fn,...)
+    for key in pairs(packet) do packet[key]=nil end
+    return fn(...)
+end
+local function _invoke_closure(metadata,values)
+    local w=_EX[metadata[1].vm_id+1](metadata[1],metadata[2],values,nil,nil)
+    return table.unpack(w.r,1,w.n)
+end
 local _VF=setmetatable({},{__mode="kv"})
 local _PN,_PE=0,0
 --<<TARGET_PRIVATE_MIX>>
@@ -8,6 +16,32 @@ local function _pmix(x)
     return (x~(x>>31))&-1
 end
 --<<ENDTARGET_PRIVATE_MIX>>
+
+local _for_api={tonumber,math.type,math.floor,math.ceil,math.tointeger,math.mininteger,math.maxinteger}
+-- Match Lua 5.3 FORPREP, including integer-limit rounding and saturation.
+local function _for_values(initial,limit,step)
+    local bound=_for_api[1](limit)
+    if _for_api[2](initial)=="integer" and _for_api[2](step)=="integer" and bound then
+        local rounded=step<0 and _for_api[4](bound) or _for_api[3](bound)
+        local integer=_for_api[5](rounded)
+        if integer==nil then
+            if bound>0 then
+                integer=_for_api[7]
+                if step<0 then initial=0 end
+            else
+                integer=_for_api[6]
+                if step>=0 then initial=0 end
+            end
+        end
+        return initial,integer,step
+    end
+    if bound==nil then error("'for' limit must be a number") end
+    step=_for_api[1](step)
+    if step==nil then error("'for' step must be a number") end
+    initial=_for_api[1](initial)
+    if initial==nil then error("'for' initial value must be a number") end
+    return initial*1.0,bound*1.0,step*1.0
+end
 
 --<<EXEC>>
 exec = function(proto, upvals, args, va_in, _source_parents)
@@ -23,6 +57,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local top    = -1
     local _st    = 0
     local _va    = va_in or {n=0}
+    local _open_values={}
     local _split_tmp
     local _S={[611]=(proto.vm_id~#code)&-1}
     local _MJ={}
@@ -40,18 +75,39 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         for i=proto.num_params+1,_argc do n=n+1; _va[n]=args[i] end
         _va.n=n
     end
+    for key in pairs(args) do args[key]=nil end
+    args=nil
     --<<ENDTARGET_USER_STATEMENT>>
 
     --<<RGET>>
-    local function rget(i) return regs[i] end
+    local function rget(i)
+        local box=boxes[i]; if box then return box.v end
+        return regs[i]
+    end
     --<<ENDRGET>>
     --<<RSET>>
     local function rset(i,v)
         regs[i]=v
         local box=boxes[i]
-        if box and not box.set then box.v=v end
+        if box then box.v=v; regs[i]=nil end
     end
     --<<ENDRSET>>
+
+    local function _open_get(i)
+        if i<256 then return rget(i) end
+        return _open_values[i]
+    end
+    local function _open_set(i,v)
+        if i<256 then rset(i,v) else _open_values[i]=v end
+    end
+
+    local function _stack_trim(first)
+        for i=first,math.min(255,math.max(proto.max_stack_size-1,top)) do
+            if not boxes[i] then rset(i,nil) end
+        end
+        _split_tmp=nil
+        for key in pairs(_open_values) do _open_values[key]=nil end
+    end
 
     --<<TARGET_USER_STATEMENT>>
     local function _acount(q) return q and (q.n or #q) or 0 end
@@ -60,11 +116,11 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         if count==nil then count=top-first+1 end
         if count<0 then count=0 end
         local values={n=count}
-        for i=1,count do values[i]=rget(first+i-1) end
+        for i=1,count do values[i]=_open_get(first+i-1) end
         return values
     end
     local function _store_values(first,values,count)
-        for i=1,count do rset(first+i-1,values[i]) end
+        for i=1,count do _open_set(first+i-1,values[i]) end
     end
     --<<ENDTARGET_USER_STATEMENT>>
     local function _av_read() end
@@ -189,10 +245,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     --<<TARGET_USER_STATEMENT>>
     local function get_box(slot)
         if not boxes[slot] then
-            boxes[slot]={
-                get=function() return regs[slot] end,
-                set=function(v) regs[slot]=v end,
-            }
+            -- A cell owns only its captured value, never the entire frame.
+            boxes[slot]={v=rget(slot)}
+            regs[slot]=nil
         end
         return boxes[slot]
     end
@@ -210,9 +265,10 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         for slot,box in pairs(boxes) do
             if slot>=first then
                 local value=get_upvalue(box)
+                boxes[slot]=nil
+                rset(slot,value)
                 box.get=nil; box.set=nil
                 set_upvalue(box,value)
-                boxes[slot]=nil
             end
         end
     end
@@ -230,9 +286,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         local metadata={sub,new_uv}
         local fn=function(...)
-            local sub,new_uv=metadata[1],metadata[2]
-            local w=_EX[sub.vm_id+1](sub, new_uv, table.pack(...),nil,nil)
-            return table.unpack(w.r, 1, w.n)
+            return _invoke_closure(metadata,table.pack(...))
         end
         _VF[fn]=metadata
         return bind_environment(fn,new_uv,upvals)
@@ -293,13 +347,17 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if B==0 then ca=_collect_values(A+1)
             else ca=_collect_values(A+1,B-1) end
             local ca_n=ca.n
+            _stack_trim(A)
             local vm=_VF[fn];local res
-            if vm and _source_parents then
-                local parents={upvals.environment}
-                for i=1,#(_source_parents or {}) do parents[#parents+1]=_source_parents[i] end
-                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],table.pack(table.unpack(ca,1,ca_n)),nil,parents)
+            if vm then
+                local parents
+                if _source_parents then
+                    parents={upvals.environment}
+                    for i=1,#_source_parents do parents[#parents+1]=_source_parents[i] end
+                end
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],ca,nil,parents)
                 res=w.r;res.n=w.n
-            else res=table.pack(fn(table.unpack(ca,1,ca_n))) end
+            else res=table.pack(_call_packet(ca,fn,table.unpack(ca,1,ca_n))) end
             if C==0 then
                 _store_values(A,res,res.n); top=A+res.n-1
             elseif C>1 then
@@ -312,12 +370,13 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if B==0 then ca=_collect_values(A+1)
             else ca=_collect_values(A+1,B-1) end
             local ca_n=ca.n
+            _stack_trim(A)
             --<<VM_TAIL_DISPATCH>>
             local vm=_VF[fn];local res
-            if vm and _source_parents then
-                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],table.pack(table.unpack(ca,1,ca_n)),nil,_source_parents)
+            if vm then
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],ca,nil,_source_parents)
                 res=w.r;res.n=w.n
-            else res=table.pack(fn(table.unpack(ca,1,ca_n))) end
+            else res=table.pack(_call_packet(ca,fn,table.unpack(ca,1,ca_n))) end
             --<<ENDVM_TAIL_DISPATCH>>
             return {r=res, n=res.n}
 
@@ -340,7 +399,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
                 pc=pc+sBx; rset(A+3,idx)
             end
 
-        elseif op==40 then rset(A,rget(A)-rget(A+2)); pc=pc+sBx
+        elseif op==40 then
+            local initial,limit,step=_for_values(rget(A),rget(A+1),rget(A+2))
+            rset(A,initial-step); rset(A+1,limit); rset(A+2,step); pc=pc+sBx
 
         elseif op==41 then
             local res=table.pack(rget(A)(rget(A+1),rget(A+2)))
@@ -356,10 +417,9 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
-            for i=1,cnt do tbl[base+i]=rget(A+i) end
+            for i=1,cnt do tbl[base+i]=_open_get(A+i) end
 
         elseif op==44 then
-            get_box(A)
             local fn=make_closure(_subs[Bx+1])
             rset(A,fn)
 
@@ -390,6 +450,13 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         elseif op==62 then
             local n=_acount(_va);local t={n=_source_value(n)}
             for i=1,n do t[i]=_aget(_va,i) end;rset(A,t)
+        elseif op==63 then _IT.fail("VM execution failed",0)
+        elseif op==64 then _IT.invalid=true; _IT.fail("VM execution failed",0)
+        elseif op==65 then
+            local condition=rget(A); _stack_trim(B)
+            if not condition then _IT.fail("VM execution failed",0) end
+            condition=nil
+            if C==0 then top=B-1 else for i=B,B+C-2 do rset(i,nil) end end
         else error("unknown op "..op) end
     end
     return {r={},n=0}

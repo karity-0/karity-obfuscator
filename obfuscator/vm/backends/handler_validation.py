@@ -49,12 +49,21 @@ def validate_handler_dispatch(lowered, *, delayed):
                     split_targets[vop] = (part, values)
         fused_targets = {vop: pair for pair, vop in fuses.items()}
         operations.update({vop: pair[0] for vop, pair in fused_targets.items()})
+        synth={e.opcode:e for f in iter_functions(layout.functions) if f.vm_id==vm_id for e in f.synthesis}
+        if any(type(vop) is not int or not 0<=vop<32768 for vop in synth):
+            raise ValueError('synthesis opcode exceeds dispatcher encoding')
+        if any(e.opcode in synth for f in iter_functions(layout.functions) if f.vm_id!=vm_id for e in f.synthesis):
+            raise ValueError('synthesis opcode shared across independent VMs')
+        if set(synth).intersection(targets):raise ValueError('synthesis opcode collision')
+        operations.update({vop: next(f.code[e.start].instruction.op for f in iter_functions(layout.functions) if e in f.synthesis) for vop,e in synth.items()})
         if not layout.used_ops[vm_id] <= alias_targets:
             raise ValueError('dispatcher pruning references an unknown alias')
         for function in iter_functions(layout.functions):
             if function.vm_id != vm_id:
                 continue
             interior = set()
+            for e in function.synthesis:
+                interior.update(range(e.start+1,e.start+len(e.occurrence.source_ids)))
             for index, item in enumerate(function.code):
                 if item.vop in alias_targets and item.vop not in layout.used_ops[vm_id]:
                     raise ValueError('physical instruction references a pruned handler')

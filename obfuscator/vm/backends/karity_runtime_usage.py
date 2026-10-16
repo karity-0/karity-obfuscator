@@ -18,7 +18,7 @@ from ...passes.numeric_provenance import join_code
 _HELPERS = frozenset('''decode _ss_step _ss_value _int1 _int2 _cross
 _branch _cf _touch _graph_for _couple_direct _seal_result _arith1 _arith2
 _elinear1 _elinear2 _pending_snapshot _pending_fragment _defer1r _defer2r
-_arith1r _arith2r _arith1s _arith2s _call_args _return_values _native_call
+_arith1r _arith2r _arith1s _arith2s _syn_arith1r _syn_arith2r _call_args _return_values _native_call
 _jump _loop_commit _forloop make_closure close_upvalues get_box get_upvalue
 set_upvalue _tnew _tkey _tget _tset _tlen _texpose'''.split())
 
@@ -35,6 +35,8 @@ _SLOT_TOKENS = {f'__VM_SLOT_{k}__' for k in (
 _SLOT_ARGUMENTS = {
     '_arith2': 3, '_arith1': 2, '_arith2r': 4, '_arith1r': 3,
     '_defer2r': 4, '_defer1r': 3, '_arith2s': 3, '_arith1s': 2,
+    # Derived raw-value helpers append operands after the original slot ABI.
+    '_syn_arith2r': 4, '_syn_arith1r': 3,
 }
 _LOOP_TOKENS = {f'__VM_LOOP_{kind}__' for kind in ('FORLOOP', 'FORPREP', 'TFORLOOP')}
 
