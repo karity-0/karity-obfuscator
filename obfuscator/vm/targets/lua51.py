@@ -267,7 +267,7 @@ class Lua51Target:
 
     def direct_runtime_entry(self):
         return ('_EX[proto.vm_id+1](proto,{env_box,environment=self_func},'
-                '_pack_values(),nil,{})')
+                '_root_args,nil,{})')
 
     def value_packet_api(self):
         return '_pack_values', '_unpack_values'
@@ -624,15 +624,16 @@ end
         # the final wrapper's prefix without executing its contents at build time.
         return normalize_dump(run_tool("\n" * header.count("\n") + source, "dump", toolchain))
 
-    def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
+    def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail, *, forward_args=False):
         returned = re.match(r'\Areturn\b', source)
         if returned is None:
             raise ValueError("Lua 5.1 VM source must return its runtime function")
         body = source[returned.end():].lstrip()
+        arguments=",{n=select('#',...),...}" if forward_args else ''
         # The lowered body is already native Lua 5.1 source. Emitting it as a
         # function literal preserves the same nested prototype used for the
         # normalized integrity dump, without serializing the whole runtime into
         # a decimal-escaped string and reparsing it through loadstring.
         return (f'local {decoy_name}="{decoy_value}";local {vm_name}={body};'
                 f'setfenv({vm_name},getfenv(1));'
-                f'return ({vm_name}(1032,413,258,104,953,283,120))({blob},"{tail}",{vm_name})')
+                f'return ({vm_name}(1032,413,258,104,953,283,120))({blob},"{tail}",{vm_name}{arguments})')

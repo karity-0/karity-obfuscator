@@ -3718,7 +3718,7 @@ class FunctionObfuscationPass(BasePass):
         local_replacements = [Replacement(
             start=fragment_ctx.cs(block),
             end=fragment_ctx.ce(block),
-            new_text=new_body,
+            new_text=join_code(('\n',new_body,'\n')),
         )]
         if params and worker.features["wrapper"]:
             local_replacements.append(Replacement(
@@ -4052,7 +4052,8 @@ class FunctionObfuscationPass(BasePass):
             self.last_inlined_function_count += boundary_stats["inlined_functions"]
 
             claimed_ranges.append((bstart, bend))
-            replacements.append(Replacement(start=bstart, end=bend, new_text=new_body))
+            replacements.append(Replacement(start=bstart, end=bend,
+                                            new_text=join_code(('\n',new_body,'\n'))))
 
             # 파라미터 목록 내부('(' 다음 ~ ')' 이전)를 "..."로 교체. params가
             # 있을 때만(자기 self/빈 목록은 건드리지 않음).

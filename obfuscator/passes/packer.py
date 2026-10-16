@@ -77,7 +77,8 @@ _BARE_REF_PROXY_EXPRESSIONS = {
 
 _VM_TAIL_RE = re.compile(
     r"return\s*\((?P<vmf>[A-Za-z_]\w*)\((?P<args>[^)]*)\)\)"
-    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)\)\s*$",
+    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)"
+    r"(?P<forward_args>,(?:\s*\.{3}|\{n=select\('#',\.{3}\),\.{3}\}))?\)\s*$",
     re.S,
 )
 
@@ -122,6 +123,7 @@ class ContextPlan:
     vm_args: list[str] = field(default_factory=list)
     vm_tail: str | None = None
     is_vm: bool = False
+    forward_args: bool = False
 
     def slot(self, key: str) -> int:
         return self.slots[key]
@@ -700,6 +702,22 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     return "".join(out)
 
 
+def _chunk_uses_varargs(script: str) -> bool:
+    from .ts_utils import parse
+    ctx=parse(script)
+    if ctx.root.has_error:
+        return True
+    pending=list(ctx.root.named_children)
+    while pending:
+        node=pending.pop()
+        if node.type in {'function_definition','function_declaration'}:
+            continue
+        if node.type=='vararg_expression':
+            return True
+        pending.extend(node.named_children)
+    return False
+
+
 def _alloc_plan(script: str) -> ContextPlan:
     # VM output has a rigid, known tail shape.  Do not run the generic Lua
     # structure analysis over the entire generated VM source: that path
@@ -764,6 +782,7 @@ def _alloc_plan(script: str) -> ContextPlan:
             vm_args=vm_args,
             vm_tail=vm_tail,
             is_vm=True,
+            forward_args=bool(vm_match.group('forward_args')),
         )
 
     masked = _mask_lua_noncode(script)
@@ -887,6 +906,7 @@ def _alloc_plan(script: str) -> ContextPlan:
         vm_args=vm_args,
         vm_tail=vm_tail,
         is_vm=is_vm,
+        forward_args=_chunk_uses_varargs(script),
     )
 
 
@@ -1097,10 +1117,12 @@ def _rewrite_generic_payload(script: str, plan: ContextPlan, state: int) -> str:
     # The state function itself is supplied as a separate argument so the
     # bootstrap does not expose its sparse context slot in the payload.
     prefix = (
-        "local __KCTX,__KSTATEF=...;"
+        "local __KCTX,__KSTATEF,__KDECODE=...;"
         "local __KSTATE=__KSTATEF(__KCTX);"
     )
-    return prefix + body
+    # The private context is not part of the user's chunk varargs. Tail-enter
+    # a lexical body with only the original arguments, including trailing nil.
+    return prefix + "return (function(...)\n" + body + "\nend)(select(4,...))"
 
 
 def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
@@ -1118,9 +1140,13 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     ).decode("ascii")
     vmf_name = m.group("vmf")
 
+    forwarded=m.group('forward_args')
+    arguments=(",{n=select('#',select(4,...)),select(4,...)}" if forwarded and '{' in forwarded
+               else ',select(4,...)' if forwarded else '')
+
     replacement = (
         f"return ({vmf_name}({','.join(encoded_args)}))"
-        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name})"
+        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name}{arguments})"
     )
     body = script[:m.start()] + replacement + script[m.end():]
 
@@ -1134,10 +1160,11 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 
 
 def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
+    arguments="{n=select('#',...),...}" if plan.forward_args else '{n=0}'
     return (
         f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
-        f"return _P(_D,_P)\n"
+        f"return _P(_D,_P,{arguments})\n"
     )
 
 

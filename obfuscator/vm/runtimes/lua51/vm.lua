@@ -520,6 +520,10 @@ end
 --<<ENDTARGET_SOURCE_VALUE>>
 
 local exec, _EX, _NX
+local function _call_packet(packet,fn,...)
+    for key in pairs(packet) do packet[key]=nil end
+    return fn(...)
+end
 -- Closures own their descriptors; this registry must not root environment or
 -- recursive-upvalue cycles on runtimes without ephemeron weak-key tables.
 local _VF=setmetatable({},{__mode="kv"})
@@ -805,8 +809,24 @@ local function _value_key(v)
     return v
 end
 local _UC=0
-local _TM=setmetatable({},{__mode="k"})
+-- Lua 5.1 weak keys are not ephemerons. The unexposed table owns its
+-- descriptor under a private key; the registry owns neither side.
+local _TM=setmetatable({},{__mode="kv"})
+local _TN={}
 local _TC=0
+
+-- Remove the wrapper's vararg stack before entering the virtual frame.
+local function _invoke_closure(metadata,values,flow,expose,next_route)
+    local packet=_apack(values,values.n,flow)
+    if packet~=values then for key in pairs(values) do values[key]=nil end end
+    local w=_CG[__VM_ROUTE_ENTER__](next_route,{
+        [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=metadata[__VM_META_PROTO__],
+        [__VM_Q_UPVALS__]=metadata[__VM_META_UPVALS__],[__VM_Q_ARGS__]=packet})
+    for i=1,w[__VM_RES_COUNT__] do
+        w[__VM_RES_VALUES__][i]=expose(w[__VM_RES_VALUES__][i])
+    end
+    return _unpack_values(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
+end
 
 --<<TARGET_51_NATIVE_51_FOR_VALUES>>
 local _for_api={tonumber}
@@ -886,9 +906,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local _RS    = _fr and _fr[__VM_FR_REG_SHARES__] or {}
     local _RE    = _fr and _fr[__VM_FR_REG_EPOCHS__] or {}
     local _RT    = _fr and _fr[__VM_FR_REG_TYPES__] or {}
-    local _RO    = _fr and _fr[__VM_FR_VALUE_VAULT__] or {}
-    local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="k"})
-    local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0}
+    -- Weak indices; only live register/split owners retain handle objects.
+    local _RO    = _fr and _fr[__VM_FR_VALUE_VAULT__] or setmetatable({},{__mode="v"})
+    local _RI    = _fr and _fr[__VM_FR_VALUE_INDEX__] or setmetatable({},{__mode="kv"})
+    -- Counter, handle ID, strong slot owners, and dynamic open-result packets.
+    local _RX    = _fr and _fr[__VM_FR_REPR_COUNTERS__] or {0,0,{}, {}}
     local _PD    = _fr and _fr[__VM_FR_PENDING__] or {}
     local _RZ    = _fr and _fr[__VM_FR_REG_SEED__] or
                    (--<<TARGET_PRIVATE_EXPRESSION>>
@@ -1164,6 +1186,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     -- general syntax translator.
     --<<TARGET_51_KARITY_REGISTER_BANK>>
     local function _rstore(slot,encoded,epoch,kind)
+        _RX[3][slot]=nil
         _MJ._RC[slot]=nil
         _PD[_rpos(5,slot)]=nil
         local share=_rmix((--<<TARGET_PRIVATE_EXPRESSION>>
@@ -1188,7 +1211,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         if kind==3 then return nil end
         local index_hi,index_lo=_pword(encoded)
         if index_hi~=0 or index_lo==0 then error('register vault index mismatch') end
-        return _RO[index_lo]
+        return _RO[index_lo][1]
     end
 
     local function _rvalue(v,epoch)
@@ -1200,15 +1223,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                           --<<ENDTARGET_PRIVATE_EXPRESSION>>
                          )),3
         end
-        local id
-        if not (type(v)=="number" and v~=v) then id=_RI[_value_key(v)] end
-        if id==nil then
-            _RX[2]=(_RX[2] or 0)+1; id=_RX[2]
-            if id>4294967295 then error('register vault exhausted') end
-            _RO[id]=v
-            if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=id end
+        local ref
+        if not (type(v)=="number" and v~=v) then ref=_RI[_value_key(v)] end
+        if ref==nil then
+            _RX[2]=(_RX[2] or 0)+1
+            if _RX[2]>4294967295 then error('register vault exhausted') end
+            ref={v,_RX[2]}; _RO[ref[2]]=ref
+            if not (type(v)=="number" and v~=v) then _RI[_value_key(v)]=ref end
         end
-        return id,4
+        return ref[2],4,ref
     end
     local get_upvalue,set_upvalue
 
@@ -1251,14 +1274,25 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                  )
         end
         local epoch=_rnext(i,salt)
-        local payload,kind=_rvalue(v,epoch)
+        local payload,kind,ref=_rvalue(v,epoch)
         local a,b=_rparams(i,epoch)
         _rstore(i,(--<<TARGET_PRIVATE_EXPRESSION>>
                    a*payload+b
                    --<<ENDTARGET_PRIVATE_EXPRESSION>>
                   ),epoch,kind)
+        _RX[3][i]=not box and ref or nil
     end
     --<<ENDRSET>>
+
+    -- Keep the dynamic open-result tail separate from static RK constants.
+    local function _open_get(i)
+        if i<256 then return rget(i) end
+        return _aget(_RX[4][i],1)
+    end
+    local function _open_set(i,v)
+        if i<256 then rset(i,v)
+        else _RX[4][i]=_apack({v},1,(_SS and _SS[1]) or 0) end
+    end
 
     local function _rrotate(slot,salt)
         _MJ._RC[slot]=nil
@@ -1343,7 +1377,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<TARGET_51_KARITY_REGISTERS>>
     local function _split_set(v)
         local epoch=_rnext(-7,0x53504C49)
-        local payload,kind=_rvalue(v,epoch)
+        local payload,kind,ref=_rvalue(v,epoch)
+        _RX[3][-7]=ref
         local a,b=_rparams(-7,epoch)
         local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
                        a*payload+b
@@ -1382,6 +1417,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
             _va=_apack(_vv,_vn,(_SS and _SS[1]) or (_XF[2] or 0))
         end
+        for key in pairs(args) do args[key]=nil end
+        args=nil
     end
 
     local function _av_read()
@@ -1391,6 +1428,23 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             _XF[1]=_pxor(_pxor(_XF[1] or 0,v),slot)
             _AA[slot]=nil
         end
+    end
+
+    -- Call argument slots have been copied before this cleanup. Keep RK
+    -- constants and open captured cells; cleanup is not a logical VM store.
+    local function _stack_trim(first)
+        _av_read()
+        _MJ._RC={}
+        for slot in pairs(_RL) do
+            if slot>=first and slot<256 and not boxes[slot] then
+                local p1,p2,p3,p4=_rpositions(slot)
+                regs[p1]=nil; _RS[p2]=nil; _RE[p3]=nil; _RT[p4]=nil
+                _PD[_rpos(5,slot)]=nil; _RX[3][slot]=nil; _RL[slot]=nil
+            end
+        end
+        _RX[3][-7]=nil
+        for key in pairs(_RX[4]) do _RX[4][key]=nil end
+        _split_tmp=nil; _split_epoch=nil; _split_share=nil; _split_kind=nil
     end
 
     -- 상수 풀을 register 파일 상위(256+)에 미리 풀어 넣는다.
@@ -1416,6 +1470,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local value=rget(slot)
             boxes[slot]={v=value}
             set_upvalue(boxes[slot],value)
+            _RX[3][slot]=nil; _MJ._RC[slot]=nil
         end
         return boxes[slot]
     end
@@ -1511,6 +1566,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         else box.v=v; _UV[box]=nil; get_upvalue(box) end
     end
 
+    local _texpose
     local function _tnew()
         local t={}
         if not _TY then return t end
@@ -1519,10 +1575,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                          _TC~(_SS[1] or 0)~(_XF[2] or 0)~_RZ~__VM_TABLE_SEED__
                          --<<ENDTARGET_PRIVATE_EXPRESSION>>
                         ))
-        _TM[t]={[__VM_TB_LEFT__]={},[__VM_TB_RIGHT__]={},
+        local m={[__VM_TB_LEFT__]={},[__VM_TB_RIGHT__]={},
                 [__VM_TB_KEYS__]={},[__VM_TB_REVERSE__]={},
                 [__VM_TB_SALT__]=salt,[__VM_TB_NEXT__]=0,
                 [__VM_TB_EXPOSED__]=false}
+        t[_TN]=m; _TM[t]=m
         return t
     end
 
@@ -1559,12 +1616,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _tset(t,k,v)
         _MJ._RC={}
         local m=_TM[t]
-        if not m or m[__VM_TB_EXPOSED__] then t[k]=v; return end
+        if not m or m[__VM_TB_EXPOSED__] then t[_texpose(k)]=_texpose(v); return end
+        if k==nil or (type(k)=='number' and k~=k) then t[k]=v; return end
         local physical=_tkey(m,k,v~=nil)
         if physical==nil then return end
         if v==nil then
             m[__VM_TB_LEFT__][physical]=nil
             m[__VM_TB_RIGHT__][physical]=nil
+            m[__VM_TB_KEYS__][physical]=nil
+            m[__VM_TB_REVERSE__][k]=nil
             return
         end
         if _number_kind(v)=="integer" then
@@ -1593,13 +1653,15 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         return n
     end
 
-    local function _texpose(v,seen)
+    _texpose=function(v,seen)
         local m=type(v)=="table" and _TM[v] or nil
         if not m or m[__VM_TB_EXPOSED__] then return v end
         seen=seen or {}
         if seen[v] then return v end
         seen[v]=true
         m[__VM_TB_EXPOSED__]=true
+        _TM[v]=nil
+        v[_TN]=nil
         for physical,k in pairs(m[__VM_TB_KEYS__]) do
             local x=m[__VM_TB_LEFT__][physical]
             if x~=nil then
@@ -1619,10 +1681,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         for slot,box in pairs(boxes) do
             if slot>=first then
                 local value=get_upvalue(box)
+                boxes[slot]=nil
                 rset(slot,value)
                 box.get=nil; box.set=nil
                 set_upvalue(box,value)
-                boxes[slot]=nil
             end
         end
     end
@@ -1642,16 +1704,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         local metadata={[__VM_META_PROTO__]=sub,[__VM_META_UPVALS__]=new_uv}
         local fn=function(...)
-            local sub,new_uv=metadata[__VM_META_PROTO__],metadata[__VM_META_UPVALS__]
-            local _av=_pack_values(...)
-            local w=_CG[__VM_ROUTE_ENTER__](_NX,{
-                [__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=sub,
-                [__VM_Q_UPVALS__]=new_uv,
-                [__VM_Q_ARGS__]=_apack(_av,_av.n,(_SS and _SS[1]) or 0)})
-            for i=1,w[__VM_RES_COUNT__] do
-                w[__VM_RES_VALUES__][i]=_texpose(w[__VM_RES_VALUES__][i])
-            end
-            return _unpack_values(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
+            return _invoke_closure(metadata,_pack_values(...),(_SS and _SS[1]) or 0,_texpose,_NX)
         end
         _VF[fn]=metadata
         return bind_environment(fn,new_uv,upvals)
@@ -1704,6 +1757,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     end
 
     local function _leave(r,n,av,tag)
+        if not _kk then
+            for i=1,n do r[i]=_texpose(r[i]) end
+        end
         local q={
             [__VM_Q_KIND__]=__VM_CALL_LEAVE__,[__VM_Q_CONT__]=_kk,
             [__VM_Q_RESULT__]={[__VM_RES_VALUES__]=r,[__VM_RES_COUNT__]=n},
@@ -2131,26 +2187,28 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local _rc=_frame_decode(_fr[__VM_FR_C__],_fm)
         if _rc==0 then
             for i=1,_rr[__VM_RES_COUNT__] do
-                rset(_ra+i-1,_rr[__VM_RES_VALUES__][i])
+                _open_set(_ra+i-1,_rr[__VM_RES_VALUES__][i])
             end
             top=_ra+_rr[__VM_RES_COUNT__]-1
         elseif _rc>1 then
             for i=1,_rc-1 do rset(_ra+i-1,_rr[__VM_RES_VALUES__][i]) end
         end
     end
+    _rr=nil; _fr=nil
 
     local function _call_args(a,b,...)
         local values={};local count=0
         local last=(b==0 and top) or (b>1 and (a+b-1)) or a
-        for i=a+1,last do count=count+1;values[count]=rget(i) end
+        for i=a+1,last do count=count+1;values[count]=_open_get(i) end
         values.n=count
+        _stack_trim(a)
         return values
     end
 
     local function _return_values(a,b,...)
         if b==1 then return {},0 end
         local result={};local count=(b==0 and (top-a+1)) or (b-1)
-        for i=1,count do result[i]=rget(a+i-1) end
+        for i=1,count do result[i]=_open_get(a+i-1) end
         return result,count
     end
 
@@ -2159,10 +2217,10 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local count=args.n
         if not tail then _touch(av,tag) end
         for i=1,count do args[i]=_texpose(args[i]) end
-        local result=_pack_values(_source_call(fn,upvals,_kk,_unpack_values(args,1,count)))
+        local result=_pack_values(_call_packet(args,_source_call,fn,upvals,_kk,_unpack_values(args,1,count)))
         if tail then return _leave(result,result.n,av,tag) end
         if c==0 then
-            for i=1,result.n do rset(a+i-1,result[i]) end
+            for i=1,result.n do _open_set(a+i-1,result[i]) end
             top=a+result.n-1
         elseif c>1 then
             for i=1,c-1 do rset(a+i-1,result[i]) end
@@ -2355,7 +2413,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
-            local vals={}; for i=1,cnt do vals[i]=rget(A+i) end
+            local vals={}; for i=1,cnt do vals[i]=_open_get(A+i) end
             _sem(__VM_OP_SETLIST__,tbl,vals,{base,cnt})
             _touch(_av,43)
 
@@ -2371,9 +2429,9 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
             local qb=_cf(q,__VM_CF_B__,45)
             local qn=_cf(q,__VM_CF_COUNT__,45)
             if _AY then
-                for i=1,qn do rset(qa+i-1,_aget(_va,i)) end
+                for i=1,qn do _open_set(qa+i-1,_aget(_va,i)) end
             else
-                _sem(__VM_OP_VARARG__,rset,qa,{qn,_va})
+                _sem(__VM_OP_VARARG__,_open_set,qa,{qn,_va})
             end
             if qb==0 then
                 top=qa+qn-1
@@ -2511,8 +2569,9 @@ _EX._runctx={
 -- Keep the entry closure on the existing executor registry instead of adding
 -- another long-lived local to the Lua 5.1 runtime function (which is already
 -- close to the target's 200-local compiler limit under full protections).
-_EX.run=function(blob,rand_tail,self_func)
+_EX.run=function(blob,rand_tail,self_func,_root_args)
     local ctx=_EX._runctx
+    _root_args=_root_args or {n=0}
     local dump=ctx.function_dump(self_func)
     local dump_crc=ctx.crc32(dump)
     local crc=ctx.ixor(dump_crc,(ctx.line_state or 0))
@@ -2591,15 +2650,17 @@ local _fn=r.uint()
     local proto=ctx.read_proto(r,acc_state)
     local env_box={v=ctx.env}
     --<<RUN_ENTRY>>
-    ctx.CG[__VM_ROUTE_ENTER__](ctx.NX[proto.vm_id+1],
+    local _root_result=ctx.CG[__VM_ROUTE_ENTER__](ctx.NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,
-         [__VM_Q_UPVALS__]={env_box,environment=self_func},[__VM_Q_ARGS__]=ctx.apack({},0,crc)})
+         [__VM_Q_UPVALS__]={env_box,environment=self_func},[__VM_Q_ARGS__]=ctx.apack(_root_args,_root_args.n,crc)})
+    local _root_values,_root_count=_root_result[__VM_RES_VALUES__],_root_result[__VM_RES_COUNT__]
     --<<ENDRUN_ENTRY>>
     --<<RUNTIME_TRACE>>
     ctx.io.stderr:write("karity-vm-trace:",_target_hex64(_PX),
                     " blocks:",_PBC," blocktrace:",
                     _target_hex64(_PBH),"\n")
     --<<ENDRUNTIME_TRACE>>
+    return ctx.unpack_values(_root_values,1,_root_count)
 end
 
 if _EX._runctx.arg and _EX._runctx.arg[0] and _EX._runctx.arg[0]:match("vm") then

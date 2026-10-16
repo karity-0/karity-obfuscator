@@ -23,7 +23,7 @@ class Lua53Target:
         return (root/name if name=='vm.lua' else root/'runtimes'/name).read_text(encoding='utf-8')
 
     def direct_runtime_entry(self):
-        return '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},table.pack())'
+        return '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},_root_args)'
 
     def value_packet_api(self):
         return 'table.pack', 'table.unpack'
@@ -86,11 +86,12 @@ class Lua53Target:
         from ..backends.runtime_emitter import _dump_function_stripped
         return _dump_function_stripped(source, header, decoy_name, decoy_value, toolchain)
 
-    def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail):
+    def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail, *, forward_args=False):
         returned = re.match(r'\Areturn\b', source)
         if returned is None:
             raise ValueError('Lua 5.3 VM source must return its runtime function')
         body = source[returned.end():].lstrip()
+        arguments=",{n=select('#',...),...}" if forward_args else ''
         return (f'local {decoy_name}="{decoy_value}"local {vm_name}={body};'
                 f'return ({vm_name}(1032,413,258,104,953,283,120))'
-                f'({blob},"{tail}",{vm_name})')
+                f'({blob},"{tail}",{vm_name}{arguments})')

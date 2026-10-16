@@ -529,9 +529,9 @@ _DIRECT_SEMANTIC_BODIES = {
     33: " local left=rget(B); local right; if B==C then right=left else right=rget(C) end; if not _branch(_carry(left<=right,_av,33),A~=0,_av,33) then pc=pc+1 end\n        ",
     34: " if not _branch(_carry(not not rget(A),_av,34),C~=0,_av,34) then pc=pc+1 end\n        ",
     35: " local _v=rget(B); if _branch(_carry(not not _v,_av,35),C~=0,_av,35) then rset(A,_v) else pc=pc+1 end\n        ",
-    43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=rget(A+_i) end; for _i=1,_n do _tset(_t,_b+_i,_v[_i]) end; _touch(_av,43)\n        ",
+    43: " local _b=(C-1)*50; local _n=B==0 and (top-A) or B; local _t=rget(A); local _v={}; for _i=1,_n do _v[_i]=_open_get(A+_i) end; for _i=1,_n do _tset(_t,_b+_i,_v[_i]) end; _touch(_av,43)\n        ",
     44: " rset(A,_carry(make_closure(_subs[Bx+1]),_av,44))\n        ",
-    45: " local _n=B==0 and _acount(_va) or B-1; for _i=1,_n do rset(A+_i-1,_aget(_va,_i)) end; _touch(_av,45); if B==0 then top=A+_n-1 end\n        ",
+    45: " local _n=B==0 and _acount(_va) or B-1; for _i=1,_n do _open_set(A+_i-1,_aget(_va,_i)) end; _touch(_av,45); if B==0 then top=A+_n-1 end\n        ",
 }
 
 
@@ -1077,10 +1077,10 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                 "elseif _k==3 then value=nil else "
                 "local _hi,_lo=_pword(_v); "
                 "if _hi~=0 or _lo==0 then error('register vault index mismatch') end; "
-                "value=_RO[_lo] end"
+                "value=_RO[_lo][1] end"
                 if native_exact_word else
                 "if _k==1 then value=_v elseif _k==2 then value=_v~=0 "
-                "elseif _k==3 then value=nil else value=_RO[_v] end"
+                "elseif _k==3 then value=nil else value=_RO[_v][1] end"
             )
             clone = re.sub(
                 r"local value=_rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
@@ -1097,22 +1097,22 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                         "\n--<<ENDTARGET_PRIVATE_EXPRESSION>>\n)")
             nil_payload = (private_expression("epoch~_RZ~0x4E494C")
                            if native_exact_word else "epoch~_RZ~0x4E494C")
-            vault_limit = ("if payload>4294967295 then error('register vault exhausted') end; "
+            vault_limit = ("if _RX[2]>4294967295 then error('register vault exhausted') end; "
                            if native_exact_word else "")
             logical_slot = "_rslot(i)" if native_exact_word else "i"
             def specialize_rset(match):
                 return "".join((
-                    "local payload,kind\n",
+                    "local payload,kind,ref\n",
                     "        if ", "_number_kind" if native_exact_word else "math.type",
                     "(v)==\"integer\" then payload,kind=v,1\n",
                     "        elseif type(v)==\"boolean\" then payload,kind=(v and 1 or 0),2\n",
                     "        elseif v==nil then payload,kind=_rmix(", nil_payload, "),3\n",
                     "        else\n",
-                    "            if not (type(v)==\"number\" and v~=v) then payload=_RI[_value_key(v)] end\n",
-                    "            if payload==nil then _RX[2]=(_RX[2] or 0)+1; payload=_RX[2]; ",
+                    "            if not (type(v)==\"number\" and v~=v) then ref=_RI[_value_key(v)] end\n",
+                    "            if ref==nil then _RX[2]=(_RX[2] or 0)+1; ",
                     vault_limit,
-                    "_RO[payload]=v; if not (type(v)==\"number\" and v~=v) then ",
-                    "_RI[_value_key(v)]=payload end end; kind=4\n",
+                    "ref={v,_RX[2]}; _RO[ref[2]]=ref; if not (type(v)==\"number\" and v~=v) then ",
+                    "_RI[_value_key(v)]=ref end end; payload=ref[2]; kind=4\n",
                     "        end\n",
                     "        local a,b=_rparams(i,epoch); local encoded=", match.group(1), "\n",
                     # Cloned rset inlines _rstore, including its cache invalidation.
@@ -1126,7 +1126,7 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                     "]=true; _ss_value(i,encoded,epoch,kind)",
                 ))
             clone = re.sub(
-                r"local payload,kind=_rvalue\(v,epoch\)\s*"
+                r"local payload,kind,ref=_rvalue\(v,epoch\)\s*"
                 r"local a,b=_rparams\(i,epoch\)\s*"
                 r"_rstore\(i,(\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
                 r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),epoch,kind\)",

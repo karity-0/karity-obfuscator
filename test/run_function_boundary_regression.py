@@ -71,6 +71,24 @@ print(keep_as_value(5), keep_multret())
 
 
 def main() -> int:
+    # A delimiter such as ')' can touch the original function-closing 'end'.
+    # Generated CFF ends in a keyword, so replacement boundaries need spacing.
+    compact_sources=(
+        'print((function(x)local a=x+1;local b=a*2;return(b)end)(3))',
+        'local function f(x)local a=x+1;local b=a*2;return(b)end print(f(3))',
+    )
+    for nested in (False,True):
+        for source in compact_sources:
+            random.seed(124)
+            compact_pass=FunctionObfuscationPass(nested=nested)
+            compact_pipeline=Pipeline(show_header=False);compact_pipeline.add(compact_pass)
+            transformed=compact_pipeline.run(source)
+            expected,actual=run_lua(source),run_lua(transformed)
+            assert expected.returncode==actual.returncode==0,(expected.stderr,actual.stderr)
+            assert actual.stdout==expected.stdout and actual.stdout.splitlines()==[b'8'],(
+                expected.stdout,actual.stdout)
+            assert compact_pass.last_transformed_count>0
+    print('function-boundary-compact-ok nested/non-nested anonymous/named',flush=True)
     random.seed(71337)
     function_pass = FunctionObfuscationPass(boundary_mode="split")
     pipeline = Pipeline(show_header=False)

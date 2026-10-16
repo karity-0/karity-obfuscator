@@ -45,15 +45,39 @@ live closure descriptors with upvalue virtualization both disabled and enabled
 on Karity. The register-cache, MOV and opcode-synthesis suites cover remapping,
 encoded storage and synthesized commits around these boundaries.
 
-## Remaining GC limitation
+## Active-frame ownership and GC limits
 
-These checks do not promise identical GC timing while a VM frame remains
-active. Dead temporary register values and Karity's frame value vault can
-retain objects until that frame exits. One observed example is creating and
-resuming a coroutine, setting the local coroutine variable to nil, and running
-GC in the same active VM frame: its suspended locals can remain alive longer
-than under native Lua. The escaped-upvalue/error-frame leak fixed here is
-separate from liveness-based cleanup of active-frame temporaries.
+Live Karity slots own their value handles; weak vault indices do not retain
+overwritten objects. Captured objects belong to shared cells rather than stale
+register copies. Closure wrappers use tail bridges, private argument packets
+are consumed after binding, and resume packets are released after use. After
+copying call arguments, the VM clears completed call temporaries while keeping
+open captured locals and RK constants. Lua 5.1 virtual tables own their hidden
+descriptors until native exposure, avoiding weak-key descriptor cycles.
+
+`test/run_vm_lifetime_regression.py` compares forced-GC observations with native
+Lua for overwritten objects, live aliases, shared cells, coroutine disposal,
+callable tables, exposed tables and unreachable cycles, on both Lua versions
+and all backends. Open results beyond the 256 static register indices use a
+separate tail, so they cannot overwrite RK constants; the suite checks through
+1,100 values with trailing nil, false and object identity.
+
+These checks cover the recorded boundaries, not identical automatic GC timing,
+finalizer order, debug stack layout or arbitrary active-frame liveness. The VM
+allocates helper structures and uses different native call frames. Other
+observable lifetime differences should still be reduced against the matching
+native interpreter and added to the differential corpus.
+
+## Chunk arguments and module results
+
+The generated chunk forwards its original varargs into the root VM function
+and returns the root result list with its explicit count. Nil holes, trailing
+nil and false are preserved. Tables leaving Karity are restored to native
+tables before crossing the VM boundary.
+
+The lifetime regression also loads output through an external observer and
+`require`, checks a custom environment, and calls returned module functions
+after GC. Lua 5.3 checks include source-only packing and VM plus packing.
 
 Native reference: Lua's [5.3 VM](https://www.lua.org/source/5.3/lvm.c.html) and
 [5.1 VM](https://www.lua.org/source/5.1/lvm.c.html).

@@ -153,7 +153,12 @@ else v=hi*4294967296.0+lo end
     local function rset(i,v)
         if i<proto.max_stack_size then v=_source_value(v) end
         _mdigits[i]=nil; _mstrings[i]=nil; regs[i]=v
-        local box=boxes[i]; if box then box.v=v end
+        local box=boxes[i]
+        if box then
+            box.v=v
+            local kind=type(v)
+            if kind=='table' or kind=='function' or kind=='thread' or kind=='userdata' then regs[i]=nil end
+        end
     end
     -- Lua 5.1 numbers are binary64 values, never Lua 5.3 integers. Only
     -- explicitly serialized digit values may enter MOV's integer fast path.

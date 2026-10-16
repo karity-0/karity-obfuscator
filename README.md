@@ -82,6 +82,21 @@ python test/run_ci.py
 Local verification and CI share the same test manifest. Test protected scripts
 in their intended Lua environment before release.
 
+For a larger native/VM differential corpus with saved inputs, options, generated
+outputs and per-case differences:
+
+```sh
+python tools/explore_vm_semantics.py --seeds 124 7719 20261016 --generated 8 --output local/vm-audit/run
+python tools/explore_vm_semantics.py --inputs my-script.lua --versions 5.3 --generated 0 --output local/vm-audit/my-script
+```
+
+Generated programs and boundary fixtures run on both Lua versions and all three
+backends with fresh runtime processes and execution timeouts. The corpus tests
+finite cases; matching output does not establish complete semantic equivalence.
+Use `--harness test/fixtures/vm_chunk_interface_harness.lua` with the matching
+`vm_chunk_interface.lua` input to observe chunk returns, environments and
+`require`. Add `--pack --versions 5.3` to include the packer boundary.
+
 ## License
 
 [MIT License](LICENSE). Use only on code you own or are authorized to protect.

@@ -30,9 +30,9 @@ def build(source,backend,version,options,seed=1400,instrument=False,event_trace=
         result=serialize(self,lowered,context)
         data.update(blob_bytes=len(result),blob_hash=hashlib.sha256(result).hexdigest(),common_blob_bytes=len(result))
         return result
-    def runtime(script,*args):
+    def runtime(script,*args,**kwargs):
         data['runtime_bytes']=len(script.encode())
-        return wrap(script,*args)
+        return wrap(script,*args,**kwargs)
     def counted(script):
         script=finalize(script)
         if event_trace:

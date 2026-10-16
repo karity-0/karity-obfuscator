@@ -1,5 +1,13 @@
 -- Lua 5.1 target runtime template; maintained independently from Lua 5.3.
 local exec, _EX
+local function _call_packet(packet,fn,...)
+    for key in pairs(packet) do packet[key]=nil end
+    return fn(...)
+end
+local function _invoke_closure(metadata,values)
+    local w=_EX[metadata[1].vm_id+1](metadata[1],metadata[2],values,nil,{})
+    return _unpack_values(w.r,1,w.n)
+end
 local _VF=setmetatable({},{__mode="kv"})
 local _PN,_PE=0,0
 --<<TARGET_PRIVATE_MIX>>
@@ -179,6 +187,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
     local top    = -1
     local _st    = 0
     local _va    = va_in or {n=0}
+    local _open_values={}
     local _split_tmp
     -- Classic keeps its routing state in exact 32-bit native limbs.  Source
     -- values never enter these helpers; the generated executor only feeds
@@ -217,6 +226,8 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         for i=proto.num_params+1,_argc do n=n+1; _va[n]=args[i] end
         _va.n=n
     end
+    for key in pairs(args) do args[key]=nil end
+    args=nil
     --<<ENDTARGET_USER_STATEMENT>>
 
     --<<RGET>>
@@ -230,9 +241,25 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         if i<proto.max_stack_size then v=_source_value(v) end
         regs[i]=v
         local box=boxes[i]
-        if box then box.v=v end
+        if box then box.v=v; regs[i]=nil end
     end
     --<<ENDRSET>>
+
+    local function _open_get(i)
+        if i<256 then return rget(i) end
+        return _open_values[i]
+    end
+    local function _open_set(i,v)
+        if i<256 then rset(i,v) else _open_values[i]=v end
+    end
+
+    local function _stack_trim(first)
+        for i=first,math.min(255,math.max(proto.max_stack_size-1,top)) do
+            if not boxes[i] then rset(i,nil) end
+        end
+        _split_tmp=nil
+        for key in pairs(_open_values) do _open_values[key]=nil end
+    end
 
     --<<TARGET_USER_STATEMENT>>
     local function _acount(q) return q and (q.n or #q) or 0 end
@@ -241,11 +268,11 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         if count==nil then count=top-first+1 end
         if count<0 then count=0 end
         local values={n=count}
-        for i=1,count do values[i]=rget(first+i-1) end
+        for i=1,count do values[i]=_open_get(first+i-1) end
         return values
     end
     local function _store_values(first,values,count)
-        for i=1,count do rset(first+i-1,values[i]) end
+        for i=1,count do _open_set(first+i-1,values[i]) end
     end
     --<<ENDTARGET_USER_STATEMENT>>
     local function _av_read() end
@@ -345,6 +372,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         if not boxes[slot] then
             -- A cell owns only its captured value, never the entire frame.
             boxes[slot]={v=rget(slot)}
+            regs[slot]=nil
         end
         return boxes[slot]
     end
@@ -362,10 +390,10 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         for slot,box in pairs(boxes) do
             if slot>=first then
                 local value=get_upvalue(box)
+                boxes[slot]=nil
                 rset(slot,value)
                 box.get=nil; box.set=nil
                 set_upvalue(box,value)
-                boxes[slot]=nil
             end
         end
     end
@@ -383,9 +411,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
         -- 래퍼는 이를 받아 native처럼 다중반환으로 변환.
         local metadata={sub,new_uv}
         local fn=function(...)
-            local sub,new_uv=metadata[1],metadata[2]
-            local w=_EX[sub.vm_id+1](sub, new_uv, _pack_values(...),nil,{})
-            return _unpack_values(w.r, 1, w.n)
+            return _invoke_closure(metadata,_pack_values(...))
         end
         _VF[fn]=metadata
         return bind_environment(fn,new_uv,upvals)
@@ -446,13 +472,14 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if B==0 then ca=_collect_values(A+1)
             else ca=_collect_values(A+1,B-1) end
             local ca_n=ca.n
+            _stack_trim(A)
             local vm=_VF[fn];local res
             if vm and _source_parents then
                 local parents={upvals.environment}
                 for i=1,#(_source_parents or {}) do parents[#parents+1]=_source_parents[i] end
-                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],_pack_values(_unpack_values(ca,1,ca_n)),nil,parents)
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],ca,nil,parents)
                 res=w.r;res.n=w.n
-            else res=_pack_values(_source_call(fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))) end
+            else res=_pack_values(_call_packet(ca,_source_call,fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))) end
             if C==0 then
                 _store_values(A,res,res.n); top=A+res.n-1
             elseif C>1 then
@@ -465,12 +492,13 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             if B==0 then ca=_collect_values(A+1)
             else ca=_collect_values(A+1,B-1) end
             local ca_n=ca.n
+            _stack_trim(A)
             --<<VM_TAIL_DISPATCH>>
             local vm=_VF[fn];local res
             if vm and _source_parents then
-                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],_pack_values(_unpack_values(ca,1,ca_n)),nil,_source_parents)
+                local w=_EX[vm[1].vm_id+1](vm[1],vm[2],ca,nil,_source_parents)
                 res=w.r;res.n=w.n
-            else res=_pack_values(_source_call(fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))) end
+            else res=_pack_values(_call_packet(ca,_source_call,fn,upvals,_source_parents,_unpack_values(ca,1,ca_n))) end
             --<<ENDVM_TAIL_DISPATCH>>
             return {r=res, n=res.n}
 
@@ -511,7 +539,7 @@ exec = function(proto, upvals, args, va_in, _source_parents)
             end
             local base=(C-1)*50; local cnt=B==0 and (top-A) or B
             local tbl=rget(A)
-            for i=1,cnt do tbl[base+i]=rget(A+i) end
+            for i=1,cnt do tbl[base+i]=_open_get(A+i) end
 
         elseif op==44 then
             local fn=make_closure(_subs[Bx+1])

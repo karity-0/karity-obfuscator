@@ -17,5 +17,7 @@ def direct_executor(source, executor, *, target=None):
     marker = '--<<ENDRUN_ENTRY>>'
     end = source.index(marker, start) + len(marker)
     entry = (target.direct_runtime_entry() if target else
-             '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},table.pack())')
+             '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},_root_args)')
+    entry = ('local _root_result=' + entry +
+             '; local _root_values,_root_count=_root_result.r,_root_result.n')
     return source[:start] + entry + source[end:]

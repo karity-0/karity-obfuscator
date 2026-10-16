@@ -77,7 +77,7 @@ def build_runtime(classic: str, kits: list[VMKit], *, template=None, target=None
     handlers = handlers[:tail_start] + f"""local target=_mov_closures[fn]
             local res
             if target then ca.n=ca_n; return {{mov_tail=target,args=ca}} end
-            res={pack_values}(fn({unpack_values}(ca,1,ca_n)))
+            res={pack_values}(_call_packet(ca,fn,{unpack_values}(ca,1,ca_n)))
             """ + handlers[tail_end + len("--<<ENDVM_TAIL_DISPATCH>>"):]
     handlers = handlers.replace("elseif op==30 then pc=pc+sBx",
                                 'elseif op==30 then error("unexpected MOV host jump")')

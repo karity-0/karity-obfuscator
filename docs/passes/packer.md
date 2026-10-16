@@ -7,6 +7,10 @@ to the wrapper. VM call constants may be externalized without rewriting the
 already captured VM function. Non-VM payloads use conservative eligible
 function/constant/reference externalization.
 
+Original chunk varargs and multiple return values are preserved, including
+trailing nil. The loader passes its private context separately from user
+arguments and loads the payload in the caller's existing `_ENV`.
+
 ## Configuration and requirements
 
 Add `pack` to the main `passes` list after source/VM processing. Configure loader
@@ -39,4 +43,6 @@ their normal numeric depth. Other output-pass orders keep their existing path.
 randomized builds, tamper cases, stored/fixed/dynamic DEFLATE window boundaries
 and a runtime budget. MOV regression additionally
 checks its CLI packing path. Both run through `python test/run_ci.py`.
+`test/run_vm_lifetime_regression.py` additionally checks source and VM modules
+with custom environments, `require`, returned callbacks and trailing nil.
 Implementation: [packer.py](../../obfuscator/passes/packer.py).

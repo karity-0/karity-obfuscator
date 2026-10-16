@@ -104,7 +104,12 @@ end
     end
     local function rset(i,v)
         _mdigits[i]=nil; _mstrings[i]=nil; regs[i]=v
-        local box=boxes[i]; if box then box.v=v end
+        local box=boxes[i]
+        if box then
+            box.v=v
+            local kind=type(v)
+            if kind=='table' or kind=='function' or kind=='thread' or kind=='userdata' then regs[i]=nil end
+        end
     end
     local function _mov_digits(i)
         if boxes[i] then rset(i,boxes[i].v) end

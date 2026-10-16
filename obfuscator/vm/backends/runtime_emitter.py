@@ -923,4 +923,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
 
     # 7. 최종 출력 조합 — vm_func_src(_vmf 본문)는 더 이상 재가공하지 않음
     # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용
-    return run_phase('finalization:runtime', target.wrap, vm_func_src, decoy_name, decoy_value, vmf_name, lua_blob, rand_tail)
+    forward_args=any(instruction.operation in {'VARARG','PACK_VARARG'}
+                     for block in protected_semantic_ir.root.blocks for instruction in block.instructions)
+    return run_phase('finalization:runtime', target.wrap, vm_func_src, decoy_name, decoy_value,
+                     vmf_name, lua_blob, rand_tail, forward_args=forward_args)
