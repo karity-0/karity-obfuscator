@@ -48,9 +48,12 @@ _LUA_KEYWORDS = {
     "repeat", "return", "then", "true", "until", "while",
 }
 
-# 문자열 리터럴(' 또는 ")을 구간으로 분리하기 위한 정규식.
+# Lua literals and comments must stay opaque during generated-name substitution.
+# In particular, an apostrophe in a comment must not start a quoted string.
 # 식별자 치환 시 문자열 내부 텍스트는 건드리지 않기 위해 사용한다.
 _STRING_LIT_RE = re.compile(
+    r'--\[(?P<comment_eq>=*)\[[\s\S]*?\](?P=comment_eq)\]|--[^\r\n]*|'
+    r'\[(?P<string_eq>=*)\[[\s\S]*?\](?P=string_eq)\]|'
     r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\''
 )
 
@@ -151,7 +154,14 @@ def _subst_var_refs(text: str, mapping: dict[str, str], protected_re: re.Pattern
     while i < L:
         pm = protected_re.match(text, i)   # 보호 구간은 그대로 복사
         if pm and pm.end() > i:
-            out.append(pm.group(0))
+            protected = pm.group(0)
+            if _FUNC_PARAMS_SPAN_RE.fullmatch(protected):
+                # Keep parameters lexical, but a qualified declaration still
+                # assigns through its outer table binding (function S.open()).
+                params_start = protected.index('(')
+                protected = (_subst_var_refs(protected[:params_start], mapping, _STRING_LIT_RE)
+                             + protected[params_start:])
+            out.append(protected)
             i = pm.end()
             continue
         ch = text[i]
@@ -1249,8 +1259,11 @@ def _last_zv(lines: list[str]) -> str | None:
     """
     last = None
     for ln in lines:
-        for m in _ZV_DECL_RE.finditer(ln):
-            last = m.group(1)
+        # Flow generators put outer declarations at the start of a line.
+        # A conditional's inner temporary is not visible to the later sink.
+        match = _ZV_DECL_RE.match(ln)
+        if match is not None:
+            last = match.group(1)
     return last
 
 

@@ -69,6 +69,7 @@
   - [cross_instruction_rate](#cross_instruction_rate)
   - [runtime_polymorphism_rate](#runtime_polymorphism_rate)
   - [runtime_trace](#runtime_trace)
+  - [environment_policy](#environment_policy)
   - [block_variant_rate](#block_variant_rate)
   - [block_variant_count](#block_variant_count)
   - [block_variant_max_instructions](#block_variant_max_instructions)
@@ -543,7 +544,8 @@ Register values remain virtualized across dispatch boundaries. Integers use
 build-specific per-value affine encodings fragmented into additive shares; the
 multiplier family is selected from slot and epoch state, while offsets and shares
 are derived rather than stored as plaintext keys. Booleans and nil use affine
-canonical tokens. Floats, strings, tables, functions, userdata, and threads use
+canonical tokens. Strings use a separate encoded-byte representation with content and cell checks.
+Floats, tables, functions, userdata, and threads use
 affine handles into a frame value vault, so the register bank does not directly
 contain those program values.
 
@@ -1082,6 +1084,19 @@ default: `0.2`
 Emit the final runtime route hash to stderr for diagnostics (karity backend only). When false, all trace instrumentation is removed during generation. Keep disabled in normal and release builds.
 
 default: false
+
+---
+
+### environment_policy
+
+Host environment policy: compatible preserves proxy guest environments and uses an available direct native environment; strict rejects inherited essential APIs and initial function-based environment/library lookup hooks. Both monitor later metatable changes.
+
+| Value | Description |
+|---|---|
+| `compatible` | Preserve guest proxy environments; monitor later changes. |
+| `strict` | Require direct essential APIs and reject initial function lookup hooks. |
+
+default: `compatible`
 
 ---
 

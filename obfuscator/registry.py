@@ -329,6 +329,12 @@ VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
         "description": "Emit the final runtime route hash to stderr for diagnostics (karity backend only). When false, all trace instrumentation is removed during generation. Keep disabled in normal and release builds.",
         "default": False,
     },
+    "environment_policy": {
+        "description": "Host environment policy: compatible preserves proxy guest environments and uses an available direct native environment; strict rejects inherited essential APIs and initial function-based environment/library lookup hooks. Both monitor later metatable changes.",
+        "default": "compatible",
+        "values": [("compatible", "Preserve guest proxy environments; monitor later changes."),
+                   ("strict", "Require direct essential APIs and reject initial function lookup hooks.")],
+    },
     "block_variant_rate": {
         "description": "Fraction of eligible straight-line basic-block chunks cloned into independently compiled runtime-selectable variants.",
         "default": 0.08,
@@ -778,6 +784,8 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError(f"invalid vm_options.dispatcher_type '{dispatcher}'. expected: {values}")
 
     blob_form = options.get("blob_form")
+    if options.get('environment_policy', 'compatible') not in ('compatible', 'strict'):
+        raise ConfigError('vm_options.environment_policy must be compatible or strict')
     if blob_form is not None and blob_form not in VALID_BLOB_FORMS:
         values = ", ".join(sorted(VALID_BLOB_FORMS))
         raise ConfigError(f"invalid vm_options.blob_form '{blob_form}'. expected: {values}")

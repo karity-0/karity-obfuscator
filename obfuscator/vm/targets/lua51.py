@@ -272,6 +272,9 @@ class Lua51Target:
     def value_packet_api(self):
         return '_pack_values', '_unpack_values'
 
+    def security_runtime_options(self):
+        return {'native_unpack': 'unpack', 'globals_name': 'getfenv(1)', 'native_table_pack': False}
+
     def runtime_entry_symbol(self):
         return '_EX.run'
 
@@ -387,6 +390,8 @@ end)(blob)
             )
         source_call = (
             "local function _source_call(fn,upvals,frame,...) "
+            "if fn==setmetatable and _ENV_REFRESH then local object=...;"
+            "_ENV_REFRESH(object,false);local result=fn(...);_ENV_REFRESH(object,true);return result end;"
             "if fn~=_native_getfenv and fn~=_native_setfenv then return fn(...) end;"
             "local environments=_source_environments(upvals,frame);"
             "local subject,value=...;"
@@ -561,6 +566,11 @@ end
             "math,string,table,debug,type,tostring,tonumber,select,error,"
             "rawget,rawset,getfenv,setfenv,unpack\n"
         )
+        if '_ENV_CHECK' in source:
+            names = ('math','string','table','debug','type','tostring','tonumber','select',
+                     'error','rawget','rawset','getfenv','setfenv','unpack')
+            prelude = ('local '+','.join(names)+'='+
+                       ','.join('_ENV_NATIVE["'+name+'"]' for name in names)+'\n')
         # Native API references share one capture, even when an executor's
         # nested helpers use many C functions. This bank stores the original
         # functions/libraries directly; it adds no wrapper or value dispatcher.
@@ -575,12 +585,12 @@ end
     local value,shift=0,0
     for i=1,5 do
         local b=read_u8()
-        if i==5 and b>15 then error("MOV field overflow") end
+        if i==5 and b>15 then error(nil,0) end
         value=value+(b%128)*2^shift
         if b<128 then return value end
         shift=shift+7
     end
-    error("invalid MOV field")
+    error(nil,0)
 end
 '''
         # All three backend assets own their exact-state operations. No
@@ -588,7 +598,8 @@ end
         # through whole-source arithmetic translation.
         prelude += ("local _ENV=setmetatable({math=math,string=string,table=table,"
                     "type=type,tostring=tostring,tonumber=tonumber,select=select,error=error,"
-                    "rawget=rawget,rawset=rawset,debug=debug,getfenv=getfenv},{__index=_G})\n")
+                    "rawget=rawget,rawset=rawset,debug=debug,getfenv=getfenv},{__index="+
+                    ('_ENV_NATIVE' if '_ENV_CHECK' in source else '_G')+"})\n")
         translated = _translate_preserving_native_hooks(source, translate_general=False)
         translated = re.sub(
             r'--<<(?:END)?TARGET_51_NATIVE_[A-Z0-9_]+>>[ \t]*(?:\r?\n)?',
@@ -614,17 +625,24 @@ end
         # backend so bind_lines never needs the whole-source compatibility
         # translator after backend emission.
         prefix = context.output_prefix if context is not None else ''
+        passes = context.output_passes if context is not None else ()
+        finalizer = None
+        if 'minify' in passes:
+            from ...passes.minify import MinifyPass
+            finalizer = MinifyPass().run
         result, state, lines = apply_line_state(source, prefix,
+                                               finalizer=finalizer,
+                                               environment_source=getattr(self, 'line_environment', None),
                                                output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]",
                                                native_u32=True)
         return result.replace("--[[TARGET51_PRELUDE_END]]", ""), state, lines
 
-    def dump_function(self, source, header, decoy_name, decoy_value, toolchain):
+    def dump_function(self, source, header, toolchain):
         # Canonical Lua 5.1 dumps retain each function's line boundaries. Match
         # the final wrapper's prefix without executing its contents at build time.
         return normalize_dump(run_tool("\n" * header.count("\n") + source, "dump", toolchain))
 
-    def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail, *, forward_args=False):
+    def wrap(self, source, vm_name, blob, *, forward_args=False):
         returned = re.match(r'\Areturn\b', source)
         if returned is None:
             raise ValueError("Lua 5.1 VM source must return its runtime function")
@@ -634,6 +652,6 @@ end
         # function literal preserves the same nested prototype used for the
         # normalized integrity dump, without serializing the whole runtime into
         # a decimal-escaped string and reparsing it through loadstring.
-        return (f'local {decoy_name}="{decoy_value}";local {vm_name}={body};'
+        return (f'local {vm_name}={body};'
                 f'setfenv({vm_name},getfenv(1));'
-                f'return ({vm_name}(1032,413,258,104,953,283,120))({blob},"{tail}",{vm_name}{arguments})')
+                f'return ({vm_name}(1032,413,258,104,953,283,120))({blob},{vm_name}{arguments})')

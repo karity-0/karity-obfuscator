@@ -90,7 +90,7 @@ class MaterializationPlan:
             raise ValueError('host materialization constant boundary is missing')
         return source.replace(marker,
                               'for slot,reference in pairs(_host_slots[_host_function] or {}) do '
-                              'p.constants[slot]={CK_STR,_kss(_host_read(reference))} end\n' + marker)
+                              'p.constants[slot]={CK_STR,"",_PS.seal(_host_read(reference))} end\n' + marker)
 
 
 def plan_materialization(functions, provider: ConstantProvider) -> MaterializationPlan:

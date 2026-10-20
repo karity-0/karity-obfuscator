@@ -112,7 +112,7 @@ def resolve_user_preset(name, context=None):
     context = context or {}
     result = {key: deepcopy(context[key]) for key in CONTEXT_KEYS if key in context}
     result.update(user_preset(name))
-    for key in ('backend', 'requirements'):
+    for key in ('backend', 'requirements', 'environment_policy'):
         if key in context.get('vm_options', {}):
             result['vm_options'][key] = deepcopy(context['vm_options'][key])
     result['_profile'] = canonical_name(name)

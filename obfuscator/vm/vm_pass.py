@@ -58,6 +58,7 @@ _DEFAULT_VM_OPTIONS: VMOptions = {
     "cross_instruction_rate": 0.2,
     "runtime_polymorphism_rate": 0.2,
     "runtime_trace": False,
+    "environment_policy": "compatible",
     "block_variant_rate": 0.08,
     "block_variant_count": 3,
     "block_variant_max_instructions": 6,

@@ -17,6 +17,7 @@ from obfuscator import Pipeline, build_pipeline_from_config
 from obfuscator.profiling import Profiler
 from obfuscator.vm.vm_variants import _render_tamper, apply_line_state
 from obfuscator.vm.targets.lua51 import Lua51Target
+from obfuscator.passes.minify import MinifyPass
 
 
 LUA = lua_executable()
@@ -54,10 +55,84 @@ def vm_config(passes: list[str]) -> dict:
     }
 
 
+def check_distributed_readers() -> None:
+    from lupa.lua51 import LuaRuntime as Lua51Runtime
+    from lupa.lua53 import LuaRuntime as Lua53Runtime
+
+    # Real initialization statements must remain between observations, even
+    # when the input runtime has already been minified. Their execution order
+    # and lexical scope must stay intact.
+    initialization = '\n'.join(f'local item{i}={i}; total=total+item{i}' for i in range(35))
+    template = ('return function(...) local total=0\n'
+                'local string,tonumber,pcall,type,math=false,false,false,false,false\n' + initialization
+                + '\nassert(total==595); return _LS end')
+    for native, runtime_type in ((False, Lua53Runtime), (True, Lua51Runtime)):
+        variants = set()
+        for seed in range(12):
+            random.seed(3000+seed)
+            compact = seed % 2 == 1
+            source = MinifyPass().run(template) if compact else template
+            before = random.getstate()
+            rendered, expected, lines = apply_line_state(
+                source, native_u32=native,
+                finalizer=MinifyPass().run if compact else None,
+            )
+            assert random.getstate() == before
+            assert not re.search(r'K[0-9a-f]{8}|\berror\s*\(', rendered)
+            assert 'LINE_FRAGMENT_' not in rendered
+            assert len(lines) in (3, 4, 5)
+            variants.add(rendered)
+            if not compact:
+                assert len(set(lines)) == len(lines)
+                # At least three original initializers lie between the first
+                # and last faults; merely spacing a single prefix fails this.
+                assert lines[-1] != lines[0]
+                original_positions = [rendered.index(f'local item{i}=') for i in range(35)]
+                between = rendered.splitlines()[min(lines)-1:max(lines)]
+                assert sum('local item' in line for line in between) >= 3
+                assert original_positions == sorted(original_positions)
+            runtime = runtime_type(unpack_returned_tuples=True)
+            loader = runtime.eval('loadstring' if native else 'load')
+            for name in ('@file:999: name:456: part.lua', '=source:123:part:456:',
+                         'source:987:chunk', '@한글:12: 입력.lua'):
+                chunk = loader(rendered, name)
+                assert chunk()() == expected, (native, seed, name, lines)
+            # Moving the complete source changes observations, not just a
+            # visible expected-line check. Exercise this on both Lua versions.
+            assert loader('\n'+rendered, '@shifted.lua')()() != expected
+            # Each parser family contributes to the state. No healthy reader
+            # may silently replace a manipulated result from another reader.
+            for override in (
+                'string.match=function() return "0" end',
+                'string.byte=function() return 0 end',
+                'string.find=function() return nil end',
+                'string.sub=function() return "0" end',
+                'tonumber=function() return 0 end',
+                'pcall=function() return true,nil end',
+            ):
+                altered = runtime_type(unpack_returned_tuples=True)
+                f = altered.execute(rendered)
+                altered.execute(override)
+                assert f() != expected, (native, seed, override)
+        assert len(variants) == 12
+        # A direct read is a hard deadline; nested captures and loop bodies
+        # must not make collection run too late or more than once.
+        deadline = '''return function(...)
+local function captured() return _LS end
+local total=0;for i=1,7 do total=total+i end
+local observed=_LS
+assert(total==28)
+return observed,captured()
+end'''
+        rendered, expected, _ = apply_line_state(deadline, native_u32=native)
+        assert runtime_type(unpack_returned_tuples=True).execute(rendered)() == (expected, expected)
+
+
 def main() -> int:
+    check_distributed_readers()
     tamper = _render_tamper()
     for function_name in (
-        "error", "pcall", "tostring", "tonumber", "string.match",
+        "error", "pcall", "tostring", "tonumber", "string.match", "string.byte", "string.find", "string.sub",
     ):
         if f"_isC({function_name})" not in tamper:
             raise AssertionError(f"line-state dependency lacks C check: {function_name}")
@@ -134,8 +209,8 @@ def main() -> int:
                 f"{(native.returncode, native.stdout, native.stderr)!r}"
             )
         multiply_match = re.search(
-            r"local function ([A-Za-z_]\w*)\(a,b\)\n"
-            r"  a=a%4294967296;b=b%4294967296\n  local al=a%65536", bound,
+            r"([A-Za-z_]\w*\[\d+\])=function\(a,b\)\n"
+            r" a=a%4294967296;b=b%4294967296\n local al=a%65536", bound,
         )
         return_match = re.search(r"return ([A-Za-z_]\w*) end$", bound)
         if not multiply_match or not return_match:

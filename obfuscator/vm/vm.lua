@@ -529,6 +529,10 @@ local function _invoke_closure(metadata,values,flow,expose,next_route)
     return table.unpack(w[__VM_RES_VALUES__],1,w[__VM_RES_COUNT__])
 end
 
+-- Only entered with a rejected nil operand; the host creates the error body.
+local function _for_fault(initial,limit,step)
+    for i=initial,limit,step do break end
+end
 local _for_api={tonumber,math.type,math.floor,math.ceil,math.tointeger,math.mininteger,math.maxinteger}
 -- Match Lua 5.3 FORPREP, including integer-limit rounding and saturation.
 local function _for_values(initial,limit,step)
@@ -547,11 +551,11 @@ local function _for_values(initial,limit,step)
         end
         return initial,integer,step
     end
-    if bound==nil then error("'for' limit must be a number") end
+    if bound==nil then return _for_fault(1,bound,1) end
     step=_for_api[1](step)
-    if step==nil then error("'for' step must be a number") end
+    if step==nil then return _for_fault(1,1,step) end
     initial=_for_api[1](initial)
-    if initial==nil then error("'for' initial value must be a number") end
+    if initial==nil then return _for_fault(initial,1,1) end
     return initial*1.0,bound*1.0,step*1.0
 end
 
@@ -2099,7 +2103,7 @@ end
 local function _function_dump(fn) return string.dump(fn,true) end
 --<<ENDTARGET_FUNCTION_DUMP>>
 
-local function run(blob,rand_tail,self_func,_root_args)
+local function run(blob,self_func,_root_args)
     _root_args=_root_args or {n=0}
     local dump=_function_dump(self_func)
     local dump_crc=_crc32(dump)
@@ -2133,7 +2137,7 @@ local function run(blob,rand_tail,self_func,_root_args)
     _IT.script=crc
     _IT.line=_LS or 0
     _ksd=dump_crc
-    local key="karityObfuscator/"..string.format("%08x",crc).."/"..rand_tail
+    local key=string.format("%08x",crc)
     blob=kae_decrypt(from_base36(blob),key)
     local r=make_reader(blob); r.header()
     local seed=r.u16()

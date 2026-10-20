@@ -158,15 +158,19 @@ end
 --<<ENDTARGET_PRIVATE_MIX>>
 
 --<<TARGET_51_NATIVE_51_FOR_VALUES>>
+-- Only entered with a rejected nil operand; the host creates the error body.
+local function _for_fault(initial,limit,step)
+    for i=initial,limit,step do break end
+end
 local _for_api={tonumber}
 -- Lua 5.1 validates initial, limit, then step; arithmetic metamethods do not apply.
 local function _for_values(initial,limit,step)
     initial=_for_api[1](initial)
-    if initial==nil then error("'for' initial value must be a number") end
+    if initial==nil then return _for_fault(initial,1,1) end
     limit=_for_api[1](limit)
-    if limit==nil then error("'for' limit must be a number") end
+    if limit==nil then return _for_fault(1,limit,1) end
     step=_for_api[1](step)
-    if step==nil then error("'for' step must be a number") end
+    if step==nil then return _for_fault(1,1,step) end
     return initial,limit,step
 end
 

@@ -287,6 +287,7 @@ class VMBackend:
 
 
 SHARED_OPTIONS = frozenset((
+    "environment_policy",
     "opcode_synthesis", "synthesis_policy", "synthesis_max_steps", "synthesis_max_recipes", "synthesis_max_occurrences", "synthesis_max_code_growth",
     "ir_mba_rate", "ir_test_set_rate", "ir_tail_duplication_rate", "ir_rematerialization_rate",
     "ir_morph_max_growth", "ir_morph_max_added_instructions", "ir_morph_max_added_blocks",

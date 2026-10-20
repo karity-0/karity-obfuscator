@@ -10,6 +10,7 @@ REGRESSIONS = (
     "import",
     "blob_form",
     "serialization",
+    "runtime_security",
     "block_permutation",
     "ir_facts",
     "ir_morphing",

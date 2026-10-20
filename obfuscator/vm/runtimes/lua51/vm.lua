@@ -829,15 +829,19 @@ local function _invoke_closure(metadata,values,flow,expose,next_route)
 end
 
 --<<TARGET_51_NATIVE_51_FOR_VALUES>>
+-- Only entered with a rejected nil operand; the host creates the error body.
+local function _for_fault(initial,limit,step)
+    for i=initial,limit,step do break end
+end
 local _for_api={tonumber}
 -- Lua 5.1 validates initial, limit, then step; arithmetic metamethods do not apply.
 local function _for_values(initial,limit,step)
     initial=_for_api[1](initial)
-    if initial==nil then error("'for' initial value must be a number") end
+    if initial==nil then return _for_fault(initial,1,1) end
     limit=_for_api[1](limit)
-    if limit==nil then error("'for' limit must be a number") end
+    if limit==nil then return _for_fault(1,limit,1) end
     step=_for_api[1](step)
-    if step==nil then error("'for' step must be a number") end
+    if step==nil then return _for_fault(1,1,step) end
     return initial,limit,step
 end
 
@@ -2576,7 +2580,7 @@ _EX._runctx={
 -- Keep the entry closure on the existing executor registry instead of adding
 -- another long-lived local to the Lua 5.1 runtime function (which is already
 -- close to the target's 200-local compiler limit under full protections).
-_EX.run=function(blob,rand_tail,self_func,_root_args)
+_EX.run=function(blob,self_func,_root_args)
     local ctx=_EX._runctx
     _root_args=_root_args or {n=0}
     local dump=ctx.function_dump(self_func)
@@ -2611,7 +2615,7 @@ _EX.run=function(blob,rand_tail,self_func,_root_args)
     ctx.IT.script=crc
     ctx.IT.line=ctx.line_state or 0
     _ksd=dump_crc
-    local key="karityObfuscator/"..ctx.string.format("%08x",crc).."/"..rand_tail
+    local key=ctx.string.format("%08x",crc)
     blob=ctx.kae_decrypt(ctx.from_base36(blob),key)
     local r=ctx.make_reader(blob); r.header()
     local seed=r.u16()

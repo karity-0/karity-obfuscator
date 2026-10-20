@@ -578,6 +578,13 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
             direct = planned_modes[i]
             if orig_op in _DIRECT_SEMANTIC_BODIES and direct:
                 alias_body = _DIRECT_SEMANTIC_BODIES[orig_op]
+                if '_PS.cell_set(box,v)' in vm_code:
+                    # Karity strings are values, not native table identities.
+                    # Keep direct aliases on the same representation boundary
+                    # as graph-backed handlers, including cloned helpers.
+                    for operator, helper in (('==', 'eq'), ('<=', 'le'), ('<', 'lt')):
+                        alias_body = alias_body.replace('left'+operator+'right',
+                                                        '_PS.'+helper+'(left,right)')
             if vop in comparison_specializations:
                 if orig_op not in (31, 32, 33):
                     raise ValueError("comparison specialization targets a non-comparison alias")

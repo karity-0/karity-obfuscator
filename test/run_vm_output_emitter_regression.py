@@ -80,7 +80,7 @@ def main() -> int:
     # remain useful without copying the complete source into the GUI console.
     oversized_branch = 'return function(flag) local x=0 if flag then ' + 'x=x+1;' * 200000 + ' end return x end'
     try:
-        _dump_function_stripped(oversized_branch, "", "decoy", "", LuaToolchain())
+        _dump_function_stripped(oversized_branch, "", LuaToolchain())
     except RuntimeError as error:
         assert "control structure too long" in str(error), str(error)[:2000]
         assert "characters omitted" in str(error) and len(str(error)) < 10000

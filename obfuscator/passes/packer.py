@@ -6,8 +6,8 @@ The packer is intentionally the outer runtime component rather than another VM:
 - encrypts the compressed stream with a loader-self-keyed rolling XOR
 - builds an external context table outside the packed payload
 - couples packed code to that context through state-derived slot routing
-- for VM output, externalizes the VM call constants and reconstructs rand_tail
-  through the packer auth graph without modifying the captured VM function
+- for VM output, externalizes the VM call constants without modifying the
+  captured VM function; legacy three-argument wrappers also reconstruct their tail
 - for non-VM output, conservatively externalizes safe top-level functions /
   literal constants and selected reference proxies
 """
@@ -78,7 +78,7 @@ _BARE_REF_PROXY_EXPRESSIONS = {
 
 _VM_TAIL_RE = re.compile(
     r"return\s*\((?P<vmf>[A-Za-z_]\w*)\((?P<args>[^)]*)\)\)"
-    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)"
+    r"\((?P<blob>.*?)(?:,\"(?P<tail>[A-Za-z0-9]{16})\")?,(?P=vmf)"
     r"(?P<forward_args>,(?:\s*\.{3}|\{n=select\('#',\.{3}\),\.{3}\}))?\)\s*$",
     re.S,
 )
@@ -690,6 +690,14 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     if not replacements:
         return src
 
+    # Record keys are identifiers in the grammar, but never global reads.
+    # A capture bank such as {rawget=_ENV.rawget} must keep its key intact.
+    import tree_sitter as ts
+    from .ts_utils import parse, _LANG
+    from .rename_ts import _is_reference
+    context = parse(src)
+    field_keys = ts.QueryCursor(ts.Query(_LANG, '(field name: (identifier) @key)')).captures(context.root)
+    protected_keys = {context.cs(node) for node in field_keys.get('key', []) if not _is_reference(node)}
     masked = _mask_lua_noncode(src)
     keys = sorted(replacements, key=len, reverse=True)
     pattern = re.compile(
@@ -703,6 +711,8 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     pos = 0
     for m in pattern.finditer(masked):
         key = m.group(0)
+        if m.start() in protected_keys:
+            continue
         # Neither a bare name nor a dotted suffix is a global reference when
         # it follows another field/method selector (e.g. _ENV.string.byte).
         j = m.start() - 1
@@ -1146,7 +1156,7 @@ def _rewrite_generic_payload(script: str, plan: ContextPlan, state: int) -> str:
 
 def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     m = _VM_TAIL_RE.search(script)
-    if not m or plan.vm_tail is None:
+    if not m:
         return script
 
     encoded_args = [
@@ -1154,9 +1164,12 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
         for i in range(len(plan.vm_args))
     ]
 
-    tail_enc = base64.b64encode(
-        _auth_xor(plan.vm_tail.encode("ascii"), state)
-    ).decode("ascii")
+    tail_arg=''
+    if plan.vm_tail is not None:
+        tail_enc = base64.b64encode(
+            _auth_xor(plan.vm_tail.encode("ascii"), state)
+        ).decode("ascii")
+        tail_arg=f'__KDECODE(__KCTX,"{tail_enc}"),'
     vmf_name = m.group("vmf")
 
     forwarded=m.group('forward_args')
@@ -1165,7 +1178,7 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 
     replacement = (
         f"return ({vmf_name}({','.join(encoded_args)}))"
-        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name}{arguments})"
+        f"({m.group('blob')},{tail_arg}{vmf_name}{arguments})"
     )
     body = script[:m.start()] + replacement + script[m.end():]
 

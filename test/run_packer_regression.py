@@ -206,6 +206,9 @@ def test_mask_positions(ctx: Path):
     assert _top_level_locals(scoped, masked, depth) == {'outer', 'f', 'after'}
     refs = '_ENV.string.byte(s);_ENV . -- gap\n string.byte(s);string.byte(s);t:type()'
     assert _code_substitute(refs, {'string.byte':'proxy', 'type':'proxy_type'}) == refs.replace(';string.byte(s)', ';proxy(s)')
+    fields = 'local t={type=type,rawget=_ENV.rawget,[type]=rawget};return t.type,t["rawget"]'
+    assert _code_substitute(fields, {'type':'proxy_type','rawget':'proxy_raw'}) == (
+        'local t={type=proxy_type,rawget=_ENV.rawget,[proxy_type]=proxy_raw};return t.type,t["rawget"]')
 
 
 def test_pack_semantics(ctx: Path):

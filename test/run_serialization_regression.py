@@ -208,8 +208,9 @@ class Serialization(unittest.TestCase):
                         for j,descriptor in enumerate(item.graph_sites,1):
                             self.assertEqual(list(descriptor),list(sites[j].values()))
                     if expected.source.constants:
-                        self.assertEqual(b'',actual[b'constants'][8][2])
-                        self.assertEqual(expected.source.constants[8],actual[b'constants'][9][2])
+                        from obfuscator.vm.string_storage import decode
+                        self.assertEqual(b'',decode(actual[b'constants'][8][2]))
+                        self.assertEqual(expected.source.constants[8],decode(actual[b'constants'][9][2]))
                         self.assertEqual([1,len(expected.code)],list(actual[b'block_routes'][1].values()))
                         self.assertEqual(1,actual[b'upvalues'][1][b'instack'])
                     for i,child in enumerate(expected.children,1):check(child,actual[b'protos'][i])

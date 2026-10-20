@@ -10,7 +10,6 @@ per-run VM 다형성 변형 3종. 각 함수는 vm.lua 템플릿(마커/토큰 �
 keystream/tamper는 vm.lua 안에서만 완결되므로 마커 사이를 교체한다.
 """
 from __future__ import annotations
-import hashlib
 import random
 import re
 
@@ -150,6 +149,10 @@ _TAMPER_C_POOL = [
 _TAMPER_ALWAYS = [
     "debug.getinfo", "string.dump", "debug.gethook",
     "error", "pcall", "tostring", "tonumber", "string.match",
+    "string.byte", "string.char", "string.sub", "string.format", "string.find",
+    "table.concat", "table.unpack", "type", "rawget", "select", "getmetatable",
+    "math.floor", "math.max", "math.min", "table.pack",
+    "setmetatable", "next", "pairs", "ipairs",
 ]
 
 
@@ -205,194 +208,6 @@ def apply_tamper(vm_code: str, renderer=None) -> str:
     return _TAMPER_RE.sub(lambda _m: render(), vm_code, count=1)
 
 
-# ---------------------------------------------------------------------------
-# 4. source-line state
-# ---------------------------------------------------------------------------
-_U32_MASK = 0xFFFFFFFF
-
-
-def _line_state_mix(lines: list[int], steps: list[tuple[int, int, int]]) -> int:
-    state = 0
-    for line, (mul, add, shift) in zip(lines, steps):
-        state = ((state ^ ((line * mul) & _U32_MASK)) + add) & _U32_MASK
-        state = (state ^ (state >> shift)) & _U32_MASK
-    return state
-
-
-def apply_line_state(
-    vm_func_src: str,
-    output_prefix: str = "",
-    finalizer=None,
-    output_passes: list[str] | None = None,
-    insertion_anchor: str = "return function(...)",
-    native_u32: bool = False,
-    qualify_globals: bool = False,
-) -> tuple[str, int, list[int]]:
-    """Inject line probes and compute the clean state from the final layout.
-
-    Runtime code never compares against a visible expected line. Observed line
-    values become a per-build local state; the builder derives the same value
-    for encryption and integrity-constant encoding.  The block is generated
-    after the large VM output pipeline, so it uses the small structured literal
-    emitter directly instead of reparsing the complete VM source.
-    """
-    anchor = insertion_anchor
-    anchor_pos = vm_func_src.find(anchor)
-    if anchor_pos < 0:
-        raise ValueError("VM function source is missing its return-function anchor")
-
-    seed_bytes = hashlib.sha256(repr(random.getstate()).encode("utf-8")).digest()
-    rng = random.Random(int.from_bytes(seed_bytes, "big"))
-    probe_count = rng.randint(3, 5)
-    from ..names import NameAllocator, RENAME_OPTIONS
-
-    name_options = RENAME_OPTIONS.get()
-    allocator = NameAllocator.for_source(
-        vm_func_src,
-        seed=name_options.get("seed"),
-        readable=name_options.get("readable", False),
-    )
-
-    def ident(tag: str) -> str:
-        return allocator.allocate(tag)
-
-    parser_name = ident("p")
-    state_name = ident("s")
-    probe_names = [ident("f") for _ in range(probe_count)]
-    message_names = [ident("e") for _ in range(probe_count)]
-    value_names = [ident("v") for _ in range(probe_count)]
-    tokens = [f"K{rng.getrandbits(32):08x}" for _ in range(probe_count)]
-    fallbacks = [rng.getrandbits(24) | 1 for _ in range(probe_count)]
-    steps = [
-        (rng.getrandbits(32) | 1, rng.getrandbits(32), rng.randint(5, 17))
-        for _ in range(probe_count)
-    ]
-
-    selected_passes = list(output_passes or [])
-    localize = "localize_globals" in selected_passes
-    if localize:
-        env_name = ident("g")
-        error_name = ident("r")
-        pcall_name = ident("c")
-        tostring_name = ident("t")
-        tonumber_name = ident("n")
-        match_name = ident("m")
-        string_name = ident("q")
-        block: list[str] = [
-            f"local {env_name}=_ENV",
-            f'local {error_name}={env_name}["error"]',
-            f'local {pcall_name}={env_name}["pcall"]',
-            f'local {tostring_name}={env_name}["tostring"]',
-            f'local {tonumber_name}={env_name}["tonumber"]',
-            f'local {string_name}={env_name}["string"]',
-            f'local {match_name}={string_name}["match"]',
-        ]
-    else:
-        error_name = "error"
-        pcall_name = "pcall"
-        tostring_name = "tostring"
-        tonumber_name = "tonumber"
-        match_name = "string.match"
-        block = []
-
-    for probe_name, token in zip(probe_names, tokens):
-        # Keep each declaration on one source line.  The declaration position
-        # remains a stable marker even when its string literal is lowered.
-        block.append(
-            f'local function {probe_name}() {error_name}("{token}") end'
-        )
-    parser_value_name = ident("x")
-    parser_error_name = ident("message")
-    parser_fallback_name = ident("fallback")
-    ignored_status_name = ident("status")
-    block.append(
-        f"local function {parser_name}({parser_error_name},{parser_fallback_name}) local {parser_value_name}="
-        f"{tostring_name}({parser_error_name}) return {tonumber_name}("
-        f'{match_name}({parser_value_name},":(%d+): K%x+$")) or {parser_fallback_name} end'
-    )
-    for probe_name, message_name in zip(probe_names, message_names):
-        block.append(f"local {ignored_status_name},{message_name}={pcall_name}({probe_name})")
-    for message_name, value_name, fallback in zip(message_names, value_names, fallbacks):
-        block.append(f"local {value_name}={parser_name}({message_name},{fallback})")
-    block.append(f"local {state_name}=0")
-    if native_u32:
-        xor_name = ident("x")
-        multiply_name = ident("m")
-        block.insert(0, f"""local function {xor_name}(a,b)
-  a=a%4294967296;b=b%4294967296
-  local result,place=0,1
-  while a>0 or b>0 do
-    local left,right=a%2,b%2
-    if left~=right then result=result+place end
-    a=math.floor(a/2);b=math.floor(b/2);place=place*2
-  end
-  return result
-end""")
-        block.insert(1, f"""local function {multiply_name}(a,b)
-  a=a%4294967296;b=b%4294967296
-  local al=a%65536;local ah=math.floor(a/65536)
-  local bl=b%65536;local bh=math.floor(b/65536)
-  return (al*bl+((al*bh+ah*bl)%65536)*65536)%4294967296
-end""")
-        for value_name, (mul, add, shift) in zip(value_names, steps):
-            block.append(
-                f"{state_name}=({xor_name}({state_name},{multiply_name}({value_name},{mul}))"
-                f"+{add})%4294967296"
-            )
-            block.append(
-                f"{state_name}={xor_name}({state_name},math.floor({state_name}/2^{shift}))%4294967296"
-            )
-    else:
-        for value_name, (mul, add, shift) in zip(value_names, steps):
-            block.append(
-                f"{state_name}=(({state_name}~(({value_name}*0x{mul:08X})&0xFFFFFFFF))"
-                f"+0x{add:08X})&0xFFFFFFFF"
-            )
-            block.append(
-                f"{state_name}=({state_name}~({state_name}>>{shift}))&0xFFFFFFFF"
-            )
-
-    block_source = "\n".join(block)
-    literal_passes = [
-        name for name in selected_passes
-        if name in {"number_obf", "string_obf", "boolean_obf"}
-    ]
-    if literal_passes:
-        from .output_emitter import emit_vm_literals
-
-        # Line-state generation intentionally owns a private PRNG so adding
-        # this late stage cannot perturb the main pipeline's random sequence.
-        global_random_state = random.getstate()
-        try:
-            random.setstate(rng.getstate())
-            block_source, _ = emit_vm_literals(block_source, literal_passes)
-            rng.setstate(random.getstate())
-        finally:
-            random.setstate(global_random_state)
-
-    if qualify_globals:
-        from ..passes.rename_ts import qualify_runtime_globals
-        block_source = qualify_runtime_globals(block_source)
-
-    vm_func_src = re.sub(r"\b_LS\b", state_name, vm_func_src)
-    anchor_pos = vm_func_src.find(anchor)
-    if finalizer is not None:
-        # The large VM source has already passed through the finalizer.  Only
-        # this late fragment is new; minifying the complete multi-megabyte VM
-        # again was the remaining max-profile hot-path duplication.
-        block_source = finalizer(block_source)
-        insertion = " " + block_source + " "
-    else:
-        insertion = "\n" + block_source + "\n"
-    insert_at = anchor_pos + len(anchor)
-    result = vm_func_src[:insert_at] + insertion + vm_func_src[insert_at:]
-
-    prefix_lines = output_prefix.count("\n")
-    probe_lines: list[int] = []
-    for probe_name in probe_names:
-        marker_pos = result.find(f"function {probe_name}(")
-        if marker_pos < 0:
-            raise AssertionError("line probe marker disappeared during rendering")
-        probe_lines.append(prefix_lines + result[:marker_pos].count("\n") + 1)
-
-    return result, _line_state_mix(probe_lines, steps), probe_lines
+# Source-layout observations are emitted separately from the VM template edits.
+# Preserve this import boundary for existing target adapters and callers.
+from .line_state import apply_line_state as apply_line_state

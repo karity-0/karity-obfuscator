@@ -61,6 +61,7 @@ class ProtectionOptions(TypedDict, total=False):
 
 
 class VMOptions(ProtectionOptions, total=False):
+    environment_policy: Literal['compatible', 'strict']
     opcode_synthesis: bool
     synthesis_policy: str
     synthesis_max_code_growth: float

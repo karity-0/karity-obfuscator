@@ -136,7 +136,8 @@ Register values remain virtualized across dispatch boundaries. Integers use
 build-specific per-value affine encodings fragmented into additive shares; the
 multiplier family is selected from slot and epoch state, while offsets and shares
 are derived rather than stored as plaintext keys. Booleans and nil use affine
-canonical tokens. Floats, strings, tables, functions, userdata, and threads use
+canonical tokens. Strings use a separate encoded-byte representation with content and cell checks.
+Floats, tables, functions, userdata, and threads use
 affine handles into a frame value vault, so the register bank does not directly
 contain those program values.
 

@@ -65,6 +65,9 @@ flowchart TD
     T --> H[Lua effects and native calls]
 ```
 
+See [runtime hardening](runtime-hardening.md) for per-constant storage, protected
+string values and repeated host checks.
+
 Karity supports graph execution, state threading, argument/upvalue/table/branch
 virtualization, runtime polymorphism and helper diversity. Which routes actually
 run depends on the enabled controls and eligible sites. Heavy graphs are compiled
@@ -178,6 +181,7 @@ unsupported controls, including values inherited from a profile.
 | `cross_instruction_rate` | Yes | No | No |
 | `runtime_polymorphism_rate` | Yes | No | No |
 | `runtime_trace` | Yes | No | No |
+| `environment_policy` | Yes | Yes | Yes |
 | `block_variant_rate` | Yes | No | No |
 | `block_variant_count` | Yes | No | No |
 | `block_variant_max_instructions` | Yes | No | No |

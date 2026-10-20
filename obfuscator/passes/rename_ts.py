@@ -261,7 +261,7 @@ def rename_script_ts(script: str, *, seed=None, readable=None, reuse_function_na
                           reuse_function_names=reuse_function_names)
 
 
-def qualify_runtime_globals(script: str) -> str:
+def qualify_runtime_globals(script: str, *, lexical_names=()) -> str:
     """Prevent an embedded runtime from capturing surrounding source locals.
 
     This runs before integrity finalization. Explicit _ENV accesses compile in
@@ -270,13 +270,15 @@ def qualify_runtime_globals(script: str) -> str:
     ctx = _ts_parse(script)
     bindings, _, _, _, _ = resolve_bindings(ctx)
     bound = {node.id for binding in bindings for node in binding.nodes}
+    lexical_names = set(lexical_names)
     # _LS is bound by the late line-state emitter after this pass. self is an
     # implicit method parameter whose declaration has no identifier token.
     replacements = [
         (ctx.cs(node), ctx.ce(node), "_ENV." + ctx.text(node))
         for node in ctx.walk()
         if node.type == "identifier" and node.id not in bound and _is_reference(node)
-        and ctx.text(node) not in {"_ENV", "self", "_LS"}
+        and ctx.text(node) not in lexical_names
+        and ctx.text(node) not in {"_ENV", "self", "_LS", "_ENV_GUEST", "_ENV_NATIVE", "_ENV_CHECK", "_ENV_REFRESH"}
     ]
     return _apply_replacements_once(script, replacements)
 
