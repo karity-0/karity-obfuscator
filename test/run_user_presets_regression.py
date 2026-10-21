@@ -58,7 +58,7 @@ def main():
     macro = resolve_config_profile({}, 'fast')
     macro['passes'] = []
     macro['signature'] = {'mode':'none'}
-    source = '--@FUNCTION_OBF\nlocal function f(...) return STRING_OBF("한글 hi"), NUMBER_OBF(42), ... end\nreturn f(nil,3,nil)'
+    source = '--@FUNCTION_OBF\nlocal function f(...) return STRING_FLOW_OBF("한글 hi"), NUMBER_OBF(42), ... end\nreturn f(nil,3,nil)'
     pipeline = build_pipeline_from_config(macro, Pipeline, show_header=False)
     random.seed(112)
     from obfuscator.profiling import Profiler
@@ -66,7 +66,7 @@ def main():
     output = pipeline.run(source, profiler=profiler)
     lua = LuaRuntime(encoding=None, unpack_returned_tuples=True)
     assert lua.execute(output.encode()) == ('한글 hi'.encode(),42,None,3,None)
-    assert 'STRING_OBF' not in output and 'NUMBER_OBF' not in output
+    assert 'STRING_FLOW_OBF' not in output and 'NUMBER_OBF' not in output
     assert any(record.name == 'FunctionObfuscationPass' for record in profiler.records)
     assert any(detail.get('cff_blocks',0) > 0
                for record in profiler.records for detail in record.details), 'StringObf reconstruction lost CFF'

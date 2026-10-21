@@ -34,7 +34,7 @@ Windows용 Lua 도구는 `bin/`에 포함되어 있습니다. 다른 플랫폼�
 |---|---|
 | **Fast · 빠르게** | 가벼운 VM 보호. 무거운 소스 변환은 마커로 지정한 곳에 적용합니다. |
 | **Balanced · 균형** | 가벼운 소스 변환과 더 다양한 VM 구성을 제공합니다. |
-| **Strong · 강하게** | StringObf와 CFF를 포함한 전체 소스 보호를 적용합니다. |
+| **Strong · 강하게** | String Flow Obf와 CFF를 포함한 전체 소스 보호를 적용합니다. |
 | **Maximum · 최대** | 보호 예산과 VM 변형을 늘리고 패킹을 적용합니다. |
 
 모든 프리셋은 VM 출력에 NumberObf와 MemeStrings를 적용합니다. 프리셋과

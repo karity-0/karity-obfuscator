@@ -79,6 +79,7 @@ class Lua53Target:
             source, lua_version='5.3',
             policy=context.options.get('environment_policy', 'compatible'),
             compact='minify' in context.output_passes,
+            output_passes=context.output_passes,
             qualify_globals=getattr(self, 'isolate_runtime_globals', False))
         return source
 
@@ -86,10 +87,8 @@ class Lua53Target:
         from ..vm_variants import apply_line_state
         passes = context.output_passes if context is not None else ()
         prefix = context.output_prefix if context is not None else ''
-        finalizer = None
-        if "minify" in passes:
-            from ...passes.minify import MinifyPass
-            finalizer = MinifyPass().run
+        from ..runtime_finalization import output_finalizer
+        finalizer = output_finalizer(passes, lua_version='5.3')
         anchor = '--[[ENVIRONMENT_READY]]' if '--[[ENVIRONMENT_READY]]' in source else 'return function(...)'
         result, state, lines = apply_line_state(source, prefix, finalizer=finalizer,
                                 output_passes=passes,

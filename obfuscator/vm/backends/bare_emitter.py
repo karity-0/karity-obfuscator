@@ -11,9 +11,8 @@ def literal(value):
     if value is True: return 'true'
     if value is False: return 'false'
     if isinstance(value, (bytes, str)):
-        data = value if isinstance(value, bytes) else value.encode('utf8')
-        return '"' + ''.join(chr(b) if 32 <= b < 127 and b not in (34, 92)
-                              else '\\' + str(b).zfill(3) for b in data) + '"'
+        from ...passes.string_mosaic import lua_string
+        return lua_string(value)
     if isinstance(value, float):
         if math.isnan(value): return '(0/0)'
         if math.isinf(value): return '(-1/0)' if value < 0 else '(1/0)'
@@ -365,7 +364,7 @@ def emit(lowered, context):
     from ..native_capture import bind_native_calls
     forced=['string.match','string.find','string.sub','tonumber',
         'string.byte','pcall','type','debug.getinfo','debug.gethook','debug.getmetatable']
-    if set(context.output_passes)&{'string_obf','string_encode','meme_strings'}:
+    if set(context.output_passes)&{'string_obf','string_flow_obf','string_encode','meme_strings'}:
         forced+=['string.char','string.rep','table.concat']
     source,captured=bind_native_calls(source,forced=forced)
     context.profile.append({'phase': 'bare_codegen', 'elapsed': round(time.perf_counter() - started, 6),
@@ -390,15 +389,14 @@ def emit(lowered, context):
     from ..environment import bind_environment
     source,environment=bind_environment(source,lua_version=program.version,
         policy=context.options.get('environment_policy','compatible'),compact='minify' in context.output_passes,
+        output_passes=context.output_passes,
         qualify_globals=getattr(context.target,'isolate_runtime_globals',False),ready_marker='--[[BARE_ENV_READY]]')
     from ..line_state import apply_line_state
     from ..runtime_identity import checksum
     started=time.perf_counter()
     anchor='--[[BARE_ENV_READY]]'
-    finalizer=None
-    if 'minify' in context.output_passes:
-        from ...passes.minify import MinifyPass
-        finalizer=MinifyPass().run
+    from ..runtime_finalization import output_finalizer
+    finalizer=output_finalizer(context.output_passes,lua_version=program.version)
     source,program.security.line_state,lines=apply_line_state(source,context.output_prefix,
         finalizer=finalizer,output_passes=list(context.output_passes),insertion_anchor=anchor,
         native_u32=program.version=='5.1',environment_source=environment,

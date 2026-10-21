@@ -48,6 +48,14 @@ flowchart TD
 ```
 
 For blob runtimes, VM output passes run before dump/integrity binding.
+All four backends share a terminal API-capture and formatting boundary after
+output generation and late environment/line helpers. This captures native calls
+introduced by output passes too, using numeric slots. Initial API lookup keys
+remain ordinary literals unless String Encode is selected; its shared String Mosaic
+policy needs no runtime API and can also style these bootstrap keys.
+Late environment strings follow the selected string passes through a shared
+pool, so repeated guard labels need only one reconstruction. New runtime code
+must enter before this boundary and before source locations and dumps are bound.
 Changing that finalized function afterwards can invalidate the artifact. Each
 prototype belongs to one generated VM; increasing `vm_count` diversifies runtimes,
 not CPU parallelism. Source/output pass contexts and release rules are listed in

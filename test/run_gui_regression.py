@@ -131,7 +131,7 @@ def main() -> int:
             ]
     for name in ("high", "max"):
         stages=shipped_profiles[name]['passes']
-        assert stages.index('string_obf') < stages.index('function_obf') < stages.index('number_obf')
+        assert stages.index('string_flow_obf') < stages.index('function_obf') < stages.index('number_obf')
     if "max" in profiles:
         validate_release_config(profiles["max"])
 

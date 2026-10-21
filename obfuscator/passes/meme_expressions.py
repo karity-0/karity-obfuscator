@@ -93,9 +93,10 @@ class MemeExpressionEngine:
 
     @staticmethod
     def _length(phrase: str) -> str:
-        escaped = phrase.replace('\\', '\\\\').replace('"', '\\"')
-        escaped = escaped.replace('\n', '\\n').replace('\r', '\\r')
-        return f'#"{escaped}"'
+        from .string_mosaic import generated_string
+        # Length-expression budgets and the numeric fragment lexer require a
+        # single quoted atom. Share escapes/quotes, without extra concat work.
+        return '#' + generated_string(phrase, literal_only=True, preserve_utf8=True)
 
     def _integer(self, value: int, depth: int = 2) -> str:
         choices = STRINGS_BY_LENGTH.get(value)

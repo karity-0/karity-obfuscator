@@ -13,6 +13,7 @@
   - [remove_comment](#remove_comment)
   - [string_encode](#string_encode)
   - [string_obf](#string_obf)
+  - [string_flow_obf](#string_flow_obf)
   - [boolean_obf](#boolean_obf)
   - [number_obf](#number_obf)
   - [meme_strings](#meme_strings)
@@ -21,6 +22,7 @@
   - [rename_obf](#rename_obf)
   - [localize_globals](#localize_globals)
   - [minify](#minify)
+  - [semicolon](#semicolon)
   - [vm](#vm)
   - [anti_debug](#anti_debug)
   - [anti_env](#anti_env)
@@ -80,7 +82,7 @@
 
 ## selective protection
 Use `selection_modes` to choose `all` (the default for enabled passes) or
-`marked` for `string_obf`, `number_obf`, `boolean_obf`, `table_obf`,
+`marked` for `string_obf`, `string_flow_obf`, `number_obf`, `boolean_obf`, `table_obf`,
 `function_obf`, `meme_strings`, and `vm`. Source macros/directives can enable an absent
 pass in marked mode. `selection_profiles` supplies named VM option presets
 in flat configs; named input profiles are also available to VM directives.
@@ -91,10 +93,12 @@ See the [selective protection guide](selective-obfuscation.md) and
 `config.selective.example.json` for syntax, precedence and limitations.
 `--selection-report PATH` writes original-line application results as JSON.
 
-## string_obf_options
+## string_flow_obf_options
 Optional bounded reconstruction parameters: steps_min/steps_max (2..5),
 slots_min/slots_max (2..4), unroll_bytes (0..16). Omission retains the original generator.
-These also apply to automatically enabled STRING_OBF macros. They do not filter literals.
+These also apply to automatically enabled STRING_FLOW_OBF macros. They do not filter literals.
+`string_obf_options` is retained as a legacy alias for Flow options; the compact
+`string_obf` pass has no flow/step settings. Choose string_flow_obf explicitly to keep the 1.2 reconstruction style.
 
 ## boolean_obf_options / table_obf_options
 Boolean `mode` is `expression` (default), `mixed`, or `dataflow`. The shared source/VM
@@ -102,7 +106,7 @@ generator varies arithmetic, XOR, mask and MBA predicates. Dataflow adds bounded
 local assignments for subsequent CFF; VM literal emission always uses scalar expressions.
 Generated numeric operands use NumberObf/Literal Mosaic and provenance prevents re-expansion.
 Table `mode` is `mixed` (default), `shuffle`, or `reconstruct`; `max_fields` defaults to 16 (1..64).
-Optional `string_keys: true` reuses StringObf for staged string keys and requires Lua 5.3.
+Optional `string_keys: true` reuses String Flow Obf for staged string keys and requires Lua 5.3.
 Sparse or uncertain list fields retain constructor form. Dense literal arrays can be staged. Calls, global reads, colliding keys and
 uncertain expressions retain their evaluation structure. Budget fallback is recorded in profiling.
 Options also apply to automatically enabled BOOLEAN_OBF/TABLE_OBF macros.
@@ -110,8 +114,9 @@ See [literal reconstruction and cost measurements](passes/boolean-table.md).
 
 ## literal_mosaic
 `literal_mosaic` configures the internal shared generator; it is not a pass.
-It reuses NumberObf/MemeStrings only when those passes are enabled in the
-actual source or output pipeline, and respects marked source regions.
+Optional strategies follow the actual source/output pass list and marked regions.
+String Obf and String Flow Obf always use numeric Mosaic for their own operands;
+this does not enable NumberObf over source numbers. MemeStrings remains optional.
 FunctionObf's existing numeric and compiler budgets remain authoritative.
 Source NumberObf and the original MemeStrings replacement rate (0.35) are unchanged.
 
@@ -251,7 +256,9 @@ Removes comments from the source code before AST parsing.
 
 **type:** passes | vm_output_passes | packer_output_passes
 
-Encodes string literals.
+Applies shared String Mosaic spelling: varied quotes, long brackets, escapes and bounded mixed fragments, without runtime helpers.
+
+See [`string_encode` design and implementation notes](passes/stringEncode.md) for architecture, trade-offs, and future work.
 
 ## string_obf
 
@@ -261,11 +268,25 @@ Encodes string literals.
 
 **type:** passes | vm_output_passes | packer_output_passes
 
-Reconstructs strings through randomized, interleaved arithmetic and bitwise statements.
+Reconstructs string bytes through compact char calls, varied inverse operations, and scoped numeric Mosaic expressions.
 
 **Target requirements:** integer_arithmetic, native_bitops; minimum compatibility `portable`.
 
 See [`string_obf` design and implementation notes](passes/stringObfuscation.md) for architecture, trade-offs, and future work.
+
+## string_flow_obf
+
+**label:** String Flow Obf
+
+**group:** base pass
+
+**type:** passes | vm_output_passes | packer_output_passes
+
+Reconstructs strings through randomized, interleaved arithmetic and bitwise statements with mutable shared state.
+
+**Target requirements:** integer_arithmetic, native_bitops; minimum compatibility `portable`.
+
+See [`string_flow_obf` design and implementation notes](passes/stringFlowObfuscation.md) for architecture, trade-offs, and future work.
 
 ## boolean_obf
 
@@ -372,7 +393,7 @@ source numbers retain their existing protection. `generated_number_max_chars`
 the generated expressions. Hot states use one arithmetic layer and Lua
 5.1-compatible syntax. Profiling records native costs and protection adjustments.
 `reconstruction_group_size` (default `4`, range `1..8`) groups consecutive
-StringObf reconstruction statements into basic blocks. Joins/branches/returns
+String Flow Obf reconstruction statements into basic blocks. Joins/branches/returns
 remain boundaries, data dependencies and execution order stay intact, and
 all reconstruction operations remain in CFF. Profiling records coalesced states.
 
@@ -417,6 +438,18 @@ See [`localize_globals` design and implementation notes](passes/localizeGlobals.
 **type:** passes | vm_output_passes | packer_output_passes
 
 Reduces script size by removing unnecessary whitespace.
+
+## semicolon
+
+**label:** SemiColon
+
+**group:** post pass
+
+**type:** passes | vm_output_passes | packer_output_passes
+
+Adds decorative statement terminators in a repeating 1, 3, 2, 1 pattern; Lua 5.1 uses single terminators.
+
+See [`semicolon` design and implementation notes](passes/semiColon.md) for architecture, trade-offs, and future work.
 
 ## vm
 
@@ -626,12 +659,13 @@ and vararg transfer semantics execute inside build-time compiled control and
 semantic graphs where supported.
 
 Generated VM output plans `function_obf`, `rename_obf`, `localize_globals`, and
-the `string_obf`/`boolean_obf`/`number_obf` literal stages from one shared
+the `string_obf`/`string_flow_obf`/`string_encode`/`boolean_obf`/`number_obf` literal stages from one shared
 Tree-sitter context when no structural rewrite invalidates it. Identifier and
 literal replacements are merged by a structured emitter, while generated
 literals remain typed for later stages. This preserves cross-pass layering such
-as string-reconstruction operands flowing into number obfuscation without parsing and
-rendering the expanded VM source after every pass.
+as literal encoding and reconstruction without parsing and rendering the expanded
+VM source after every pass. String reconstruction generates its own numeric Mosaic
+operands and protects them from repeated numeric wrapping.
 
 Handler, arithmetic, semantic, call, control, and loop graph sources are inserted
 before that VM-output pipeline, so generated backend identifiers and literals are

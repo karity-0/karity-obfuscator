@@ -624,6 +624,7 @@ end
             source, lua_version='5.1',
             policy=context.options.get('environment_policy', 'compatible'),
             compact='minify' in context.output_passes,
+            output_passes=context.output_passes,
             qualify_globals=getattr(self, 'isolate_runtime_globals', False))
         return source
 
@@ -635,14 +636,12 @@ end
         # translator after backend emission.
         prefix = context.output_prefix if context is not None else ''
         passes = context.output_passes if context is not None else ()
-        finalizer = None
-        if 'minify' in passes:
-            from ...passes.minify import MinifyPass
-            finalizer = MinifyPass().run
+        from ..runtime_finalization import output_finalizer
+        finalizer = output_finalizer(passes, lua_version='5.1')
         result, state, lines = apply_line_state(source, prefix,
                                                finalizer=finalizer,
                                                environment_source=getattr(self, 'line_environment', None),
-                                               output_passes=(), insertion_anchor="--[[TARGET51_PRELUDE_END]]",
+                                               output_passes=passes, insertion_anchor="--[[TARGET51_PRELUDE_END]]",
                                                native_u32=True)
         return result.replace("--[[TARGET51_PRELUDE_END]]", ""), state, lines
 

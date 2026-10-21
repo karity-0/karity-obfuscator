@@ -6,14 +6,15 @@ retain their existing behavior.
 
 ## Configuration and precedence
 
-`selection_modes` selects `all` or `marked` independently for `string_obf`,
+`selection_modes` selects `all` or `marked` independently for `string_obf`, `string_flow_obf`,
 `number_obf`, `boolean_obf`, `table_obf`, `function_obf`, `meme_strings`, and `vm`.
 
 `--@NUMBER_OBF_START` / `--@NUMBER_OBF_END` and
 `--@MEME_STRINGS_START` / `--@MEME_STRINGS_END` select complete statement regions.
 They accept no options. In marked mode the shared Literal Mosaic generator uses
-only the strategies selected at the StringObf literal or FunctionObf function
-being transformed. An enclosing function without Number/Meme selection does
+the strategies selected at the literal or function being transformed. String Obf
+and String Flow Obf always use numeric Mosaic expressions for their own operands;
+Meme Strings remains optional. An enclosing function without Number/Meme selection does
 not borrow activation from a marked child; selected children keep their own
 scope. See [Literal Mosaic](literal-mosaic.md).
 
@@ -53,6 +54,7 @@ Direct `Pipeline` users inherit function selection defaults from their configure
 
 ```lua
 local message = STRING_OBF("secret")
+local staged = STRING_FLOW_OBF("secret")
 local limit = NUMBER_OBF(-123)
 local enabled = BOOLEAN_OBF(true)
 local data = TABLE_OBF({1, 2, 3, name="literal"})

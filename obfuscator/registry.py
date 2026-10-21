@@ -84,12 +84,19 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "cls": "StringEncodePass",
         "label": "Encode String",
         "group": "base",
+        "docs": "passes/stringEncode.md",
     },
     "string_obf": {
         "cls": "StringObfuscationPass",
         "label": "String Obfuscation",
         "group": "base",
         "docs": "passes/stringObfuscation.md",
+    },
+    "string_flow_obf": {
+        "cls": "StringFlowObfuscationPass",
+        "label": "String Flow Obf",
+        "group": "base",
+        "docs": "passes/stringFlowObfuscation.md",
     },
     "boolean_obf": {
         "cls": "BooleanObfuscationPass",
@@ -136,6 +143,12 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "label": "Minify",
         "group": "post",
     },
+    "semicolon": {
+        "cls": "SemiColonPass",
+        "label": "SemiColon",
+        "group": "post",
+        "docs": "passes/semiColon.md",
+    },
     "vm": {
         "cls": "VMPass",
         "label": "VM",
@@ -180,8 +193,9 @@ VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
 PASS_DESCRIPTIONS = {
     "strip_info": "Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.",
     "remove_comment": "Removes comments from the source code before AST parsing.",
-    "string_encode": "Encodes string literals.",
-    "string_obf": "Reconstructs strings through randomized, interleaved arithmetic and bitwise statements.",
+    "string_encode": "Applies shared String Mosaic spelling: varied quotes, long brackets, escapes and bounded mixed fragments, without runtime helpers.",
+    "string_obf": "Reconstructs string bytes through compact char calls, varied inverse operations, and scoped numeric Mosaic expressions.",
+    "string_flow_obf": "Reconstructs strings through randomized, interleaved arithmetic and bitwise statements with mutable shared state.",
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
     "meme_strings": "Replaces some numeric literals with meme string lengths and arithmetic corrections.",
@@ -190,6 +204,7 @@ PASS_DESCRIPTIONS = {
     "rename_obf": "Assigns frequency-ranked short names to lexical locals and generated helpers.",
     "localize_globals": "Converts global variable accesses to local aliases where possible.",
     "minify": "Reduces script size by removing unnecessary whitespace.",
+    "semicolon": "Adds decorative statement terminators in a repeating 1, 3, 2, 1 pattern; Lua 5.1 uses single terminators.",
     "vm": "Virtualizes Lua bytecode using the custom Lua 5.3 VM.",
     "anti_debug": "Inserts anti-debugging checks.",
     "anti_env": "Blocks Roblox/executor-shaped environments using multiple related typed signals, including real matching hosts. Opt-in source pre-pass.",
@@ -520,6 +535,7 @@ def validate_config(config: object) -> None:
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_literal_mosaic(config.get('literal_mosaic',{}))
     _validate_string_obf_options(config.get('string_obf_options', {}))
+    _validate_string_obf_options(config.get('string_flow_obf_options', {}))
     _validate_literal_pass_options(config)
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
@@ -949,11 +965,11 @@ def build_pipeline_from_config[P: Pipeline](
     has_packer              = "pack" in config.get("passes", [])
 
     # Integrity-bearing output must not be rewritten after its dump is hashed.
-    # Route a following minifier into that stage's output finalization instead.
+    # Route following formatting passes into that stage's output finalization.
     stages: list[tuple[str, list[str]]] = []
     protected_output = None
     for name in config.get("passes", []):
-        if name == "minify" and protected_output is not None:
+        if name in {"minify", "semicolon"} and protected_output is not None:
             if name not in stages[protected_output][1]:
                 stages[protected_output][1].append(name)
             continue
@@ -991,11 +1007,15 @@ def build_pipeline_from_config[P: Pipeline](
             function_pass.lua_version = pipeline.target_profile.lua_version
             pipeline.add(function_pass)
         elif name == 'string_obf':
-            pipeline.add(cls(**config.get('string_obf_options', {})))
+            pipeline.add(cls())
+        elif name == 'string_flow_obf':
+            pipeline.add(cls(**config.get('string_flow_obf_options', config.get('string_obf_options', {}))))
         elif name == 'boolean_obf':
             pipeline.add(cls(**config.get('boolean_obf_options', {})))
         elif name == 'table_obf':
             pipeline.add(cls(**config.get('table_obf_options', {})))
+        elif name in {'semicolon', 'string_encode'}:
+            pipeline.add(cls(lua_version=pipeline.target_profile.lua_version))
         else:
             pipeline.add(cls())
 

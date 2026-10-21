@@ -19,7 +19,8 @@ from obfuscator.passes import string_reconstruction as reconstruction
 from obfuscator.passes.function_obfuscation import FunctionObfuscationPass
 from obfuscator.passes.number_obfuscation import NumberObfuscationPass
 from obfuscator.passes.rename_obfuscation import RenameObfuscationPass
-from obfuscator.passes.string_obfuscation import StringObfuscationPass, _encode, parse_lua_string
+from obfuscator.passes.string_obfuscation import parse_lua_string, _encode_flow as _encode
+from obfuscator.passes.string_flow_obfuscation import StringFlowObfuscationPass as StringObfuscationPass
 from obfuscator.passes.ts_utils import parse
 from obfuscator.vm.output_emitter import emit_vm_literals
 from lua_runtime import lua_executable
@@ -104,17 +105,17 @@ text]=])
                 self.assertEqual(parse_lua_string(literal), lua.eval(literal.encode()), repr(literal))
 
     def test_macro_activation_selection_and_no_obf(self):
-        source = 'local plain="visible";local a=STRING_OBF("hidden");return plain,a'
-        for passes in ([], ["string_obf"]):
+        source = 'local plain="visible";local a=STRING_FLOW_OBF("hidden");return plain,a'
+        for passes in ([], ["string_flow_obf"]):
             pipeline = build_pipeline_from_config({"passes": passes, "signature": {"mode": "none"},
-                                                  "selection_modes": {"string_obf": "marked"}}, Pipeline)
+                                                  "selection_modes": {"string_flow_obf": "marked"}}, Pipeline)
             output = pipeline.run(source)
             self.assertIn('"visible"', output)
             self.assertNotIn('"hidden"', output)
-            self.assertNotIn("STRING_OBF", output)
+            self.assertNotIn("STRING_FLOW_OBF", output)
             self.assertEqual(LuaRuntime().execute(output), ("visible", "hidden"))
-        excluded = '--@NO_OBF_START\nlocal s=STRING_OBF("keep")\n--@NO_OBF_END\nreturn s'
-        pipeline = build_pipeline_from_config({"passes": ["string_obf"], "signature": {"mode": "none"}}, Pipeline)
+        excluded = '--@NO_OBF_START\nlocal s=STRING_FLOW_OBF("keep")\n--@NO_OBF_END\nreturn s'
+        pipeline = build_pipeline_from_config({"passes": ["string_flow_obf"], "signature": {"mode": "none"}}, Pipeline)
         self.assertEqual(LuaRuntime().execute(pipeline.run(excluded)), "keep")
 
     def test_unique_occurrences_seed_and_bounded_graph(self):
@@ -158,7 +159,7 @@ text]=])
             self.assertEqual(execute(output), expected, seed)
             self.assertGreater(function_pass.last_transformed_count, 0)
             random.seed(seed)
-            output, details = emit_vm_literals(source, ["string_obf", "number_obf"])
+            output, details = emit_vm_literals(source, ["string_flow_obf", "number_obf"])
             self.assertEqual(execute(output), expected, seed)
             self.assertEqual(sum(d.get("parse_count", 0) for d in details), 1)
             numbers = NumberObfuscationPass().run("return string.char(65,66)", parse("return string.char(65,66)"))
@@ -189,7 +190,7 @@ text]=])
                                "graph_execution_rate": 0.0, "cross_instruction_rate": 0.0,
                                "runtime_polymorphism_rate": 0.0},
             }, Pipeline)
-            output = pipeline.run('local s=STRING_OBF("a\\000b");print(s,#s)')
+            output = pipeline.run('local s=STRING_FLOW_OBF("a\\000b");print(s,#s)')
             self.assertEqual(execute(output), (0, b"a\0b\t3\n", b""), backend)
 
     def test_profile_source_order_and_composition(self):
@@ -198,12 +199,92 @@ text]=])
         for name in ("high", "max"):
             options = profiles[name].copy()
             passes = options["passes"]
-            self.assertLess(passes.index("string_obf"), passes.index("function_obf"))
+            self.assertLess(passes.index("string_flow_obf"), passes.index("function_obf"))
             options["passes"] = [p for p in passes if p not in {"vm", "pack"}]
             options["signature"] = {"mode": "none"}
             random.seed(321)
             output = build_pipeline_from_config(options, Pipeline).run(source)
             self.assertEqual(execute(output), (0, b"hi\t42\n", b""), name)
+
+
+class CompactStringTests(unittest.TestCase):
+    def test_all_byte_operations_and_large_literals(self):
+        from obfuscator.passes.string_obfuscation import _BYTE_OPERATIONS, _byte_expression, _encode as compact
+        lua = LuaRuntime(encoding=None)
+        for operation in _BYTE_OPERATIONS:
+            for value in range(256):
+                random.seed(value)
+                self.assertEqual(value, lua.eval(_byte_expression(value, operation).encode()))
+        for length in (0, 1, 16, 17, 64, 65, 1024, 8192, 65536):
+            random.seed(54)
+            data = bytes(i % 256 for i in range(length))
+            code = compact(data)
+            self.assertEqual(data, lua.eval(code.encode()))
+            self.assertNotIn('function', code)
+            self.assertEqual(length > 64, 'table.concat' in code)
+
+    def test_markers_options_and_strategy_precedence(self):
+        from obfuscator.registry import PASS_REGISTRY, get_pass_contexts
+        from obfuscator.passes.string_obfuscation import StringObfuscationPass as Compact
+        from obfuscator.passes.string_flow_obfuscation import StringFlowObfuscationPass
+        self.assertIs(PASS_REGISTRY['string_obf']['cls'], Compact)
+        self.assertIs(PASS_REGISTRY['string_flow_obf']['cls'], StringFlowObfuscationPass)
+        self.assertEqual(3, len(get_pass_contexts('string_flow_obf')))
+        for other, macro, flow in (('string_obf', 'STRING_FLOW_OBF', True),
+                                    ('string_flow_obf', 'STRING_OBF', False)):
+            config = {'passes': [other], 'signature': {'mode': 'none'}}
+            source = 'return ' + macro + '("hidden")'
+            output = build_pipeline_from_config(config, Pipeline).run(source)
+            self.assertNotIn('"hidden"', output)
+            self.assertEqual(flow, 'function' in output)
+            self.assertEqual('hidden', LuaRuntime().execute(output))
+        source = '--@NO_OBF_START\nlocal s="readable"\n--@NO_OBF_END\nreturn s'
+        output = build_pipeline_from_config({'passes': ['string_obf'], 'signature': {'mode': 'none'}}, Pipeline).run(source)
+        self.assertIn('"readable"', output)
+        tuned = build_pipeline_from_config({'passes': ['string_flow_obf'],
+            'string_flow_obf_options': {'steps_min': 4, 'steps_max': 5},
+            'signature': {'mode': 'none'}}, Pipeline).run('return "tuned"')
+        self.assertEqual('tuned', LuaRuntime().execute(tuned))
+
+    def test_expression_semantics_and_mosaic(self):
+        from obfuscator.profiling import Profiler
+        source = '''local function packet(...)return select('#',...),... end
+local skipped=false and "not evaluated"
+local t={["key"]="한글\\000\\255"}
+local function f(...)return packet("a",...),t["key"] end
+print(f(nil,false,nil));io.write [=[long
+text]=]'''
+        expected = execute(source)
+        for name in ('string_obf', 'string_flow_obf'):
+            config = {'passes': [name, 'number_obf', 'meme_strings', 'minify'],
+                'signature': {'mode': 'none'}, 'literal_mosaic': {'diversity_metrics': True,
+                    'generated_meme_rate': 1.0}}
+            random.seed(44)
+            profiler = Profiler()
+            output = build_pipeline_from_config(config, Pipeline).run(source, profiler=profiler)
+            self.assertEqual(expected, execute(output))
+            metrics = profiler.as_dict()['literal_mosaic']
+            self.assertGreater(metrics['strategies'].get('meme_generated', 0), 0)
+            numeric = next(r for r in profiler.records if r.name == 'NumberObfuscationPass')
+            self.assertGreater(numeric.details[0]['protected_generated_numbers'], 0)
+
+    def test_both_strategies_in_all_vm_outputs_and_packer(self):
+        from run_blob_form_regression import execute as run_vm
+        from obfuscator.vm import VMPass
+        from obfuscator.vm.targets.profile import TargetProfile
+        from obfuscator.passes.packer import _obfuscate_packer_output
+        source = 'print("split-strings-ok")'
+        for name in ('string_obf', 'string_flow_obf'):
+            for backend in ('classic', 'karity', 'mov', 'bare'):
+                random.seed(330)
+                output = VMPass(target=TargetProfile('5.3', backend), vm_options={
+                    'backend': backend, 'vm_count': 1, 'fake_handlers': False,
+                    'mutate_handlers': False, 'junk_instructions': False,
+                }, vm_output_passes=[name, 'minify']).run(source)
+                self.assertEqual(run_vm('5.3', source), run_vm('5.3', output))
+                self.assertNotIn('string.char', output)
+            output = _obfuscate_packer_output(source, [name, 'minify'])
+            self.assertEqual(execute(source), execute(output))
 
 
 if __name__ == "__main__":

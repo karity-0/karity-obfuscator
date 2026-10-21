@@ -193,7 +193,7 @@
     }
 
     const markerHints = {
-      STRING_OBF: 'Select a string literal → insert', NUMBER_OBF: 'Select a number literal → insert',
+      STRING_OBF: 'Select a string literal → insert', STRING_FLOW_OBF: 'Select a string literal → insert', NUMBER_OBF: 'Select a number literal → insert',
       BOOLEAN_OBF: 'Select true / false → insert', TABLE_OBF: 'Select a table { … } → insert',
       VM_START: 'Select complete statements → VM region', FUNCTION_OBF: 'Insert before a function',
       FUNCTION_OBF_START: 'Select statements inside a function → protect', VM: 'Insert at the start of the file',

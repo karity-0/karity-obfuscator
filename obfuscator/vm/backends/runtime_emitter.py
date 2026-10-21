@@ -425,14 +425,14 @@ def _obfuscate_vm_output_scoped(
     deferred_names = (
         'rename_obf' in identifier_names
         and 'localize_globals' not in identifier_names
-        and 'string_obf' not in emitter_names
+        and not set(emitter_names) & {'string_obf', 'string_flow_obf'}
         and not RENAME_OPTIONS.get().get('readable', False)
     )
     strip_entries = [entry for entry in after if entry[0] == 'strip_info']
     fused_strip = len(strip_entries) == 1
     reuse_scalar_analysis = (
         (deferred_names or (fused_strip and not identifier_names))
-        and 'string_obf' not in emitter_names
+        and not set(emitter_names) & {'string_obf', 'string_flow_obf'}
         and len(strip_entries) <= 1
         and all(name in {'strip_info', 'minify'} for name, _ in after)
     )
@@ -469,6 +469,9 @@ def _obfuscate_vm_output_scoped(
                 # The shared identifier emitter already renamed locals. Keep
                 # fields/labels/comments stripped without a second rename scan.
                 pipeline.add(cls(rename_locals='rename_obf' not in identifier_names))
+            elif configured_name in {'semicolon', 'string_encode'}:
+                from obfuscator.passes.function_costs import POLICY
+                pipeline.add(cls(lua_version=POLICY.get().lua_version))
             else:
                 pipeline.add(cls())
             names.append(configured_name)

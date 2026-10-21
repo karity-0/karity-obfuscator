@@ -7,13 +7,19 @@ and `MemeExpressionEngine` with MemeStrings. No pass registry entry is added.
 ## Call flow and activation
 
 `Pipeline.run` creates a service after resolving the real base pass list,
-including passes enabled by source selections. StringObf scopes each original
-literal, reconstructs its existing numeric/data dependency program, and sends
-its generated operands to `transform_generated`. FunctionObf scopes each
+including passes enabled by source selections. String Obf and String Flow Obf
+scope each original literal, build their reconstruction expressions or programs,
+and send generated operands to `transform_generated`. FunctionObf scopes each
 original function and asks `NumericTransport.generated_expression` for bounded
 state/transition/junk constants. The service returns a protected `CodeText`.
 Later NumberObf/MemeStrings skip its numeric leaves. Original source numbers
 still use the full existing NumberObf generator.
+
+String Obf and String Flow Obf always use a bounded numeric producer for their
+own reconstruction operands, even with NumberObf off. This does not enable the
+NumberObf pass over original source numbers. Their optional MemeStrings strategy
+still follows the surrounding selection. The activation table below describes
+other callers and optional participation.
 
 | Enabled in this scope | Allowed new generated strategies |
 |---|---|
@@ -84,9 +90,9 @@ fall back to literals, so candidate rate is not an emitted ratio. Lua 5.1
 generation avoids native bit operators, floor division and hexadecimal floats;
 large values use double-compatible literal/zero-correction expressions.
 
-StringObf's split lengths, mutable states, MBA/reconstruction operations and
-expression wrapper are preserved. Only generated numeric operands change.
-StringObf still precedes FunctionObf, and its reconstruction statements still
+String Flow Obf's split lengths, mutable states, MBA/reconstruction operations
+and expression wrapper are preserved. Only generated numeric operands change.
+Both string passes precede FunctionObf; Flow's reconstruction statements still
 receive CFF and compiler-measured grouping/splitting. Generated operands become
 protected after their first budgeted generation; unlimited subsequent numeric
 and meme layering would defeat that budget. This intentionally changes generated
@@ -146,3 +152,12 @@ introduced.
 
 See the [controlled performance report](performance/literal-mosaic.md) for
 measurements, regression coverage and remaining costs.
+
+## String Mosaic
+
+`strings()` returns the shared [String Mosaic](passes/stringEncode.md) generator
+with the active target and String Encode activation. It reuses the existing byte
+literal decoder and escape implementation rather than introducing another pass.
+Source/output activation remains separate. Quoted/long literals and up to four
+mixed fragments share one policy; literal-only and newline restrictions belong
+to the caller. Generated numeric operands and their budgets remain independent.

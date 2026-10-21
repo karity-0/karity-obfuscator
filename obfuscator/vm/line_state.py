@@ -235,7 +235,7 @@ end end''')
 
     selected = list(output_passes or ())
     literal_passes = [name for name in selected
-                      if name in {'number_obf', 'string_obf', 'boolean_obf'}]
+                      if name in {'number_obf', 'string_obf', 'string_flow_obf', 'string_encode', 'boolean_obf'}]
 
     # Literal emitters use the module PRNG; keep the build stream unchanged.
     random_state = random.getstate()
@@ -256,7 +256,12 @@ end end''')
         combined = '\n'.join(marker+fragment for marker, fragment in zip(boundaries, fragments))
         if literal_passes:
             from .output_emitter import emit_vm_literals
-            combined, _ = emit_vm_literals(combined, literal_passes)
+            from ..passes.function_costs import POLICY, CostPolicy
+            policy_token = POLICY.set(CostPolicy(lua_version='5.1' if native_u32 else '5.3'))
+            try:
+                combined, _ = emit_vm_literals(combined, literal_passes)
+            finally:
+                POLICY.reset(policy_token)
         if qualify_globals:
             from ..passes.rename_ts import qualify_runtime_globals
             # The environment bank is declared outside these late fragments.

@@ -34,7 +34,7 @@ depends on the input. See [backend choices](docs/backends.md).
 |---|---|
 | **Fast · 빠르게** | Lightweight VM protection; use markers for heavy source passes. |
 | **Balanced · 균형** | More VM diversity with light source transformations. |
-| **Strong · 강하게** | Full source protection, including StringObf and CFF. |
+| **Strong · 강하게** | Full source protection, including String Flow Obf and CFF. |
 | **Maximum · 최대** | Larger protection budgets, more VM variants, and packing. |
 
 Every preset keeps NumberObf and MemeStrings on the VM output. Preset and

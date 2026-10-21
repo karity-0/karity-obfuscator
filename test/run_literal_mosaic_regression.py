@@ -62,7 +62,9 @@ def main():
             counts=metrics['strategies']
             assert bool(counts.get('meme_generated',0))==meme,counts
             number_strategies=sum(v for k,v in counts.items() if k.startswith('number_'))
-            assert bool(number_strategies)==number,counts
+            # String reconstruction owns a bounded numeric producer even
+            # without the independent NumberObf source pass.
+            assert bool(number_strategies)==(number or not meme),counts
             assert '#"' not in output if not meme else '#"' in output
             assert 'KarityNumericOrigin' not in output
             if number:
@@ -126,10 +128,10 @@ return selected(),outside()
     assert run(output)==run(selected)
     assert metrics['strategies']['meme_generated']>0
     assert all(not name.startswith('number_') or count>0 for name,count in metrics['strategies'].items())
-    # Every generated-expression tag belongs to the selected declaration;
-    # plain reconstruction constants outside remain unprotected by Mosaic.
+    # Optional Number/Meme selections still follow their regions. Strings
+    # outside those regions own a bounded numeric producer of their own.
     assert any('/mosaic:' in o for _,_,o in output.origins)
-    assert any(o=='string_constant' for _,_,o in output.origins)
+    assert any(o.startswith('string_constant/mosaic:number_') for _,_,o in output.origins)
 
     parent=LiteralMosaic(['number_obf','meme_strings'],options={'generated_meme_rate':1.0},metrics=DiversityMetrics(True))
     with use_mosaic(parent):

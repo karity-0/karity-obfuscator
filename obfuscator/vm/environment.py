@@ -38,7 +38,8 @@ def _helper_sites(source: str, start: int) -> list[int]:
 
 
 def bind_environment(source: str, *, lua_version: str, policy: str, compact: bool,
-                     qualify_globals: bool = False, ready_marker: str | None = None) -> tuple[str, str]:
+                     qualify_globals: bool = False, ready_marker: str | None = None,
+                     output_passes=()) -> tuple[str, str]:
     if policy not in {'compatible', 'strict'}:
         raise ValueError('environment_policy must be compatible or strict')
     from ..names import NameAllocator
@@ -133,6 +134,8 @@ end
     fragments = fragments.replace('__KIT', kit).replace('__ORIGINAL', original)
     for key, slot in slots.items():
         fragments = re.sub(r'\b__'+key+r'\b', str(slot), fragments)
+    from .runtime_finalization import protect_fragment_strings
+    fragments = protect_fragment_strings(fragments, output_passes, lua_version=lua_version)
     if lua_version == '5.3' and qualify_globals:
         from ..passes.rename_ts import qualify_runtime_globals
         fragments = qualify_runtime_globals(fragments)

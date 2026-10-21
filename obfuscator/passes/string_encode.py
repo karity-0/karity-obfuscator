@@ -1,37 +1,35 @@
+"""Apply the shared String Mosaic spelling policy to source literals."""
 from .base import BasePass, Replacement
 from .string_obfuscation import parse_lua_string
+from .string_mosaic import StringMosaic, StringPolicy, encode_quoted as _encode_bytes
 
 
-def _encode(raw: str) -> str:
-    """
-    Lua 문자열 리터럴(따옴표 포함)을 \\NNN 이스케이프 시퀀스로 인코딩한다.
-
-    Lua 문자열은 바이트열이므로 실제 런타임 바이트 단위로 인코딩한다(한글 등
-    멀티바이트/이스케이프도 안전). 항상 3자리로 zero-pad해서 뒤따르는 숫자와
-    묶이는 모호성을 없앤다.
-
-    예) '"hello"' → '"\\104\\101\\108\\108\\111"'
-    """
-    return '"' + "".join(f"\\{b:03d}" for b in parse_lua_string(raw)) + '"'
+def _encode(raw: str, lua_version='5.3') -> str:
+    return StringMosaic(StringPolicy(lua_version=lua_version)).expression(
+        parse_lua_string(raw, lua_version))
 
 
 class StringEncodePass(BasePass):
-    """문자열 리터럴을 ASCII 이스케이프 시퀀스로 난독화하는 pass."""
+    """Opt in to shared string spelling; preserve each literal's exact bytes."""
+    parser = 'treesitter'
 
-    # Lua hexadecimal floats produced by number_obf cannot be read by
-    # luaparser's Python-number converter. Keep this textual pass on Lua syntax.
-    parser = "treesitter"
+    def __init__(self, lua_version=None):
+        self.lua_version = lua_version
 
     def run(self, script: str, tree) -> list[Replacement]:
-        replacements: list[Replacement] = []
-
+        from .literal_mosaic import ACTIVE
+        from .function_costs import POLICY
+        mosaic = ACTIVE.get()
+        version = self.lua_version or (mosaic.policy.lua_version if mosaic is not None else POLICY.get().lua_version)
+        generator = (mosaic.strings(force=True) if mosaic is not None and mosaic.policy.lua_version == version
+                     else StringMosaic(StringPolicy(lua_version=version)))
+        decoded = {}
+        replacements = []
         for node in tree.walk():
-            if node.type == "string":
+            if node.type == 'string':
                 literal = tree.text(node)
-                replacements.append(Replacement(
-                    start    = tree.cs(node),
-                    end      = tree.ce(node),
-                    new_text = _encode(literal),
-                ))
-
+                if literal not in decoded:
+                    decoded[literal] = parse_lua_string(literal, version)
+                replacements.append(Replacement(tree.cs(node), tree.ce(node),
+                    generator.expression(decoded[literal])))
         return replacements

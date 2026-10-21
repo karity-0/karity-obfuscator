@@ -19,6 +19,7 @@ from .passes.base import Replacement
 from .passes.ts_utils import parse
 
 MACROS = {"STRING_OBF": "string_obf", "NUMBER_OBF": "number_obf",
+          "STRING_FLOW_OBF": "string_flow_obf",
           "BOOLEAN_OBF": "boolean_obf", "TABLE_OBF": "table_obf"}
 FUNCTION_TYPES = {"function_declaration", "function_definition"}
 SELECTABLE = frozenset((*MACROS.values(), "function_obf", "meme_strings", "vm"))
@@ -118,7 +119,7 @@ class SelectionPlan:
         self.file_vm_line = 1
         self.file_vm_options = {}
         self.active = False
-        if not self.modes and not re.search(r"\b(?:STRING_OBF|NUMBER_OBF|BOOLEAN_OBF|TABLE_OBF)\b|(?:^|\n)\s*(?:--\s*)?@", source):
+        if not self.modes and not re.search(r"\b(?:STRING_OBF|STRING_FLOW_OBF|NUMBER_OBF|BOOLEAN_OBF|TABLE_OBF)\b|(?:^|\n)\s*(?:--\s*)?@", source):
             self.source = source
             return
         self.source = self._read(source)
@@ -242,7 +243,7 @@ class SelectionPlan:
                 _error(source, ctx.cs(node), "macros require exactly one parenthesized argument")
             arg = args[0]
             feature = MACROS[ctx.text(node)]
-            expected = {"string_obf": {"string"}, "number_obf": {"number", "unary_expression"},
+            expected = {"string_obf": {"string"}, "string_flow_obf": {"string"}, "number_obf": {"number", "unary_expression"},
                         "boolean_obf": {"true", "false"}, "table_obf": {"table_constructor"}}[feature]
             if arg.type not in expected or (arg.type == "unary_expression" and
                     not (ctx.text(arg).lstrip().startswith("-") and len(arg.named_children) == 1 and arg.named_children[0].type == "number")):

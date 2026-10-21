@@ -31,6 +31,93 @@ def kernel(version,script=123,line=456):
 
 
 class RuntimeSecurity(unittest.TestCase):
+    def test_terminal_native_capture_preserves_shadowing_and_function_identity(self):
+        from obfuscator.vm.runtime_finalization import capture_generated_apis
+        source = '''return function()
+local function shadow()
+ local string={char=function()return 'shadow' end}
+ function string.custom() return 'shadow' end
+ return string.char()
+end
+local function read() return string.char(65),table.concat({'B','C'}),shadow() end
+return read,string.char
+end'''
+        for version, runtime_type in (('5.1', Lua51), ('5.3', Lua53)):
+            random.seed(2914)
+            output = capture_generated_apis(source, lua_version=version)
+            self.assertNotIn('string.char', output)
+            self.assertNotIn('table.concat', output)
+            self.assertIn('"rawget"', output)
+            self.assertIn('"char"', output)
+            self.assertNotIn('\\099\\104\\097\\114', output)
+            runtime = runtime_type(unpack_returned_tuples=True)
+            original = runtime.eval('string.char')
+            read, captured = runtime.execute(output)()
+            same = runtime.eval('rawequal')
+            self.assertTrue(same(original, captured))
+            runtime.execute("string.char=function()return 'rebound' end;table.concat=function()return 'rebound' end")
+            self.assertEqual(('A', 'BC', 'shadow'), read())
+        # Qualified globals from selective VM isolation need the same capture.
+        output = capture_generated_apis('return function() return _ENV["string"]["char"](65) end', lua_version='5.3')
+        self.assertEqual('A', Lua53().execute(output)())
+
+    def test_late_environment_strings_share_selected_protection(self):
+        from obfuscator.vm.environment import bind_environment
+        from obfuscator.vm.runtime_finalization import output_finalizer
+        template = 'return function() _ENV_CHECK();return _ENV_NATIVE end'
+        for version, runtime_type, passes in (('5.1', Lua51, ['string_encode']),
+                ('5.3', Lua53, ['string_obf', 'minify'])):
+            random.seed(4147)
+            source, _ = bind_environment(template, lua_version=version, policy='compatible',
+                compact=False, output_passes=passes)
+            for word in ('getmetatable', '__index', '__newindex', 'function', 'rawget'):
+                self.assertNotIn('"'+word+'"', source)
+            source = output_finalizer(passes, lua_version=version)(source)
+            self.assertNotIn('string.char', source)
+            self.assertNotIn('table.concat', source)
+            self.assertNotIn(':sub(', source)
+            runtime = runtime_type(unpack_returned_tuples=True)
+            native = runtime.execute(source)()
+            self.assertTrue(runtime.eval('rawequal')(native, runtime.globals()))
+
+    def test_output_generators_leave_no_direct_native_calls_or_late_guard_literals(self):
+        from obfuscator.vm import VMPass
+        from obfuscator.vm.targets.profile import TargetProfile
+        from run_blob_form_regression import execute
+        from obfuscator.vm.backends.runtime_emitter import _obfuscate_vm_output
+        from obfuscator.vm.environment import bind_environment
+        from obfuscator.vm.runtime_finalization import output_finalizer
+        import re
+        source = 'local s="protected";assert(s:sub(1,2)=="pr");print("finalization-ok")'
+        # Include the reported order, with no Localize Globals selection.
+        passes = ['strip_info','string_obf','boolean_obf','number_obf','meme_strings',
+                  'table_obf','function_obf','rename_obf','semicolon','minify']
+        random.seed(9147)
+        factory, _ = _obfuscate_vm_output('return function() local n=1 local s="abc" '
+            'local okay=true local t={s};if okay then return string.sub(t[n],1,1) end end', passes)
+        factory, _ = bind_environment(factory, lua_version='5.3', policy='compatible',
+            compact=True, output_passes=passes)
+        factory = output_finalizer(passes, lua_version='5.3')(factory)
+        self.assertEqual('a', Lua53().execute(factory)())
+        self.assertIsNone(re.search(r'\b(?:string|table|math|debug)\s*\.\s*\w+|:\s*sub\s*\(', factory))
+        # Full interpreter kernels use the same terminal stage. Keep this
+        # coverage focused on late API/string generation rather than multiplying
+        # every literal and CFF strategy over four large runtime templates.
+        for backend in ('classic', 'karity', 'mov', 'bare'):
+            random.seed(9147)
+            output = VMPass(target=TargetProfile('5.3', backend), vm_options={
+                'backend': backend, 'vm_count': 1, 'fake_handlers': False,
+                'mutate_handlers': False, 'junk_instructions': False,
+                'graph_execution_rate': 0.0, 'cross_instruction_rate': 0.0,
+                'runtime_polymorphism_rate': 0.0,
+            }, vm_output_passes=['strip_info','string_obf','rename_obf','semicolon','minify']).run(source)
+            self.assertIsNone(re.search(r'\b(?:string|table|math|debug)\s*\.\s*\w+|:\s*sub\s*\(', output))
+            # Initial native lookup names are deliberately ordinary literals;
+            # guard type/metatable labels still follow StringObf selection.
+            for word in ('function','__index','__newindex'):
+                self.assertNotIn('"'+word+'"', output)
+            self.assertEqual(execute('5.3', source), execute('5.3', output))
+
     def test_integrity_identity_checks_do_not_invoke_guest_equality(self):
         from obfuscator.vm import VMPass
         from obfuscator.vm.targets.profile import TargetProfile
