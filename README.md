@@ -91,6 +91,10 @@ python test/run_ci.py
 Local verification and CI share the same test manifest. Test protected scripts
 in their intended Lua environment before release.
 
+Use `python test/run_ci.py --level quick` for fast checks, or
+`python test/run_ci.py --changed HEAD` for checks related to local changes.
+See [verification groups and CI](docs/verification.md) for coverage and replay.
+
 For a larger native/VM differential corpus with saved inputs, options, generated
 outputs and per-case differences:
 

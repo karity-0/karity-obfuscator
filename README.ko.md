@@ -90,6 +90,10 @@ python test/run_ci.py
 로컬 검증과 CI는 같은 테스트 목록을 사용합니다. 배포 전에 실제 사용 환경에서
 난독화된 스크립트를 실행해 확인하세요.
 
+빠른 검사는 `python test/run_ci.py --level quick`, 로컬 변경 관련 검사는
+`python test/run_ci.py --changed HEAD`로 실행합니다.
+[검증 그룹과 CI 안내](docs/verification.md)에서 검사 범위와 실패 재현 방법을 확인하세요.
+
 원본과 VM 실행을 비교하고 입력·옵션·생성 코드·케이스별 차이를 저장하려면 다음 명령을 사용합니다.
 
 ```sh

@@ -3,21 +3,46 @@ name: CI
 on:
   push:
     branches: [main, dev, future]
+  workflow_dispatch:
   pull_request:
     branches: [main, dev, future]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Validate manifest and plan affected checks
+        id: plan
+        env:
+          VERIFICATION_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: |
+          matrix=$(python test/run_ci.py --github --matrix)
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          python test/run_verification_regression.py
+
   test:
+    needs: plan
+    name: test (${{ matrix.os }}, ${{ matrix.python }}, ${{ matrix.shard }})
+    timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            python: "3.12"
-          - os: ubuntu-latest
-            python: "3.15"
-          - os: windows-latest
-            python: "3.12"
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -26,6 +51,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
+          cache: pip
+          cache-dependency-path: |
+            requirements.txt
+            requirements-dev.txt
           allow-prereleases: ${{ matrix.python == '3.15' }}
 
       - uses: step-security/msvc-dev-cmd@v1
@@ -70,5 +99,18 @@ jobs:
           subprocess.run([lua_executable(), '-v'], check=True);
           subprocess.run([luac_executable(), '-v'], check=True)"
 
-      - name: Run shared verification suite
-        run: python test/run_ci.py
+      - name: Run selected verification shard
+        env:
+          KARITY_CHECK_SELECTION: ${{ toJSON(matrix.selection) }}
+        run: python test/run_ci.py --selection-env KARITY_CHECK_SELECTION --keep-going
+
+      - name: Save check timings and replayable failures
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ strategy.job-index }}-${{ matrix.os }}-${{ matrix.python }}
+          path: |
+            local/verification/report-*.json
+            local/verification/failures/
+          if-no-files-found: ignore
+          retention-days: 7

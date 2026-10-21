@@ -704,14 +704,19 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     if not replacements:
         return src
 
-    # Record keys are identifiers in the grammar, but never global reads.
-    # A capture bank such as {rawget=_ENV.rawget} must keep its key intact.
-    import tree_sitter as ts
-    from .ts_utils import parse, _LANG
-    from .rename_ts import _is_reference
-    context = parse(src)
-    field_keys = ts.QueryCursor(ts.Query(_LANG, '(field name: (identifier) @key)')).captures(context.root)
-    protected_keys = {context.cs(node) for node in field_keys.get('key', []) if not _is_reference(node)}
+    # Resolve actual free references, preserving local declarations, parameters,
+    # nested shadowing and record keys. Extracted function literals need a
+    # return prefix to be valid chunks for the existing binding resolver.
+    from .ts_utils import parse
+    from .rename_ts import resolve_bindings
+    prefix = 'return ' if re.match(r'\s*function\s*\(', src) else ''
+    context = parse(prefix + src)
+    roots = {key.split('.', 1)[0] for key in replacements} | {'_ENV'}
+    free = {}
+    resolve_bindings(context, free_environments=free, collect_literals=False,
+                     identifier_filter=lambda node: context.plain_text(node) in roots)
+    free_starts = {context.cs(node) - len(prefix) for node in context.walk()
+                   if node.type == 'identifier' and node.id in free and free[node.id] is None}
     masked = _mask_lua_noncode(src)
     keys = sorted(replacements, key=len, reverse=True)
     pattern = re.compile(
@@ -725,7 +730,7 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     pos = 0
     for m in pattern.finditer(masked):
         key = m.group(0)
-        if m.start() in protected_keys:
+        if m.start() not in free_starts:
             continue
         # Neither a bare name nor a dotted suffix is a global reference when
         # it follows another field/method selector (e.g. _ENV.string.byte).

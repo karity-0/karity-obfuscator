@@ -146,8 +146,10 @@ def resolve_bindings(ctx, *, free_environments=None, collect_literals=True, spar
                 binding = scope.resolve(name)
                 if binding is None:
                     reserved.add(name)
-                    if free_environments is not None:
-                        free_environments[node.id] = None if scope.is_implicit(name) else scope.resolve('_ENV')
+                    if free_environments is not None and not scope.is_implicit(name):
+                        # Method self has an implicit local binding, rather
+                        # than a free global available for dependency capture.
+                        free_environments[node.id] = scope.resolve('_ENV')
                 else:
                     binding.nodes.append(node)
                     if collect_name_scopes:

@@ -132,6 +132,11 @@ class NumberExpressionEngine:
         return "".join(out)
 
     def _fmt_plain_int(self, value: int) -> str:
+        # Native integer expressions operate modulo 2**64. Decimal leaves at
+        # INT64_MIN (unary minus is parsed separately), or outside the signed
+        # range, become floats and can lose bits before a bitwise operation.
+        if not self.portable and not -(1 << 63) < value < (1 << 63):
+            return self._random_hex_case(hex(value & ((1 << 64) - 1)))
         if random.getrandbits(1):
             return str(value)
 
@@ -1134,7 +1139,17 @@ class NumberExpressionEngine:
                 expr = self._make_float_expr(token)
             else:
                 value = _parse_int_token(token)
-                expr = self._fmt_int_expr(value, random.randint(1, 3))
+                if not self.portable and token.strip().lower().startswith('0x'):
+                    value &= (1 << 64) - 1
+                    if value >= 1 << 63:
+                        value -= 1 << 64
+                    expr = self._fmt_int_expr(value, random.randint(1, 3))
+                elif not self.portable and value > (1 << 63) - 1:
+                    # Unlike hex integers, overflowing decimal source tokens
+                    # have native float semantics; do not wrap them to int64.
+                    expr = self._make_float_expr(token)
+                else:
+                    expr = self._fmt_int_expr(value, random.randint(1, 3))
 
             self._validate_expr(expr)
             return expr

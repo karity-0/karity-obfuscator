@@ -90,6 +90,22 @@ text]=])'''
             return returncode or 1
     print(f"number-obf-ok {case}")
 
+    # Integer wraparound belongs to generated arithmetic/hex tokens. Decimal
+    # source overflow instead becomes a float. Check values AND native types.
+    boundary_tokens = ('9223372036854775807', '9223372036854775808',
+        '18446744073709551615', '18446744073709551616',
+        '0x7fffffffffffffff', '0x8000000000000000', '0xffffffffffffffff',
+        '0x10000000000000000', '0x10000000000000003', '0xffffffffffffffffffff')
+    for seed in range(64):
+        random.seed(seed)
+        batch = []
+        for token in boundary_tokens:
+            expr = generator.obfuscate_token(token)
+            batch.append(f"do local a={token};local b={expr};"
+                         "assert(a==b and math.type(a)==math.type(b),'integer-domain contract') end")
+        assert run_number_batch(batch, seed) == 0
+    print('number-integer-domain-ok seeds=64')
+
     alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_-/.: "
     text = "".join(alphabet[(i * 37 + i // 3) % len(alphabet)] for i in range(768))
     source = f"io.write({json.dumps(text)})"
