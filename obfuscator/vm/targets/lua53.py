@@ -100,5 +100,5 @@ class Lua53Target:
         body = source[returned.end():].lstrip()
         arguments=",{n=select('#',...),...}" if forward_args else ''
         return (f'local {vm_name}={body};'
-                f'return ({vm_name}(1032,413,258,104,953,283,120))'
+                f'return ({vm_name}())'
                 f'({blob},{vm_name}{arguments})')

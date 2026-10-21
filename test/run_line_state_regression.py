@@ -80,6 +80,8 @@ def check_distributed_readers() -> None:
             assert random.getstate() == before
             assert not re.search(r'K[0-9a-f]{8}|\berror\s*\(', rendered)
             assert 'LINE_FRAGMENT_' not in rendered
+            if compact:
+                assert rendered.startswith('return function(...)local ')
             assert len(lines) in (3, 4, 5)
             variants.add(rendered)
             if not compact:

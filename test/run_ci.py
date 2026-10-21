@@ -7,6 +7,9 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 REGRESSIONS = (
     "typing",
+    "bare_backend",
+    "source_protection",
+    "anti_env",
     "import",
     "blob_form",
     "serialization",

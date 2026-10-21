@@ -11,6 +11,8 @@ PASS_REQUIREMENTS = {
     # Bounded arithmetic state encoding and predicates use common Lua syntax.
     "function_obf": R(),
     "anti_debug": R({C.NATIVE_BITOPS}),
+    # Own-field reads plus protected inherited lookup; no debug or bitwise API.
+    "anti_env": R(),
     "anti_decompile": R({C.NATIVE_BITOPS}),
     "localize_globals": R({C.ENV_TABLE}),
     # Both emitters hash runtime function dumps, tying output to a compatible
@@ -33,6 +35,12 @@ VM_OUTPUT_PASS_REQUIREMENTS = {
 
 
 def validate_pass_target(name, profile):
+    if name == 'vm':
+        from ..backends import get_backend
+        requirements = getattr(get_backend(profile.backend), 'target_requirements', None)
+        if requirements is not None:
+            profile.require(requirements(profile), 'VM backend ' + profile.backend)
+            return
     profile.require(PASS_REQUIREMENTS.get(name, R()), "pass " + name)
     if name == "vm":
         profile.require(profile.adapter().requirements, "VM target runtime")
@@ -41,7 +49,7 @@ def validate_pass_target(name, profile):
 def validate_vm_output_pass_target(name, profile):
     # These are whole-script wrappers/stages, not transformations of the
     # return-function body that the VM dumper hashes and reloads.
-    if name in {"vm", "pack", "anti_debug"}:
+    if name in {"vm", "pack", "anti_debug", "anti_env"}:
         raise ValueError(f"VM output pass {name} cannot wrap the VM function")
     from ...registry import PASS_REGISTRY
     if name not in PASS_REGISTRY:

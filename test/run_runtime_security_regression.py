@@ -11,13 +11,19 @@ sys.path[:0]=[str(ROOT),str(ROOT/'test')]
 from lupa.lua51 import LuaRuntime as Lua51
 from lupa.lua53 import LuaRuntime as Lua53
 from obfuscator.vm.string_storage import encode,decode,rebind
+from obfuscator.vm.host_guards import GUARD_SOURCE
+
+
+def guarded_template():
+    source=(ROOT/'obfuscator/vm/runtimes/protected_strings.lua').read_text(encoding='utf8')
+    return source.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
 
 
 def kernel(version,script=123,line=456):
     path=ROOT/('obfuscator/vm/vm.lua' if version=='5.3' else 'obfuscator/vm/runtimes/lua51/vm.lua')
     source=path.read_text(encoding='utf8')
     xor=source.split('--<<TARGET_INSTRUCTION_XOR>>')[1].split('--<<ENDTARGET_INSTRUCTION_XOR>>')[0]
-    body=(ROOT/'obfuscator/vm/runtimes/protected_strings.lua').read_text(encoding='utf8')
+    body=guarded_template()
     body=body.replace('__PS_UNPACK__','unpack' if version=='5.1' else 'table.unpack').replace('__PS_BINDINGS__','{}')
     runtime=(Lua51 if version=='5.1' else Lua53)(encoding=None)
     ps=runtime.execute((f'local _IT={{script={script},line={line},seed=7}}; local function _kss(v) return v end; local _PS,_PS_GUARD;'+xor+body+';return _PS').encode())
@@ -38,9 +44,12 @@ class RuntimeSecurity(unittest.TestCase):
                 'fake_handlers':False,'mutate_handlers':False,'junk_instructions':False,
                 'graph_execution_rate':0.0,'block_variant_rate':0.0,
             },vm_output_passes=['strip_info','rename_obf','minify']).run(source)
+            self.assertRegex(output,r'\Alocal \w+=function\(\.\.\.\)local ')
             match=_VM_TAIL_RE.search(output)
             self.assertIsNotNone(match)
             self.assertIsNone(match.group('tail'))
+            self.assertEqual('',match.group('args'))
+            self.assertEqual([],_alloc_plan(output).vm_args)
             self.assertTrue(match.group('forward_args'))
             for token in ('karityObfuscator/','runtime integrity mismatch','line_state','function_dump','_runctx'):
                 self.assertNotIn(token,output)
@@ -64,6 +73,55 @@ class RuntimeSecurity(unittest.TestCase):
                          "local n,blob,kind,count=f(nil,false,3,nil);"
                          "assert(n==6 and blob=='BLOB' and kind=='function' and count=="+str(4 if forwarded else 0)+");print('packed-shape-ok')")
                 self.assertEqual(b'packed-shape-ok\r\n',execute('5.3',harness))
+
+        # Current wrappers retain two calls even with no factory parameters.
+        output=("local f;f=function() return function(blob,self,packet) "
+                "return blob,type(self),packet.n,packet[2],packet[3] end end;"
+                "return (f())('BLOB',f,{n=select('#',...),...})")
+        for output_passes in ([],['minify']):
+            packed=PackerPass(packer_output_passes=output_passes).run(output)
+            harness=("local source=[====["+packed+"]====];local f=assert(load(source));"
+                     "local blob,kind,count,b,c=f(nil,false,3,nil);"
+                     "assert(blob=='BLOB' and kind=='function' and count==4 and b==false and c==3)")
+            self.assertEqual(b'',execute('5.3',harness))
+
+    def test_environment_helpers_are_distributed_before_use(self):
+        from obfuscator.vm.environment import bind_environment
+        from obfuscator.passes.ts_utils import parse
+        template=('return function(...) '+
+                  ';'.join('local sentinel'+str(i)+'='+str(i) for i in range(12))+
+                  ';local function guarded() _ENV_CHECK();return _ENV_REFRESH end;'
+                  'return guarded(),_ENV_NATIVE end')
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            for policy in ('compatible','strict'):
+                for compact in (False,True):
+                    random.seed(56391)
+                    output,_=bind_environment(template,lua_version=version,policy=policy,compact=compact)
+                    ctx=parse(output)
+                    self.assertFalse(ctx.root.has_error)
+                    blocks=[node for node in ctx.walk() if node.type=='do_statement']
+                    self.assertEqual(2,len(blocks))
+                    positions=sorted(ctx.cs(node) for node in blocks)
+                    self.assertLess(output.index('sentinel0'),positions[0])
+                    self.assertIn('sentinel',output[positions[0]:positions[1]])
+                    self.assertLess(positions[1],output.index('local function guarded'))
+                    self.assertNotIn('ENVIRONMENT_FRAGMENT',output)
+                    # Strict output never includes compatible proxy recovery.
+                    self.assertEqual(policy=='compatible','"_G"' in output)
+                    runtime=runtime_type(unpack_returned_tuples=True)
+                    refresh,native=runtime.execute(output)()
+                    self.assertIsNone(refresh(native,False))
+
+            # Definitions may move, but baselines must precede initialization
+            # code that changes an environment metatable.
+            changed=template.replace('local sentinel5=5',
+                                    'local sentinel5=5;setmetatable(_ENV_GUEST,{})')
+            for seed in (51,53,56391):
+                random.seed(seed)
+                output,_=bind_environment(changed,lua_version=version,policy='compatible',compact=True)
+                runtime=runtime_type(unpack_returned_tuples=True)
+                factory=runtime.execute(output)
+                self.assertEqual((False,None),runtime.eval('function(f) return pcall(f) end')(factory))
 
     def test_native_member_coverage_and_shadowing(self):
         from obfuscator.vm.runtime_security import _capture_source,_freeze_calls,_CORE_MEMBERS,_CORE_GLOBALS
@@ -108,7 +166,7 @@ return r.iword(),"iword metadata header",r'''
 
     def test_private_value_and_api_slots(self):
         from obfuscator.vm.runtime_security import _capture_source, _freeze_calls
-        runtime_body=(ROOT/'obfuscator/vm/runtimes/protected_strings.lua').read_text(encoding='utf8')
+        runtime_body=guarded_template()
         body='''
 local function exercise()
  local S={length=function() return 'shadow-length' end}
@@ -150,7 +208,7 @@ return _PS,_PS.api,_PS.guard,exercise,roundtrip,tamper
 
     def test_native_capture_slots_and_integrity(self):
         from obfuscator.vm.runtime_security import _capture_source, _freeze_calls
-        runtime_body=(ROOT/'obfuscator/vm/runtimes/protected_strings.lua').read_text(encoding='utf8')
+        runtime_body=guarded_template()
         body='''
 local function shadow()
  local _PS_CORE={type=function() return 'shadow' end}
@@ -212,9 +270,12 @@ end''')
                     answer,native,check,refresh=factory()
                     self.assertEqual(42,answer)
                     self.assertTrue(r.eval('function(native) return native==_G end')(native))
-                    r.eval('function(e) debug.getmetatable(e).__index=function() return nil end end')(proxy)
+                    original_index=r.eval('''function(e)
+ local mt=debug.getmetatable(e);local original=mt.__index
+ mt.__index=function() return nil end;return original end''')(proxy)
                     self.assertEqual((False,None),invoke(check))
                     # Failure remains latched even after restoring the table.
+                    r.eval('function(e,original) debug.getmetatable(e).__index=original end')(proxy,original_index)
                     self.assertEqual((False,None),invoke(check))
             # Authorized changes refresh only the changed environment/object.
             r=runtime_type(unpack_returned_tuples=True)

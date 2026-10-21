@@ -6,7 +6,6 @@ import tempfile
 import random
 import hashlib
 import time
-import zlib
 import os
 import re
 from pathlib import Path
@@ -821,7 +820,6 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     runtime_entry = target.runtime_entry_symbol()
     vm_func_src = (
         f'return function(...)\n'
-        f'local k1,k2,k3,k4,k5,k6,k7 = ... '
         f'{vm_code} return {runtime_entry} end'
     )
 
@@ -914,7 +912,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     dump_bytes = run_phase('vm:integrity', target.dump_function,
         vm_func_src, header, context.toolchain,
     )
-    dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+    from ..runtime_identity import checksum
+    dump_crc   = checksum(dump_bytes)
     effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
     blob = patch_integrity_sources(
         blob, effective_crc, line_state, constant_tags,

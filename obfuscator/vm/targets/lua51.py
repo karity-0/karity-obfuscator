@@ -654,4 +654,4 @@ end
         # a decimal-escaped string and reparsing it through loadstring.
         return (f'local {vm_name}={body};'
                 f'setfenv({vm_name},getfenv(1));'
-                f'return ({vm_name}(1032,413,258,104,953,283,120))({blob},{vm_name}{arguments})')
+                f'return ({vm_name}())({blob},{vm_name}{arguments})')

@@ -18,21 +18,7 @@ _PS=(function()
         failed=true
         throw(nil,0)
     end
-    function S.guard(force)
-        if failed then fail() end
-        ticks=(ticks+1)%127
-        if not force and ticks~=0 then return end
-        if _ENV_CHECK then _ENV_CHECK() end
-        for i=1,#trusted do local b=trusted[i]
-            if raw(b[1],b[2])~=b[3] then fail() end
-        end
-        for i=1,#bindings do
-            local b=bindings[i]
-            if b[1][b[2]]~=b[3] then fail() end
-        end
-        local hook,mask,count=hook0()
-        if hook~=nil or (mask and #mask>0) or (count and count~=0) then fail() end
-    end
+    --<<SHARED_HOST_GUARD>>
     function S.watched(t,k)
         for i=1,#bindings do local b=bindings[i]
             if b[1]==t and b[2]==k then return true end

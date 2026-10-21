@@ -201,6 +201,11 @@ def main() -> int:
     assert mov_result["ok"], mov_result
     assert len(mov_result["warnings"]) == 1
     assert "fake_handlers" in mov_result["warnings"][0]
+    bare_config = _complete_config({"passes": ["vm"], "vm_options": {"backend": "bare"}})
+    bare_result = Api().run_obfuscation({"script": "print(42)", "config": bare_config})
+    assert bare_result["ok"], bare_result
+    assert "KARITY/" not in bare_result["output"]
+    assert len(bare_result["warnings"]) == 1
 
     from lua_runtime import lua_executable
     lua = lua_executable()

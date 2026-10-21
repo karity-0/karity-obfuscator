@@ -148,6 +148,12 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "group": "pre",
         "docs": "passes/antiDebug.md",
     },
+    "anti_env": {
+        "cls": "AntiEnvPass",
+        "label": "Anti Env",
+        "group": "pre",
+        "docs": "passes/antiEnv.md",
+    },
     "anti_decompile": {
         "cls": "AntiDecompilePass",
         "label": "Anti-Decompile (unluac trap)",
@@ -167,7 +173,7 @@ PASS_REGISTRY = {name: _PassInfo(info) for name, info in PASS_REGISTRY.items()}
 CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
 VALID_BLOB_FORMS = {"string", "table", "numeric", "emoji", "chinese", "random"}
-OUTPUT_PASS_EXCLUDES = {"vm", "pack"}
+OUTPUT_PASS_EXCLUDES = {"vm", "pack", "anti_env"}
 VALID_SIGNATURE_MODES = {"default", "none", "fake", "generated", "custom"}
 VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
 
@@ -186,6 +192,7 @@ PASS_DESCRIPTIONS = {
     "minify": "Reduces script size by removing unnecessary whitespace.",
     "vm": "Virtualizes Lua bytecode using the custom Lua 5.3 VM.",
     "anti_debug": "Inserts anti-debugging checks.",
+    "anti_env": "Blocks Roblox/executor-shaped environments using multiple related typed signals, including real matching hosts. Opt-in source pre-pass.",
     "anti_decompile": "Adds source-level traps that make decompiler output less useful.",
     "pack": "Compresses and wraps the final output in a self-extracting loader.",
 }
@@ -232,7 +239,7 @@ VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
         "values": backend_choices(),
     },
     "dispatcher_type": {
-        "description": "VM dispatcher shape.",
+        "description": "Opcode dispatcher shape for blob runtimes. Bare generates its own program-specific block dispatcher.",
         "default": "ifelseif",
         "values": [
             ("ifelseif", "if/elseif chain dispatcher"),
@@ -598,7 +605,8 @@ def validate_deployment_config(config: Mapping[str, Any]) -> None:
     options = config.get('vm_options', {})
     if options.get('runtime_trace', False):
         errors.append('runtime_trace must be false')
-    if not options.get('integrity_constants') or options.get('integrity_constant_rate', 0) <= 0:
+    capabilities = backend_capabilities(normalize_vm_backend(options.get('backend')))
+    if 'integrity_constants' in capabilities.supported_options and (not options.get('integrity_constants') or options.get('integrity_constant_rate', 0) <= 0):
         errors.append('constant integrity protection must be enabled')
     if errors:
         raise ReleaseCheckError('deployment-check failed:\n- '+'\n- '.join(errors))
@@ -616,11 +624,11 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
         if name not in passes:
             errors.append(f"passes must include '{name}'")
 
+    capabilities = backend_capabilities(backend)
     vm_count = vm_options.get("vm_count", 1)
-    if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2:
+    if 'vm_count' in capabilities.supported_options and (not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2):
         errors.append("vm_options.vm_count should be >= 2 for release builds")
 
-    capabilities = backend_capabilities(backend)
     required_vm_flags = tuple(key for key in (
         "fake_handlers", "mutate_handlers", "junk_instructions",
     ) if key in capabilities.supported_options)
@@ -631,10 +639,10 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
     if float(vm_options.get("junk_rate", 0.0)) <= 0.0:
         errors.append("vm_options.junk_rate should be > 0.0")
 
-    if vm_options.get("integrity_constants") is not True:
+    if 'integrity_constants' in capabilities.supported_options and vm_options.get("integrity_constants") is not True:
         errors.append("vm_options.integrity_constants must be true")
 
-    if float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
+    if 'integrity_constant_rate' in capabilities.supported_options and float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
         errors.append("vm_options.integrity_constant_rate should be > 0.0")
 
     for key in ("graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
@@ -647,7 +655,7 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
     if vm_options.get("runtime_trace") is True:
         errors.append("vm_options.runtime_trace must be false for release builds")
 
-    if vm_options.get("blob_form") != "random":
+    if 'blob_form' in capabilities.supported_options and vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
     # MOV always emits independent instruction IDs and digit alphabets per VM;
@@ -662,7 +670,7 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
 def _reject_nested_output_passes(config: Mapping[str, Any], key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
-        raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
+        raise ConfigError(f"'{key}' cannot contain post-build/source-only passes: {', '.join(nested)}")
 
 
 def _validate_rename_options(options):

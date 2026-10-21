@@ -1,5 +1,10 @@
 (() => {
   const pairs = [
+    ['Anti Env', '안티 환경'],
+    ['Blocks Roblox/executor-shaped environments using multiple related typed signals, including real matching hosts. Opt-in source pre-pass.', '관련 값 여러 개와 타입을 묶어 Roblox·executor 계열 환경을 차단합니다. 실제 해당 환경도 차단하는 선택 PrePass입니다.'],
+    ['Program-specific code generation', '프로그램별 코드 생성'],
+    ['Program-specific blocks linked by randomized ID dispatch.', '전용 실행 블록을 랜덤 ID 분기로 연결.'],
+    ['Size and speed first · no instruction blob or interpreter.', '크기·속도 우선 · 명령어 블롭과 해석기 생략.'],
     ['Protection preset details', '프리셋 상세 선택'], ['VM backend details', 'VM 백엔드 상세 선택'],
     ['Choose a protection preset', '보호 프리셋 선택'], ['Your VM backend and target stay unchanged.', '선택한 VM 백엔드와 Lua 대상은 유지됩니다.'],
     ['Left click: apply · Right click: details', '좌클릭: 바로 적용 · 우클릭: 상세 선택'],

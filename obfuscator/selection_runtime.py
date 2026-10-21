@@ -142,7 +142,7 @@ class SelectionRuntime:
 
     def run_pre(self, pre, source):
         name = self.names.get(type(pre), type(pre).__name__)
-        if any(s.feature == "no_obf" for s in self.plan.spans) and name in {"strip_info", "anti_debug"}:
+        if any(s.feature == "no_obf" for s in self.plan.spans) and name in {"strip_info", "anti_debug", "anti_env"}:
             # These pre-passes include nonlocal symbol/field changes or a whole
             # script wrapper. Preserve exclusions instead of partially applying
             # their edits and breaking lexical bindings or field accesses.

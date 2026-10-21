@@ -2,8 +2,8 @@
 
 [English](README.md) | [**한국어**](README.ko.md)
 
-GUI와 선택적 소스 보호를 제공하는 Lua 5.3 난독화 도구입니다.
-**Karity**, **Classic**, **MOV** 세 가지 VM 백엔드를 지원합니다.
+GUI와 선택적 소스 보호를 제공하는 Lua 5.1/5.3 난독화 도구입니다.
+**Karity**, **Classic**, **MOV**, **Bare** 네 가지 VM 백엔드를 지원합니다.
 
 ## 빠른 시작
 
@@ -22,7 +22,11 @@ python obfuscator_gui.py
 Windows용 Lua 도구는 `bin/`에 포함되어 있습니다. 다른 플랫폼에서는
 버전이 맞는 Lua 5.3과 `luac` 5.3을 설치하고 `PATH`에서 사용할 수 있게 설정하세요.
 
-![GUI](images/6.png)
+![GUI](images/preview.jpg)
+
+**Bare**는 명령어 블롭과 opcode 해석기 없이 프로그램별 Lua 실행 블록을 생성합니다.
+무결성 검사와 상수 보호를 공유하며, 출력 크기는 입력에 따라 달라집니다.
+자세한 차이는 [백엔드 선택 가이드(영문)](docs/backends.md)를 참고하세요.
 
 ## 보호 프리셋
 
@@ -67,7 +71,9 @@ GUI에서 저장한 설정은 CLI에서도 사용할 수 있습니다. 기존 JS
 패스별 가이드(영문): [문자열](docs/passes/stringObfuscation.md),
 [함수](docs/passes/functionObfuscation.md),
 [전역 변수 지역화](docs/passes/localizeGlobals.md),
-[Packer](docs/passes/packer.md), [Anti-debug](docs/passes/antiDebug.md).
+[Packer](docs/passes/packer.md), [Anti-debug](docs/passes/antiDebug.md),
+[Anti Env](docs/passes/antiEnv.md). Anti Env는 선택 기능이며 실제 Roblox를 포함한
+Roblox·executor 계열 환경을 차단합니다.
 
 ## 예제
 
@@ -91,8 +97,9 @@ python tools/explore_vm_semantics.py --seeds 124 7719 20261016 --generated 8 --o
 python tools/explore_vm_semantics.py --inputs my-script.lua --versions 5.3 --generated 0 --output local/vm-audit/my-script
 ```
 
-생성한 프로그램과 경계 조건 예제는 두 Lua 버전과 세 백엔드에서 각각 새 런타임
-프로세스로 실행하며, 실행 시간 제한을 적용합니다. 유한한 사례를 검사하므로
+생성한 프로그램과 경계 조건 예제는 기본적으로 두 Lua 버전과 Classic·Karity·MOV에서
+검사합니다. Bare도 포함하려면 `--backends classic karity mov bare`를 추가하세요.
+각 실행은 새 런타임 프로세스와 실행 시간 제한을 사용합니다. 유한한 사례를 검사하므로
 결과가 같다는 사실만으로 모든 입력의 의미론적 동등성을 보장하지는 않습니다.
 `vm_chunk_interface.lua` 입력에 `--harness test/fixtures/vm_chunk_interface_harness.lua`를
 함께 사용하면 청크 반환값, 환경, `require` 동작을 확인할 수 있습니다.

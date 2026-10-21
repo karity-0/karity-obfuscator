@@ -15,6 +15,7 @@ from obfuscator.registry import (  # noqa: E402
     get_pass_contexts,
 )
 from obfuscator.vm.backend import VM_BACKENDS, unsupported_vm_options
+from obfuscator.vm.backends import backend_metadata
 from obfuscator.vm.targets.pass_requirements import PASS_REQUIREMENTS
 
 
@@ -29,6 +30,28 @@ output pipeline. `karity` remains the implicit choice when the option is omitted
 `default` is an alias for `karity`, matching an omitted backend.
 Older builds mapped `default` to `classic`; use explicit `classic` to preserve
 that runtime when migrating. See [backend architecture and capabilities](backends.md).
+
+`bare` shares the Lua 5.1/5.3 frontend, semantic IR, optimization and supported
+IR morphing, then emits program-specific Lua blocks with randomized position
+dispatch and threshold branches. It has no instruction blob or opcode interpreter.
+Select `--vm-option backend=bare`; source and VM-output passes remain available,
+including literal/name transforms. Its generated dispatcher is excluded from
+redundant generic CFF. Blob, legacy opcode-dispatcher,
+multi-VM and interpreter-specific hardening settings are disabled by its capability
+map. Guard decisions and guest protection boundaries compile into IR; atomic
+protection calls emit directly and repeated inspection/recovery uses small shared
+native helpers selected by actual use. Native APIs use a randomized numeric bank.
+The common dispersed line readers and final function dump key a compact printable
+constant pool with masked offsets and per-build tags. Strings and a sentinel
+retain binding even when numeric integrity is disabled. Shared data/identity
+primitives remain native. Short straight-line regions stay together; long regions
+use 16–32 emission units per segment. See [size measurements](performance/bare-size.md).
+This protection package adds substantial fixed size/startup cost to small inputs;
+operation semantics remain visible before output passes. Debug/dump capabilities
+and a compatible runtime dump ABI are required. Default output literal expansion
+is bounded to one hot or three cold operations, unless explicitly overridden via
+`literal_mosaic.output_cost`. Packing preserves the finalized function. CE
+image-backed constant materialization is unsupported.
 
 `mov` is a supported release backend with a hybrid runtime. Use it with
 `--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM/MOD/IDIV,
@@ -506,7 +529,8 @@ def backend_document() -> tuple[Path, str]:
     text = path.read_text(encoding="utf-8")
     start, end = "<!-- BEGIN BACKEND OPTIONS -->", "<!-- END BACKEND OPTIONS -->"
     assert text.count(start) == text.count(end) == 1
-    rows = ["| Option | Karity | Classic | MOV |", "|---|---|---|---|"]
+    labels = [item['label'] for item in backend_metadata() if item['value'] in VM_BACKENDS]
+    rows = ['| Option | ' + ' | '.join(labels) + ' |', '|---|' + '---|' * len(labels)]
     for name in VM_OPTION_DOCS:
         cells = ["No" if name in unsupported_vm_options(backend) else "Yes" for backend in VM_BACKENDS]
         rows.append(f"| `{name}` | " + " | ".join(cells) + " |")

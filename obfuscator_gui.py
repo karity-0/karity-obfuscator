@@ -216,7 +216,7 @@ def _range_bounds(info: dict, default) -> tuple[float | int, float | int, float 
 
 
 def _vm_option_meta() -> list[dict]:
-    from obfuscator.vm.backends import backend_choices
+    from obfuscator.vm.backends import backend_metadata
     from obfuscator.vm.backend import vm_option_resolution
     result = []
     for name, info in VM_OPTION_DOCS.items():
@@ -240,9 +240,9 @@ def _vm_option_meta() -> list[dict]:
             item["kind"] = "boolean"
         elif "values" in info:
             item["kind"] = "select"
-            item["values"] = [
+            item["values"] = backend_metadata() if name == "backend" else [
                 {"value": value, "label": value, "description": description}
-                for value, description in (backend_choices() if name == "backend" else info["values"]) if not value.endswith("N")
+                for value, description in info["values"] if not value.endswith("N")
             ]
             if name == "dispatcher_type":
                 item["values"].extend(

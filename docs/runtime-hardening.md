@@ -74,7 +74,9 @@ The byte reader needs neither patterns nor `tonumber`. All observations complete
 before the runtime entry is returned and the encrypted blob is opened. Final
 source positions, including output prefixes and minification, determine the
 builder's matching state. This adds one structural parse to find legal insertion
-boundaries in the finalized VM; only the new fragments are lowered/minified.
+boundaries in the finalized VM. Only new fragments undergo literal lowering;
+when minification is enabled, the assembled runtime is compacted once before
+recording source positions, including late environment/observation joins.
 
 Generated VM invariant failures omit internal diagnostics such as opcode values,
 blob-format details, metadata indices and register-vault state. They still raise
@@ -104,6 +106,10 @@ uses the integrity-adjusted dump CRC in hexadecimal; the separate random nonce
 still diversifies blob encryption. This removes public key inputs and markers,
 not an externally held secret. The visible `KARITY/` blob-format marker remains.
 Packing recognizes both current wrappers and legacy random-tail wrappers.
+The outer factory is invoked without arguments, retaining the two-stage
+`factory()(blob, factory)` shape. Its seven formerly fixed numeric arguments
+and unused parameter locals have been removed; packing accepts an empty
+factory-argument list as well as older nonempty lists.
 
 `vm_options.environment_policy` defaults to `compatible`. A late bootstrap keeps
 the original guest environment separate from the environment used by runtime
@@ -124,13 +130,42 @@ therefore reject legitimate sandbox environments and is an explicit opt-in.
 Bootstrap locals are renamed and its guest/native/check slots use randomized
 numeric keys. These checks do not authenticate capabilities supplied by a host
 that was already instrumented before initialization.
+The selected policy is specialized during generation: compatible output omits
+strict-only tests, and strict output omits proxy recovery. Capability capture
+and initial snapshots remain at entry. Guard and authorized-refresh definitions
+occupy separate outer initialization boundaries, both before the first statement
+that defines or uses a guard consumer. Their shared private state also uses
+random numeric keys, and scoped definitions add no persistent factory locals.
 
 The attack model remains an analyst who owns the Lua host. Checks whose answers
 come from that same host can still be falsified by a sufficiently adapted host.
 In particular, this does not claim to eliminate pristine `string.dump` replay or
 to hide strings handed to an external function. The regression suite tests the
 specific earlier extraction, cell-editing and late-hook paths, alongside native
-execution equivalence on Lua 5.1/5.3 and all three backends.
+execution equivalence on Lua 5.1/5.3 and the blob backends.
+
+Bare uses a separate source adapter: guard decisions and guest protection calls
+compile into semantic IR. Atomic call groups emit directly, while a shared native
+package performs repeated inspection and constant recovery. Unused string/write/
+environment/getter/tailcall helpers are omitted, and numeric-loop conversion is
+shared across guest functions. `native_capture.py` captures referenced APIs in a
+randomized numeric bank, including the APIs needed by late readers/output helpers.
+Shared repeated host checks live in `host_guards.py`; the dump CRC helper is
+shared with blob emission. The common `line_state.py` disperses three to five
+native fault closures, reader definitions and observations with random slots.
+Their final source lines and the dump CRC key a compact external constant pool,
+avoiding self-hash circularity. Per-build tags, a printable alphabet and masked
+record offsets replace the old escaped-string record lists. Guest constants are
+deduplicated across functions; a random sentinel always checks the identity path.
+Native inspection/recovery/reader/dump/CRC and call-boundary primitives remain
+native; the guard captures its original inspector/failure functions and makes
+the fail/continue decision in IR. Entry/call/return boundaries retain guest writes,
+setmetatable, coroutine, tailcall and dead-argument collection semantics.
+This is a substantial fixed output/startup cost for small inputs. It requires
+debug/dump capabilities and a compatible target dump ABI. Packing keeps the
+finalized function unchanged and preserves its source lines and guest varargs.
+Run `python test/run_source_protection_regression.py` for Bare-specific code,
+line, payload, hook, environment, guest mutation, tailcall and packing checks.
 
 Run `python test/run_runtime_security_regression.py` for focused checks; it is
 also part of `python test/run_ci.py`.

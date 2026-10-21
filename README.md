@@ -2,8 +2,8 @@
 
 [**English**](README.md) | [한국어](README.ko.md)
 
-A Lua 5.3 obfuscator with a GUI, selective source protection, and three VM
-backends: **Karity**, **Classic**, and **MOV**.
+A Lua 5.1/5.3 obfuscator with a GUI, selective source protection, and four VM
+backends: **Karity**, **Classic**, **MOV**, and **Bare**.
 
 ## Quick start
 
@@ -22,7 +22,11 @@ python obfuscator_gui.py
 Windows includes Lua tools in `bin/`. On other platforms, install matching
 Lua 5.3 and `luac` 5.3 tools and make them available on `PATH`.
 
-![GUI](images/6.png)
+![GUI](images/preview.jpg)
+
+**Bare** emits program-specific Lua blocks without an instruction blob or
+opcode interpreter. It shares integrity and constant protection; output size
+depends on the input. See [backend choices](docs/backends.md).
 
 ## Protection presets
 
@@ -68,7 +72,9 @@ development and diagnostics. See [user presets](docs/user-presets.md) and the
 Pass guides: [Strings](docs/passes/stringObfuscation.md),
 [Functions](docs/passes/functionObfuscation.md),
 [Global localization](docs/passes/localizeGlobals.md),
-[Packer](docs/passes/packer.md), and [Anti-debug](docs/passes/antiDebug.md).
+[Packer](docs/passes/packer.md), [Anti-debug](docs/passes/antiDebug.md),
+and [Anti Env](docs/passes/antiEnv.md). Anti Env is opt-in and blocks
+Roblox/executor-shaped environments, including real matching hosts.
 
 ## Examples
 
@@ -93,8 +99,9 @@ python tools/explore_vm_semantics.py --seeds 124 7719 20261016 --generated 8 --o
 python tools/explore_vm_semantics.py --inputs my-script.lua --versions 5.3 --generated 0 --output local/vm-audit/my-script
 ```
 
-Generated programs and boundary fixtures run on both Lua versions and all three
-backends with fresh runtime processes and execution timeouts. The corpus tests
+Generated programs and boundary fixtures run on both Lua versions and Classic,
+Karity and MOV by default; add `--backends classic karity mov bare` to include Bare.
+Each run uses a fresh runtime process and an execution timeout. The corpus tests
 finite cases; matching output does not establish complete semantic equivalence.
 Use `--harness test/fixtures/vm_chunk_interface_harness.lua` with the matching
 `vm_chunk_interface.lua` input to observe chunk returns, environments and

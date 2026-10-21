@@ -23,6 +23,7 @@
   - [minify](#minify)
   - [vm](#vm)
   - [anti_debug](#anti_debug)
+  - [anti_env](#anti_env)
   - [anti_decompile](#anti_decompile)
   - [pack](#pack)
 - [vm_options](#vm_options)
@@ -438,6 +439,28 @@ output pipeline. `karity` remains the implicit choice when the option is omitted
 Older builds mapped `default` to `classic`; use explicit `classic` to preserve
 that runtime when migrating. See [backend architecture and capabilities](backends.md).
 
+`bare` shares the Lua 5.1/5.3 frontend, semantic IR, optimization and supported
+IR morphing, then emits program-specific Lua blocks with randomized position
+dispatch and threshold branches. It has no instruction blob or opcode interpreter.
+Select `--vm-option backend=bare`; source and VM-output passes remain available,
+including literal/name transforms. Its generated dispatcher is excluded from
+redundant generic CFF. Blob, legacy opcode-dispatcher,
+multi-VM and interpreter-specific hardening settings are disabled by its capability
+map. Guard decisions and guest protection boundaries compile into IR; atomic
+protection calls emit directly and repeated inspection/recovery uses small shared
+native helpers selected by actual use. Native APIs use a randomized numeric bank.
+The common dispersed line readers and final function dump key a compact printable
+constant pool with masked offsets and per-build tags. Strings and a sentinel
+retain binding even when numeric integrity is disabled. Shared data/identity
+primitives remain native. Short straight-line regions stay together; long regions
+use 16–32 emission units per segment. See [size measurements](performance/bare-size.md).
+This protection package adds substantial fixed size/startup cost to small inputs;
+operation semantics remain visible before output passes. Debug/dump capabilities
+and a compatible runtime dump ABI are required. Default output literal expansion
+is bounded to one hot or three cold operations, unless explicitly overridden via
+`literal_mosaic.output_cost`. Packing preserves the finalized function. CE
+image-backed constant materialization is unsupported.
+
 `mov` is a supported release backend with a hybrid runtime. Use it with
 `--profile fast-vm --vm-option backend=mov`. Integer ADD/SUB/MUL/UNM/MOD/IDIV,
 BAND/BOR/BXOR/SHL/SHR/BNOT and EQ/LT/LE lower into nibble lookup microcode;
@@ -638,6 +661,20 @@ Inserts anti-debugging checks.
 **Target requirements:** native_bitops; minimum compatibility `portable`.
 
 See [`anti_debug` design and implementation notes](passes/antiDebug.md) for architecture, trade-offs, and future work.
+
+## anti_env
+
+**label:** Anti Env
+
+**group:** pre pass
+
+**type:** passes
+
+Blocks Roblox/executor-shaped environments using multiple related typed signals, including real matching hosts. Opt-in source pre-pass.
+
+**Target requirements:** ; minimum compatibility `portable`.
+
+See [`anti_env` design and implementation notes](passes/antiEnv.md) for architecture, trade-offs, and future work.
 
 ## anti_decompile
 
@@ -900,6 +937,7 @@ VM runtime execution model. Missing values select the current karity runtime.
 | `karity` | hardened graph and encoded-register runtime |
 | `classic` | direct-register and direct-handler runtime on the current VM pipeline |
 | `mov` | supported multi-VM lookup microcode; encoded integer arithmetic, bitwise and comparisons; Lua host fallback |
+| `bare` | program-specific Lua blocks with randomized position dispatch; no instruction blob |
 | `default` | alias for karity (the default runtime) |
 
 default: `karity`
@@ -908,7 +946,7 @@ default: `karity`
 
 ### dispatcher_type
 
-VM dispatcher shape.
+Opcode dispatcher shape for blob runtimes. Bare generates its own program-specific block dispatcher.
 
 | Value | Description |
 |---|---|

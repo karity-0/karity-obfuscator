@@ -14,6 +14,7 @@ __lazy_modules__ = {
     'obfuscator.passes.remove_comment',
     'obfuscator.passes.minify',
     'obfuscator.passes.anti_debug',
+    'obfuscator.passes.anti_env',
     'obfuscator.passes.anti_decompile',
     'obfuscator.passes.packer',
     'obfuscator.passes.output_signature',
@@ -33,6 +34,7 @@ from .localize_globals import LocalizeGlobalsPass
 from .remove_comment import RemoveCommentPass
 from .minify import MinifyPass
 from .anti_debug import AntiDebugPass
+from .anti_env import AntiEnvPass
 from .anti_decompile import AntiDecompilePass
 from .packer import PackerPass
 from .output_signature import OutputSignaturePass, SignatureOptions

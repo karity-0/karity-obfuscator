@@ -64,7 +64,7 @@
     const presetDialog = $('preset-picker'), inspector = $('build-inspector'), palette = $('command-palette');
     const byteText = value => `${Number(value).toLocaleString()} B`;
     const timeText = value => `${Number(value).toFixed(2)} s`;
-    const backendName = value => ({classic:'Classic',karity:'Karity',mov:'MOV'})[value] || value;
+    const backendName = value => ctx.getBootstrap().vm_options.find(field => field.name === 'backend')?.values.find(item => item.value === value)?.label || value;
 
     function closeOtherDialogs() {
       document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());

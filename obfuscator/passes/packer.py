@@ -83,6 +83,20 @@ _VM_TAIL_RE = re.compile(
     re.S,
 )
 
+# Bare emits one self-bound function followed by its external constant payload.
+# Treat that finalized function as opaque, just like a blob VM's captured body.
+_SOURCE_VM_TAIL_RE = re.compile(
+    r';return (?P<vmf>[A-Za-z_]\w*)\((?P=vmf),(?P<payload>\{.*\}|"[A-Za-z0-9]+")(?P<legacy_nil>,nil)?'
+    r"(?P<forward_args>,\.\.\.)?\)\s*$", re.S,
+)
+
+
+def _source_vm_tail(script: str):
+    match = _SOURCE_VM_TAIL_RE.search(script)
+    if match and script.startswith('local ' + match.group('vmf') + '=function('):
+        return match
+    return None
+
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 _LITERAL_RE = re.compile(
     r"""(?xs)
@@ -749,9 +763,11 @@ def _alloc_plan(script: str) -> ContextPlan:
     # repeatedly scans large prefixes and becomes effectively quadratic on
     # hundreds-of-KB VM output.
     vm_match = _VM_TAIL_RE.search(script)
-    if vm_match:
-        vm_args = [part.strip() for part in vm_match.group("args").split(",")]
-        vm_tail = vm_match.group("tail")
+    source_match = _source_vm_tail(script) if vm_match is None else None
+    if vm_match or source_match:
+        vm_args = ([part.strip() for part in vm_match.group("args").split(",") if part.strip()]
+                   if vm_match else [])
+        vm_tail = vm_match.group("tail") if vm_match else None
 
         # The VM path intentionally keeps the captured VM function untouched.
         # External Context
@@ -807,7 +823,7 @@ def _alloc_plan(script: str) -> ContextPlan:
             vm_args=vm_args,
             vm_tail=vm_tail,
             is_vm=True,
-            forward_args=bool(vm_match.group('forward_args')),
+            forward_args=bool((vm_match or source_match).group('forward_args')),
         )
 
     masked = _mask_lua_noncode(script)
@@ -887,7 +903,7 @@ def _alloc_plan(script: str) -> ContextPlan:
     vm_args: list[str] = []
     vm_tail: str | None = None
     if vm_match:
-        vm_args = [x.strip() for x in vm_match.group("args").split(",")]
+        vm_args = [x.strip() for x in vm_match.group("args").split(",") if x.strip()]
         vm_tail = vm_match.group("tail")
 
         # Never touch inside the captured VM function. Generic extraction or
@@ -1157,6 +1173,14 @@ def _rewrite_generic_payload(script: str, plan: ContextPlan, state: int) -> str:
 def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     m = _VM_TAIL_RE.search(script)
     if not m:
+        bare = _source_vm_tail(script)
+        if bare:
+            body = script
+            if bare.group('forward_args'):
+                start, end = bare.span('forward_args')
+                body = body[:start] + ',select(4,...)' + body[end:]
+            return ('local __KCTX,__KSTATEF,__KDECODE=...;'
+                    'local __KSTATE=__KSTATEF(__KCTX);' + body)
         return script
 
     encoded_args = [

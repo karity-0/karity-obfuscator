@@ -120,7 +120,8 @@ def apply_line_state(
     Each build uses all three reader families and multiple independently mixed
     observations of some faults. There is no reader-selection or recovery gate
     which can discard a conflicting result. Only the small new fragments go
-    through literal/final emission; the existing runtime is never re-minified.
+    through literal emission. Final whitespace compaction includes their joins
+    with the runtime and precedes source-position binding.
     """
     anchor_pos = vm_func_src.find(insertion_anchor)
     if anchor_pos < 0:
@@ -271,7 +272,7 @@ end end''')
             raise AssertionError('unexpected line-state fragment prefix')
 
         def render(fragment: str) -> str:
-            return (' ' + finalizer(fragment) + ' ') if finalizer else '\n' + fragment + '\n'
+            return (' ' + fragment + ' ') if finalizer else '\n' + fragment + '\n'
 
         insertions: dict[int, list[str]] = {start: [render(fragments[0])]}
         for index, fragment in enumerate(fragments[1:]):
@@ -286,6 +287,11 @@ end end''')
         previous = position
     parts.append(vm_func_src[previous:])
     result = ''.join(parts)
+    if finalizer:
+        # Late environment/line fragments introduce separators after the main
+        # output pass. Compact the assembled source before recording locations,
+        # then leave it untouched for both the integrity dump and final wrapper.
+        result = finalizer(result)
     prefix_lines = output_prefix.count('\n')
     probe_lines = []
     for marker in markers:

@@ -65,6 +65,8 @@ def prepare(source: str, *, backend: str, native_unpack: str, globals_name: str,
             owner,key=globals_name,expression
         bindings.append('{'+owner+',"'+key+'",'+expression+'}')
     runtime=(Path(__file__).parent/'runtimes/protected_strings.lua').read_text(encoding='utf8')
+    from .host_guards import GUARD_SOURCE
+    runtime=runtime.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
     runtime=runtime.replace('__PS_UNPACK__',native_unpack).replace('__PS_BINDINGS__','{'+','.join(bindings)+'}')
     anchor='--<<TARGET_CONSTANT_RESOLVER>>'
     if source.count(anchor)!=1:
@@ -309,7 +311,7 @@ def _freeze_calls(source: str) -> str:
             function = node.child_by_field_name('name')
             arguments = node.child_by_field_name('arguments')
             if (function is not None and function.type=='identifier' and function.id in free
-                    and ctx.plain_text(function)=='assert' and node.parent.type=='block'
+                    and ctx.plain_text(function)=='assert' and node.parent is not None and node.parent.type=='block'
                     and arguments is not None and _internal_diagnostic(ctx,arguments,1)):
                 # These compiler-owned assertions are statement guards. Keep
                 # their short-circuit condition, but omit the diagnostic object.
