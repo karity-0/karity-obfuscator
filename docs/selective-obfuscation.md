@@ -251,7 +251,9 @@ still apply inside `NO_VM`. Comments and empty statements outside the excluded
 regions do not require a VM runtime.
 
 Generated VM output is emitted at its final line position and is not rewritten
-after integrity binding. Use `vm_output_passes` for output minification. In a
+after integrity binding. Use `vm_output_passes` for output minification. With
+`minify` enabled there, native factory shells and host glue are also compacted
+before VM line binding; `NO_OBF` source text is preserved. In a
 configuration that already enables `vm`, choose `selection_modes.vm="marked"`
 to make `VM_START` / `VM_END` selective; otherwise the surrounding chunk retains
 the configured whole-script VM behavior.

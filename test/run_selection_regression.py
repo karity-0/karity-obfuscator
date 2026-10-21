@@ -326,11 +326,12 @@ print(f(2))
         self.equivalent(source, vm_options=VM)
 
     def test_cli_example_and_error_before_output(self):
-        source = (ROOT / "examples/selective.lua").read_text(encoding="utf-8")
+        example_path = ROOT / "examples/selective/selective.lua"
+        source = example_path.read_text(encoding="utf-8")
         with tempfile.TemporaryDirectory() as directory:
             output_path = Path(directory) / "output.lua"
             report_path = Path(directory) / "selection.json"
-            command = [sys.executable, str(ROOT / "main.py"), str(ROOT / "examples/selective.lua"),
+            command = [sys.executable, str(ROOT / "main.py"), str(example_path),
                        "-c", str(ROOT / "config.selective.example.json"), "-o", str(output_path),
                        "--selection-report", str(report_path), "--seed", "117"]
             result = subprocess.run(command, capture_output=True, timeout=90)
@@ -681,6 +682,51 @@ print(first(1),second(2),third(3),shared)
                 self.equivalent(source, vm_options={**VM, "backend": backend},
                                 signature={"mode": "default"}, vm_output_passes=["rename_obf", "minify"])
                 self.assertEqual(1, compile_vm.call_count)
+
+    def test_selective_host_minification_preserves_exclusions_and_vm_line_binding(self):
+        source = '''local total = 0
+--@VM_START
+local function first(value)
+ total = total + value
+ --@NO_VM_START
+ total = total + 1
+ --@NO_VM_END
+ return total
+end
+--@VM_END
+--@VM_START(junk_rate=0.5)
+local function second(value) return first(value) end
+--@VM_END
+--@NO_OBF_START
+local readable = "keep this spacing"
+--@NO_OBF_END
+print(first(2), second(3), total, readable)
+'''
+        from obfuscator import selective_vm
+        for backend in ("classic", "karity", "mov", "bare"):
+            for mode in ("all", "marked"):
+                capsules = []
+                build_vm = selective_vm._vm_build
+                def record(runtime, template, options, script, prefix):
+                    output = build_vm(runtime, template, options, script, prefix)
+                    capsules.append((prefix, output))
+                    return output
+                with self.subTest(backend=backend, mode=mode), patch.object(
+                        selective_vm, "_vm_build", side_effect=record):
+                    output, _ = self.equivalent(source, vm_options={**VM, "backend": backend},
+                                               selection_modes={"vm": mode},
+                                               signature={"mode": "default"},
+                                               vm_output_passes=["rename_obf", "minify"])
+                    self.assertTrue(capsules)
+                    host = output
+                    for prefix, capsule in capsules:
+                        start = output.index(capsule)
+                        self.assertEqual(prefix.count('\n'), output[:start].count('\n'))
+                        host = host.replace(capsule, "VM_CAPSULE", 1)
+                    self.assertNotRegex(host, r'function\([^)]*\)\nlocal _ENV=')
+                    self.assertIn(' = "keep this spacing"', host)
+                    # Only NO_OBF source and its protective line boundaries remain.
+                    self.assertLessEqual(host.count('\n'), 6)
 
     def test_different_vm_options_and_backends_remain_separate(self):
         source = '''local shared=0

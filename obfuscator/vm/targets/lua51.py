@@ -618,6 +618,15 @@ end
                 translated[:anchor.end()] + "\n" + prelude + translated[anchor.end():])
         return _compact_executor_captures(prelude + translated)
 
+    def bind_environment(self, source, context):
+        from ..environment import bind_environment
+        source, self.line_environment = bind_environment(
+            source, lua_version='5.1',
+            policy=context.options.get('environment_policy', 'compatible'),
+            compact='minify' in context.output_passes,
+            qualify_globals=getattr(self, 'isolate_runtime_globals', False))
+        return source
+
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state
         # The late line-state fragment is private 32-bit state, not user-value

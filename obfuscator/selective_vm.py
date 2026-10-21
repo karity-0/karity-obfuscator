@@ -23,7 +23,7 @@ def _parameters(ctx, node):
     return "(self" + ("," if text[1:-1].strip() else "") + text[1:] if _method(node) else text
 
 
-def _factory(ctx, node, bindings, allocator, *, metatable="_ENV.setmetatable"):
+def _factory(ctx, node, bindings, allocator, *, metatable="_ENV.setmetatable", compact=False, preserve_body=False):
     body = node.child_by_field_name("body")
     body_start = ctx.cs(body) if body is not None else ctx.ce(node) - 2
     body_end = ctx.ce(body) + 1 if body is not None else body_start
@@ -80,6 +80,15 @@ def _factory(ctx, node, bindings, allocator, *, metatable="_ENV.setmetatable"):
     edits = [r for r in edits if not any(h.start <= r.start and r.end <= h.end for h in header_edits)] + header_edits
     body_text = _apply(ctx.script[body_start:body_end], edits)
     factory = f"function({cap})\nlocal _ENV={cap}.g\nreturn function{_parameters(ctx, node)}\n{body_text}\nend\nend"
+    if compact:
+        from .passes.minify import MinifyPass
+        minify = MinifyPass().run
+        if preserve_body:
+            # NO_OBF keeps its source text; only the generated shell compacts.
+            factory = (minify(f"function({cap}) local _ENV={cap}.g return function{_parameters(ctx, node)}")
+                       + "\n" + body_text + "\nend end")
+        else:
+            factory = minify(factory)
 
     value_arg, key_arg, ignore_arg = [allocator.allocate(h) for h in ("value", "key", "ignored")]
     getters = [f"[{key}]=function() return {name} end" for key, name in captured]
@@ -124,7 +133,7 @@ def _vm_build(runtime, template, options, source, prefix):
     return output
 
 
-def _vm_factories_entry(runtime, template, options, factories, prefix, allocator):
+def _vm_factories_entry(runtime, template, options, factories, prefix, allocator, *, compact=False):
     # Existing VM runners execute the root chunk for its effects and do not
     # expose its return packet. Publish each factory into a private HOST table.
     # A table constructed inside bytecode may have virtualized keys and cannot
@@ -133,9 +142,15 @@ def _vm_factories_entry(runtime, template, options, factories, prefix, allocator
     intro = (f"(function() local {cell}={{}}; local {environment}=_ENV; "
              f"local _ENV={environment}.setmetatable({{[{key!r}]={cell}}},{{__index={environment},__newindex={environment}}}); "
              "(function()\n")
+    if compact:
+        from .passes.minify import MinifyPass
+        intro = MinifyPass().run(intro) + " "
     source = "\n".join(f"{key}[{index}]={factory}" for index, factory in factories)
     output = _vm_build(runtime, template, options, source, prefix + intro)
-    return intro + output + f"\nend)(); return {cell} end)()"
+    outro = f"\nend)(); return {cell} end)()"
+    if compact:
+        outro = " " + MinifyPass().run(outro)
+    return intro + output + outro
 
 
 def _whole_chunk_excluded(source, exclusions):

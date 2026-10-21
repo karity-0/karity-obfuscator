@@ -31,6 +31,31 @@ def kernel(version,script=123,line=456):
 
 
 class RuntimeSecurity(unittest.TestCase):
+    def test_integrity_identity_checks_do_not_invoke_guest_equality(self):
+        from obfuscator.vm import VMPass
+        from obfuscator.vm.targets.profile import TargetProfile
+        from run_blob_form_regression import execute
+        source='''local comparisons=0
+local mt={__eq=function() comparisons=comparisons+1;return true end}
+local a,b=setmetatable({},mt),setmetatable({},mt)
+a.value=3;b.value=4
+setmetatable(math,mt);math.example=9
+assert(a==b)
+setmetatable(math,nil)
+print((a.value+b.value)..':'..comparisons)
+assert(comparisons==1)
+'''
+        for version in ('5.1','5.3'):
+            expected=execute(version,source)
+            for backend in ('classic','karity','mov','bare'):
+                with self.subTest(version=version,backend=backend):
+                    random.seed(39217)
+                    output=VMPass(target=TargetProfile(version,backend),vm_options={
+                        'backend':backend,'vm_count':1,'fake_handlers':False,
+                        'mutate_handlers':False,'junk_instructions':False,
+                    },vm_output_passes=['rename_obf','minify']).run(source)
+                    self.assertEqual(expected,execute(version,output))
+
     def test_vm_and_packer_entry_without_public_tail(self):
         from obfuscator.vm import VMPass
         from obfuscator.vm.targets.profile import TargetProfile
@@ -54,7 +79,7 @@ class RuntimeSecurity(unittest.TestCase):
             for token in ('karityObfuscator/','runtime integrity mismatch','line_state','function_dump','_runctx'):
                 self.assertNotIn(token,output)
             harness="local source=[====["+output+"]====];local f=assert((loadstring or load)(source));f(nil,false,3,nil)"
-            expected=[b'forwarded-ok'] if version=='5.1' else b'forwarded-ok\r\n'
+            expected=execute(version,"print('forwarded-ok')")
             self.assertEqual(expected,execute(version,harness))
         # Both current and legacy wrappers retain packer routing and varargs.
         for legacy in (False,True):
@@ -72,7 +97,7 @@ class RuntimeSecurity(unittest.TestCase):
                 harness=("local source=[====["+packed+"]====];local f=assert(load(source));"
                          "local n,blob,kind,count=f(nil,false,3,nil);"
                          "assert(n==6 and blob=='BLOB' and kind=='function' and count=="+str(4 if forwarded else 0)+");print('packed-shape-ok')")
-                self.assertEqual(b'packed-shape-ok\r\n',execute('5.3',harness))
+                self.assertEqual(execute('5.3',"print('packed-shape-ok')"),execute('5.3',harness))
 
         # Current wrappers retain two calls even with no factory parameters.
         output=("local f;f=function() return function(blob,self,packet) "

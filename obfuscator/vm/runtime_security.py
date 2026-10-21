@@ -56,7 +56,7 @@ def prepare(source: str, *, backend: str, native_unpack: str, globals_name: str,
             native_table_pack: bool) -> str:
     expressions = ['debug.getinfo','debug.gethook','string.dump','string.byte','string.char','string.len',
                    'string.sub','string.format','string.match','string.find','table.concat',native_unpack,
-                   'string','table','math','debug','type','rawget','error','pcall','tostring','tonumber','select','getmetatable','setmetatable','next','pairs','ipairs','math.floor','math.max','math.min']
+                   'string','table','math','debug','type','rawget','rawequal','error','pcall','tostring','tonumber','select','getmetatable','setmetatable','next','pairs','ipairs','math.floor','math.max','math.min']
     bindings=[]
     for expression in expressions:
         if '.' in expression:
@@ -164,7 +164,7 @@ def _karity(source: str) -> str:
     return source
 
 
-_CORE_GLOBALS=('type','rawget','rawset','select','tonumber','tostring','error',
+_CORE_GLOBALS=('type','rawget','rawset','rawequal','select','tonumber','tostring','error',
                'pcall','xpcall','getmetatable','setmetatable','next','pairs','ipairs')
 _CORE_MEMBERS={
     'string':('byte','char','sub','dump','format','match','find','len','rep','gmatch','gsub','pack','unpack'),

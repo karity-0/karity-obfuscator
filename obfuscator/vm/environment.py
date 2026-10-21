@@ -46,7 +46,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
     kit = allocator.allocate('environment')
     rng = random.Random(hashlib.sha256(repr(random.getstate()).encode()).digest())
     keys = ('guest', 'native', 'check', 'refresh', 'state', 'raw', 'kind', 'meta',
-            'fail', 'snapshot', 'watched')
+            'fail', 'snapshot', 'watched', 'same')
     slots = dict(zip(keys, rng.sample(range(31, 4096), len(keys))))
     original = '_ENV' if lua_version == '5.3' else 'getfenv(1)'
     selection = ('if not direct(E) then fail() end' if policy == 'strict' else '''
@@ -57,7 +57,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
  end''')
     strict_watch = ('''if T(b[3])=="function" or T(b[4])=="function" then fail() end'''
                     if policy == 'strict' else '')
-    early = '''local __KIT=(function(E,R,T,D,F,next)
+    early = '''local __KIT=(function(E,R,T,D,F,next,same)
  local S={}
  local failed=false
  local M=R(D,"getmetatable")
@@ -67,7 +67,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
  if T(M)~="function" then fail() end
  local function direct(e)
   if T(e)~="table" then return false end
-  for _,k in next,{"type","rawget","error","pcall","tonumber","tostring","select"} do
+  for _,k in next,{"type","rawget","rawequal","error","pcall","tonumber","tostring","select"} do
    if T(R(e,k))~="function" then return false end
   end
   for _,k in next,{"string","table","math","debug"} do
@@ -85,7 +85,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
  end
  local function watch(t)
   if T(t)~="table" then fail() end
-  for i=1,#watched do if watched[i][1]==t then return end end
+  for i=1,#watched do if same(watched[i][1],t) then return end end
   local b={t};snapshot(b)
   __STRICT_WATCH
   watched[#watched+1]=b
@@ -93,30 +93,30 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
  watch(E);watch(N)
  for _,k in next,{"string","table","math","debug"} do watch(N[k]) end
  S[__raw]=R;S[__kind]=T;S[__meta]=M;S[__fail]=fail
- S[__snapshot]=snapshot;S[__watched]=watched
+ S[__snapshot]=snapshot;S[__watched]=watched;S[__same]=same
  return {[__guest]=E,[__native]=N,[__state]=S}
-end)(__ORIGINAL,rawget,type,debug,error,next)
+end)(__ORIGINAL,rawget,type,debug,error,next,rawequal)
 '''.replace('__SELECTION', selection).replace('__STRICT_WATCH', strict_watch)
     check = '''do
  local S=__KIT[__state]
- local R,T,M,fail,watched=S[__raw],S[__kind],S[__meta],S[__fail],S[__watched]
+ local R,T,M,fail,watched,same=S[__raw],S[__kind],S[__meta],S[__fail],S[__watched],S[__same]
  __KIT[__check]=function()
   fail(true)
   for i=1,#watched do local b=watched[i];local mt=M(b[1])
-   if mt~=b[2] then fail() end
-   if T(mt)=="table" and (R(mt,"__index")~=b[3] or R(mt,"__newindex")~=b[4]) then fail() end
+   if not same(mt,b[2]) then fail() end
+   if T(mt)=="table" and (not same(R(mt,"__index"),b[3]) or not same(R(mt,"__newindex"),b[4])) then fail() end
   end
  end
 end
 '''
     refresh = '''do
  local S=__KIT[__state]
- local fail,watched,snapshot=S[__fail],S[__watched],S[__snapshot]
+ local fail,watched,snapshot,same=S[__fail],S[__watched],S[__snapshot],S[__same]
  __KIT[__refresh]=function(t,commit)
   fail(true)
   local affected=false
   for i=1,#watched do local b=watched[i]
-   if t==b[1] or t==b[2] then
+   if same(t,b[1]) or same(t,b[2]) then
     affected=true
     if commit then snapshot(b) end
    end

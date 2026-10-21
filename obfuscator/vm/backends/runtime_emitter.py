@@ -878,12 +878,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     vm_output_details.insert(0, graph_detail)
 
     vm_func_src = target.lower_source(vm_func_src)
-    from ..environment import bind_environment
-    vm_func_src, target.line_environment = bind_environment(
-        vm_func_src, lua_version=target.lua_version,
-        policy=context.options.get('environment_policy', 'compatible'),
-        compact='minify' in context.output_passes,
-        qualify_globals=getattr(target,'isolate_runtime_globals',False))
+    vm_func_src = target.bind_environment(vm_func_src, context)
     _line_state_start = time.perf_counter()
     vm_func_src, line_state, probe_lines = target.bind_lines(vm_func_src, context)
     context.profile.append({

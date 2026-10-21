@@ -6,10 +6,10 @@ GUARD_SOURCE = '''function S.guard(force)
  if not force and ticks~=0 then return end
  if _ENV_CHECK then _ENV_CHECK() end
  for i=1,#trusted do local b=trusted[i]
-  if raw(b[1],b[2])~=b[3] then fail() end
+  if not same(raw(b[1],b[2]),b[3]) then fail() end
  end
  for i=1,#bindings do local b=bindings[i]
-  if b[1][b[2]]~=b[3] then fail() end
+  if not same(b[1][b[2]],b[3]) then fail() end
  end
  local hook,mask,count=hook0()
  if hook~=nil or (mask and #mask>0) or (count and count~=0) then fail() end

@@ -344,8 +344,12 @@ count=_acount,get=_aget,seed=_aseed,key=_akey,wordkey=_aword_key}
     inspection_source=runtime_sources[1]
     instruction_xor=inspection_source.split('--<<TARGET_INSTRUCTION_XOR>>',1)[1].split(
         '--<<ENDTARGET_INSTRUCTION_XOR>>',1)[0]
-    from obfuscator.vm.runtime_security import _capture_source
-    instruction_xor = _capture_source(native_unpack='unpack', native_table_pack=False)+instruction_xor
+    def captured_api(source):
+        # Frozen helper calls use per-build numeric slots. Extract their bank
+        # from the same emitted runtime instead of constructing a fresh one.
+        return source.split('--<<SECURITY_CAPTURE>>',1)[1].split(
+            '--<<ENDSECURITY_CAPTURE>>',1)[0]
+    instruction_xor = captured_api(inspection_source)+instruction_xor
     private_mix=inspection_source.split('--<<TARGET_PRIVATE_MIX>>',1)[1].split(
         '--<<ENDTARGET_PRIVATE_MIX>>',1)[0]
     from obfuscator.vm.vm_obfuscation import apply_dispatch_target_hiding
@@ -707,7 +711,8 @@ mod=function(hi,lo,modulus)return _pmod(_pnew(hi,lo),modulus) end}
     decrypt_name=re.findall(
         r'local function ([A-Za-z_][A-Za-z0-9_]*)\('
         r'[A-Za-z_][A-Za-z0-9_]*,[A-Za-z_][A-Za-z0-9_]*\)',cipher_region)[-1]
-    unpack_name=re.search(r'(?:string\.char|_PS_CORE\.string_char)\(([A-Za-z_][A-Za-z0-9_]*)\(',cipher_region).group(1)
+    char_slot=re.search(r'\[(\d+)\]\s*=\s*string\.char\b',captured_api(inspection_source)).group(1)
+    unpack_name=re.search(r'_PS_CORE\['+char_slot+r'\]\(([A-Za-z_][A-Za-z0-9_]*)\(',cipher_region).group(1)
     decrypt=lua.execute((instruction_xor+
         f'local function {unpack_name}(values,first,last) return unpack(values,first,last) end\n'+
         cipher_region+f'return {decrypt_name}').encode())
@@ -775,7 +780,7 @@ end''').encode())
     float_storage=mov_source.split('--<<TARGET_MOV_FLOAT_STORAGE>>',1)[1].split(
         '--<<ENDTARGET_MOV_FLOAT_STORAGE>>',1)[0]
     assert '_target51' not in float_storage and 'string.pack' not in float_storage
-    roundtrip=lua.execute((_capture_source(native_unpack='unpack', native_table_pack=False)+float_storage+'''local encode,decode={},{}
+    roundtrip=lua.execute((captured_api(mov_source)+float_storage+'''local encode,decode={},{}
 for i=0,15 do encode[i]=(i*7+3)%16;decode[(i*7+3)%16]=i end
 return function(value)
     local result=_mov_f64_from_digits(_mov_f64_digits(value,encode),decode,0)

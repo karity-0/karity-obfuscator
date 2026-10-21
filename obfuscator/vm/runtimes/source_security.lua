@@ -1,5 +1,6 @@
 return function(P,self,payload,line)
  local E,raw,kind,throw,next0=P[1],P[2],P[3],P[4],P[5]
+ local same=rawequal
  local N,_ENV_CHECK,_ENV_REFRESH=P[11],P[12],P[13]
  local failed,ticks=false,0
  local function fail() failed=true;throw(nil,0);local n=nil;return n[n] end
@@ -14,7 +15,7 @@ return function(P,self,payload,line)
 --<<write>>
  function S.write(t,k,v)
   _ENV_REFRESH(t,false);t[k]=v;_ENV_REFRESH(t,true)
-  for i=1,#bindings do local b=bindings[i];if b[1]==t and b[2]==k then b[3]=t[k] end end
+  for i=1,#bindings do local b=bindings[i];if same(b[1],t) and same(b[2],k) then b[3]=t[k] end end
  end
 --<<ENDwrite>>
 --<<global_get>>
@@ -102,6 +103,6 @@ return function(P,self,payload,line)
  S.guard(true)
  return S,function(g)
   S.guard=g
-  for i=1,#trusted do local b=trusted[i];if b[1]==S and b[2]==__GUARD_SLOT__ then b[3]=g end end
+  for i=1,#trusted do local b=trusted[i];if same(b[1],S) and same(b[2],__GUARD_SLOT__) then b[3]=g end end
  end
 end

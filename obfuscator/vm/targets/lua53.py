@@ -73,6 +73,15 @@ class Lua53Target:
     def lower_source(self, source):
         return source
 
+    def bind_environment(self, source, context):
+        from ..environment import bind_environment
+        source, self.line_environment = bind_environment(
+            source, lua_version='5.3',
+            policy=context.options.get('environment_policy', 'compatible'),
+            compact='minify' in context.output_passes,
+            qualify_globals=getattr(self, 'isolate_runtime_globals', False))
+        return source
+
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state
         passes = context.output_passes if context is not None else ()

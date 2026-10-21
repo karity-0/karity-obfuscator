@@ -4,11 +4,11 @@ _PS=(function()
     local S={api={byte=string.byte,char=string.char,sub=string.sub,concat=table.concat,
         info=debug.getinfo,hook=debug.gethook,dump=string.dump,format=string.format,
         match=string.match,len=string.len,unpack=__PS_UNPACK__,select=select,
-        type=type,rawget=rawget,error=error,floor=math.floor,tonumber=tonumber,
+        type=type,rawget=rawget,rawequal=rawequal,error=error,floor=math.floor,tonumber=tonumber,
         tostring=tostring,getmetatable=getmetatable,max=math.max,min=math.min}}
     local A=S.api
     local counter,ticks,failed=0,0,false
-    local raw,throw,hook0,kind,next0=A.rawget,A.error,A.hook,A.type,next
+    local raw,throw,hook0,kind,next0,same=A.rawget,A.error,A.hook,A.type,next,A.rawequal
     local trusted={}
     local M=2147483647
     local objects=setmetatable({},{__mode='k'})
@@ -21,7 +21,7 @@ _PS=(function()
     --<<SHARED_HOST_GUARD>>
     function S.watched(t,k)
         for i=1,#bindings do local b=bindings[i]
-            if b[1]==t and b[2]==k then return true end
+            if same(b[1],t) and same(b[2],k) then return true end
         end
         return false
     end
@@ -30,7 +30,7 @@ _PS=(function()
         t[k]=v
         if _ENV_REFRESH then _ENV_REFRESH(t,true) end
         for i=1,#bindings do local b=bindings[i]
-            if b[1]==t and b[2]==k then b[3]=t[k] end
+            if same(b[1],t) and same(b[2],k) then b[3]=t[k] end
         end
     end
     local function key(seed)
@@ -162,7 +162,7 @@ _PS=(function()
     end
     function S.cell_get(box,v)
         local expected=cells[box]
-        if expected and expected~=v then fail() end
+        if expected and not same(expected,v) then fail() end
         return S.check(v)
     end
     function S.native(fn,args,count,get,length)

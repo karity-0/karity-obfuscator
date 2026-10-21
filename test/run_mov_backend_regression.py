@@ -452,6 +452,17 @@ def main() -> int:
                 if math.type(rget(B))=="integer" and math.type(rget(C))=="integer" then
                     error("native integer comparison/division fallback") end;""")
         runtime = build_runtime(classic, opcodes, template=template)
+        # Production queries the captured native locale API. Inject this
+        # test-only query seam to force non-C/unavailable paths without
+        # optional host locales or relying on guest overrides of native APIs.
+        runtime = runtime.replace('collate=os.setlocale(nil,"collate")',
+                                  'collate=_mov_test_collate()')
+        runtime = '''local function _mov_test_collate()
+            local library=_ENV_GUEST["os"]
+            local query=type(library)=="table" and library["setlocale"]
+            if type(query)=="function" then return query(nil,"collate") end
+        end
+        ''' + runtime
         runtime = '_G.__mov_order_test=true\n' + runtime
         assert "local function _arith2(a,b,av,slot)" in runtime
         assert "local function _arith1(a,av,slot)" in runtime
