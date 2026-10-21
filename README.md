@@ -78,8 +78,8 @@ Roblox/executor-shaped environments, including real matching hosts.
 
 ## Examples
 
-- Hello: [source](examples/hello.lua), [protected output](examples/hello.protected.lua), [comparison](images/1.png).
-- Selective protection: [source](examples/selective.lua), [protected output](examples/selective.protected.lua).
+- Hello (`print("hello world")`, Fast preset): [Karity](examples/hello_world/fast-karity-01.lua), [Classic](examples/hello_world/fast-classic-01.lua), [MOV](examples/hello_world/fast-mov-01.lua), [Bare](examples/hello_world/fast-bare-01.lua).
+- Selective protection: [source](examples/selective/selective.lua), [previous protected output](examples/selective/selective.protected-old.lua).
 
 ## Testing
 

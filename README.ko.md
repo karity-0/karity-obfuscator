@@ -77,8 +77,8 @@ Roblox·executor 계열 환경을 차단합니다.
 
 ## 예제
 
-- Hello: [원본](examples/hello.lua), [난독화 결과](examples/hello.protected.lua), [비교](images/1.png).
-- 선택적 보호: [원본](examples/selective.lua), [난독화 결과](examples/selective.protected.lua).
+- Hello (`print("hello world")`, Fast 프리셋): [Karity](examples/hello_world/fast-karity-01.lua), [Classic](examples/hello_world/fast-classic-01.lua), [MOV](examples/hello_world/fast-mov-01.lua), [Bare](examples/hello_world/fast-bare-01.lua).
+- 선택적 보호: [원본](examples/selective/selective.lua), [이전 난독화 결과](examples/selective/selective.protected-old.lua).
 
 ## 테스트
 
