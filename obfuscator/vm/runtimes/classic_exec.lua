@@ -17,6 +17,10 @@ local function _pmix(x)
 end
 --<<ENDTARGET_PRIVATE_MIX>>
 
+-- Only entered with a rejected nil operand; the host creates the error body.
+local function _for_fault(initial,limit,step)
+    for i=initial,limit,step do break end
+end
 local _for_api={tonumber,math.type,math.floor,math.ceil,math.tointeger,math.mininteger,math.maxinteger}
 -- Match Lua 5.3 FORPREP, including integer-limit rounding and saturation.
 local function _for_values(initial,limit,step)
@@ -35,11 +39,11 @@ local function _for_values(initial,limit,step)
         end
         return initial,integer,step
     end
-    if bound==nil then error("'for' limit must be a number") end
+    if bound==nil then return _for_fault(1,bound,1) end
     step=_for_api[1](step)
-    if step==nil then error("'for' step must be a number") end
+    if step==nil then return _for_fault(1,1,step) end
     initial=_for_api[1](initial)
-    if initial==nil then error("'for' initial value must be a number") end
+    if initial==nil then return _for_fault(initial,1,1) end
     return initial*1.0,bound*1.0,step*1.0
 end
 

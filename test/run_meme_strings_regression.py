@@ -67,10 +67,11 @@ for i=1,3 do print(i) end
             converted = Pipeline(show_header=False).add(full).run(original)
             assert converted != original and '#"' in converted
             assert execute(converted) == execute(original), (seed, token, converted)
-    for phrase in MEME_STRINGS:
+    # The pool permits a standalone RLO. Also keep coverage for a phrase with
+    # an explicit PDF terminator, independent of the current pool contents.
+    for phrase in (*MEME_STRINGS, '\u202eclosed phrase\u202c'):
         assert int(execute('print(' + full._length(phrase) + ')')) == len(phrase.encode('utf-8'))
         if phrase.startswith('\u202e'):
-            assert phrase.endswith('\u202c')
             size = len(phrase.encode('utf-8'))
             probe = f'print({size})'
             # Force each direction-controlled phrase through actual Lua

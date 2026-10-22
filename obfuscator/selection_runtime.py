@@ -21,7 +21,15 @@ class _SelectedTree:
         return getattr(self.tree, name)
 
     def walk(self):
-        return (n for n in self.tree.walk() if self.plan.selected(self.feature, self.tree.cs(n), self.tree.ce(n) + 1))
+        strings = {'string_obf', 'string_flow_obf'}
+        def allowed(node):
+            start, end = self.tree.cs(node), self.tree.ce(node) + 1
+            if not self.plan.selected(self.feature, start, end):
+                return False
+            return not (self.feature in strings and any(
+                span.kind == 'macro' and span.feature in strings and span.feature != self.feature
+                and span.start <= start and end <= span.end for span in self.plan.spans))
+        return (n for n in self.tree.walk() if allowed(n))
 
 
 class SelectionRuntime:
@@ -86,7 +94,7 @@ class SelectionRuntime:
         from .vm.targets.profile import TargetProfile
         present = {self.names.get(type(p)) for p in passes}
         extra = []
-        for feature in ("string_obf", "boolean_obf", "number_obf", "meme_strings", "table_obf", "function_obf"):
+        for feature in ("string_obf", "string_flow_obf", "boolean_obf", "number_obf", "meme_strings", "table_obf", "function_obf"):
             if self.plan.explicit(feature) and feature not in present:
                 targets = [s for s in self.plan.spans if s.feature == feature]
                 if self.plan.modes.get(feature, "marked") == "marked" and all(
@@ -100,6 +108,10 @@ class SelectionRuntime:
                 except ValueError as error:
                     raise SelectionError(f"line {targets[0].line}: {error}") from error
                 pass_options = self.config.get(feature+'_options', {})
+                if feature == 'string_obf':
+                    pass_options = {}
+                elif feature == 'string_flow_obf':
+                    pass_options = self.config.get('string_flow_obf_options', self.config.get('string_obf_options', {}))
                 extra.append(PASS_REGISTRY[feature]["cls"](**pass_options))
                 self.names[type(extra[-1])] = feature
                 self.plan.modes.setdefault(feature, "marked")
@@ -111,26 +123,29 @@ class SelectionRuntime:
             tables = [p for p in result if self.names.get(type(p)) == "table_obf"]
             result = [p for p in result if p not in tables]
             index = max((i + 1 for i, p in enumerate(result) if self.names.get(type(p)) in
-                         {"string_obf", "boolean_obf", "number_obf"}), default=0)
+                         {"string_obf", "string_flow_obf", "boolean_obf", "number_obf"}), default=0)
             result[index:index] = tables
         if any(s.kind == "macro" for s in self.plan.spans):
             functions = [p for p in result if self.names.get(type(p)) == "function_obf"]
             result = [p for p in result if p not in functions]
             index = max((i + 1 for i, p in enumerate(result) if self.names.get(type(p)) in
-                         {"string_obf", "boolean_obf", "number_obf", "table_obf"}), default=0)
+                         {"string_obf", "string_flow_obf", "boolean_obf", "number_obf", "table_obf"}), default=0)
             result[index:index] = functions
         return result
 
     def post_passes(self, passes):
         from .vm.vm_pass import VMPass
         from .passes.minify import MinifyPass
+        from .passes.semicolon import SemiColonPass
         from .passes.packer import PackerPass
         from .vm.targets.profile import TargetProfile
         if self.plan.explicit("vm") and not any(isinstance(p, VMPass) for p in passes):
             output_passes = list(self.config.get("vm_output_passes", []))
-            if any(isinstance(p, MinifyPass) for p in passes):
-                output_passes.append("minify")
-                passes = [p for p in passes if not isinstance(p, MinifyPass)]
+            for cls, name in ((MinifyPass, 'minify'), (SemiColonPass, 'semicolon')):
+                if any(isinstance(p, cls) for p in passes):
+                    if name not in output_passes:
+                        output_passes.append(name)
+                    passes = [p for p in passes if not isinstance(p, cls)]
             vm = VMPass(vm_options=self.config.get("vm_options", {}), vm_output_passes=output_passes,
                         toolchain=getattr(self.pipeline, "toolchain", None),
                         target=getattr(self.pipeline, "target_profile", TargetProfile()),
@@ -142,7 +157,7 @@ class SelectionRuntime:
 
     def run_pre(self, pre, source):
         name = self.names.get(type(pre), type(pre).__name__)
-        if any(s.feature == "no_obf" for s in self.plan.spans) and name in {"strip_info", "anti_debug"}:
+        if any(s.feature == "no_obf" for s in self.plan.spans) and name in {"strip_info", "anti_debug", "anti_env"}:
             # These pre-passes include nonlocal symbol/field changes or a whole
             # script wrapper. Preserve exclusions instead of partially applying
             # their edits and breaking lexical bindings or field accesses.
@@ -287,18 +302,19 @@ class SelectionRuntime:
     def run_post(self, post, source):
         from .vm.vm_pass import VMPass
         from .passes.minify import MinifyPass
+        from .passes.semicolon import SemiColonPass
         if isinstance(post, VMPass):
             from .selective_vm import run_selective_vm
             result = run_selective_vm(self, post, source)
             self.vm_finished = bool(post.last_profile)
             return result
         if self.vm_finished:
-            if isinstance(post, MinifyPass):
-                raise SelectionError("minify after a selective VM would invalidate integrity; put it in vm_output_passes")
+            if isinstance(post, (MinifyPass, SemiColonPass)):
+                raise SelectionError("formatting after a selective VM would invalidate integrity; put it in vm_output_passes")
             return post.run(source)
-        if isinstance(post, MinifyPass):
-            # The lexer already knows every removed gap/comment. Carry those
-            # exact edits through selection instead of diffing repetitive CFF.
+        if isinstance(post, (MinifyPass, SemiColonPass)):
+            # Formatting passes expose exact edits. Carry those through
+            # selection instead of diffing large repetitive generated code.
             edits = [edit for edit in post.replacements(source)
                      if not self.plan.excluded(edit.start, edit.end + 1)]
             return self.plan.apply(source, edits)

@@ -545,7 +545,23 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
             assert not any(token in block for token in ('<<', '>>', '//', '&', '|'))
         assert 'local function _mov_decode_byte' in ''.join(native_blocks)
         assert 'local function _mov_encode_byte' in ''.join(native_blocks)
-        assert 'unsupported Lua 5.1 MOV operation: BAND' in ''.join(native_blocks)
+        assert 'unsupported Lua 5.1 MOV operation:' not in ''.join(native_blocks)
+        arithmetic = next(block for block in native_blocks if 'local _mov_binary=' in block)
+        capture = re.search(r'local _PS_CORE=\{[^}]*\}', runtime).group(0)
+        oracle = LuaRuntime(encoding=None)
+        banks = oracle.execute((capture + arithmetic + 'return {_mov_binary,_mov_unary}').encode())
+        probe = oracle.eval(b'function(fn) local ok,value=pcall(fn,3,2);return ok,value end')
+        values, failures = [], 0
+        for bank in banks.values():
+            for function in bank.values():
+                ok, value = probe(function)
+                if ok:
+                    values.append(value)
+                else:
+                    assert value is None
+                    failures += 1
+        assert sorted(values) == [-3, 1, 5, 6]
+        assert failures == 6
         assert 'return _mdigits[i]' in ''.join(native_blocks)
         lowered = original(self, runtime)
         assert '--<<TARGET_51_NATIVE_51_MOV_NATIVE>>' not in lowered

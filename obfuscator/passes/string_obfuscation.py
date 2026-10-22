@@ -27,10 +27,15 @@ def _long_bracket_len(raw: str) -> int:
     return 0
 
 
-def parse_lua_string(raw: str) -> bytes:
+def parse_lua_string(raw: str, lua_version=None) -> bytes:
     """Lua 문자열 리터럴(따옴표/long bracket 포함 원문)을 실제 런타임 바이트열로
     디코드한다. Lua 문자열은 바이트열이므로 한글 등 멀티바이트 문자는 UTF-8
     바이트 단위로 처리한다(코드포인트를 바이트로 취급하지 않는다)."""
+    if lua_version is None:
+        from .literal_mosaic import ACTIVE
+        from .function_costs import POLICY
+        mosaic = ACTIVE.get()
+        lua_version = mosaic.policy.lua_version if mosaic is not None else POLICY.get().lua_version
     if not raw:
         return b""
 
@@ -66,26 +71,36 @@ def parse_lua_string(raw: str) -> bytes:
             j = i
             while j < n and raw[j] in '0123456789' and j - i < 3:
                 j += 1
-            out.append(int(raw[i:j], 10) & 0xFF)
+            value = int(raw[i:j], 10)
+            if value > 255:
+                raise ValueError('decimal string escape exceeds one byte')
+            out.append(value)
             i = j
-        elif c == 'x':                        # \xHH (16진 1~2자리)
+        elif c == 'x' and lua_version != '5.1':  # \xHH (Lua 5.3)
             j = i + 1
             while j < n and j - (i + 1) < 2 and raw[j] in '0123456789abcdefABCDEF':
                 j += 1
-            out.append(int(raw[i + 1:j], 16) if j > i + 1 else 0)
+            if j != i + 3:
+                raise ValueError('hex string escape requires two digits')
+            out.append(int(raw[i + 1:j], 16))
             i = j
-        elif c == 'z':                        # \z: 이어지는 공백 스킵
+        elif c == 'z' and lua_version != '5.1':  # \z: 이어지는 공백 스킵
             i += 1
             while i < n and raw[i] in ' \t\r\n\f\v':
                 i += 1
-        elif c == 'u':                        # \u{XXXX}: 코드포인트 → UTF-8
+        elif c == 'u' and lua_version != '5.1':  # \u{XXXX}: 코드포인트 → UTF-8
             j = raw.find('}', i)
             if raw[i + 1:i + 2] == '{' and j != -1:
-                out.extend(chr(int(raw[i + 2:j], 16)).encode('utf-8', errors='surrogatepass'))
+                digits = raw[i + 2:j]
+                if not re.fullmatch('[0-9a-fA-F]+', digits):
+                    raise ValueError('invalid Unicode string escape')
+                value = int(digits, 16)
+                if value > 0x10ffff:
+                    raise ValueError('Unicode string escape exceeds Lua 5.3 range')
+                out.extend(chr(value).encode('utf-8', errors='surrogatepass'))
                 i = j + 1
             else:
-                out.extend(b'u')
-                i += 1
+                raise ValueError('invalid Unicode string escape')
         elif c in _SIMPLE_ESCAPES:
             out.append(_SIMPLE_ESCAPES[c])
             i += 1
@@ -95,33 +110,75 @@ def parse_lua_string(raw: str) -> bytes:
             if i < n and raw[i] in ('\n', '\r') and raw[i] != c:
                 i += 1
         else:                                  # 알 수 없는 이스케이프: 문자 그대로
+            if lua_version != '5.1':
+                raise ValueError('invalid Lua 5.3 string escape: ' + c)
             out.extend(c.encode('utf-8'))
             i += 1
 
     return bytes(out)
 
 
-def _encode(data: bytes, allocator: NameAllocator | None = None, options=None) -> str:
+def _finish_encoding(expression):
     from .numeric_provenance import CodeText
-    from .literal_mosaic import ACTIVE
-    expression = reconstruct(data, allocator, options)
-    mosaic = ACTIVE.get()
-    if mosaic is not None:
-        expression = mosaic.transform_generated(expression)
+    from .literal_mosaic import ACTIVE, LiteralMosaic
+    mosaic = ACTIVE.get() or LiteralMosaic()
+    expression = mosaic.transform_generated(expression, mandatory=True)
     return CodeText(expression, getattr(expression,'protected',()),
                     reconstructions=[(0,len(expression))],
                     origins=getattr(expression,'origins',()) or [(0,len(expression),'string_constant')])
 
 
+_BYTE_OPERATIONS = ('xor', 'add', 'sub', 'mod', 'mul_mod', 'div', 'mask')
+
+
+def _byte_expression(value, operation=None):
+    operation = operation or random.choice(_BYTE_OPERATIONS)
+    key = random.randint(256, 65535)
+    if operation == 'xor':
+        return f'({value ^ key}~{key})'
+    if operation == 'add':
+        return f'({value + key}-{key})'
+    if operation == 'sub':
+        return f'({key}-{key - value})'
+    if operation == 'mod':
+        modulus = random.randint(256, 1023)
+        return f'({value + random.randint(1, 63)*modulus}%{modulus})'
+    if operation == 'mul_mod':
+        factor = random.randint(2, 256)
+        return f'({value*factor%257}*{pow(factor, -1, 257)}%257)'
+    if operation == 'div':
+        factor = random.randint(2, 63)
+        return f'({value*factor}//{factor})'
+    if operation == 'mask':
+        return f'({value | ((key >> 8) << 8)}&255)'
+    raise ValueError('unknown byte reconstruction operation: ' + operation)
+
+
+def _encode(data: bytes, allocator: NameAllocator | None = None, options=None) -> str:
+    """Restore compact char calls, varying byte inverses and Mosaic operands."""
+    if not data:
+        return _finish_encoding('(string.char())')
+    parts = ['string.char(' + ','.join(_byte_expression(b) for b in data[i:i+16]) + ')'
+             for i in range(0, len(data), 16)]
+    # Bound concatenation recursion and char argument/register pressure.
+    expression = ('(' + '..'.join(parts) + ')' if len(parts) <= 4 else
+                  '(table.concat({' + ','.join(parts) + '}))')
+    return _finish_encoding(expression)
+
+
+def _encode_flow(data: bytes, allocator: NameAllocator | None = None, options=None) -> str:
+    return _finish_encoding(reconstruct(data, allocator, options))
+
+
 class StringObfuscationPass(BasePass):
-    """Lower each literal to a fresh, bounded multi-statement reconstruction."""
+    """Rebuild bytes with varied scalar expressions and compact char calls."""
 
     parser = "treesitter"
 
-    def __init__(self, **options):
-        from .string_reconstruction import validate_options
-        validate_options(options)
-        self.options = options
+    encoder = staticmethod(_encode)
+
+    def __init__(self):
+        self.options = {}
 
     def run(self, script: str, tree) -> list[Replacement]:
         from .literal_mosaic import ACTIVE
@@ -134,7 +191,7 @@ class StringObfuscationPass(BasePass):
                 continue
 
             with mosaic.at(tree.cs(node),tree.ce(node)+1) if mosaic is not None else nullcontext():
-                expression = _encode(parse_lua_string(tree.text(node)),allocator,self.options)
+                expression = self.encoder(parse_lua_string(tree.text(node)),allocator,self.options)
             replacements.append(Replacement(
                 start    = tree.cs(node),
                 end      = tree.ce(node),

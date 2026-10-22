@@ -8,12 +8,14 @@ from .base import BackendContext, LoweredIR, VMBackend
 from .classic import ClassicBackend
 from .karity import KarityBackend
 from .mov import MovBackend
+from .bare import BareBackend
 
 
 _BACKENDS: dict[str, VMBackend] = {
     "karity": KarityBackend(),
     "classic": ClassicBackend(),
     "mov": MovBackend(),
+    "bare": BareBackend(),
 }
 
 
@@ -53,6 +55,15 @@ def register_backend(backend: VMBackend) -> None:
 def backend_choices() -> list[tuple[str, str]]:
     return [(name, backend.description) for name, backend in _BACKENDS.items()] + [
         ("default", "alias for karity (the default runtime)")]
+
+
+def backend_metadata() -> list[dict[str, str]]:
+    """Keep persisted IDs independent of user-facing branding."""
+    return [{"value": name,
+             "label": getattr(backend, "display_name", "") or ("MOV" if name == "mov" else name.title()),
+             "description": backend.description} for name, backend in _BACKENDS.items()] + [
+        {"value": "default", "label": "Default (Karity)",
+         "description": "alias for karity (the default runtime)"}]
 
 
 _DOMAIN_BACKENDS = None

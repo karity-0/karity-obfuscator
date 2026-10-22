@@ -20,13 +20,13 @@ from ..passes.boolean_expressions import BooleanExpressionEngine
 from ..passes.base import Replacement
 from ..passes.number_obfuscation import NumberObfuscationPass
 from ..passes.meme_strings import MemeStringsPass
-from ..passes.string_obfuscation import _encode, parse_lua_string
+from ..passes.string_obfuscation import _encode, _encode_flow, parse_lua_string
 from ..names import NameAllocator
 from ..passes.ts_utils import _LANG, parse
 from ..passes.numeric_provenance import CodeText, protected_number, number_origin, join_code
 
 
-EMITTER_PASS_NAMES = frozenset({"number_obf", "string_obf", "boolean_obf"})
+EMITTER_PASS_NAMES = frozenset({"number_obf", "string_obf", "string_flow_obf", "string_encode", "boolean_obf"})
 
 _LITERAL_QUERY = ts.Query(
     _LANG,
@@ -82,7 +82,10 @@ _GENERATED_NUMBER_RE = re.compile(
 )
 
 _EXACT_HEX64_RE = re.compile(r"0[xX][0-9A-Fa-f]{16}")
-_MEME_LITERAL_RE = re.compile(r'"(?:\\.|[^"\\])*"|' + _GENERATED_NUMBER_RE.pattern)
+_MEME_LITERAL_RE = re.compile(
+    r"\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|" + _GENERATED_NUMBER_RE.pattern,
+    re.DOTALL,
+)
 # A deliberately restricted scalar grammar: numeric/quoted-string tokens and
 # operators only. No identifiers, declarations, tables or lexical scopes can
 # be introduced. Unknown generated syntax takes the full final-analysis path.
@@ -117,14 +120,18 @@ def _append_raw(parts: list[Fragment], text: str) -> None:
 def _split_generated_numbers(expr: str) -> list[Fragment]:
     """Tokenize controlled NumberObfuscationPass output for later layers.
 
-    Number expressions contain no strings or comments.  Keeping their numeric
-    leaves typed lets a second configured number stage reproduce the old
+    Numeric generation can include quoted meme operands. Keep those atoms opaque
+    while exposing numeric leaves; this lets a second configured number stage reproduce the old
     parse-after-replacement layering without parsing the whole VM again.
     """
     parts: list[Fragment] = []
     pos = 0
-    for match in _GENERATED_NUMBER_RE.finditer(expr):
+    for match in _MEME_LITERAL_RE.finditer(expr):
         _append_raw(parts, expr[pos:match.start()])
+        if match.group(0).startswith(('\"', "'")):
+            parts.append(StringLiteral(match.group(0), 'meme_expression'))
+            pos = match.end()
+            continue
         parts.append(NumberLiteral(match.group(0),protected=protected_number(expr,match.start(),match.end()),
             origin=number_origin(expr,match.start(),match.end(),'vm_constant')))
         pos = match.end()
@@ -140,7 +147,7 @@ def _split_meme_literals(expr: str, eligible: bool) -> list[Fragment]:
         _append_raw(parts, expr[pos:match.start()])
         token = match.group(0)
         parts.append(
-            StringLiteral(token,'meme_expression') if token.startswith('"')
+            StringLiteral(token,'meme_expression') if token.startswith(('\"', "'"))
             else NumberLiteral(token, eligible and _EXACT_HEX64_RE.fullmatch(token) is None,
                                origin='meme_expression')
         )
@@ -303,11 +310,11 @@ def _parse_fragments(
     return parts, captured_count
 
 
-def _emit_string(token: str, allocator: NameAllocator) -> list[Fragment]:
-    # The shared generator emits no quoted literals or comments. Keep every
-    # numeric leaf eligible for later NumberObf/Meme stages, without reparsing
-    # the complete VM. Its identifiers are reserved from the input/plans.
-    return _split_generated_numbers(_encode(parse_lua_string(token), allocator))
+def _emit_string(token: str, allocator: NameAllocator, *, flow=False) -> list[Fragment]:
+    # Retain numeric provenance and opaque quoted meme atoms without parsing
+    # the complete VM. Identifiers are reserved from the input/plans.
+    encoder = _encode_flow if flow else _encode
+    return _split_generated_numbers(encoder(parse_lua_string(token), allocator))
 
 
 def _emit_boolean(value: bool) -> list[Fragment]:
@@ -423,7 +430,7 @@ def _emit_vm_literals_scoped(
     """Apply identifier plans and literal stages over one syntax context."""
     stages = [name for name in pass_names if name in EMITTER_PASS_NAMES or name == "meme_strings"]
     replacements = replacements or []
-    if finalize is not None and (replacements or 'string_obf' in stages):
+    if finalize is not None and (replacements or set(stages) & {'string_obf', 'string_flow_obf'}):
         raise ValueError('Scalar analysis reuse requires unchanged identifiers and string literals')
     if not stages and not replacements:
         return source, []
@@ -457,7 +464,7 @@ def _emit_vm_literals_scoped(
     }]
 
     allocator = None
-    if "string_obf" in stages:
+    if set(stages) & {'string_obf', 'string_flow_obf'}:
         allocator = NameAllocator.for_source(source, seed=random.getrandbits(64))
         for replacement in replacements:
             allocator.used.update(re.findall(r"[A-Za-z_][A-Za-z_0-9]*", replacement.new_text))
@@ -484,8 +491,20 @@ def _emit_vm_literals_scoped(
                 # are protected, preventing Meme -> Number amplification.
                 _append_raw(output, mosaic.output_number(part.token, origin=part.origin, hot=part.hot))
                 replacements += 1
-            elif name == "string_obf" and isinstance(part, StringLiteral):
-                output.extend(_emit_string(part.token, allocator))
+            elif name in {"string_obf", "string_flow_obf"} and isinstance(part, StringLiteral):
+                output.extend(_emit_string(part.token, allocator, flow=name == 'string_flow_obf'))
+                replacements += 1
+            elif name == 'string_encode' and isinstance(part, StringLiteral):
+                tokens = mosaic.strings(force=True).fragments(parse_lua_string(part.token))
+                wrapped = len(tokens) != 1 or tokens[0].startswith('[')
+                if wrapped:
+                    _append_raw(output, '(')
+                for index, token in enumerate(tokens):
+                    if index:
+                        _append_raw(output, '..')
+                    output.append(StringLiteral(token, part.origin))
+                if wrapped:
+                    _append_raw(output, ')')
                 replacements += 1
             elif name == "boolean_obf" and isinstance(part, BooleanLiteral):
                 output.extend(_emit_boolean(part.value))

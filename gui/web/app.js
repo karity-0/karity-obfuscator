@@ -757,18 +757,24 @@ document.addEventListener('DOMContentLoaded', () => {
     const allPasses = [...state.config.passes, ...state.config.vm_output_passes, ...state.config.packer_output_passes];
     ui.pipelineCount.textContent = allPasses.length;
     ui.activePreset.textContent = tr(presetLabels[state.preset]?.[0] || titleCase(state.preset));
-    ui.activeLevel.textContent = ({karity:'Karity', classic:'Classic', mov:'MOV'})[bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity'];
+    const backendId = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
+    ui.activeLevel.textContent = bootstrap.vm_options.find(option => option.name === 'backend').values.find(item => item.value === backendId)?.label || backendId;
     ui.metricPasses.textContent = allPasses.length;
-    ui.metricVms.textContent = state.config.vm_options.vm_count ?? 1;
+    ui.metricVms.textContent = bootstrap.vm_options.find(option => option.name === 'vm_count').supported_backends.includes(backendId)
+      ? state.config.vm_options.vm_count ?? 1 : 1;
     ui.metricRuntime.textContent = !bootstrap.vm_options.find(option => option.name === 'runtime_polymorphism_rate').supported_backends.includes(bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend)
       ? 'N/A' : formatPercent(state.config.vm_options.runtime_polymorphism_rate);
     const backend = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
     document.querySelectorAll('[data-backend]').forEach(button => {
+      const label = bootstrap.vm_options.find(option => option.name === 'backend').values.find(item => item.value === button.dataset.backend)?.label;
+      if (label) button.querySelector('strong').textContent = label;
       button.setAttribute('aria-pressed', String(button.dataset.backend === backend));
       button.setAttribute('aria-haspopup', 'false');
       button.setAttribute('aria-controls', 'backend-picker');
     });
     document.querySelectorAll('[data-backend-choice]').forEach(button => {
+      const label = bootstrap.vm_options.find(option => option.name === 'backend').values.find(item => item.value === button.dataset.backendChoice)?.label;
+      if (label) button.querySelector('.backend-name').textContent = label;
       button.setAttribute('aria-pressed', String(button.dataset.backendChoice === backend));
     });
     const unused = bootstrap.vm_options.filter(option => option.resolution[backend]?.outcome === 'disable' && state.config.vm_options[option.name]);

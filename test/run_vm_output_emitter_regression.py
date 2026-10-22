@@ -80,7 +80,7 @@ def main() -> int:
     # remain useful without copying the complete source into the GUI console.
     oversized_branch = 'return function(flag) local x=0 if flag then ' + 'x=x+1;' * 200000 + ' end return x end'
     try:
-        _dump_function_stripped(oversized_branch, "", "decoy", "", LuaToolchain())
+        _dump_function_stripped(oversized_branch, "", LuaToolchain())
     except RuntimeError as error:
         assert "control structure too long" in str(error), str(error)[:2000]
         assert "characters omitted" in str(error) and len(str(error)) < 10000
@@ -219,9 +219,9 @@ print(call(3))
     if len(parse_details) != 1 or parse_details[0].get("parse_count") != 1:
         raise AssertionError(f"literal backend did not parse exactly once: {details}")
     number_detail = next(d for d in details if d["phase"] == "vm_output:number_obf")
-    if number_detail["replacements"] <= 10:
+    if number_detail["replacements"] != 1:
         raise AssertionError(
-            "number emitter did not consume string/boolean generated literals: "
+            "number emitter must transform source 123 once and preserve intrinsic string/boolean operands: "
             f"{number_detail}"
         )
     if number_detail.get("retokenized_generated_numbers") is not False:

@@ -132,16 +132,29 @@ def main():
     assert any(no_cff_source[r.start:r.end+1] == '73' for r in no_cff_edits)
     assert join_code((CodeText('🍤1', [(1,2)]), 'x'))[1:2].protected == ((0,1),)
 
-    # The reconstruction helpers are source functions for FunctionObf; no
-    # exclusion of StringObf-generated instructions is permitted.
+    # Flow reconstruction helpers are source functions for FunctionObf; no
+    # exclusion of their generated instructions is permitted.
     random.seed(4606)
-    pipeline = build_pipeline_from_config({'passes':['string_obf','function_obf','number_obf'],
+    pipeline = build_pipeline_from_config({'passes':['string_flow_obf','function_obf','number_obf'],
         'function_obf_options': {'inline':False}}, Pipeline, show_header=False)
-    result = pipeline.run('return STRING_OBF("hello world")')
+    result = pipeline.run('return STRING_FLOW_OBF("hello world")')
     function_pass = next(p for p in pipeline._passes if isinstance(p, FunctionObfuscationPass))
     assert function_pass.last_transformed_count > 0
     assert sum(r.get('cff_blocks', 0) for r in function_pass.last_function_costs) > 10
     assert runtime('5.3').execute(result) == 'hello world'
+
+    # Compact String Obf owns scalar byte expressions, with no reconstruction
+    # function for FunctionObf to transform. Keep its execution check separate
+    # from Flow's CFF coverage instead of requiring a helper it does not emit.
+    random.seed(4606)
+    compact = build_pipeline_from_config({'passes':['string_obf','function_obf','number_obf'],
+        'function_obf_options': {'inline':False}}, Pipeline, show_header=False)
+    compact_result = compact.run('return STRING_OBF("hello world")')
+    compact_function = next(p for p in compact._passes if isinstance(p, FunctionObfuscationPass))
+    assert compact_function.last_transformed_count == 0
+    assert not any(n.type in {'function_definition','function_declaration'}
+                   for n in parse(compact_result).walk())
+    assert runtime('5.3').execute(compact_result) == 'hello world'
 
     # Function directives override structural budgets, while the pass budget
     # stays a global setting rather than being silently ignored per function.

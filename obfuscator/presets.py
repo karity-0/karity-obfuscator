@@ -5,7 +5,7 @@ own the backend, target, signature, toolchain or explicit selection settings.
 """
 from copy import deepcopy
 
-REVISION = 3
+REVISION = 4
 USER_PRESETS = ('fast', 'balanced', 'strong', 'maximum')
 PREFIX = 'builtin:'
 CONTEXT_KEYS = ('target', 'signature', 'lua_executable', 'luac_executable',
@@ -28,7 +28,7 @@ def user_preset(name):
     if index == 1:
         passes += ['boolean_obf', 'localize_globals']
     elif full:
-        passes += ['boolean_obf', 'table_obf', 'string_obf', 'function_obf',
+        passes += ['boolean_obf', 'table_obf', 'string_flow_obf', 'function_obf',
                    'number_obf', 'localize_globals', 'meme_strings']
     passes += ['minify', 'vm']
     if index == 3:
@@ -49,7 +49,7 @@ def user_preset(name):
             'reconstruction_group_size': (8, 6, 4, 3)[index],
             'max_pass_expansion_ratio': (8.0, 10.0, 12.0, 16.0)[index],
         },
-        'string_obf_options': {
+        'string_flow_obf_options': {
             'steps_min': (2, 2, 3, 3)[index],
             'steps_max': (3, 3, 4, 5)[index],
             'slots_min': (2, 2, 2, 3)[index], 'slots_max': (3, 4, 4, 4)[index],
@@ -112,7 +112,7 @@ def resolve_user_preset(name, context=None):
     context = context or {}
     result = {key: deepcopy(context[key]) for key in CONTEXT_KEYS if key in context}
     result.update(user_preset(name))
-    for key in ('backend', 'requirements'):
+    for key in ('backend', 'requirements', 'environment_policy'):
         if key in context.get('vm_options', {}):
             result['vm_options'][key] = deepcopy(context['vm_options'][key])
     result['_profile'] = canonical_name(name)

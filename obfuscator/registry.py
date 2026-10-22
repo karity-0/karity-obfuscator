@@ -84,12 +84,19 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "cls": "StringEncodePass",
         "label": "Encode String",
         "group": "base",
+        "docs": "passes/stringEncode.md",
     },
     "string_obf": {
         "cls": "StringObfuscationPass",
         "label": "String Obfuscation",
         "group": "base",
         "docs": "passes/stringObfuscation.md",
+    },
+    "string_flow_obf": {
+        "cls": "StringFlowObfuscationPass",
+        "label": "String Flow Obf",
+        "group": "base",
+        "docs": "passes/stringFlowObfuscation.md",
     },
     "boolean_obf": {
         "cls": "BooleanObfuscationPass",
@@ -136,6 +143,12 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "label": "Minify",
         "group": "post",
     },
+    "semicolon": {
+        "cls": "SemiColonPass",
+        "label": "SemiColon",
+        "group": "post",
+        "docs": "passes/semiColon.md",
+    },
     "vm": {
         "cls": "VMPass",
         "label": "VM",
@@ -147,6 +160,12 @@ PASS_REGISTRY: dict[str, Mapping] = {
         "label": "Anti-Debug Wrapper",
         "group": "pre",
         "docs": "passes/antiDebug.md",
+    },
+    "anti_env": {
+        "cls": "AntiEnvPass",
+        "label": "Anti Env",
+        "group": "pre",
+        "docs": "passes/antiEnv.md",
     },
     "anti_decompile": {
         "cls": "AntiDecompilePass",
@@ -167,15 +186,16 @@ PASS_REGISTRY = {name: _PassInfo(info) for name, info in PASS_REGISTRY.items()}
 CONFIG_PASS_LISTS = ("passes", "vm_output_passes", "packer_output_passes")
 VALID_DISPATCHERS = {"ifelseif", "tailcall", "table", "bsearch", "mixed"}
 VALID_BLOB_FORMS = {"string", "table", "numeric", "emoji", "chinese", "random"}
-OUTPUT_PASS_EXCLUDES = {"vm", "pack"}
+OUTPUT_PASS_EXCLUDES = {"vm", "pack", "anti_env"}
 VALID_SIGNATURE_MODES = {"default", "none", "fake", "generated", "custom"}
 VALID_SIGNATURE_SOURCES = {"well_known", "generated"}
 
 PASS_DESCRIPTIONS = {
     "strip_info": "Removes comments, shortens lexical names, and renames statically tracked fields of private local tables.",
     "remove_comment": "Removes comments from the source code before AST parsing.",
-    "string_encode": "Encodes string literals.",
-    "string_obf": "Reconstructs strings through randomized, interleaved arithmetic and bitwise statements.",
+    "string_encode": "Applies shared String Mosaic spelling: varied quotes, long brackets, escapes and bounded mixed fragments, without runtime helpers.",
+    "string_obf": "Reconstructs string bytes through compact char calls, varied inverse operations, and scoped numeric Mosaic expressions.",
+    "string_flow_obf": "Reconstructs strings through randomized, interleaved arithmetic and bitwise statements with mutable shared state.",
     "boolean_obf": "Obfuscates boolean literals.",
     "number_obf": "Obfuscates number literals.",
     "meme_strings": "Replaces some numeric literals with meme string lengths and arithmetic corrections.",
@@ -184,8 +204,10 @@ PASS_DESCRIPTIONS = {
     "rename_obf": "Assigns frequency-ranked short names to lexical locals and generated helpers.",
     "localize_globals": "Converts global variable accesses to local aliases where possible.",
     "minify": "Reduces script size by removing unnecessary whitespace.",
+    "semicolon": "Adds decorative statement terminators in a repeating 1, 3, 2, 1 pattern; Lua 5.1 uses single terminators.",
     "vm": "Virtualizes Lua bytecode using the custom Lua 5.3 VM.",
     "anti_debug": "Inserts anti-debugging checks.",
+    "anti_env": "Blocks Roblox/executor-shaped environments using multiple related typed signals, including real matching hosts. Opt-in source pre-pass.",
     "anti_decompile": "Adds source-level traps that make decompiler output less useful.",
     "pack": "Compresses and wraps the final output in a self-extracting loader.",
 }
@@ -232,7 +254,7 @@ VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
         "values": backend_choices(),
     },
     "dispatcher_type": {
-        "description": "VM dispatcher shape.",
+        "description": "Opcode dispatcher shape for blob runtimes. Bare generates its own program-specific block dispatcher.",
         "default": "ifelseif",
         "values": [
             ("ifelseif", "if/elseif chain dispatcher"),
@@ -328,6 +350,12 @@ VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
     "runtime_trace": {
         "description": "Emit the final runtime route hash to stderr for diagnostics (karity backend only). When false, all trace instrumentation is removed during generation. Keep disabled in normal and release builds.",
         "default": False,
+    },
+    "environment_policy": {
+        "description": "Host environment policy: compatible preserves proxy guest environments and uses an available direct native environment; strict rejects inherited essential APIs and initial function-based environment/library lookup hooks. Both monitor later metatable changes.",
+        "default": "compatible",
+        "values": [("compatible", "Preserve guest proxy environments; monitor later changes."),
+                   ("strict", "Require direct essential APIs and reject initial function lookup hooks.")],
     },
     "block_variant_rate": {
         "description": "Fraction of eligible straight-line basic-block chunks cloned into independently compiled runtime-selectable variants.",
@@ -507,6 +535,7 @@ def validate_config(config: object) -> None:
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_literal_mosaic(config.get('literal_mosaic',{}))
     _validate_string_obf_options(config.get('string_obf_options', {}))
+    _validate_string_obf_options(config.get('string_flow_obf_options', {}))
     _validate_literal_pass_options(config)
     _validate_function_obf_options(config.get("function_obf_options", {}))
     _validate_vm_options(config.get("vm_options", {}))
@@ -592,7 +621,8 @@ def validate_deployment_config(config: Mapping[str, Any]) -> None:
     options = config.get('vm_options', {})
     if options.get('runtime_trace', False):
         errors.append('runtime_trace must be false')
-    if not options.get('integrity_constants') or options.get('integrity_constant_rate', 0) <= 0:
+    capabilities = backend_capabilities(normalize_vm_backend(options.get('backend')))
+    if 'integrity_constants' in capabilities.supported_options and (not options.get('integrity_constants') or options.get('integrity_constant_rate', 0) <= 0):
         errors.append('constant integrity protection must be enabled')
     if errors:
         raise ReleaseCheckError('deployment-check failed:\n- '+'\n- '.join(errors))
@@ -610,11 +640,11 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
         if name not in passes:
             errors.append(f"passes must include '{name}'")
 
+    capabilities = backend_capabilities(backend)
     vm_count = vm_options.get("vm_count", 1)
-    if not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2:
+    if 'vm_count' in capabilities.supported_options and (not isinstance(vm_count, int) or isinstance(vm_count, bool) or vm_count < 2):
         errors.append("vm_options.vm_count should be >= 2 for release builds")
 
-    capabilities = backend_capabilities(backend)
     required_vm_flags = tuple(key for key in (
         "fake_handlers", "mutate_handlers", "junk_instructions",
     ) if key in capabilities.supported_options)
@@ -625,10 +655,10 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
     if float(vm_options.get("junk_rate", 0.0)) <= 0.0:
         errors.append("vm_options.junk_rate should be > 0.0")
 
-    if vm_options.get("integrity_constants") is not True:
+    if 'integrity_constants' in capabilities.supported_options and vm_options.get("integrity_constants") is not True:
         errors.append("vm_options.integrity_constants must be true")
 
-    if float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
+    if 'integrity_constant_rate' in capabilities.supported_options and float(vm_options.get("integrity_constant_rate", 0.0)) <= 0.0:
         errors.append("vm_options.integrity_constant_rate should be > 0.0")
 
     for key in ("graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
@@ -641,7 +671,7 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
     if vm_options.get("runtime_trace") is True:
         errors.append("vm_options.runtime_trace must be false for release builds")
 
-    if vm_options.get("blob_form") != "random":
+    if 'blob_form' in capabilities.supported_options and vm_options.get("blob_form") != "random":
         errors.append("vm_options.blob_form must be 'random'")
 
     # MOV always emits independent instruction IDs and digit alphabets per VM;
@@ -656,7 +686,7 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
 def _reject_nested_output_passes(config: Mapping[str, Any], key: str) -> None:
     nested = [name for name in config.get(key, []) if name in OUTPUT_PASS_EXCLUDES]
     if nested:
-        raise ConfigError(f"'{key}' cannot contain post-build passes: {', '.join(nested)}")
+        raise ConfigError(f"'{key}' cannot contain post-build/source-only passes: {', '.join(nested)}")
 
 
 def _validate_rename_options(options):
@@ -778,6 +808,8 @@ def _validate_vm_options(options: dict) -> None:
             raise ConfigError(f"invalid vm_options.dispatcher_type '{dispatcher}'. expected: {values}")
 
     blob_form = options.get("blob_form")
+    if options.get('environment_policy', 'compatible') not in ('compatible', 'strict'):
+        raise ConfigError('vm_options.environment_policy must be compatible or strict')
     if blob_form is not None and blob_form not in VALID_BLOB_FORMS:
         values = ", ".join(sorted(VALID_BLOB_FORMS))
         raise ConfigError(f"invalid vm_options.blob_form '{blob_form}'. expected: {values}")
@@ -933,11 +965,11 @@ def build_pipeline_from_config[P: Pipeline](
     has_packer              = "pack" in config.get("passes", [])
 
     # Integrity-bearing output must not be rewritten after its dump is hashed.
-    # Route a following minifier into that stage's output finalization instead.
+    # Route following formatting passes into that stage's output finalization.
     stages: list[tuple[str, list[str]]] = []
     protected_output = None
     for name in config.get("passes", []):
-        if name == "minify" and protected_output is not None:
+        if name in {"minify", "semicolon"} and protected_output is not None:
             if name not in stages[protected_output][1]:
                 stages[protected_output][1].append(name)
             continue
@@ -975,11 +1007,15 @@ def build_pipeline_from_config[P: Pipeline](
             function_pass.lua_version = pipeline.target_profile.lua_version
             pipeline.add(function_pass)
         elif name == 'string_obf':
-            pipeline.add(cls(**config.get('string_obf_options', {})))
+            pipeline.add(cls())
+        elif name == 'string_flow_obf':
+            pipeline.add(cls(**config.get('string_flow_obf_options', config.get('string_obf_options', {}))))
         elif name == 'boolean_obf':
             pipeline.add(cls(**config.get('boolean_obf_options', {})))
         elif name == 'table_obf':
             pipeline.add(cls(**config.get('table_obf_options', {})))
+        elif name in {'semicolon', 'string_encode'}:
+            pipeline.add(cls(lua_version=pipeline.target_profile.lua_version))
         else:
             pipeline.add(cls())
 

@@ -1,5 +1,10 @@
 (() => {
   const pairs = [
+    ['Anti Env', '안티 환경'],
+    ['Blocks Roblox/executor-shaped environments using multiple related typed signals, including real matching hosts. Opt-in source pre-pass.', '관련 값 여러 개와 타입을 묶어 Roblox·executor 계열 환경을 차단합니다. 실제 해당 환경도 차단하는 선택 PrePass입니다.'],
+    ['Program-specific code generation', '프로그램별 코드 생성'],
+    ['Program-specific blocks linked by randomized ID dispatch.', '전용 실행 블록을 랜덤 ID 분기로 연결.'],
+    ['Size and speed first · no instruction blob or interpreter.', '크기·속도 우선 · 명령어 블롭과 해석기 생략.'],
     ['Protection preset details', '프리셋 상세 선택'], ['VM backend details', 'VM 백엔드 상세 선택'],
     ['Choose a protection preset', '보호 프리셋 선택'], ['Your VM backend and target stay unchanged.', '선택한 VM 백엔드와 Lua 대상은 유지됩니다.'],
     ['Left click: apply · Right click: details', '좌클릭: 바로 적용 · 우클릭: 상세 선택'],
@@ -105,8 +110,11 @@
     ['Integer substitution requires Lua 5.3.', '정수 연산 치환은 Lua 5.3에서 사용할 수 있습니다.'],
     ['Strip Info', '정보 제거'], ['Remove Comment', '주석 제거'], ['Encode String', '문자열 인코딩'],
     ['String Obfuscation', '문자열 난독화'], ['Boolean Obfuscation', '불리언 난독화'], ['Number Obfuscation', '숫자 난독화'],
+    ['String Flow Obf', '문자열 흐름 난독화'],
+    ['String flow', '문자열 흐름'],
     ['Table Obfuscation', '테이블 난독화'], ['Function Obfuscation', '함수 난독화'], ['Rename Obfuscation', '이름 난독화'],
     ['Localize Globals', '전역 지역화'], ['Minify', '압축'], ['Meme / Fun Strings', '밈 문자열'],
+    ['SemiColon', '세미콜론'],
     ['VM runtime', 'VM 런타임'], ['Dispatcher', '디스패처'], ['Blob representation', '블롭 형식'], ['VM count', 'VM 수'],
     ['Fake handlers', '가짜 핸들러'], ['Handler mutation', '핸들러 변형'], ['Junk instructions', '정크 명령'], ['Junk rate', '정크 비율'],
     ['Integrity constants', '무결성 상수'], ['Integrity constant rate', '무결성 상수 비율'], ['Graph execution rate', '그래프 실행 비율'],

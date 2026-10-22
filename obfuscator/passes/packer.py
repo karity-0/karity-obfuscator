@@ -6,8 +6,8 @@ The packer is intentionally the outer runtime component rather than another VM:
 - encrypts the compressed stream with a loader-self-keyed rolling XOR
 - builds an external context table outside the packed payload
 - couples packed code to that context through state-derived slot routing
-- for VM output, externalizes the VM call constants and reconstructs rand_tail
-  through the packer auth graph without modifying the captured VM function
+- for VM output, externalizes the VM call constants without modifying the
+  captured VM function; legacy three-argument wrappers also reconstruct their tail
 - for non-VM output, conservatively externalizes safe top-level functions /
   literal constants and selected reference proxies
 """
@@ -78,10 +78,24 @@ _BARE_REF_PROXY_EXPRESSIONS = {
 
 _VM_TAIL_RE = re.compile(
     r"return\s*\((?P<vmf>[A-Za-z_]\w*)\((?P<args>[^)]*)\)\)"
-    r"\((?P<blob>.*),\"(?P<tail>[A-Za-z0-9]{16})\",(?P=vmf)"
+    r"\((?P<blob>.*?)(?:,\"(?P<tail>[A-Za-z0-9]{16})\")?,(?P=vmf)"
     r"(?P<forward_args>,(?:\s*\.{3}|\{n=select\('#',\.{3}\),\.{3}\}))?\)\s*$",
     re.S,
 )
+
+# Bare emits one self-bound function followed by its external constant payload.
+# Treat that finalized function as opaque, just like a blob VM's captured body.
+_SOURCE_VM_TAIL_RE = re.compile(
+    r';return (?P<vmf>[A-Za-z_]\w*)\((?P=vmf),(?P<payload>\{.*\}|"[A-Za-z0-9]+")(?P<legacy_nil>,nil)?'
+    r"(?P<forward_args>,\.\.\.)?\)\s*$", re.S,
+)
+
+
+def _source_vm_tail(script: str):
+    match = _SOURCE_VM_TAIL_RE.search(script)
+    if match and script.startswith('local ' + match.group('vmf') + '=function('):
+        return match
+    return None
 
 _IDENT_RE = re.compile(r"[A-Za-z_]\w*")
 _LITERAL_RE = re.compile(
@@ -690,6 +704,19 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     if not replacements:
         return src
 
+    # Resolve actual free references, preserving local declarations, parameters,
+    # nested shadowing and record keys. Extracted function literals need a
+    # return prefix to be valid chunks for the existing binding resolver.
+    from .ts_utils import parse
+    from .rename_ts import resolve_bindings
+    prefix = 'return ' if re.match(r'\s*function\s*\(', src) else ''
+    context = parse(prefix + src)
+    roots = {key.split('.', 1)[0] for key in replacements} | {'_ENV'}
+    free = {}
+    resolve_bindings(context, free_environments=free, collect_literals=False,
+                     identifier_filter=lambda node: context.plain_text(node) in roots)
+    free_starts = {context.cs(node) - len(prefix) for node in context.walk()
+                   if node.type == 'identifier' and node.id in free and free[node.id] is None}
     masked = _mask_lua_noncode(src)
     keys = sorted(replacements, key=len, reverse=True)
     pattern = re.compile(
@@ -703,6 +730,8 @@ def _code_substitute(src: str, replacements: dict[str, str]) -> str:
     pos = 0
     for m in pattern.finditer(masked):
         key = m.group(0)
+        if m.start() not in free_starts:
+            continue
         # Neither a bare name nor a dotted suffix is a global reference when
         # it follows another field/method selector (e.g. _ENV.string.byte).
         j = m.start() - 1
@@ -739,9 +768,11 @@ def _alloc_plan(script: str) -> ContextPlan:
     # repeatedly scans large prefixes and becomes effectively quadratic on
     # hundreds-of-KB VM output.
     vm_match = _VM_TAIL_RE.search(script)
-    if vm_match:
-        vm_args = [part.strip() for part in vm_match.group("args").split(",")]
-        vm_tail = vm_match.group("tail")
+    source_match = _source_vm_tail(script) if vm_match is None else None
+    if vm_match or source_match:
+        vm_args = ([part.strip() for part in vm_match.group("args").split(",") if part.strip()]
+                   if vm_match else [])
+        vm_tail = vm_match.group("tail") if vm_match else None
 
         # The VM path intentionally keeps the captured VM function untouched.
         # External Context
@@ -797,7 +828,7 @@ def _alloc_plan(script: str) -> ContextPlan:
             vm_args=vm_args,
             vm_tail=vm_tail,
             is_vm=True,
-            forward_args=bool(vm_match.group('forward_args')),
+            forward_args=bool((vm_match or source_match).group('forward_args')),
         )
 
     masked = _mask_lua_noncode(script)
@@ -877,7 +908,7 @@ def _alloc_plan(script: str) -> ContextPlan:
     vm_args: list[str] = []
     vm_tail: str | None = None
     if vm_match:
-        vm_args = [x.strip() for x in vm_match.group("args").split(",")]
+        vm_args = [x.strip() for x in vm_match.group("args").split(",") if x.strip()]
         vm_tail = vm_match.group("tail")
 
         # Never touch inside the captured VM function. Generic extraction or
@@ -1146,7 +1177,15 @@ def _rewrite_generic_payload(script: str, plan: ContextPlan, state: int) -> str:
 
 def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     m = _VM_TAIL_RE.search(script)
-    if not m or plan.vm_tail is None:
+    if not m:
+        bare = _source_vm_tail(script)
+        if bare:
+            body = script
+            if bare.group('forward_args'):
+                start, end = bare.span('forward_args')
+                body = body[:start] + ',select(4,...)' + body[end:]
+            return ('local __KCTX,__KSTATEF,__KDECODE=...;'
+                    'local __KSTATE=__KSTATEF(__KCTX);' + body)
         return script
 
     encoded_args = [
@@ -1154,9 +1193,12 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
         for i in range(len(plan.vm_args))
     ]
 
-    tail_enc = base64.b64encode(
-        _auth_xor(plan.vm_tail.encode("ascii"), state)
-    ).decode("ascii")
+    tail_arg=''
+    if plan.vm_tail is not None:
+        tail_enc = base64.b64encode(
+            _auth_xor(plan.vm_tail.encode("ascii"), state)
+        ).decode("ascii")
+        tail_arg=f'__KDECODE(__KCTX,"{tail_enc}"),'
     vmf_name = m.group("vmf")
 
     forwarded=m.group('forward_args')
@@ -1165,7 +1207,7 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
 
     replacement = (
         f"return ({vmf_name}({','.join(encoded_args)}))"
-        f"({m.group('blob')},__KDECODE(__KCTX,\"{tail_enc}\"),{vmf_name}{arguments})"
+        f"({m.group('blob')},{tail_arg}{vmf_name}{arguments})"
     )
     body = script[:m.start()] + replacement + script[m.end():]
 

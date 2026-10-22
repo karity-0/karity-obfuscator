@@ -22,7 +22,7 @@ _OPERATIONS = ("add", "sub", "mul", "xor", "rol", "ror", "mba_add", "mba_xor")
 
 
 def _constant(value: int) -> str:
-    """Hide seed/constants modestly; NumberObf can layer the numeric leaves."""
+    """Build seed expressions before the shared Mosaic producer handles leaves."""
     key = random.randint(1, _MASK)
     style = random.randrange(4)
     if style == 0:
@@ -115,18 +115,18 @@ def _seeds(targets: list[int], plan: list[_Step], shared: int) -> tuple[list[int
 
 def validate_options(options):
     if not isinstance(options, dict):
-        raise ValueError('string_obf_options must be an object')
+        raise ValueError('string_flow_obf_options must be an object')
     bounds = {'steps_min': (2, 5), 'steps_max': (2, 5),
               'slots_min': (2, 4), 'slots_max': (2, 4), 'unroll_bytes': (0, 16)}
     if set(options) - bounds.keys():
-        raise ValueError('unknown string_obf_options')
+        raise ValueError('unknown string_flow_obf_options')
     for key, value in options.items():
         low, high = bounds[key]
         if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
-            raise ValueError(f'string_obf_options.{key} must be between {low} and {high}')
+            raise ValueError(f'string_flow_obf_options.{key} must be between {low} and {high}')
     for kind, default in (('steps', (2, 3)), ('slots', (2, 4))):
         if options.get(kind+'_min', default[0]) > options.get(kind+'_max', default[1]):
-            raise ValueError(f'string_obf_options.{kind}_min exceeds maximum')
+            raise ValueError(f'string_flow_obf_options.{kind}_min exceeds maximum')
 
 
 def reconstruct(data: bytes, allocator: NameAllocator | None = None, options=None) -> str:
@@ -169,8 +169,8 @@ def reconstruct(data: bytes, allocator: NameAllocator | None = None, options=Non
         value = states[slot]
         if not early[slot]:
             return [f"{numbers}[{index}]={value}"]
-        return [f"{pieces}[{index}]=string.char({value} & 255,"
-                f"({value} >> 8) & 255,({value} >> 16) & 255):sub(1,{size})"]
+        return [f"{pieces}[{index}]=string.sub(string.char({value} & 255,"
+                f"({value} >> 8) & 255,({value} >> 16) & 255),1,{size})"]
 
     if len(data) <= options.get('unroll_bytes', _UNROLL_LIMIT) and len(chunks) <= _UNROLL_CHUNKS:
         for group in groups:
@@ -229,8 +229,8 @@ def reconstruct(data: bytes, allocator: NameAllocator | None = None, options=Non
         index, value = fresh(), fresh()
         lines.extend((f"for {index}=1,{len(chunks)} do", f"local {value}={numbers}[{index}]",
                       f"if {value} then",
-                      f"{pieces}[{index}]=string.char({value} & 255,"
-                      f"({value} >> 8) & 255,({value} >> 16) & 255):sub(1,{lengths}[{index}])",
+                      f"{pieces}[{index}]=string.sub(string.char({value} & 255,"
+                      f"({value} >> 8) & 255,({value} >> 16) & 255),1,{lengths}[{index}])",
                       "end", "end"))
     lines.append(f"return table.concat({pieces})")
     # Outer parentheses suppress multiple results even after helper transforms.

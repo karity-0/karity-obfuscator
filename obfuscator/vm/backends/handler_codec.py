@@ -560,8 +560,9 @@ def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
             w.u8(c_float)
             w.f64(c)
         elif isinstance(c, (str, bytes)):
+            from ..string_storage import encode
             w.u8(c_str)
-            w.string(c)
+            w.string(encode(c, integrity['script_hash'], integrity['line_state']))
         else:
             raise ValueError(f"unknown constant type: {type(c)}")
     w.mark("constants", start)
@@ -709,7 +710,13 @@ def _patch_proto_integrity(
         elif tag == c_float:
             r.f64()
         elif tag == c_str:
-            r.string()
+            from ..string_storage import rebind
+            size = r.uint()
+            start = r._pos
+            r.skip(size)
+            envelope = r._data[start:r._pos]
+            buf[start:r._pos] = rebind(envelope, old_hash, old_line_state,
+                                      new_hash, new_line_state)
         elif tag == c_iexpr:
             encoded_pos = r._pos
             encoded = r.i64()

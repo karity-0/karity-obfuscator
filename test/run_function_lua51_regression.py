@@ -13,7 +13,7 @@ from lupa.lua53 import LuaRuntime as Lua53
 from obfuscator import Pipeline, build_pipeline_from_config
 from obfuscator.passes.function_obfuscation import (
     _Affine, _int_true_forms, _int_false_forms, _zero_from, _one_from,
-    _obf_int, _JUNK_SEGS, _last_zv,
+    _obf_int, _JUNK_SEGS, _last_zv, _junk_simple, _replace_idents_outside_strings,
 )
 from run_function_boundary_regression import SOURCE as BOUNDARIES
 from run_function_nested_regression import SOURCE as NESTED
@@ -52,6 +52,11 @@ def execute(runtime, source):
 
 
 def main():
+    comments = "-- Lua's evaluation \" _z0\n_z0=1; --[=[ ' _z0 ]=]\nreturn _z0,[==[ '_z0 ]==]"
+    assert _replace_idents_outside_strings(comments, {'_z0':'cell.value'}) == comments.replace('_z0=1', 'cell.value=1').replace('return _z0,', 'return cell.value,')
+    declaration = 'function owner.method(value) return owner[value] end'
+    assert _replace_idents_outside_strings(declaration, {'owner':'cell.owner'}) == (
+        'function cell.owner.method(value) return cell.owner[value] end')
     builds = 0
     for version, runtime in (("5.1", Lua51), ("5.3", Lua53)):
         # Internal integer predicates never multiply unbounded junk values.
@@ -73,7 +78,7 @@ def main():
                 assert lua.eval(_obf_int(value)) == value
             # Exercise every rich junk family independently, not just families
             # selected by a particular dispatcher seed. Each sink is integral.
-            for segment in _JUNK_SEGS:
+            for segment in (*_JUNK_SEGS, _junk_simple):
                 lines = segment([0], [("state", "int")])
                 sink = lua.execute('local state=42; ' + '\n'.join(lines)
                                    + '\nreturn ' + _last_zv(lines))

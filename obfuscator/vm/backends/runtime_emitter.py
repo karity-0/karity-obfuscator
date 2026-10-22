@@ -3,12 +3,9 @@ from ...profiling import run_phase
 from obfuscator.names import NameAllocator
 import subprocess
 import tempfile
-import secrets
-import string
 import random
 import hashlib
 import time
-import zlib
 import os
 import re
 from pathlib import Path
@@ -143,13 +140,11 @@ _NUMERIC_DECODE = (
 def _dump_function_stripped(
     vm_func_src: str,
     header: str,
-    decoy_name: str,
-    decoy_value: str,
     toolchain: LuaToolchain | None = None,
 ) -> bytes:
     """
     vm_func_src(= "return function(...) ... end")를 최종 출력과 동일한
-    enclosing 컨텍스트(`header` 주석 + `local a="..."` 프리픽스) 안에서
+    enclosing 컨텍스트(`header` 주석의 줄 수) 안에서
     load()로 로드해 얻은 내부 함수(_vmf에 해당)를 string.dump(f, true)로
     직렬화한 바이트를 반환한다.
 
@@ -158,10 +153,7 @@ def _dump_function_stripped(
     _vmf가 정의되는 컨텍스트(헤더 주석 포함)를 그대로 재현해야 빌드 타임
     dump와 런타임 dump가 바이트 단위로 일치한다.
     """
-    wrapped = (
-        f'{header}local {decoy_name}="{decoy_value}"'
-        f'{vm_func_src};'
-    )
+    wrapped = f'{header}{vm_func_src};'
     toolchain = toolchain or LuaToolchain()
     if toolchain.lua_library:
         return toolchain.run_library(wrapped, "dump")
@@ -275,6 +267,9 @@ _VM_RENAME_KEYS = [
     # reader method names
     "u8", "u16", "u32", "u64", "i64", "f64", "str",
 ]
+_VM_SCHEMA_RENAME_KEYS = ('iword', 'uint', 'header', 'metadata',
+                          'get', 'set', 'refs', 'environment',
+                          '_runctx', 'function_dump', 'line_state')
 
 
 def _rename_vm_keys(src: str, *, names: dict | None = None) -> str:
@@ -282,11 +277,27 @@ def _rename_vm_keys(src: str, *, names: dict | None = None) -> str:
     import re
     allocator = NameAllocator.for_source(src, seed=random.getrandbits(64))
     rename_map = {k: allocator.allocate(k) for k in _VM_RENAME_KEYS}
+    reader_map = {k: allocator.allocate(k) for k in _VM_SCHEMA_RENAME_KEYS}
     if names is not None:names.update(rename_map)
+    if names is not None:names.update(reader_map)
     for orig, new in rename_map.items():
         src = re.sub(rf'\b{re.escape(orig)}\b', new, src)
         src = src.replace(f'["{orig}"]', f'["{new}"]')
         src = src.replace(f"['{orig}']", f"['{new}']")
+    # These late-added reader names also occur in diagnostic literals. Rewrite
+    # only static field syntax so diagnostics retain their normalization keys.
+    from ...passes.ts_utils import parse
+    ctx=parse(src)
+    edits=[]
+    for node in ctx.walk():
+        key=None
+        if node.type=='dot_index_expression':key=node.child_by_field_name('field')
+        elif node.type=='field':key=node.child_by_field_name('name')
+        if key is not None and key.type=='identifier':
+            replacement=reader_map.get(ctx.plain_text(key))
+            if replacement:edits.append((ctx.cs(key),ctx.ce(key)+1,replacement))
+    for start,end,replacement in sorted(edits,reverse=True):
+        src=src[:start]+replacement+src[end:]
     return src
 
 
@@ -414,14 +425,14 @@ def _obfuscate_vm_output_scoped(
     deferred_names = (
         'rename_obf' in identifier_names
         and 'localize_globals' not in identifier_names
-        and 'string_obf' not in emitter_names
+        and not set(emitter_names) & {'string_obf', 'string_flow_obf'}
         and not RENAME_OPTIONS.get().get('readable', False)
     )
     strip_entries = [entry for entry in after if entry[0] == 'strip_info']
     fused_strip = len(strip_entries) == 1
     reuse_scalar_analysis = (
         (deferred_names or (fused_strip and not identifier_names))
-        and 'string_obf' not in emitter_names
+        and not set(emitter_names) & {'string_obf', 'string_flow_obf'}
         and len(strip_entries) <= 1
         and all(name in {'strip_info', 'minify'} for name, _ in after)
     )
@@ -458,6 +469,9 @@ def _obfuscate_vm_output_scoped(
                 # The shared identifier emitter already renamed locals. Keep
                 # fields/labels/comments stripped without a second rename scan.
                 pipeline.add(cls(rename_locals='rename_obf' not in identifier_names))
+            elif configured_name in {'semicolon', 'string_encode'}:
+                from obfuscator.passes.function_costs import POLICY
+                pipeline.add(cls(lua_version=POLICY.get().lua_version))
             else:
                 pipeline.add(cls())
             names.append(configured_name)
@@ -725,6 +739,9 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
                              target.library_dump_normalization and bool(context.toolchain.lua_library),
                              target=target)
     from ..intrinsics import prepare_intrinsic_runtime
+    from ..runtime_security import prepare as prepare_security
+    runtime_source = prepare_security(runtime_source, backend=lowered_ir.backend,
+                                      **target.security_runtime_options())
     runtime_source = prepare_intrinsic_runtime(runtime_source, protected_semantic_ir)
     from ..synthesis.storage import prepare_reader
     runtime_source=prepare_reader(runtime_source,blob,instr_layout)
@@ -806,7 +823,6 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     runtime_entry = target.runtime_entry_symbol()
     vm_func_src = (
         f'return function(...)\n'
-        f'local k1,k2,k3,k4,k5,k6,k7 = ... '
         f'{vm_code} return {runtime_entry} end'
     )
 
@@ -837,6 +853,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
 
     # Graph banks and blob decoders may introduce target API operations too.
     # Finalize the complete runtime before output passes rename its identifiers.
+    from ..runtime_security import _freeze_calls
+    vm_func_src = _freeze_calls(vm_func_src)
     vm_func_src = target.finalize_runtime(vm_func_src)
     from ...passes.function_costs import POLICY
     cost_token = POLICY.set(target.function_cost_policy())
@@ -863,6 +881,7 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     vm_output_details.insert(0, graph_detail)
 
     vm_func_src = target.lower_source(vm_func_src)
+    vm_func_src = target.bind_environment(vm_func_src, context)
     _line_state_start = time.perf_counter()
     vm_func_src, line_state, probe_lines = target.bind_lines(vm_func_src, context)
     context.profile.append({
@@ -886,28 +905,20 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
 
     # 5. 확정된 vm_func_src를 load+dump(strip) → crc32 기반 key 재료
     _phase_start = time.perf_counter()
-    wrapper_alphabet = string.ascii_letters
     wrapper_names = NameAllocator.for_source(vm_func_src, seed=random.getrandbits(64))
-    decoy_name = wrapper_names.allocate("decoy")
     vmf_name = wrapper_names.allocate("vm")
-    decoy_value = "".join(
-        secrets.choice(wrapper_alphabet)
-        for _ in range(34)
-    )
     dump_bytes = run_phase('vm:integrity', target.dump_function,
-        vm_func_src, header, decoy_name, decoy_value, context.toolchain,
+        vm_func_src, header, context.toolchain,
     )
-    dump_crc   = zlib.crc32(dump_bytes) & 0xFFFFFFFF
+    from ..runtime_identity import checksum
+    dump_crc   = checksum(dump_bytes)
     effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
-    if lowered_ir.policy.get("integrity_constants", False):
-        blob = patch_integrity_sources(
-            blob, effective_crc, line_state, constant_tags,
-        )
+    blob = patch_integrity_sources(
+        blob, effective_crc, line_state, constant_tags,
+    )
     context.profile.append({"phase": "dump_vm_function", "elapsed": round(time.perf_counter() - _phase_start, 6)})
 
-    alphabet  = string.ascii_letters + string.digits
-    rand_tail = ''.join(secrets.choice(alphabet) for _ in range(16))
-    _KEY = f"karityObfuscator/{format(effective_crc, '08x')}/{rand_tail}"
+    _KEY = format(effective_crc, '08x')
 
     # 6. blob 암호화: nonce(8B) + ciphertext
     _phase_start = time.perf_counter()
@@ -927,5 +938,5 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용
     forward_args=any(instruction.operation in {'VARARG','PACK_VARARG'}
                      for block in protected_semantic_ir.root.blocks for instruction in block.instructions)
-    return run_phase('finalization:runtime', target.wrap, vm_func_src, decoy_name, decoy_value,
-                     vmf_name, lua_blob, rand_tail, forward_args=forward_args)
+    return run_phase('finalization:runtime', target.wrap, vm_func_src,
+                     vmf_name, lua_blob, forward_args=forward_args)

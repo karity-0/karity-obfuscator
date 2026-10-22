@@ -180,7 +180,7 @@ class TableObfuscationPass(BasePass):
                 random.shuffle(records)
                 for key_text, value_text, _ in records:
                     if self.options.get('string_keys') and key_text.startswith(('"', "'", '[')):
-                        from .string_obfuscation import _encode
+                        from .string_obfuscation import _encode_flow as _encode
                         key_text = _encode(parse_lua_string(key_text), allocator)
                     parts.extend((key_name, '=', key_text, ';', value_name, '=', value_text, ';',
                                   table, '[', key_name, ']=', value_name, ';'))

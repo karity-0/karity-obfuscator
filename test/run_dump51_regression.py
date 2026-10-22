@@ -86,12 +86,12 @@ def main():
         target._native_mov_uint = True
         source = target.lower_source('return function(...) return true end')
         original = lua.execute(source.encode())
-        tampered_source = source.replace('MOV field overflow',
-                                         'MOV field width rejected')
+        tampered_source = source.replace('if i==5 and b>15 then',
+                                         'if i==5 and b>14 then')
         assert tampered_source != source
         tampered = lua.execute(tampered_source.encode())
         dump_function = lua.eval(b'string.dump')
-        # An unused helper error message changes the self-function checksum,
+        # An unused helper's instructions change the self-function checksum,
         # even though normal execution returns the same result.
         assert original() is True and tampered() is True
         assert normalize(dump_function(original)) != normalize(dump_function(tampered))

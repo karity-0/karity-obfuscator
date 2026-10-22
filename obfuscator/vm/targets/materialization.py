@@ -90,7 +90,7 @@ class MaterializationPlan:
             raise ValueError('host materialization constant boundary is missing')
         return source.replace(marker,
                               'for slot,reference in pairs(_host_slots[_host_function] or {}) do '
-                              'p.constants[slot]={CK_STR,_kss(_host_read(reference))} end\n' + marker)
+                              'p.constants[slot]={CK_STR,"",_PS.seal(_host_read(reference))} end\n' + marker)
 
 
 def plan_materialization(functions, provider: ConstantProvider) -> MaterializationPlan:
@@ -123,9 +123,8 @@ def plan_materialization(functions, provider: ConstantProvider) -> Materializati
 
 
 def _lua_string(data):
-    if isinstance(data, str):
-        data = data.encode('utf-8')
-    return '"' + ''.join(f'\\{value:03d}' for value in data) + '"'
+    from ...passes.string_mosaic import lua_string
+    return lua_string(data)
 
 
 def emit_host_reader(references: tuple[ImageReference, ...]) -> str:

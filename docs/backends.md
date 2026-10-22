@@ -1,7 +1,7 @@
 # VM backends
 
-Karity, Classic and MOV consume the same Lua 5.3 bytecode and produce executable
-Lua source. Select them with `--vm-option backend=karity|classic|mov` or the GUI.
+Karity, Classic, MOV and Bare consume common Lua 5.1/5.3 semantic IR and produce
+executable Lua source. Select `--vm-option backend=karity|classic|mov|bare` or use the GUI.
 An omitted backend and `backend=default` both select Karity. **Migration:** older
 versions mapped `default` to Classic; specify `classic` to retain that behavior.
 MOV is a supported release configuration with documented HOST boundaries; it is
@@ -12,8 +12,9 @@ not yet a complete MOV-only implementation.
 `VMPass(vm_options=...)` normalizes the backend and delegates to `VMBuildPipeline`.
 Its `run(script)` returns protected Lua; `last_profile` reports build phases.
 All backends share compilation, prototype parsing, Semantic IR construction,
-protection planning, VM assignment, junk insertion, integrity constants,
-encrypted blob forms, and configured output passes. The backend declares its
+optimization, protection planning and configured output passes. Blob runtimes
+also share VM assignment, integrity constants and encrypted blob forms.
+The backend declares its
 capabilities and selects instruction lowering and runtime generation. Packing is
 a separate outer pass and also works without a VM. See the
 [IR architecture and migration map](vm-ir-architecture.md).
@@ -22,26 +23,39 @@ Shared blob layout and measured storage costs are described in the
 
 ```mermaid
 flowchart TD
-    S[Source passes] --> C[luac 5.3 and prototype parsing]
+    S[Source passes] --> C[Target Lua compilation and prototype parsing]
     C --> I[Backend-neutral Semantic IR]
     I --> P[Protection plan and capability resolution]
-    P --> A[Junk insertion and prototype-to-VM assignment]
+    P --> A[Supported semantic protection]
     A --> B{Backend}
     B --> K[Karity graphs and encoded registers]
     B --> L[Classic direct handlers and registers]
     B --> M[MOV tape and encoded digits]
+    B --> BA[Bare specialized blocks and position dispatcher]
+    BA --> BO[VM output passes]
+    BO --> BI[Source dump and line binding with constant payload]
     K --> R[Runtime generation and VM output passes]
     L --> R
     M --> R
-    A --> D[Serialized prototype blob]
+    K --> D[Serialized prototype blob]
+    L --> D
     M --> D
-    R --> I[Runtime finalization and integrity binding]
-    D --> I
-    I --> W[Encrypted blob and protected wrapper]
-    W --> P[Optional packer]
+    R --> F[Runtime finalization and integrity binding]
+    D --> F
+    F --> W[Encrypted blob and protected wrapper]
+    W --> PK[Optional packer]
+    BI --> PK
 ```
 
-VM output passes run before the runtime is finalized for dump/integrity binding.
+For blob runtimes, VM output passes run before dump/integrity binding.
+All four backends share a terminal API-capture and formatting boundary after
+output generation and late environment/line helpers. This captures native calls
+introduced by output passes too, using numeric slots. Initial API lookup keys
+remain ordinary literals unless String Encode is selected; its shared String Mosaic
+policy needs no runtime API and can also style these bootstrap keys.
+Late environment strings follow the selected string passes through a shared
+pool, so repeated guard labels need only one reconstruction. New runtime code
+must enter before this boundary and before source locations and dumps are bound.
 Changing that finalized function afterwards can invalidate the artifact. Each
 prototype belongs to one generated VM; increasing `vm_count` diversifies runtimes,
 not CPU parallelism. Source/output pass contexts and release rules are listed in
@@ -64,6 +78,9 @@ flowchart TD
     T --> F
     T --> H[Lua effects and native calls]
 ```
+
+See [runtime hardening](runtime-hardening.md) for per-constant storage, protected
+string values and repeated host checks.
 
 Karity supports graph execution, state threading, argument/upvalue/table/branch
 virtualization, runtime polymorphism and helper diversity. Which routes actually
@@ -88,6 +105,75 @@ configurable dispatchers on the shared packaging pipeline. It omits Karity's
 encoded-register/graph execution and deferred producers. Direct arithmetic,
 comparisons and object operations remain visible in host Lua handlers. It is a
 useful simpler runtime for comparison and debugging, with fewer runtime layers.
+
+## Bare
+
+Bare lowers the shared semantic instructions into program-specific Lua operations
+over generated registers and captured cells. This is a separate virtualization
+backend, not a source-pass shortcut: it consumes the same optimized/protected IR,
+including supported IR morphing and junk insertion.
+
+Control flow uses program-specific blocks selected by a randomized position
+variable. Short straight-line regions stay together; long regions are split at
+16–32 semantic emission units, keeping each protection call atomic. Random IDs and
+threshold branches place them in a binary decision tree. Leaves contain emitted
+Lua operations rather than opcode handlers. This runs on both Lua 5.1 and 5.3,
+including irreducible input CFGs on Lua 5.3, without emitted `goto` statements.
+Numeric-loop coercion and bounds use the existing Classic conversion helper.
+Only helpers required by the input are emitted. There is no instruction blob,
+reader or opcode interpreter. Output passes still apply; the generated dispatcher
+has the common marker that excludes it from redundant generic CFF.
+
+Bare compiles guard decisions and guest protection boundaries into semantic IR.
+Small groups of guard/constant/write IR instructions emit as one direct call,
+preserving their logical protection events without extra register-copy dispatch.
+Repeated host walks and constant recovery use shared native helpers. The emitter
+selects string recovery, authorized writes, environment access, script getters,
+tailcall support and numeric-loop helpers according to actual use. Loop helpers
+are shared across functions, and native APIs use one numeric capture bank with
+random slots and own-field reads where available.
+
+The existing shared line-state implementation supplies three to five dispersed
+native faults with randomized slots and three independent reader families.
+A dump CRC binds the final function after output transforms. Encoded strings
+and selected integer constants live in a compact external constant pool keyed
+by that state, without an instruction blob. The pool uses a per-build printable
+alphabet, randomized tags and masked record offsets, instead of per-constant
+escaped-string tables. Constants are deduplicated across functions. Numeric
+encoding follows `integrity_constants` and `integrity_constant_rate`; strings
+and a sentinel retain identity binding even when numeric encoding is disabled.
+`environment_policy` and shared repeated host checks are supported.
+Native helpers for inspection, recovery, source readers, dump normalization,
+CRC and call boundaries remain outside the protection IR; the guard's fail/
+continue branch stays in IR. Debug/dump capabilities and a compatible
+runtime dump ABI are required, as with the other protected backends.
+
+There is no generic instruction executor, but the protection package adds a
+substantial fixed size and startup cost to small inputs. Operation semantics
+remain visible before output passes. Closures, nil-bearing open results
+and register lifetimes use the shared IR analysis. Lua 5.1 environment changes
+apply to the actual generated closure. Selective VM boundaries retain the common
+pipeline's Lua 5.3 restriction. CE image-backed constants are unsupported.
+Native Lua local-variable limits still apply to generated functions.
+Source pre-passes still expand into executable blocks, and each guest function
+retains its own closure/frame support. Input shape and settings can therefore
+make Bare larger than an opcode-blob backend. Encoding/encryption alone is not
+compression. See the [size measurements and Prometheus comparison](performance/bare-size.md).
+
+`KARITY_GET_VM_COUNT()`/`KARITY_GET_VM_ID()` return 1/0. With no serialized runtime,
+the script getter returns the dump/line identity state, the layout getter identifies
+the semantic IR generation and code length counts semantic instructions in the
+current function, including inserted guards. Abort/assert remain catchable;
+panic invalidates the generated chunk instance, including suspended callbacks.
+
+Bare bounds output literal expansion by default to one hot or three cold
+operations per literal, preventing the added guard IR from multiplying into
+oversized native functions. Explicit `literal_mosaic.output_cost` overrides this
+default. Packing preserves the finalized self-bound function and forwards only
+the original chunk arguments to the guest.
+
+Backend registry metadata keeps persisted IDs separate from display names and
+descriptions so future naming changes do not require rewriting stored settings.
 
 ## MOV
 
@@ -133,57 +219,58 @@ unsupported controls, including values inherited from a profile.
 
 <!-- BEGIN BACKEND OPTIONS -->
 
-| Option | Karity | Classic | MOV |
-|---|---|---|---|
-| `opcode_synthesis` | Yes | Yes | Yes |
-| `synthesis_policy` | Yes | Yes | Yes |
-| `synthesis_max_code_growth` | Yes | Yes | Yes |
-| `synthesis_max_steps` | Yes | Yes | Yes |
-| `synthesis_max_recipes` | Yes | Yes | Yes |
-| `synthesis_max_occurrences` | Yes | Yes | Yes |
-| `opcode_splitting` | Yes | Yes | No |
-| `opcode_fusion` | Yes | Yes | No |
-| `ir_mba_rate` | Yes | Yes | Yes |
-| `ir_test_set_rate` | Yes | Yes | Yes |
-| `ir_tail_duplication_rate` | Yes | Yes | Yes |
-| `ir_rematerialization_rate` | Yes | Yes | Yes |
-| `ir_morph_max_growth` | Yes | Yes | Yes |
-| `ir_morph_max_added_instructions` | Yes | Yes | Yes |
-| `ir_morph_max_added_blocks` | Yes | Yes | Yes |
-| `ir_morph_max_transforms` | Yes | Yes | Yes |
-| `ir_morph_max_depth` | Yes | Yes | Yes |
-| `ir_morph_pass_max_added_instructions` | Yes | Yes | Yes |
-| `ir_morph_max_new_operations` | Yes | Yes | Yes |
-| `physical_block_permutation_rate` | Yes | Yes | No |
-| `physical_block_permutation_max_jumps` | Yes | Yes | No |
-| `state_dependency_limit` | Yes | No | No |
-| `requirements` | Yes | Yes | Yes |
-| `backend` | Yes | Yes | Yes |
-| `dispatcher_type` | Yes | Yes | No |
-| `dispatcher_target_hiding` | Yes | Yes | No |
-| `semantic_state_threading` | Yes | No | No |
-| `argument_virtualization` | Yes | No | No |
-| `upvalue_virtualization` | Yes | No | No |
-| `table_virtualization` | Yes | No | No |
-| `branch_virtualization` | Yes | No | No |
-| `blob_form` | Yes | Yes | Yes |
-| `vm_count` | Yes | Yes | Yes |
-| `fake_handlers` | Yes | Yes | No |
-| `mutate_handlers` | Yes | Yes | No |
-| `junk_instructions` | Yes | Yes | Yes |
-| `junk_rate` | Yes | Yes | Yes |
-| `integrity_constants` | Yes | Yes | Yes |
-| `integrity_constant_rate` | Yes | Yes | Yes |
-| `graph_execution_rate` | Yes | No | No |
-| `cross_instruction_rate` | Yes | No | No |
-| `runtime_polymorphism_rate` | Yes | No | No |
-| `runtime_trace` | Yes | No | No |
-| `block_variant_rate` | Yes | No | No |
-| `block_variant_count` | Yes | No | No |
-| `block_variant_max_instructions` | Yes | No | No |
-| `helper_variant_count` | Yes | No | No |
-| `helper_diversity_rate` | Yes | No | No |
-| `semantic_diversity_rate` | Yes | No | No |
+| Option | Karity | Classic | MOV | Bare |
+|---|---|---|---|---|
+| `opcode_synthesis` | Yes | Yes | Yes | No |
+| `synthesis_policy` | Yes | Yes | Yes | No |
+| `synthesis_max_code_growth` | Yes | Yes | Yes | No |
+| `synthesis_max_steps` | Yes | Yes | Yes | No |
+| `synthesis_max_recipes` | Yes | Yes | Yes | No |
+| `synthesis_max_occurrences` | Yes | Yes | Yes | No |
+| `opcode_splitting` | Yes | Yes | No | No |
+| `opcode_fusion` | Yes | Yes | No | No |
+| `ir_mba_rate` | Yes | Yes | Yes | Yes |
+| `ir_test_set_rate` | Yes | Yes | Yes | Yes |
+| `ir_tail_duplication_rate` | Yes | Yes | Yes | Yes |
+| `ir_rematerialization_rate` | Yes | Yes | Yes | Yes |
+| `ir_morph_max_growth` | Yes | Yes | Yes | Yes |
+| `ir_morph_max_added_instructions` | Yes | Yes | Yes | Yes |
+| `ir_morph_max_added_blocks` | Yes | Yes | Yes | Yes |
+| `ir_morph_max_transforms` | Yes | Yes | Yes | Yes |
+| `ir_morph_max_depth` | Yes | Yes | Yes | Yes |
+| `ir_morph_pass_max_added_instructions` | Yes | Yes | Yes | Yes |
+| `ir_morph_max_new_operations` | Yes | Yes | Yes | Yes |
+| `physical_block_permutation_rate` | Yes | Yes | No | No |
+| `physical_block_permutation_max_jumps` | Yes | Yes | No | No |
+| `state_dependency_limit` | Yes | No | No | No |
+| `requirements` | Yes | Yes | Yes | Yes |
+| `backend` | Yes | Yes | Yes | Yes |
+| `dispatcher_type` | Yes | Yes | No | No |
+| `dispatcher_target_hiding` | Yes | Yes | No | No |
+| `semantic_state_threading` | Yes | No | No | No |
+| `argument_virtualization` | Yes | No | No | No |
+| `upvalue_virtualization` | Yes | No | No | No |
+| `table_virtualization` | Yes | No | No | No |
+| `branch_virtualization` | Yes | No | No | No |
+| `blob_form` | Yes | Yes | Yes | No |
+| `vm_count` | Yes | Yes | Yes | No |
+| `fake_handlers` | Yes | Yes | No | No |
+| `mutate_handlers` | Yes | Yes | No | No |
+| `junk_instructions` | Yes | Yes | Yes | Yes |
+| `junk_rate` | Yes | Yes | Yes | Yes |
+| `integrity_constants` | Yes | Yes | Yes | Yes |
+| `integrity_constant_rate` | Yes | Yes | Yes | Yes |
+| `graph_execution_rate` | Yes | No | No | No |
+| `cross_instruction_rate` | Yes | No | No | No |
+| `runtime_polymorphism_rate` | Yes | No | No | No |
+| `runtime_trace` | Yes | No | No | No |
+| `environment_policy` | Yes | Yes | Yes | Yes |
+| `block_variant_rate` | Yes | No | No | No |
+| `block_variant_count` | Yes | No | No | No |
+| `block_variant_max_instructions` | Yes | No | No | No |
+| `helper_variant_count` | Yes | No | No | No |
+| `helper_diversity_rate` | Yes | No | No | No |
+| `semantic_diversity_rate` | Yes | No | No | No |
 
 <!-- END BACKEND OPTIONS -->
 
@@ -194,6 +281,7 @@ unsupported controls, including values inherited from a profile.
 | Karity | Graphs, variants and encoded state add build, memory and execution cost; rates strongly affect it | Diversified state-dependent routes and representations |
 | Classic | Fewer runtime layers; shared output transforms and multiple VMs can still dominate size | Opcode/handler/dispatcher diversification with direct Lua operations |
 | MOV | Many microinstructions, lookup banks and byte-list allocations can be expensive; recipes are shared | Encoded data and lookup-based lowered operations, with explicit HOST boundaries |
+| Bare | No instruction blob/reader; per-program branches and a fixed protection package add cost | Random block IDs and threshold trees; IR-based host guards and identity-bound constant recovery |
 
 These are architectural trade-offs, not measured speed rankings or security
 scores. Compare identical source, passes, seeds and VM counts on the intended

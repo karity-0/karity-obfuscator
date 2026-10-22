@@ -16,7 +16,7 @@ from obfuscator_gui import _vm_option_meta
 
 def main():
     metadata = {item["name"]: item for item in _vm_option_meta()}
-    for backend in ("karity", "classic", "default", "mov"):
+    for backend in ("karity", "classic", "default", "mov", "bare"):
         opts = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
         opts["backend"] = backend
         config = {"passes": ["vm"], "vm_options": opts}
@@ -106,7 +106,7 @@ def main():
         "outcome": "fallback", "target": "test_graph"}
     assert "declared fallbacks" in config_warnings({"passes": ["vm"], "vm_options": {
         "backend": "test_registered", "graph_execution_rate": 1}})[0]
-    print("backend-options-regression-ok metadata=3_backends alias=ok warnings=ok release=ok")
+    print("backend-options-regression-ok metadata=4_backends alias=ok warnings=ok release=ok")
     return 0
 
 

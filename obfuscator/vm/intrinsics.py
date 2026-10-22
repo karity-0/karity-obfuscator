@@ -157,8 +157,8 @@ def prepare_intrinsic_runtime(source, ir):
         # Interpreter entry and every dispatched step, including MOV microcode.
         # Catching a panic in a native pcall cannot continue the caller VM.
         source=source.replace('while true do','while true do '+check)
-        source=source.replace('local function run(blob,rand_tail,self_func,_root_args)',
-                              'local function run(blob,rand_tail,self_func,_root_args) '+check)
+        source=source.replace('local function run(blob,self_func,_root_args)',
+                              'local function run(blob,self_func,_root_args) '+check)
         source=source.replace('local function _leave(r,n,av,tag)',
                               'local function _leave(r,n,av,tag) '+check)
         # A fused/synthesized handler may perform another operation before the

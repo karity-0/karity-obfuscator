@@ -48,9 +48,12 @@ _LUA_KEYWORDS = {
     "repeat", "return", "then", "true", "until", "while",
 }
 
-# 문자열 리터럴(' 또는 ")을 구간으로 분리하기 위한 정규식.
+# Lua literals and comments must stay opaque during generated-name substitution.
+# In particular, an apostrophe in a comment must not start a quoted string.
 # 식별자 치환 시 문자열 내부 텍스트는 건드리지 않기 위해 사용한다.
 _STRING_LIT_RE = re.compile(
+    r'--\[(?P<comment_eq>=*)\[[\s\S]*?\](?P=comment_eq)\]|--[^\r\n]*|'
+    r'\[(?P<string_eq>=*)\[[\s\S]*?\](?P=string_eq)\]|'
     r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\''
 )
 
@@ -151,7 +154,14 @@ def _subst_var_refs(text: str, mapping: dict[str, str], protected_re: re.Pattern
     while i < L:
         pm = protected_re.match(text, i)   # 보호 구간은 그대로 복사
         if pm and pm.end() > i:
-            out.append(pm.group(0))
+            protected = pm.group(0)
+            if _FUNC_PARAMS_SPAN_RE.fullmatch(protected):
+                # Keep parameters lexical, but a qualified declaration still
+                # assigns through its outer table binding (function S.open()).
+                params_start = protected.index('(')
+                protected = (_subst_var_refs(protected[:params_start], mapping, _STRING_LIT_RE)
+                             + protected[params_start:])
+            out.append(protected)
             i = pm.end()
             continue
         ch = text[i]
@@ -1249,8 +1259,11 @@ def _last_zv(lines: list[str]) -> str | None:
     """
     last = None
     for ln in lines:
-        for m in _ZV_DECL_RE.finditer(ln):
-            last = m.group(1)
+        # Flow generators put outer declarations at the start of a line.
+        # A conditional's inner temporary is not visible to the later sink.
+        match = _ZV_DECL_RE.match(ln)
+        if match is not None:
+            last = match.group(1)
     return last
 
 
@@ -1332,7 +1345,7 @@ def _junk_seg_cond(c: list[int], live_vars=None) -> list[str]:
 
 # --- 아래는 더 다양한 형태의 rich junk (비-VM 경로 전용). 전역 이름 조회 없이
 #     동작하도록 설계한다: 테이블 생성자 `{}`/숫자 for/문자열 메타테이블 메서드
-#     (`("s"):rep`)/테이블에 담은 클로저. 그래서 localize_globals 와도 안전하고
+#     (문자열 리터럴 키로 조회)/테이블에 담은 클로저. 그래서 localize_globals 와도 안전하고
 #     (참조되는 전역이 없음), dead 블록이라 실행되지도 않는다. 각 세그먼트는
 #     마지막 줄이 `local _zN=<정수식>` 이라 sink(_last_zv)가 항상 정수다. ---
 
@@ -1341,7 +1354,8 @@ _JUNK_STR_ALPHABET = "abcdefghijklmnopqrstuvwxyz"
 
 def _rand_str_lit(n: int | None = None) -> str:
     n = n or random.randint(3, 8)
-    return '"' + ''.join(random.choice(_JUNK_STR_ALPHABET) for _ in range(n)) + '"'
+    from .string_mosaic import generated_string
+    return generated_string(''.join(random.choice(_JUNK_STR_ALPHABET) for _ in range(n)))
 
 
 def _junk_seg_table(c: list[int], live_vars=None) -> list[str]:
@@ -1359,14 +1373,15 @@ def _junk_seg_table(c: list[int], live_vars=None) -> list[str]:
 
 
 def _junk_seg_string(c: list[int], live_vars=None) -> list[str]:
-    """문자열 조작 후 버리기. 문자열 리터럴의 메타테이블 메서드(`:rep`/`:sub`)와
+    """문자열 조작 후 버리기. 문자열 리터럴의 메타테이블 메서드와
     `#`/`..` 만 쓰므로 전역 `string` 을 이름으로 조회하지 않는다.
     """
     s = _zv(c)
     s2 = _zv(c)
     return [
-        f"local {s}=({_rand_str_lit()}):rep({random.randint(2, 4)})..({_rand_str_lit()})",
-        f"local {s2}=({s}):sub({random.randint(1, 3)},#{s})",
+        f"local {s}={_rand_str_lit()}",
+        f'{s}={s}["rep"]({s},{random.randint(2, 4)})..({_rand_str_lit()})',
+        f'local {s2}={s}["sub"]({s},{random.randint(1, 3)},#{s})',
         f"local {_zv(c)}=#{s2}+#{s}",
     ]
 

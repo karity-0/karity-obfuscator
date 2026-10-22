@@ -68,9 +68,9 @@ def main():
     cached = _cache_loader_meme_constants(loader)
     assert Lua53().execute(_loader_binding(cached) + 'return _P()') == 5
     assert _dump_loader_stripped(cached).startswith(b'\x1bLua')
-    source = 'return(function(...)return function(blob,tail,self)return 7,nil end end)'
+    source = 'return(function(...)return function(blob,self)return 7,nil end end)'
     for target, runtime in ((Lua51Target(), Lua51), (Lua53Target(), Lua53)):
-        wrapped = target.wrap(source, 'decoy', 'data', 'vmfn', '"blob"', 'abcdefghijklmnop')
+        wrapped = target.wrap(source, 'vmfn', '"blob"')
         assert runtime(unpack_returned_tuples=True).execute(wrapped) == (7, None)
     source = 'local secret=7;return secret'
     start = source.index('7')

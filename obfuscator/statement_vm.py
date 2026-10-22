@@ -13,6 +13,13 @@ def run_statement_vm(runtime, template, source, base_options, whole, prefix):
     from .selective_vm import _factory, _replacement, _vm_factories_entry, _vm_build
     from .vm.backend import normalize_vm_backend
     plan = runtime.plan
+    from .passes.minify import MinifyPass
+    compact = "minify" in template.vm_output_passes
+    minifier = MinifyPass()
+    def host_fragment(text):
+        # Compact host fragments before computing each VM's final line offset.
+        # A finalized VM must never be passed through a later whole-file minify.
+        return minifier.run(text) + " " if compact else text
     def effective_options(options):
         result = {**template._backend.vm_options, **options}
         result["backend"] = normalize_vm_backend(result.get("backend", template.backend))
@@ -72,10 +79,12 @@ def run_statement_vm(runtime, template, source, base_options, whole, prefix):
     for index, (span, options) in enumerate(sorted(domains, key=lambda d: d[0].end - d[0].start), 1):
         ctx = parse(source)
         bindings, _, _, _, _ = resolve_bindings(ctx)
+        factory_options = {"metatable": f"{bank}.m", "compact": compact,
+                           "preserve_body": plan.excluded(span.start, span.end)}
         if span.kind == "function":
             node = next(n for n in ctx.walk() if n.type in FUNCTION_TYPES
                         and ctx.cs(n) == span.start and ctx.ce(n) + 1 == span.end)
-            factory, bridge = _factory(ctx, node, bindings, allocator, metatable=f"{bank}.m")
+            factory, bridge = _factory(ctx, node, bindings, allocator, **factory_options)
             replacement = _replacement(ctx, node, f"{bank}[{index}]({bridge})")
             outside = []
         else:
@@ -94,18 +103,18 @@ def run_statement_vm(runtime, template, source, base_options, whole, prefix):
             helper = next(n for n in temporary_ctx.walk() if n.type == "function_declaration"
                           and temporary_ctx.text(n.child_by_field_name("name")) == region.name)
             temporary_bindings, _, _, _, _ = resolve_bindings(temporary_ctx)
-            factory, bridge = _factory(temporary_ctx, helper, temporary_bindings, allocator, metatable=f"{bank}.m")
+            factory, bridge = _factory(temporary_ctx, helper, temporary_bindings, allocator, **factory_options)
             replacement = region.replacement(span, f"{bank}[{index}]({bridge})")
             outside = region.outside
         entries.append((index, factory, options))
         source = plan.apply(source, [*outside, replacement])
     # Equal effective options share bytecode and interpreter initialization. The
     # exported factories retain separate live capture bridges at every callsite.
-    prelude = f"local {bank}={{m=_ENV.setmetatable}}\n"
+    prelude = host_fragment(f"local {bank}={{m=_ENV.setmetatable}}\n")
     groups = []
     for index, factory, options in entries:
         if options is None:
-            prelude += f"{bank}[{index}]={factory}\n"
+            prelude += f"{bank}[{index}]={factory}" + (" " if compact else "\n")
             continue
         group = next((items for existing, items in groups if existing == options), None)
         if group is None:
@@ -114,17 +123,23 @@ def run_statement_vm(runtime, template, source, base_options, whole, prefix):
         group.append((index, factory))
     for options, items in groups:
         bundle = allocator.allocate("vm_factories")
-        prelude += f"do local {bundle}="
-        prelude += _vm_factories_entry(runtime, template, options, items, prefix + prelude, allocator)
-        prelude += "\n" + "; ".join(f"{bank}[{index}]={bundle}[{index}]" for index, _ in items) + "\nend\n"
+        prelude += host_fragment(f"do local {bundle}=")
+        prelude += _vm_factories_entry(runtime, template, options, items, prefix + prelude, allocator, compact=compact)
+        prelude += host_fragment("\n" + "; ".join(f"{bank}[{index}]={bundle}[{index}]" for index, _ in items) + "\nend\n")
     source = source[len(declaration):]
     if whole:
         root_source = f"local {bank}={bank_key}; local _ENV={env_key};\n" + source
         wrapper = (f"return (function({bank},e) local _ENV=e.setmetatable({{[{bank_key!r}]={bank},[{env_key!r}]=e}},"
                    "{__index=e,__newindex=e})\nreturn (function()\n")
+        wrapper = host_fragment(wrapper)
         output = _vm_build(runtime, template, base_options, root_source, prefix + prelude + wrapper)
-        result = prelude + wrapper + output + f"\nend)()\nend)({bank},_ENV)"
+        result = prelude + wrapper + output + host_fragment(f"\nend)()\nend)({bank},_ENV)")
     else:
+        if compact:
+            # Selection coordinates still include the temporary bank declaration.
+            edits = [edit for edit in minifier.replacements(source)
+                     if not plan.excluded(edit.start + len(declaration), edit.end + 1 + len(declaration))]
+            source = _apply(source, edits)
         result = prelude + source
     report_domains()
     return result

@@ -58,6 +58,7 @@ _DEFAULT_VM_OPTIONS: VMOptions = {
     "cross_instruction_rate": 0.2,
     "runtime_polymorphism_rate": 0.2,
     "runtime_trace": False,
+    "environment_policy": "compatible",
     "block_variant_rate": 0.08,
     "block_variant_count": 3,
     "block_variant_max_instructions": 6,
@@ -192,9 +193,9 @@ class VMBuildPipeline(PostPass):
         started = time.perf_counter()
         plan = planner.build(semantic_ir)
         lowered = run_phase('vm:lowering', lambda: backend.optimize(backend.lower(protect(semantic_ir, plan), context), context))
-        self.last_semantic_ir = semantic_ir
+        self.last_semantic_ir = lowered.semantic_ir
         self.last_protected_ir = lowered.protected_ir
-        self.last_protection_plan = plan
+        self.last_protection_plan = lowered.protection_plan
         self.last_lowered_ir = lowered
         self.last_profile.append({
             "phase": "backend_lowering", "elapsed": round(time.perf_counter() - started, 6),
@@ -210,8 +211,8 @@ class VMBuildPipeline(PostPass):
         dumps = {
             'synthesis_plan':lambda:dump_plan(lowered),
             "morphed_ir": lambda: morphed_ir.dump(),
-            "ir": source_ir.dump, "optimized_ir": optimized_ir.dump, "protected_ir": semantic_ir.dump,
-            "protection_plan": lambda: plan.dump() + lowered.resolution.dump(),
+            "ir": source_ir.dump, "optimized_ir": optimized_ir.dump, "protected_ir": lowered.semantic_ir.dump,
+            "protection_plan": lambda: lowered.protection_plan.dump() + lowered.resolution.dump(),
             "backend_ir": lowered.dump,
         }
         for name, path in cast(dict[str, str], self.debug_dumps).items():

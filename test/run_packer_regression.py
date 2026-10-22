@@ -206,6 +206,19 @@ def test_mask_positions(ctx: Path):
     assert _top_level_locals(scoped, masked, depth) == {'outer', 'f', 'after'}
     refs = '_ENV.string.byte(s);_ENV . -- gap\n string.byte(s);string.byte(s);t:type()'
     assert _code_substitute(refs, {'string.byte':'proxy', 'type':'proxy_type'}) == refs.replace(';string.byte(s)', ';proxy(s)')
+    fields = 'local t={type=type,rawget=_ENV.rawget,[type]=rawget};return t.type,t["rawget"]'
+    assert _code_substitute(fields, {'type':'proxy_type','rawget':'proxy_raw'}) == (
+        'local t={type=proxy_type,rawget=_ENV.rawget,[proxy_type]=proxy_raw};return t.type,t["rawget"]')
+    literal = 'function(x) local function observe(...)return select("#",...),... end;return observe(x),outside(x) end'
+    assert _code_substitute(literal, {'observe':'ctx[1]', 'select':'ctx[2]', 'outside':'ctx[3]'}) == (
+        'function(x) local function observe(...)return ctx[2]("#",...),... end;return observe(x),ctx[3](x) end')
+    shadowed = 'local string={byte=function()return 1 end};return string.byte("x")'
+    assert _code_substitute(shadowed, {'string.byte':'proxy'}) == shadowed
+    lexical_env = 'local _ENV={type=function()return 1 end};return type(2)'
+    assert _code_substitute(lexical_env, {'type':'proxy'}) == lexical_env
+    method = 'function() local t={x=3};function t:m()return self.x end;return t:m() end'
+    assert _code_substitute(method, {'self':'ctx[1]'}) == method
+    assert _code_substitute('function()return self end', {'self':'ctx[1]'}) == 'function()return ctx[1] end'
 
 
 def test_pack_semantics(ctx: Path):

@@ -28,6 +28,9 @@ class Lua53Target:
     def value_packet_api(self):
         return 'table.pack', 'table.unpack'
 
+    def security_runtime_options(self):
+        return {'native_unpack': 'table.unpack', 'globals_name': '_ENV', 'native_table_pack': True}
+
     def runtime_entry_symbol(self):
         return 'run'
 
@@ -70,28 +73,40 @@ class Lua53Target:
     def lower_source(self, source):
         return source
 
+    def bind_environment(self, source, context):
+        from ..environment import bind_environment
+        source, self.line_environment = bind_environment(
+            source, lua_version='5.3',
+            policy=context.options.get('environment_policy', 'compatible'),
+            compact='minify' in context.output_passes,
+            output_passes=context.output_passes,
+            qualify_globals=getattr(self, 'isolate_runtime_globals', False))
+        return source
+
     def bind_lines(self, source, context):
         from ..vm_variants import apply_line_state
         passes = context.output_passes if context is not None else ()
         prefix = context.output_prefix if context is not None else ''
-        finalizer = None
-        if "minify" in passes:
-            from ...passes.minify import MinifyPass
-            finalizer = MinifyPass().run
-        return apply_line_state(source, prefix, finalizer=finalizer,
+        from ..runtime_finalization import output_finalizer
+        finalizer = output_finalizer(passes, lua_version='5.3')
+        anchor = '--[[ENVIRONMENT_READY]]' if '--[[ENVIRONMENT_READY]]' in source else 'return function(...)'
+        result, state, lines = apply_line_state(source, prefix, finalizer=finalizer,
                                 output_passes=passes,
+                                insertion_anchor=anchor,
+                                environment_source=getattr(self, 'line_environment', None),
                                 qualify_globals=getattr(self, "isolate_runtime_globals", False))
+        return result.replace('--[[ENVIRONMENT_READY]]', ''), state, lines
 
-    def dump_function(self, source, header, decoy_name, decoy_value, toolchain):
+    def dump_function(self, source, header, toolchain):
         from ..backends.runtime_emitter import _dump_function_stripped
-        return _dump_function_stripped(source, header, decoy_name, decoy_value, toolchain)
+        return _dump_function_stripped(source, header, toolchain)
 
-    def wrap(self, source, decoy_name, decoy_value, vm_name, blob, tail, *, forward_args=False):
+    def wrap(self, source, vm_name, blob, *, forward_args=False):
         returned = re.match(r'\Areturn\b', source)
         if returned is None:
             raise ValueError('Lua 5.3 VM source must return its runtime function')
         body = source[returned.end():].lstrip()
         arguments=",{n=select('#',...),...}" if forward_args else ''
-        return (f'local {decoy_name}="{decoy_value}"local {vm_name}={body};'
-                f'return ({vm_name}(1032,413,258,104,953,283,120))'
-                f'({blob},"{tail}",{vm_name}{arguments})')
+        return (f'local {vm_name}={body};'
+                f'return ({vm_name}())'
+                f'({blob},{vm_name}{arguments})')

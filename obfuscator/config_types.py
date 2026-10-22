@@ -10,7 +10,7 @@ from typing import Literal, TypedDict
 type BlobForm = Literal["string", "table", "numeric", "emoji", "chinese", "random"]
 type RequirementLevel = Literal["optional", "required"]
 type SelectionMode = Literal["all", "marked"]
-type SelectablePass = Literal["string_obf", "number_obf", "meme_strings", "boolean_obf", "table_obf", "function_obf", "vm"]
+type SelectablePass = Literal["string_obf", "string_flow_obf", "number_obf", "meme_strings", "boolean_obf", "table_obf", "function_obf", "vm"]
 
 
 class LiteralMosaicOptions(TypedDict, total=False):
@@ -61,6 +61,7 @@ class ProtectionOptions(TypedDict, total=False):
 
 
 class VMOptions(ProtectionOptions, total=False):
+    environment_policy: Literal['compatible', 'strict']
     opcode_synthesis: bool
     synthesis_policy: str
     synthesis_max_code_growth: float
@@ -151,6 +152,7 @@ class DebugDumps(TypedDict, total=False):
 
 class ObfuscatorConfig(TypedDict, total=False):
     string_obf_options: dict[str, int]
+    string_flow_obf_options: dict[str, int]
     boolean_obf_options: dict[str, str]
     table_obf_options: dict[str, str | int | bool]
     literal_mosaic: LiteralMosaicOptions

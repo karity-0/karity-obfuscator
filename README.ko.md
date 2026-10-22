@@ -2,8 +2,8 @@
 
 [English](README.md) | [**한국어**](README.ko.md)
 
-GUI와 선택적 소스 보호를 제공하는 Lua 5.3 난독화 도구입니다.
-**Karity**, **Classic**, **MOV** 세 가지 VM 백엔드를 지원합니다.
+GUI와 선택적 소스 보호를 제공하는 Lua 5.1/5.3 난독화 도구입니다.
+**Karity**, **Classic**, **MOV**, **Bare** 네 가지 VM 백엔드를 지원합니다.
 
 ## 빠른 시작
 
@@ -22,7 +22,11 @@ python obfuscator_gui.py
 Windows용 Lua 도구는 `bin/`에 포함되어 있습니다. 다른 플랫폼에서는
 버전이 맞는 Lua 5.3과 `luac` 5.3을 설치하고 `PATH`에서 사용할 수 있게 설정하세요.
 
-![GUI](images/6.png)
+![GUI](images/preview.jpg)
+
+**Bare**는 명령어 블롭과 opcode 해석기 없이 프로그램별 Lua 실행 블록을 생성합니다.
+무결성 검사와 상수 보호를 공유하며, 출력 크기는 입력에 따라 달라집니다.
+자세한 차이는 [백엔드 선택 가이드(영문)](docs/backends.md)를 참고하세요.
 
 ## 보호 프리셋
 
@@ -30,7 +34,7 @@ Windows용 Lua 도구는 `bin/`에 포함되어 있습니다. 다른 플랫폼�
 |---|---|
 | **Fast · 빠르게** | 가벼운 VM 보호. 무거운 소스 변환은 마커로 지정한 곳에 적용합니다. |
 | **Balanced · 균형** | 가벼운 소스 변환과 더 다양한 VM 구성을 제공합니다. |
-| **Strong · 강하게** | StringObf와 CFF를 포함한 전체 소스 보호를 적용합니다. |
+| **Strong · 강하게** | String Flow Obf와 CFF를 포함한 전체 소스 보호를 적용합니다. |
 | **Maximum · 최대** | 보호 예산과 VM 변형을 늘리고 패킹을 적용합니다. |
 
 모든 프리셋은 VM 출력에 NumberObf와 MemeStrings를 적용합니다. 프리셋과
@@ -67,12 +71,14 @@ GUI에서 저장한 설정은 CLI에서도 사용할 수 있습니다. 기존 JS
 패스별 가이드(영문): [문자열](docs/passes/stringObfuscation.md),
 [함수](docs/passes/functionObfuscation.md),
 [전역 변수 지역화](docs/passes/localizeGlobals.md),
-[Packer](docs/passes/packer.md), [Anti-debug](docs/passes/antiDebug.md).
+[Packer](docs/passes/packer.md), [Anti-debug](docs/passes/antiDebug.md),
+[Anti Env](docs/passes/antiEnv.md). Anti Env는 선택 기능이며 실제 Roblox를 포함한
+Roblox·executor 계열 환경을 차단합니다.
 
 ## 예제
 
-- Hello: [원본](examples/hello.lua), [난독화 결과](examples/hello.protected.lua), [비교](images/1.png).
-- 선택적 보호: [원본](examples/selective.lua), [난독화 결과](examples/selective.protected.lua).
+- Hello (`print("hello world")`, Fast 프리셋): [Karity](examples/hello_world/fast-karity-01.lua), [Classic](examples/hello_world/fast-classic-01.lua), [MOV](examples/hello_world/fast-mov-01.lua), [Bare](examples/hello_world/fast-bare-01.lua).
+- 선택적 보호: [원본](examples/selective/selective.lua), [이전 난독화 결과](examples/selective/selective.protected-old.lua).
 
 ## 테스트
 
@@ -84,6 +90,10 @@ python test/run_ci.py
 로컬 검증과 CI는 같은 테스트 목록을 사용합니다. 배포 전에 실제 사용 환경에서
 난독화된 스크립트를 실행해 확인하세요.
 
+빠른 검사는 `python test/run_ci.py --level quick`, 로컬 변경 관련 검사는
+`python test/run_ci.py --changed HEAD`로 실행합니다.
+[검증 그룹과 CI 안내](docs/verification.md)에서 검사 범위와 실패 재현 방법을 확인하세요.
+
 원본과 VM 실행을 비교하고 입력·옵션·생성 코드·케이스별 차이를 저장하려면 다음 명령을 사용합니다.
 
 ```sh
@@ -91,8 +101,9 @@ python tools/explore_vm_semantics.py --seeds 124 7719 20261016 --generated 8 --o
 python tools/explore_vm_semantics.py --inputs my-script.lua --versions 5.3 --generated 0 --output local/vm-audit/my-script
 ```
 
-생성한 프로그램과 경계 조건 예제는 두 Lua 버전과 세 백엔드에서 각각 새 런타임
-프로세스로 실행하며, 실행 시간 제한을 적용합니다. 유한한 사례를 검사하므로
+생성한 프로그램과 경계 조건 예제는 기본적으로 두 Lua 버전과 Classic·Karity·MOV에서
+검사합니다. Bare도 포함하려면 `--backends classic karity mov bare`를 추가하세요.
+각 실행은 새 런타임 프로세스와 실행 시간 제한을 사용합니다. 유한한 사례를 검사하므로
 결과가 같다는 사실만으로 모든 입력의 의미론적 동등성을 보장하지는 않습니다.
 `vm_chunk_interface.lua` 입력에 `--harness test/fixtures/vm_chunk_interface_harness.lua`를
 함께 사용하면 청크 반환값, 환경, `require` 동작을 확인할 수 있습니다.

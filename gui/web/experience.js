@@ -64,7 +64,7 @@
     const presetDialog = $('preset-picker'), inspector = $('build-inspector'), palette = $('command-palette');
     const byteText = value => `${Number(value).toLocaleString()} B`;
     const timeText = value => `${Number(value).toFixed(2)} s`;
-    const backendName = value => ({classic:'Classic',karity:'Karity',mov:'MOV'})[value] || value;
+    const backendName = value => ctx.getBootstrap().vm_options.find(field => field.name === 'backend')?.values.find(item => item.value === value)?.label || value;
 
     function closeOtherDialogs() {
       document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
@@ -193,7 +193,7 @@
     }
 
     const markerHints = {
-      STRING_OBF: 'Select a string literal → insert', NUMBER_OBF: 'Select a number literal → insert',
+      STRING_OBF: 'Select a string literal → insert', STRING_FLOW_OBF: 'Select a string literal → insert', NUMBER_OBF: 'Select a number literal → insert',
       BOOLEAN_OBF: 'Select true / false → insert', TABLE_OBF: 'Select a table { … } → insert',
       VM_START: 'Select complete statements → VM region', FUNCTION_OBF: 'Insert before a function',
       FUNCTION_OBF_START: 'Select statements inside a function → protect', VM: 'Insert at the start of the file',

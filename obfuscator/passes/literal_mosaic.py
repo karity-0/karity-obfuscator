@@ -61,6 +61,13 @@ class LiteralMosaic:
         finally:
             self._allowed = previous
 
+    def strings(self, *, force=False, line_safe=False):
+        """Share target/activation with numeric generation; no new pass layer."""
+        from .string_mosaic import StringMosaic, StringPolicy
+        return StringMosaic(StringPolicy(lua_version=self.policy.lua_version,
+            enabled=force or (self.policy.phase != 'vm_internal' and 'string_encode' in self.policy.passes),
+            allow_newlines=not line_safe))
+
     def original_number(self, token, *, engine=None, origin='source_number'):
         # Existing explicit Number/Meme stages retain their seeded generation
         # and layering. Only generated Mosaic expressions become protected.
@@ -207,10 +214,19 @@ class LiteralMosaic:
             expression = self.engine._fmt_plain_int(value) if 0 <= value < (1 << 31) else plain
         return '(' + expression + ')'
 
-    def transform_generated(self, expression, *, context='string_constant', hot=True):
+    def transform_generated(self, expression, *, context='string_constant', hot=True, mandatory=False):
         from .numeric_provenance import CodeText, join_code
         from .ts_utils import parse
-        if not self.enabled('number_obf') and not self.enabled('meme_strings'):
+        producer = self
+        if mandatory:
+            # A string encoder owns its operands even when the independent
+            # NumberObf source pass is off. Optional meme participation still
+            # follows the surrounding source/output selection.
+            producer = LiteralMosaic(['number_obf'] + (['meme_strings'] if self.enabled('meme_strings') else []),
+                lua_version=self.policy.lua_version,
+                phase=self.policy.phase if self.policy.phase != 'vm_internal' else 'string_intrinsic',
+                options=self.options, metrics=self.metrics)
+        if not mandatory and not self.enabled('number_obf') and not self.enabled('meme_strings'):
             return expression
         ctx = parse(expression)
         parts, spans, origins, pos, offset = [], [], [], 0, 0
@@ -221,7 +237,7 @@ class LiteralMosaic:
             # integer tokens; no user source is scanned by this operation.
             value = int(token,16 if token.lower().startswith('0x') else 10)
             before = expression[pos:a]
-            replacement = self.number(value,context=context,hot=hot)
+            replacement = producer.number(value,context=context,hot=hot)
             parts.extend((before,replacement)); offset += len(before)
             spans.append((offset,offset+len(replacement)))
             from .numeric_provenance import number_origin
