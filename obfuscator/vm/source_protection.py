@@ -90,7 +90,7 @@ def prepare(ir, plan, context):
     p.index_mask=random.randrange(2**20,2**31)
     p.prefix=random.randbytes(random.randint(3,15))
     p.payload_size=len(p.prefix)
-    p.bootstrap_slots=dict(zip(range(1,14),random.sample(range(31,4000),13)))
+    p.bootstrap_slots=dict(zip(range(1,15),random.sample(range(31,4000),14)))
     p.alphabet=''.join(random.sample(string.ascii_letters+string.digits,16))
     p.add_constant(p.sentinel)
     operations={i.operation for f in ir.functions() for b in f.blocks for i in b.instructions}
@@ -109,10 +109,14 @@ def prepare(ir, plan, context):
         text=re.sub(pattern,lambda m:m[1] if feature in features else '',text,flags=re.S)
     apis={'byte':'string.byte','char':'string.char','sub':'string.sub','concat':'table.concat',
           'info':'debug.getinfo','hook':'debug.gethook','pcall':'pcall'}
-    text=text.replace('__SHARED_INSPECTOR__',inspector_source())
+    inspector=inspector_source().replace('if _ENV_CHECK then _ENV_CHECK() end',
+        "if kind(factory_bank)~='table' or P[6](factory_bank)~=nil then return false end\n if _ENV_CHECK then _ENV_CHECK() end")
+    text=text.replace('__SHARED_INSPECTOR__',inspector)
     from .runtime_probes import bootstrap_source, verifier_source, EVIDENCE_SOURCE, new_plan
     probe_plan=context.runtime_probe_plan or new_plan(context.target.lua_version)
-    text=text.replace('--<<RUNTIME_EVIDENCE>>',EVIDENCE_SOURCE)
+    evidence=EVIDENCE_SOURCE.replace('if ok~=true or not present then fail() end',
+        'if ok~=true or not present then fail() end\n if not pcall(retire_factories) then fail() end')
+    text=text.replace('--<<RUNTIME_EVIDENCE>>',evidence)
     text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N',plan=probe_plan,protected=True))
     text=text.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
     text=text.replace('_ENV_CHECK','envcheck').replace('_ENV_REFRESH','envrefresh')

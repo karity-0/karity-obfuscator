@@ -39,6 +39,18 @@ class Program:
         self.flow_plans = []
         self.validation_bytes = 0
         slots=random.sample(range(31,2**24),len(self.functions))
+        self.factory_slots=tuple(slots)
+        self.factory_ids={f.id:slot for f,slot in zip(self.functions,slots)}
+        retired={self.functions[0].id}|{f.id for f in self.functions if f.debug_metadata.get('security_owned')}
+        self.retired_factory_slots=tuple(self.factory_ids[key] for key in sorted(retired))
+        for function in self.functions:
+            if function.debug_metadata.get('security_owned'):continue
+            for block in function.blocks:
+                for instruction in block.instructions:
+                    if instruction.operation=='CLOSURE':
+                        child=next(o.value for o in instruction.operands if o.role=='child')
+                        if function.children[child].id in retired:
+                            raise ValueError('guest closure refers to a consumed bootstrap factory')
         self.factories = {f.id: '_BF[' + str(slot) + ']' for f,slot in zip(self.functions,slots)}
         self.helpers = {}
         self.shared_helpers = {}
@@ -81,17 +93,22 @@ class Program:
             'if fn==_Bsetmeta then return s['+str(self.security.slots['setmeta'])+'] end;return fn end\n')
         security_root=next(f for f in self.functions if f.id==self.security.runtime_id)
         security_upvalues=['{_BE}' for v in security_root.values if v.kind=='upvalue']
-        values=('_BE','rawget','type','error','next','debug.getmetatable','_Bdump','_Bcrc','_Bxor','_Bmul','_BN','_ENV_CHECK','_ENV_REFRESH')
+        values=('_BE','rawget','type','error','next','debug.getmetatable','_Bdump','_Bcrc','_Bxor','_Bmul','_BN','_ENV_CHECK','_ENV_REFRESH','_BF')
         fields=[f'[{self.security.bootstrap_slots[i]}]={value}' for i,value in enumerate(values,1)
                 if f'P[{self.security.bootstrap_slots[i]}]' in self.security.native_source]
         random.shuffle(fields)
         initialize=(f'local _Bsecurity=({self.factories[security_root.id]}({{{",".join(security_upvalues)}}}))()'
             '(_Bmake,{'+','.join(fields)+'},_Bself,_Bpayload,_LS)\n'
             f'local _Bguard=_Bsecurity[{self.security.slots["guard"]}]\n')
+        factory_slots='{'+','.join(map(str,self.factory_slots))+'}'
+        native=self.security.native_source.replace('__FACTORY_SLOTS__',factory_slots)
+        native=native.replace('__FACTORY_RETIRED__','{'+','.join(
+            '['+str(slot)+']=true' for slot in self.retired_factory_slots)+'}')
         return ('return function(_Bself,_Bpayload,...)\n' + prefix + ''.join(self.helpers.values()) + checked_return + primitives +
-                ''.join(self.shared_helpers.values())+'local _Bmake='+self.security.native_source+'\n'+
+                ''.join(self.shared_helpers.values())+'local _Bmake='+native+'\n'+
                 'local _BF={}\n' + ''.join(definitions) +
-                initialize+'return (' + self.factories[root.id] + '({' + ','.join(upvalues) + '}))(' + ('...' if forward_args else '') + ')\nend')
+                'local _Broot_factory='+self.factories[root.id]+'\n'+
+                initialize+'return (_Broot_factory({' + ','.join(upvalues) + '}))(' + ('...' if forward_args else '') + ')\nend')
 
 
 class Function:
@@ -496,6 +513,12 @@ def emit(lowered, context):
     context.profile.append({'phase':'runtime_validation_ir','elapsed':0.0,
                             'function':program.security.validation_id,'verdict_in_ir':True,
                             'source_bytes_before_output_passes':program.validation_bytes})
+    context.profile.append({'phase':'program_integrity','elapsed':0.0,
+        'domains':['factory_identity','factory_metatable'],'functions':len(program.functions),
+        'retired_bootstrap_factories':len(program.retired_factory_slots),
+        'monitored_factories':len(program.functions)-len(program.retired_factory_slots),
+        'initial':True,'factory_identity_period_guard_events':127,
+        'factory_metatable_on_full_guard':True,'instruction_blob':False})
     payload=program.security.payload(literal)
     from ...names import NameAllocator
     name=NameAllocator.for_source(source).allocate('entry')

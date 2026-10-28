@@ -19,6 +19,7 @@ _PS=(function()
         pending_evidence=nil
         throw(nil,0)
     end
+    S.program_error=fail
     --<<RUNTIME_EVIDENCE>>
     --<<SHARED_HOST_GUARD>>
     function S.watched(t,k)

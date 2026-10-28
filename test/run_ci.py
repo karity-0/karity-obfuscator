@@ -26,6 +26,7 @@ REGRESSIONS = (
     'runtime_security',
     'runtime_probes',
     'runtime_validation',
+    'program_integrity',
     'block_permutation',
     'ir_facts',
     'ir_morphing',

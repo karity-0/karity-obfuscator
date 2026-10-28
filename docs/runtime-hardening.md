@@ -7,3 +7,6 @@
 - `environment_policy=compatible` is the default; `strict` requires directly owned APIs and rejects functional environment proxies.
 - Compatible debug, coroutine and function-dump APIs are required. Protection adds output, startup and execution cost.
 - Dump/line binding and constant checks cover specific edits; fingerprints are not MACs and cannot authenticate a fully controlled host.
+
+- Classic/Karity/MOV validate decoded instructions, metadata and scalar constants; Bare checks its factory bank and external constants.
+- Checks run at initialization, entry, constant use and periodic checkpoints; persistent region edits can take up to `127 * region_count` guard events to detect.
