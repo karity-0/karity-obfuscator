@@ -71,7 +71,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
   for _,k in next,{"type","rawget","rawequal","error","pcall","tonumber","tostring","select"} do
    if T(R(e,k))~="function" then return false end
   end
-  for _,k in next,{"string","table","math","debug"} do
+  for _,k in next,{"string","table","math","debug","coroutine"} do
    if T(R(e,k))~="table" then return false end
   end
   return true
@@ -92,7 +92,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
   watched[#watched+1]=b
  end
  watch(E);watch(N)
- for _,k in next,{"string","table","math","debug"} do watch(N[k]) end
+ for _,k in next,{"string","table","math","debug","coroutine"} do watch(N[k]) end
  S[__raw]=R;S[__kind]=T;S[__meta]=M;S[__fail]=fail
  S[__snapshot]=snapshot;S[__watched]=watched;S[__same]=same
  return {[__guest]=E,[__native]=N,[__state]=S}

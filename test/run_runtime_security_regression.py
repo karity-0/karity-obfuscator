@@ -11,12 +11,12 @@ sys.path[:0]=[str(ROOT),str(ROOT/'test')]
 from lupa.lua51 import LuaRuntime as Lua51
 from lupa.lua53 import LuaRuntime as Lua53
 from obfuscator.vm.string_storage import encode,decode,rebind
-from obfuscator.vm.host_guards import GUARD_SOURCE
+from obfuscator.vm.host_guards import GUARD_SOURCE, WRITE_BINDINGS
 
 
 def guarded_template():
     source=(ROOT/'obfuscator/vm/runtimes/protected_strings.lua').read_text(encoding='utf8')
-    return source.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
+    return source.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE).replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
 
 
 def kernel(version,script=123,line=456):
@@ -687,7 +687,10 @@ assert(not pcall(callback))
                     capture=folder/(mode+'.captures')
                     result=subprocess.run([lua_executable(),str(ROOT/'test/fixtures/vm_security_observer.lua'),str(artifact),mode,str(capture),secret.decode()],capture_output=True,timeout=30)
                     self.assertNotIn(b'AUDIT_CANARY_FOUND',result.stderr)
-                    if mode in ('concat','hook-late','upvalues-rewrite'):
+                    # The masked observer returns the original C function in
+                    # getinfo(...,'f'), rather than the queried wrapper. The
+                    # bootstrap's function-identity check now rejects it too.
+                    if mode in ('concat','native-masked','hook-late','upvalues-rewrite'):
                         self.assertNotEqual(0,result.returncode,result.stdout)
                         self.assertNotIn(b'AUDIT_REWRITE',result.stdout)
                     else:

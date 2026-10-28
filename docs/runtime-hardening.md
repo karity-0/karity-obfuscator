@@ -93,6 +93,36 @@ Guard IR metadata records the event and proof reason. Native/bootstrap and
 data-recovery checks remain active. This policy does not authenticate arbitrary
 host edits to private Lua stack/upvalue state or promise detection of every
 mutation restored between observations.
+
+Karity, Classic, MOV and Bare run a shared native bootstrap protocol on Lua 5.1
+and 5.3. It compares `debug.getinfo` function, stack, option and explicit-thread
+queries using native witnesses. A private coroutine exercises line hooks,
+hook removal followed by quiet execution, and count hooks. Installation settings
+alone are insufficient: the callback must actually execute on that private
+coroutine. The protocol checks suspended-thread metadata too. It never installs
+or removes a hook on the caller's coroutine. Private hooks are cleared on normal
+completion and on errors when the supplied native APIs permit cleanup.
+
+These active probes run once per runtime initialization. They require standard
+coroutine and thread-debug APIs; missing or inconsistent implementations fail
+explicitly. The new bootstrap-only API references are checked every 127 guard
+events, using the existing counter and failure latch. Existing full native,
+environment and current-thread hook checks retain their earlier scheduling.
+Authorized VM writes update either dependency bank. A table-owner index avoids
+scanning authorization records for unrelated writes; it does not cache successful
+integrity validation. Coroutine-library metatables join the existing environment
+watching policy.
+
+This protocol does not enumerate inactive guest coroutines or authenticate a
+fully controlled host that forges all observations consistently. New reference
+changes can remain undetected until the periodic checkpoint, and changes restored
+between observations may be missed. A dishonest hook setter can also refuse
+private-thread cleanup; the caller's hook is still never cleared to compensate.
+The bootstrap comparisons currently remain native and are bound into the existing
+dump/line identity. They are not additional protected Semantic IR decisions or
+per-region VM-program authentication. See `test/run_runtime_probes_regression.py`
+for protocol, cleanup, periodic-delay, authorization and generated-backend tests.
+
 The compiler-owned native capture table uses unique randomized numeric slots and
 shuffled declaration order. Its static references are rewritten in the same
 binding-aware pass; generic integrity iteration records the resulting numeric

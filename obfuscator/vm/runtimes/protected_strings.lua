@@ -29,9 +29,7 @@ _PS=(function()
         if _ENV_REFRESH then _ENV_REFRESH(t,false) end
         t[k]=v
         if _ENV_REFRESH then _ENV_REFRESH(t,true) end
-        for i=1,#bindings do local b=bindings[i]
-            if same(b[1],t) and same(b[2],k) then b[3]=t[k] end
-        end
+        --<<WRITE_BINDINGS>>
     end
     local function key(seed)
         return (seed+(_IT.script or 0)%M+((_IT.line or 0)%M)*17)%(M-1)+1
@@ -212,6 +210,7 @@ _PS=(function()
         end
     end
     trusted[#trusted+1]={S,'api',A}
+    --<<BOOTSTRAP_PROBE>>
     return S
 end)()
 _PS_GUARD=_PS.guard

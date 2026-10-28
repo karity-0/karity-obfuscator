@@ -15,7 +15,7 @@ return function(P,self,payload,line)
 --<<write>>
  function S.write(t,k,v)
   _ENV_REFRESH(t,false);t[k]=v;_ENV_REFRESH(t,true)
-  for i=1,#bindings do local b=bindings[i];if same(b[1],t) and same(b[2],k) then b[3]=t[k] end end
+  --<<WRITE_BINDINGS>>
  end
 --<<ENDwrite>>
 --<<global_get>>
@@ -39,6 +39,7 @@ return function(P,self,payload,line)
   if kind(b[3])=='function' and not isC(b[3]) then fail() end
  end
  S.guard(true)
+ --<<BOOTSTRAP_PROBE>>
  local xor=P[9]
  local script=xor(P[8](P[7](self)),line)
  local M=2147483647

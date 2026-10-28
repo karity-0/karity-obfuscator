@@ -24,6 +24,7 @@ REGRESSIONS = (
     'blob_form',
     'serialization',
     'runtime_security',
+    'runtime_probes',
     'block_permutation',
     'ir_facts',
     'ir_morphing',

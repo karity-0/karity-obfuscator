@@ -6,7 +6,7 @@ import random
 import re
 import struct
 
-from .host_guards import inspector_source
+from .host_guards import inspector_source, WRITE_BINDINGS
 from .ir.model import IRBlock, IRFunction, IRInstruction as I, IROperand as O, IRValue, SemanticIR
 from .ir.validate import validate_semantic_ir
 from .string_storage import MODULUS, encode as encode_string, _key
@@ -109,6 +109,9 @@ def prepare(ir, plan, context):
     apis={'byte':'string.byte','char':'string.char','sub':'string.sub','concat':'table.concat',
           'info':'debug.getinfo','hook':'debug.gethook','pcall':'pcall'}
     text=text.replace('__SHARED_INSPECTOR__',inspector_source())
+    from .runtime_probes import bootstrap_source
+    text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N'))
+    text=text.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
     text=text.replace('_ENV_CHECK','envcheck').replace('_ENV_REFRESH','envrefresh')
     used=sorted(set(re.findall(r'\bA\.(\w+)',text)))
     api_slots=dict(zip(used,random.sample(range(31,4000),len(used))))

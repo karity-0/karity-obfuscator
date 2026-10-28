@@ -65,8 +65,11 @@ def prepare(source: str, *, backend: str, native_unpack: str, globals_name: str,
             owner,key=globals_name,expression
         bindings.append('{'+owner+',"'+key+'",'+expression+'}')
     runtime=(Path(__file__).parent/'runtimes/protected_strings.lua').read_text(encoding='utf8')
-    from .host_guards import GUARD_SOURCE
+    from .host_guards import GUARD_SOURCE, WRITE_BINDINGS
+    from .runtime_probes import bootstrap_source
     runtime=runtime.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
+    runtime=runtime.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
+    runtime=runtime.replace('--<<BOOTSTRAP_PROBE>>','S.guard(true)\n'+bootstrap_source('_ENV_NATIVE'))
     runtime=runtime.replace('__PS_UNPACK__',native_unpack).replace('__PS_BINDINGS__','{'+','.join(bindings)+'}')
     anchor='--<<TARGET_CONSTANT_RESOLVER>>'
     if source.count(anchor)!=1:
