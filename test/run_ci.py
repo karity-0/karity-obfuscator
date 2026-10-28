@@ -18,6 +18,7 @@ REGRESSIONS = (
     'bare_optimization',
     'bare_flow',
     'source_protection',
+    'guard_policy',
     'anti_env',
     'import',
     'blob_form',

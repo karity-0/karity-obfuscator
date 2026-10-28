@@ -142,6 +142,8 @@ end'''
 
 def _instrument(ir, plan, protection, context):
     def transform(function, parent_context=None, parent_guard=None):
+        from .guard_policy import internal_calls
+        internal=internal_calls(function,context.target.lua_version)
         values=list(function.values)
         upvalues=sum(v.kind=='upvalue' for v in values)
         context_up,guard_up=upvalues,upvalues+1
@@ -199,14 +201,15 @@ def _instrument(ir, plan, protection, context):
             out.append(make('CALL',(reg('callee',base),O('arguments','register_range',base+1,len(args)),
                 O('results','register_range',result if result is not None else base,1 if result is not None else 0))))
             return compact(out,('method',name,tuple((a.kind,a.value) for a in args),result))
-        def guard(force):
-            return compact([make('GET_UPVALUE',(reg('destination',base),O('source','upvalue',guard_up))),
+        def guard(force,event='block',proof=None):
+            out=compact([make('GET_UPVALUE',(reg('destination',base),O('source','upvalue',guard_up))),
                     make('LOAD_BOOL',(reg('destination',base+1),O('value','immediate',force),O('skip','immediate',False))),
                     make('CALL',(reg('callee',base),O('arguments','register_range',base+1,1),O('results','register_range',base,0)))],('guard',force))
+            return [replace(i,metadata={**i.metadata,'guard_event':event,'guard_proof':proof}) for i in out]
         source_pcs={i.id:i.metadata.get('source_pc') for b in function.blocks for i in b.instructions}
         blocks=[]
         for block in function.blocks:
-            instructions=guard(block.id==function.blocks[0].id)
+            instructions=guard(block.id==function.blocks[0].id,'entry' if block.id==function.blocks[0].id else 'block')
             entry_pc=next((i.metadata['source_pc'] for i in block.instructions if isinstance(i.metadata.get('source_pc'),int)),None)
             instructions=[replace(i,metadata={**i.metadata,'source_pc':entry_pc}) for i in instructions]
             for original in block.instructions:
@@ -233,14 +236,16 @@ def _instrument(ir, plan, protection, context):
                         table=reg('table',base+3)
                     instructions.extend(method('write',[table,fields['key'],fields['value']]))
                 else:
-                    if op in ('CALL','TAIL_CALL','RETURN'):instructions.extend(guard(True))
+                    proof='generated-closure' if original.id in internal else None
+                    if op in ('CALL','TAIL_CALL','RETURN'):
+                        instructions.extend(guard(not bool(proof),'call-before' if op=='CALL' else op.lower(),proof))
                     changed=replace(original,targets=(),operands=tuple(operands))
                     if operands!=list(original.operands):
                         extra=tuple(f'{function.id}:r{o.value}' for o in operands if o.kind=='register' and o.value>=base)
                         changed=replace(changed,inputs=(*original.inputs,*extra),constants=tuple(
                             f'{function.id}:k{o.value}' for o in operands if o.kind=='constant'))
                     instructions.append(changed)
-                    if op=='CALL':instructions.extend(guard(True))
+                    if op=='CALL':instructions.extend(guard(not bool(proof),'call-after',proof))
                 # Original edges belong only to the final replacement operation.
                 if original.targets:
                     instructions[-1]=replace(instructions[-1],targets=original.targets)

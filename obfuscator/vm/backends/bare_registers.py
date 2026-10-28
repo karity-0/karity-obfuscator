@@ -7,6 +7,16 @@ physical ownership at their original instruction point.
 from itertools import combinations
 
 
+def native_prefix(function):
+    """Shared pre/post-protection frame bound for nonallocating result stores."""
+    scratch=function.debug_metadata.get('security_scratch_base')
+    original=function.max_stack_size if scratch is None else scratch
+    starts=[o.value for b in function.blocks for i in b.instructions for o in i.operands
+            if o.kind=='register_range' and (o.count is None or o.count>32)]
+    return (0 if function.params>=128 else
+            min(original,max(0,140-function.params),48,min(starts,default=original)))
+
+
 def allocate(emitter):
     function, limit = emitter.function, emitter.local_count
     identity = {r:r for r in range(limit)}

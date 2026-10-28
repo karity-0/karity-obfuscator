@@ -110,8 +110,8 @@ class Function:
                           if o.kind == 'register_range' and (o.count is None or o.count > 32)]
         self.dynamic = bool(dynamic_starts)
         self.dynamic_start = min(dynamic_starts, default=self.original_stack)
-        self.local_count = 0 if self.wide else min(self.original_stack, max(0, 140 - function.params),
-                                                  48, self.dynamic_start)
+        from .bare_registers import native_prefix
+        self.local_count = native_prefix(function)
         self.uses_spill = self.dynamic or self.local_count < self.original_stack
         self.uses_scratch = False
         self.support = set()

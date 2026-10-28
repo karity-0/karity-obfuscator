@@ -79,6 +79,20 @@ its captured implementation. This preserves deliberate source-level overrides.
 The capture table is initialized before early runtime helpers. Guard entries
 validate that table and the protected-value helper identities using lexical
 primitives; replacing a mutable dispatch slot does not replace the entry guard.
+
+Bare classifies a limited set of closed ordinary calls using all reaching
+definitions in semantic IR. Only generated CLOSURE producers and their MOVE
+chains qualify; parameters, native/global/table lookups, captured callees,
+unknown joins, tailcalls, open ranges and spill/captured result stores stay conservative.
+Qualified caller-side pre/post checks use the existing periodic poll instead of
+forcing a full scan. The callee still checks fully on entry and before return,
+including entry from an unprotected host or native callback. Unknown/native
+ordinary CALLs and the post-yield resume path retain immediate full checks. Poll sites and
+the 127-event period remain; this is not a wall-clock detection guarantee.
+Guard IR metadata records the event and proof reason. Native/bootstrap and
+data-recovery checks remain active. This policy does not authenticate arbitrary
+host edits to private Lua stack/upvalue state or promise detection of every
+mutation restored between observations.
 The compiler-owned native capture table uses unique randomized numeric slots and
 shuffled declaration order. Its static references are rewritten in the same
 binding-aware pass; generic integrity iteration records the resulting numeric
