@@ -2671,6 +2671,7 @@ local _fn=r.uint()
 --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
     local proto=ctx.read_proto(r,acc_state)
     local env_box={v=ctx.env}
+    --<<RUNTIME_VERIFY>>
     --<<RUN_ENTRY>>
     local _root_result=ctx.CG[__VM_ROUTE_ENTER__](ctx.NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,

@@ -97,8 +97,7 @@ class HelperIntegrity:
                        for slot in self.slots)
 
 
-def install(source, *, library_dump=False, output_passes=()):
-    ctx = parse(source)
+def _candidates(ctx):
     bindings, *_ = resolve_bindings(ctx, collect_literals=False)
     candidates = []
     allowed = {'return_statement', 'expression_list', 'binary_expression',
@@ -132,7 +131,25 @@ def install(source, *, library_dump=False, output_passes=()):
         if valid:
             candidates.append((binding, node))
     candidates.sort(key=lambda item: ctx.cs(item[1]))
-    candidates = candidates[:3]
+    return candidates[:3]
+
+
+def preserve_function_targets(source):
+    """Keep the existing pure relocation contract through FunctionObf only."""
+    ctx=parse(source)
+    candidates=_candidates(ctx)
+    if len(candidates) < 2:
+        raise ValueError('distributed integrity requires two eligible pure runtime helpers')
+    edits=[]
+    for _,node in candidates:
+        start=ctx.cs(node.child_by_field_name('body'))
+        edits.append((start,start-1,'--[[VM_INTEGRITY_HELPER]] '))
+    return _apply_replacements_once(source,edits)
+
+
+def install(source, *, library_dump=False, output_passes=()):
+    ctx = parse(source)
+    candidates=_candidates(ctx)
     if len(candidates) < 2:
         raise ValueError('distributed integrity requires two eligible pure runtime helpers')
     allocator = NameAllocator.for_source(source + '\ni f ok data h type string pcall error tonumber getmetatable')

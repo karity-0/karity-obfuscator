@@ -2,13 +2,14 @@ return function(P,self,payload,line)
  local E,raw,kind,throw,next0=P[1],P[2],P[3],P[4],P[5]
  local same=rawequal
  local N,_ENV_CHECK,_ENV_REFRESH=P[11],P[12],P[13]
- local failed,ticks=false,0
- local function fail() failed=true;throw(nil,0);local n=nil;return n[n] end
+ local failed,ticks,pending_evidence=false,0,nil
+ local function fail() failed=true;pending_evidence=nil;throw(nil,0);local n=nil;return n[n] end
  local A=__API__
  local hook0=A.hook
  local bindings=__BARE_NATIVE_BINDINGS__
  local S={}
  local trusted={}
+ --<<RUNTIME_EVIDENCE>>
  __SHARED_INSPECTOR__
  function S.guard(force) if not S.inspect(force) then fail() end end
  S.fail=fail

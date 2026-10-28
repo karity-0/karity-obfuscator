@@ -7,7 +7,7 @@ _PS=(function()
         type=type,rawget=rawget,rawequal=rawequal,error=error,floor=math.floor,tonumber=tonumber,
         tostring=tostring,getmetatable=getmetatable,max=math.max,min=math.min}}
     local A=S.api
-    local counter,ticks,failed=0,0,false
+    local counter,ticks,failed,pending_evidence=0,0,false,nil
     local raw,throw,hook0,kind,next0,same=A.rawget,A.error,A.hook,A.type,next,A.rawequal
     local trusted={}
     local M=2147483647
@@ -16,8 +16,10 @@ _PS=(function()
     local bindings=__PS_BINDINGS__
     local function fail()
         failed=true
+        pending_evidence=nil
         throw(nil,0)
     end
+    --<<RUNTIME_EVIDENCE>>
     --<<SHARED_HOST_GUARD>>
     function S.watched(t,k)
         for i=1,#bindings do local b=bindings[i]

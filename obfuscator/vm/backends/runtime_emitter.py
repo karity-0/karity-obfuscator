@@ -704,13 +704,14 @@ def _obfuscate_vm_output_scoped(
     details.extend(post_details)
 
     # Never expose build-time dispatcher annotations, even without minify.
-    if protect_vm_dispatcher and "--[[VM_DISPATCH_ENTRY]]" in output:
+    annotations={'--[[VM_DISPATCH_ENTRY]]','--[[VM_INTEGRITY_HELPER]]'}
+    if protect_vm_dispatcher and any(marker in output for marker in annotations):
         from obfuscator.passes.minify import _COMMENT_TOKEN_RE
         from obfuscator.passes.rename_ts import _apply_replacements_once
         # Strip only annotation tokens; an identical string literal is data.
         marker_edits = [(match.start(), match.end()-1, ' ')
                         for match in _COMMENT_TOKEN_RE.finditer(output)
-                        if match.group('longcmt') == '--[[VM_DISPATCH_ENTRY]]']
+                        if match.group('longcmt') in annotations]
         output = _apply_replacements_once(output, marker_edits)
     return output, details
 
@@ -740,7 +741,13 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
                              target=target)
     from ..intrinsics import prepare_intrinsic_runtime
     from ..runtime_security import prepare as prepare_security
+    from ..runtime_validation import entry_source
+    validation=lowered_ir.backend_data.get('runtime_validation')
+    if validation is None or context.runtime_probe_plan is None:
+        raise ValueError('protected runtime validation IR is missing')
     runtime_source = prepare_security(runtime_source, backend=lowered_ir.backend,
+                                      probe_plan=context.runtime_probe_plan,
+                                      validation_entry=entry_source(lowered_ir.backend,target,prepared,validation['function']),
                                       **target.security_runtime_options())
     runtime_source = prepare_intrinsic_runtime(runtime_source, protected_semantic_ir)
     from ..synthesis.storage import prepare_reader
@@ -868,6 +875,9 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     from ..runtime_security import _freeze_calls
     vm_func_src = _freeze_calls(vm_func_src)
     vm_func_src = target.finalize_runtime(vm_func_src)
+    if distributed and 'function_obf' in context.output_passes:
+        from ..helper_integrity import preserve_function_targets
+        vm_func_src=preserve_function_targets(vm_func_src)
     from ...passes.function_costs import POLICY
     cost_token = POLICY.set(target.function_cost_policy())
     try:

@@ -2261,6 +2261,7 @@ local function run(blob,self_func,_root_args)
     --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
+    --<<RUNTIME_VERIFY>>
     --<<RUN_ENTRY>>
     local _root_result=_CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,

@@ -20,7 +20,8 @@ def native_prefix(function):
 def allocate(emitter):
     function, limit = emitter.function, emitter.local_count
     identity = {r:r for r in range(limit)}
-    if function.debug_metadata.get('security_owned') or emitter.program.poisoned:
+    if ((function.debug_metadata.get('security_owned') and not function.debug_metadata.get('security_optimization_safe'))
+            or emitter.program.poisoned):
         return identity
     pinned = set(range(function.params)) | emitter.captured
     for block in function.blocks:

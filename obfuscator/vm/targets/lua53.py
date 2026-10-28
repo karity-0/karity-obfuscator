@@ -22,8 +22,8 @@ class Lua53Target:
             raise ValueError(f'unknown runtime template: {name}')
         return (root/name if name=='vm.lua' else root/'runtimes'/name).read_text(encoding='utf-8')
 
-    def direct_runtime_entry(self):
-        return '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},_root_args)'
+    def direct_runtime_entry(self, *, proto='proto', args='_root_args'):
+        return f'_EX[{proto}.vm_id+1]({proto},{{env_box,environment=env_box.v}},{args})'
 
     def value_packet_api(self):
         return 'table.pack', 'table.unpack'

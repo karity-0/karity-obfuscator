@@ -3433,7 +3433,7 @@ def _transform_body(
 
 
 # Build-time annotation, removed by the VM output pipeline. No runtime sentinel.
-_DISPATCH_SENTINEL = re.compile(r"--\[\[VM_DISPATCH_ENTRY\]\]")
+_DISPATCH_SENTINEL = re.compile(r"--\[\[(?:VM_DISPATCH_ENTRY|VM_INTEGRITY_HELPER)\]\]")
 _VM_HOT_LOOP_SENTINEL = re.compile(r'__VM_HOT_LOOP__')
 
 

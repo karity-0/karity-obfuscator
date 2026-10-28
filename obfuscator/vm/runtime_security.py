@@ -53,7 +53,9 @@ def _internal_diagnostic(ctx, arguments, index=0) -> bool:
 
 
 def prepare(source: str, *, backend: str, native_unpack: str, globals_name: str,
-            native_table_pack: bool) -> str:
+            native_table_pack: bool, probe_plan=None, validation_entry=None) -> str:
+    if probe_plan is None or not validation_entry:
+        raise ValueError('runtime validation requires both a plan and a private entry')
     expressions = ['debug.getinfo','debug.gethook','string.dump','string.byte','string.char','string.len',
                    'string.sub','string.format','string.match','string.find','table.concat',native_unpack,
                    'string','table','math','debug','type','rawget','rawequal','error','pcall','tostring','tonumber','select','getmetatable','setmetatable','next','pairs','ipairs','math.floor','math.max','math.min']
@@ -66,16 +68,20 @@ def prepare(source: str, *, backend: str, native_unpack: str, globals_name: str,
         bindings.append('{'+owner+',"'+key+'",'+expression+'}')
     runtime=(Path(__file__).parent/'runtimes/protected_strings.lua').read_text(encoding='utf8')
     from .host_guards import GUARD_SOURCE, WRITE_BINDINGS
-    from .runtime_probes import bootstrap_source
+    from .runtime_probes import bootstrap_source, EVIDENCE_SOURCE
+    runtime=runtime.replace('--<<RUNTIME_EVIDENCE>>',EVIDENCE_SOURCE)
     runtime=runtime.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
     runtime=runtime.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
     runtime=runtime.replace('--<<BOOTSTRAP_PROBE>>','S.guard(true)\n'+bootstrap_source('_ENV_NATIVE',
-        lua_version='5.3' if native_table_pack else '5.1'))
+        lua_version='5.3' if native_table_pack else '5.1',plan=probe_plan,protected=True))
     runtime=runtime.replace('__PS_UNPACK__',native_unpack).replace('__PS_BINDINGS__','{'+','.join(bindings)+'}')
     anchor='--<<TARGET_CONSTANT_RESOLVER>>'
     if source.count(anchor)!=1:
         raise ValueError('protected string resolver boundary is missing')
     source=_capture_source(native_unpack=native_unpack,native_table_pack=native_table_pack)+'local _PS,_PS_GUARD\n'+source.replace(anchor,runtime+'\n'+anchor,1)
+    if source.count('--<<RUNTIME_VERIFY>>')!=1:
+        raise ValueError('runtime validator entry boundary is missing')
+    source=source.replace('--<<RUNTIME_VERIFY>>',validation_entry)
     source=source.replace('local env_box={v=_ENV}', 'local env_box={v=_ENV_GUEST}')
     source=source.replace('apack=_apack,env=_ENV,', 'apack=_apack,env=_ENV_GUEST,')
     source=source.replace('return fn(...)',

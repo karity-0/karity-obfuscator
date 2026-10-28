@@ -171,7 +171,8 @@ def emit(function, emitter, segments, entries, rng):
         successors=((segment.following,) if segment.following is not None else
                     tuple(entries[key] for key in segment.block.successors))
         condition=emitter.condition(segment.block) if len(successors)==2 else None
-        locked=(bool(function.debug_metadata.get('security_owned') or function.debug_metadata.get('morph_strategies'))
+        owned_locked=(function.debug_metadata.get('security_owned') and not function.debug_metadata.get('security_optimization_safe'))
+        locked=(bool(owned_locked or function.debug_metadata.get('morph_strategies'))
             or any(i.metadata.get('protection_origin') in ('junk','ir_morph') or i.metadata.get('morph_origin')
                    for i in segment.instructions))
         units=sum(not i.metadata.get('bare_call_skip',False) for i in segment.instructions)
@@ -181,7 +182,7 @@ def emit(function, emitter, segments, entries, rng):
     tags={index:segment.position for index,segment in enumerate(segments)}
     entry=entries[function.blocks[0].id];state=rng.getstate()
     baseline,_=_render(nodes,entry,tags,state,emitter.program.version)
-    if function.debug_metadata.get('security_owned'):return baseline
+    if function.debug_metadata.get('security_owned') and not function.debug_metadata.get('security_optimization_safe'):return baseline
     statistics: Counter[str]=Counter()
     # Replace nodes, not their code/instruction lists; this leaves the original
     # protected IR and the baseline rendering untouched for admission/diagnostics.

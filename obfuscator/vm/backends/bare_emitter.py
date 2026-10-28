@@ -37,6 +37,7 @@ class Program:
         self.optimization = Counter(lowered.backend_data['optimization'])
         self.frame_plans = []
         self.flow_plans = []
+        self.validation_bytes = 0
         slots=random.sample(range(31,2**24),len(self.functions))
         self.factories = {f.id: '_BF[' + str(slot) + ']' for f,slot in zip(self.functions,slots)}
         self.helpers = {}
@@ -60,7 +61,10 @@ class Program:
     def source(self):
         definitions = []
         for function in reversed(self.functions):
-            definitions.append(Function(self, function).source())
+            definition=Function(self, function).source()
+            definitions.append(definition)
+            if function.debug_metadata.get('security_subsystem')=='runtime_validation':
+                self.validation_bytes+=len(definition.encode())
         prefix = 'local _BE=_ENV_GUEST\nlocal _BN=_ENV_NATIVE\n--<<BARE_NATIVE_CAPTURE>>\n'
         if self.poisoned: prefix += 'local _BP=false\n'
         root = self.functions[0]
@@ -489,6 +493,9 @@ def emit(lowered, context):
         'protected_numbers':sum(isinstance(v,(int,float)) for v in program.security.constants)-1,
         'runtime_checks':True,'environment_policy':context.options.get('environment_policy','compatible'),
         'checks_in_semantic_ir':True})
+    context.profile.append({'phase':'runtime_validation_ir','elapsed':0.0,
+                            'function':program.security.validation_id,'verdict_in_ir':True,
+                            'source_bytes_before_output_passes':program.validation_bytes})
     payload=program.security.payload(literal)
     from ...names import NameAllocator
     name=NameAllocator.for_source(source).allocate('entry')

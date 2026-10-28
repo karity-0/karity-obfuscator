@@ -22,6 +22,36 @@ def native(script, *arguments):
 
 
 class HelperIntegrityTests(unittest.TestCase):
+    def test_function_output_keeps_real_helpers_without_runtime_annotations(self):
+        from obfuscator.vm.helper_integrity import preserve_function_targets
+        from obfuscator.vm.backends.runtime_emitter import _obfuscate_vm_output
+        source='''return function(manifest,...)
+local text="--[[VM_INTEGRITY_HELPER]]"
+local function a(x,y)return x~y end
+local function b(x)return x end
+return function(n)return a(b(n),3),text end
+end'''
+        random.seed(1606)
+        marked=preserve_function_targets(source)
+        transformed,_=_obfuscate_vm_output(marked,['function_obf'])
+        # An identical literal is still data; only build-time comments vanish.
+        self.assertIn('"--[[VM_INTEGRITY_HELPER]]"',transformed)
+        from obfuscator.passes.ts_utils import parse
+        from obfuscator.passes.function_obfuscation import _ancestor_nodes
+        ctx=parse(transformed)
+        self.assertFalse(any(n.type=='comment' and ctx.text(n)=='--[[VM_INTEGRITY_HELPER]]'
+            and not any(p.type=='string' for p in _ancestor_nodes(n)) for n in ctx.walk()))
+        output,plan=install(transformed)
+        manifest=plan.manifest(output,_dump_function_stripped(output,''))
+        result=native('local f=assert(loadfile(arg[1]))()(arg[2]);local n,s=f(17);assert(n==18 and s=="--[[VM_INTEGRITY_HELPER]]")',
+            self._factory_file(output),manifest)
+        self.assertEqual(0,result.returncode,result.stderr)
+
+    def _factory_file(self,source):
+        folder=tempfile.TemporaryDirectory();self.addCleanup(folder.cleanup)
+        path=Path(folder.name)/'factory.lua';path.write_text(source,encoding='utf8')
+        return path
+
     def test_standalone_cross_checks_reject_each_reference(self):
         # The long loop is generator-owned fixture code, ensuring every sparse
         # checker gets a turn without requiring debug hooks or old VM guards.

@@ -25,6 +25,7 @@ REGRESSIONS = (
     'serialization',
     'runtime_security',
     'runtime_probes',
+    'runtime_validation',
     'block_permutation',
     'ir_facts',
     'ir_morphing',

@@ -92,7 +92,10 @@ print(cells[1](),cells[4](),p.n,p[1],p[2],p[3],p[4])
             else:
                 raise AssertionError('Lua 5.1 unexpectedly accepted selective VM boundaries')
         small = build('print("hi")', version, ('strip_info','rename_obf','minify'))
-        assert len(small.encode()) < 20000
+        # The protected runtime verdict adds fixed IR code even for tiny input.
+        # Source-protection regression retains the incremental growth budget;
+        # runtime-validation regression asserts the verdict really exists in IR.
+        assert len(small.encode()) < 38000
         assert all(marker not in small for marker in ('KARITY/', 'read_proto', '_ksm', 'unknown op'))
         # Getter values identify this backend's semantic representation.
         build('''local h=KARITY_GET_SCRIPT_HASH();local l=KARITY_GET_LAYOUT_HASH()

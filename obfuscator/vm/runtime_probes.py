@@ -1,9 +1,4 @@
-"""One shared initialization probe; native mechanics remain bootstrap-safe.
-
-This stage is not the auxiliary-IR integration. The template separates native
-stack/worker collection from comparisons so actual validation can be protected
-through the existing IR machinery without duplicating a second protocol.
-"""
+"""Shared native observations and build-specific protected validation source."""
 from dataclasses import dataclass
 from pathlib import Path
 import random
@@ -20,8 +15,8 @@ class ProbePlan:
     full_options: str
     short_options: str
     api_order: tuple[str, ...]
-    c_fields: tuple[str, ...]
-    lua_fields: tuple[str, ...]
+    info_fields: tuple[str, ...]
+    observation_slots: tuple[int, ...]
     lua_version: str | None = None
 
 
@@ -55,22 +50,19 @@ def new_plan(lua_version: str | None = None) -> ProbePlan:
         (modes[0],modes[1],modes[2],modes[3]),random.choice(('line','count')),
         random.randint(1,7),''.join(random.sample('Suf',3)),random.choice(('Sf','fS')),
         shuffled(('info','hook','pcall','sethook','create','resume','yield','status','running')),
-        shuffled(('source','short_src'))+shuffled(('linedefined','lastlinedefined')),
-        shuffled(('what','source','short_src'))+shuffled(('linedefined','lastlinedefined')),
+        shuffled(('func','what','source','short_src','linedefined','lastlinedefined','nups','nparams','isvararg')),
+        tuple(random.sample(range(31,4096),24)),
         lua_version)
 
 
-def bootstrap_source(native_namespace: str, *, plan: ProbePlan | None = None,
-                     lua_version: str | None = None) -> str:
-    plan=plan or new_plan(lua_version)
-    source=(Path(__file__).parent/'runtimes/runtime_probes.lua').read_text(encoding='utf-8')
-    if source.count('__PROBE_NATIVE__')!=1:
-        raise ValueError('runtime probe native namespace boundary is missing')
+def _bindings(plan: ProbePlan, native_namespace: str = '') -> dict[str,str]:
     idle,line,count,quiet=plan.modes
     first_line=plan.first=='line'
     first_mode,last_mode=(line,count) if first_line else (count,line)
     first_mask,last_mask=('l','') if first_line else ('','l')
     first_count,last_count=(0,plan.count) if first_line else (plan.count,0)
+    fields=plan.info_fields
+    indices={field:(2*i,2*i+1) for i,field in enumerate(fields,1)}
     replacements={
         'NATIVE':native_namespace,'WORKER':plan.worker,
         'RESULT_FIRST':str(plan.results[0]),'RESULT_QUIET':str(plan.results[1]),
@@ -78,17 +70,60 @@ def bootstrap_source(native_namespace: str, *, plan: ProbePlan | None = None,
         'COUNT':str(count),'QUIET':str(quiet),'MODE_FIRST':str(first_mode),
         'MODE_LAST':str(last_mode),'MASK_FIRST':repr(first_mask),'MASK_LAST':repr(last_mask),
         'INTERVAL_FIRST':str(first_count),'INTERVAL_LAST':str(last_count),
-        'MISSING_FIRST':'lines==0' if first_line else 'counts==0',
-        'MISSING_LAST':'counts==0' if first_line else 'lines==0',
         'FULL_OPTIONS':repr(plan.full_options),'SHORT_OPTIONS':repr(plan.short_options),
         'API_ORDER':','.join('Q.'+name for name in plan.api_order),
-        'C_FIELDS':','.join(map(repr,plan.c_fields)),
-        'LUA_FIELDS':','.join(map(repr,plan.lua_fields)),
         'REQUIRE_PARAMS':'true' if plan.lua_version=='5.3' else 'false',
+        'INFO_FIELDS':','.join(map(repr,fields)),
+        'MATCH_RULES':','.join('{'+str(indices[f][0])+','+str(indices[f][1])+','+
+            repr('string' if f in ('what','source','short_src') else 'number')+'}' for f in fields
+            if f in ('what','source','short_src','linedefined','lastlinedefined')),
+        'PCALL_INDEX':str(plan.api_order.index('pcall')+1),
+        'EVENT_FIRST':repr('line' if first_line else 'count'),
+        'EVENT_LAST':repr('count' if first_line else 'line'),
+        'CLEAN_SLOTS':','.join(str(plan.observation_slots[i-1]) for i in (14,15,18,22,23)),
+        'INSTALLED_SLOTS':','.join(str(plan.observation_slots[i-1]) for i in (16,20)),
+        'RESUMED_SLOTS':','.join(str(plan.observation_slots[i-1]) for i in (17,19,21)),
     }
-    for name,value in replacements.items():
-        marker='__PROBE_'+name+'__'
-        if marker not in source:raise ValueError('runtime probe boundary is missing: '+name)
-        source=source.replace(marker,value)
-    if re.search(r'__PROBE_[A-Z_]+__',source):raise ValueError('unresolved runtime probe boundary')
-    return source
+    for field,(tag,value) in indices.items():
+        replacements[field.upper()+'_TYPE']=str(tag)
+        replacements[field.upper()+'_VALUE']=str(value)
+    return replacements
+
+
+def _render(source: str, bindings: dict[str,str], plan: ProbePlan) -> str:
+    def replace(match):
+        name=match[1]
+        if name not in bindings:raise ValueError('unresolved runtime probe boundary: '+name)
+        return bindings[name]
+    source=re.sub(r'__PROBE_([A-Z_]+)__',replace,source)
+    # These identifiers belong solely to the generator templates. Physical
+    # slots start at 31, so an already-rendered embedded oracle is not remapped.
+    return re.sub(r'\b(o|observations)\[([1-9]|1[0-9]|2[0-4])\]',
+        lambda m:m[1]+'['+str(plan.observation_slots[int(m[2])-1])+']',source)
+
+
+def verifier_source(plan: ProbePlan) -> str:
+    """One implementation, compiled into IR in production and native in unit oracles."""
+    source=(Path(__file__).parent/'runtimes/runtime_verifier.lua').read_text(encoding='utf-8')
+    return _render(source,_bindings(plan),plan)
+
+
+EVIDENCE_SOURCE='''function S.evidence() return pending_evidence,kind,pcall end
+function S.complete(ok)
+ local present=pending_evidence~=nil
+ pending_evidence=nil
+ if ok~=true or not present then fail() end
+end'''
+
+
+def bootstrap_source(native_namespace: str, *, plan: ProbePlan | None = None,
+                     lua_version: str | None = None, protected: bool = False) -> str:
+    plan=plan or new_plan(lua_version)
+    source=(Path(__file__).parent/'runtimes/runtime_probes.lua').read_text(encoding='utf-8')
+    if source.count('__PROBE_NATIVE__')!=1:
+        raise ValueError('runtime probe native namespace boundary is missing')
+    bindings=_bindings(plan,native_namespace)
+    bindings['PUBLISH']=('pending_evidence=observations' if protected else
+        'local verify='+verifier_source(plan)+'\nlocal valid,result=Q.pcall(verify,observations,kind)\n'
+        'if not valid or result~=true then fail() end')
+    return _render(source,bindings,plan)

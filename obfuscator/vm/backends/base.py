@@ -8,7 +8,10 @@ __lazy_modules__ = {
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from ..runtime_probes import ProbePlan
 
 from ...config_types import BackendPolicy, VMOptions
 
@@ -32,6 +35,7 @@ class BackendContext:
     output_transform: Any = None
     target: Any = None
     constant_provider: Any = None
+    runtime_probe_plan: ProbePlan | None = None
 
 
 @dataclass

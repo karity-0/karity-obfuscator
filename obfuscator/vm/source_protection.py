@@ -30,6 +30,7 @@ class SourceProtection:
     seeds: list[int] = field(default_factory=list)
     constant_slots: list[int] = field(default_factory=list)
     runtime_id: str = ''
+    validation_id: str = ''
     line_state: int = 0
     script_hash: int = 0
 
@@ -83,7 +84,7 @@ def _namespace(ir, prefix):
 
 def prepare(ir, plan, context):
     import string
-    names=('guard','constant','write','global_get','global_set','script_hash','setmeta','inspect','fail')
+    names=('guard','constant','write','global_get','global_set','script_hash','setmeta','inspect','fail','evidence','complete')
     p=SourceProtection(dict(zip(names,random.sample(range(31,4000),len(names)))),random.randrange(1,2**24))
     p.record_tags=dict(zip(('number','string'),random.sample(range(1,256),2)))
     p.index_mask=random.randrange(2**20,2**31)
@@ -109,8 +110,10 @@ def prepare(ir, plan, context):
     apis={'byte':'string.byte','char':'string.char','sub':'string.sub','concat':'table.concat',
           'info':'debug.getinfo','hook':'debug.gethook','pcall':'pcall'}
     text=text.replace('__SHARED_INSPECTOR__',inspector_source())
-    from .runtime_probes import bootstrap_source
-    text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N',lua_version=context.target.lua_version))
+    from .runtime_probes import bootstrap_source, verifier_source, EVIDENCE_SOURCE, new_plan
+    probe_plan=context.runtime_probe_plan or new_plan(context.target.lua_version)
+    text=text.replace('--<<RUNTIME_EVIDENCE>>',EVIDENCE_SOURCE)
+    text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N',plan=probe_plan,protected=True))
     text=text.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
     text=text.replace('_ENV_CHECK','envcheck').replace('_ENV_REFRESH','envrefresh')
     used=sorted(set(re.findall(r'\bA\.(\w+)',text)))
@@ -130,14 +133,26 @@ def prepare(ir, plan, context):
     # Only the decisions/call boundaries are dispatched. Repeated byte decoding,
     # table walks and authorized refresh use one shared primitive implementation.
     driver=f'''return function(make,P,self,payload,line)
+local validate={verifier_source(probe_plan)}
 local S,install=make(P,self,payload,line)
 local inspect,fail=S[{p.slots['inspect']}],S[{p.slots['fail']}]
 local function guard(force) if not inspect(force) then fail() end end
-install(guard);guard(true);return S
+install(guard);guard(true)
+local evidence,kind,call=S[{p.slots['evidence']}]()
+local ok,result=call(validate,evidence,kind)
+S[{p.slots['complete']}](ok and result==true)
+return S
 end'''
     security=context.target.build_ir(context.target.compile(driver,context.toolchain))
+    from .runtime_validation import mark_validation
+    main=security.root.children[0]
+    validators=[f for f in main.children if f.params==2]
+    if len(validators)!=1:raise ValueError('Bare runtime validator is missing or ambiguous')
+    security=replace(security,root=replace(security.root,children=(replace(main,
+        children=tuple(mark_validation(f) if f is validators[0] else f for f in main.children)),)))
     security=_namespace(security,'security:')
     p.runtime_id=security.root.id
+    p.validation_id=next(f.id for f in security.functions() if f.debug_metadata.get('security_subsystem')=='runtime_validation')
     protected=replace(protected,root=replace(protected.root,children=(*protected.root.children,security.root)))
     validate_semantic_ir(protected)
     return protected,p
