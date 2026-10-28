@@ -8,7 +8,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT))
 from lupa.lua51 import LuaRuntime as Lua51
 from lupa.lua53 import LuaRuntime as Lua53
-from obfuscator.vm.runtime_probes import bootstrap_source
+from obfuscator.vm.runtime_probes import bootstrap_source,new_plan
 from obfuscator.vm.host_guards import GUARD_SOURCE, WRITE_BINDINGS
 
 
@@ -27,7 +27,7 @@ end)
 '''
 
 
-def fixture(setup=''):
+def fixture(setup='',plan=None):
     return '''local real_info,real_hook,real_sethook=debug.getinfo,debug.gethook,debug.sethook
 local kind,raw,same=type,rawget,rawequal
 local failed=false;local function fail()failed=true;error(nil,0)end
@@ -40,7 +40,7 @@ local function probe()
 BODY
 end
 return probe,function()return failed end,native,A,periodic,diagnostic
-'''.replace('SETUP',setup).replace('BODY',bootstrap_source('native'))
+'''.replace('SETUP',setup).replace('BODY',bootstrap_source('native',plan=plan))
 
 
 GUARDED='''local ticks=0;local hook0=real_hook;local S={}
@@ -56,6 +56,63 @@ diagnostic.clear_index=function()for k in pairs(binding_owners)do binding_owners
 
 
 class RuntimeProbeTests(unittest.TestCase):
+    def test_seeded_protocol_diversity_and_determinism(self):
+        saved=random.getstate()
+        try:
+            plans=[]
+            for seed in range(40):
+                random.seed(seed);plan=new_plan()
+                self.assertEqual(3,len(set(plan.results)))
+                self.assertTrue(all(4096<x<2**31 for x in plan.results))
+                self.assertEqual(4,len(set(plan.modes)))
+                self.assertEqual(9,len(set(plan.api_order)))
+                self.assertFalse({31,37,234}&set(plan.results))
+                random.seed(seed);self.assertEqual(plan,new_plan())
+                plans.append(plan)
+            self.assertEqual({'line','count'},{p.first for p in plans})
+            self.assertGreater(len({p.count for p in plans}),1)
+            self.assertEqual(40,len({p.worker for p in plans}))
+            for runtime_type in (Lua51,Lua53):
+                lua=runtime_type(unpack_returned_tuples=True)
+                for plan in plans:
+                    probe,failed,*_=lua.execute(fixture(plan=plan))
+                    self.assertIsNone(probe());self.assertFalse(failed())
+        finally:random.setstate(saved)
+
+    def test_stack_search_handles_deeper_frames_and_has_a_bound(self):
+        setup=FACADE+'''local worker_info
+edit_info=function(a,b,c,r)
+ if type(a)=='thread' and type(b)=='function' then worker_info=r end
+ if type(a)=='thread' and type(b)=='number' then
+  if b<5 then return real_info(pcall,c) end
+  if b==5 then return worker_info end
+  return nil
+ end
+ return r
+end'''
+        for runtime_type in (Lua51,Lua53):
+            lua=runtime_type(unpack_returned_tuples=True)
+            probe,failed,*_=lua.execute(fixture(setup))
+            self.assertIsNone(probe());self.assertFalse(failed())
+        self.reject('''edit_info=function(a,b,c,r)
+ if type(a)=='thread' and type(b)=='number' then
+  diagnostic.hits=diagnostic.hits+1;return real_info(pcall,c)
+ end
+ return r
+end''',field=True)
+
+    def test_target_metadata_contract_rejects_missing_lua53_fields(self):
+        setup=FACADE+'''edit_info=function(a,b,c,r)
+ if r and r.what=='Lua' then r.nparams=nil;r.isvararg=nil;diagnostic.hits=diagnostic.hits+1 end
+ return r
+end'''
+        for runtime_type,version in ((Lua51,'5.1'),(Lua53,'5.3')):
+            lua=runtime_type(unpack_returned_tuples=True)
+            probe,failed,*_=lua.execute(fixture(setup,plan=new_plan(version)))
+            result=lua.eval('function(p)return pcall(p)end')(probe)
+            self.assertEqual((False,None) if version=='5.3' else True,result)
+            self.assertEqual(version=='5.3',failed())
+
     def reject(self,setup,*,field=False,private_cleanup=True):
         for runtime_type in (Lua51,Lua53):
             lua=runtime_type(unpack_returned_tuples=True)
@@ -80,7 +137,8 @@ local t=coroutine.create(f);diagnostic.thread=t;return t end)
 
     def test_inconsistent_info_options_function_and_thread_queries(self):
         self.reject('''edit_info=function(a,b,c,r)
- if r and not facades[a] and b=='Sf' then r.source=r.source..'changed';diagnostic.hits=diagnostic.hits+1 end
+ if r and r.what=='Lua' and type(b)=='string' and #b==2 and b:find('S',1,true) then
+  r.source=r.source..'changed';diagnostic.hits=diagnostic.hits+1 end
  return r
 end''',field=True)
         self.reject('''edit_info=function(a,b,c,r)
@@ -111,7 +169,7 @@ native.coroutine.status=facade(function(t)local s=previous(t);if s=='dead'then r
     def test_count_events_and_quiet_execution_are_observed(self):
         self.reject('''local fake={}
 native.debug.sethook=facade(function(t,h,m,c)
- if h and c==1 then fake[t]={h,m,c};return end
+ if h and m=='' and c>0 then fake[t]={h,m,c};return end
  fake[t]=nil;return real_sethook(t,h,m,c)
 end)
 A.hook=facade(function(t)local s=fake[t];if s then return s[1],s[2],s[3]end;return real_hook(t)end)''')
@@ -149,7 +207,7 @@ end''')(probe)
 
     def test_c_projection_must_refer_to_the_queried_function(self):
         self.reject('''edit_info=function(a,b,c,r)
- if r and facades[a] and b=='Sf' then
+ if r and facades[a] and type(b)=='string' and #b==2 and b:find('S',1,true) then
   r.func=real_info;diagnostic.hits=diagnostic.hits+1
  end
  return r

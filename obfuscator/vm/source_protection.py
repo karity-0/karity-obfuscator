@@ -110,7 +110,7 @@ def prepare(ir, plan, context):
           'info':'debug.getinfo','hook':'debug.gethook','pcall':'pcall'}
     text=text.replace('__SHARED_INSPECTOR__',inspector_source())
     from .runtime_probes import bootstrap_source
-    text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N'))
+    text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N',lua_version=context.target.lua_version))
     text=text.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
     text=text.replace('_ENV_CHECK','envcheck').replace('_ENV_REFRESH','envrefresh')
     used=sorted(set(re.findall(r'\bA\.(\w+)',text)))

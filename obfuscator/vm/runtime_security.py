@@ -69,7 +69,8 @@ def prepare(source: str, *, backend: str, native_unpack: str, globals_name: str,
     from .runtime_probes import bootstrap_source
     runtime=runtime.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
     runtime=runtime.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
-    runtime=runtime.replace('--<<BOOTSTRAP_PROBE>>','S.guard(true)\n'+bootstrap_source('_ENV_NATIVE'))
+    runtime=runtime.replace('--<<BOOTSTRAP_PROBE>>','S.guard(true)\n'+bootstrap_source('_ENV_NATIVE',
+        lua_version='5.3' if native_table_pack else '5.1'))
     runtime=runtime.replace('__PS_UNPACK__',native_unpack).replace('__PS_BINDINGS__','{'+','.join(bindings)+'}')
     anchor='--<<TARGET_CONSTANT_RESOLVER>>'
     if source.count(anchor)!=1:

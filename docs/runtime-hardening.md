@@ -103,6 +103,15 @@ coroutine. The protocol checks suspended-thread metadata too. It never installs
 or removes a hook on the caller's coroutine. Private hooks are cleared on normal
 completion and on errors when the supplied native APIs permit cleanup.
 
+The private protocol varies per build: bounded worker arithmetic and loop forms,
+cumulative yield/return values, line/count ordering, count interval, internal
+mode identifiers and metadata query order. Expected results are derived during
+generation with exact Lua 5.1/5.3 arithmetic. API event/type/status names retain
+their specified meanings. Stack lookup stops at the witness or end of stack,
+with a 64-query bound. Known Lua 5.3 targets require nparams/isvararg fields;
+Lua 5.1 retains its optional-field contract. Variation is not authentication or
+a secret challenge against a host that controls all observations.
+
 These active probes run once per runtime initialization. They require standard
 coroutine and thread-debug APIs; missing or inconsistent implementations fail
 explicitly. The new bootstrap-only API references are checked every 127 guard
