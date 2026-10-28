@@ -108,11 +108,20 @@ def verifier_source(plan: ProbePlan) -> str:
     return _render(source,_bindings(plan),plan)
 
 
-EVIDENCE_SOURCE='''function S.evidence() return pending_evidence,kind,pcall end
+EVIDENCE_SOURCE='''function S.evidence()
+ if validation_phase~=0 or pending_evidence==nil then fail() end
+ validation_phase=1
+ return pending_evidence,kind,pcall
+end
 function S.complete(ok)
  local present=pending_evidence~=nil
  pending_evidence=nil
+ if validation_phase~=1 then fail() end
  if ok~=true or not present then fail() end
+ validation_phase=2
+end
+function S.admission(private)
+ return validation_phase==2 or (private==true and validation_phase==1)
 end'''
 
 

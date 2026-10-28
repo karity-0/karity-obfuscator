@@ -84,7 +84,7 @@ def _namespace(ir, prefix):
 
 def prepare(ir, plan, context):
     import string
-    names=('guard','constant','write','global_get','global_set','script_hash','setmeta','inspect','fail','evidence','complete')
+    names=('guard','constant','write','global_get','global_set','script_hash','setmeta','inspect','fail','evidence','complete','admission')
     p=SourceProtection(dict(zip(names,random.sample(range(31,4000),len(names)))),random.randrange(1,2**24))
     p.record_tags=dict(zip(('number','string'),random.sample(range(1,256),2)))
     p.index_mask=random.randrange(2**20,2**31)
@@ -109,7 +109,8 @@ def prepare(ir, plan, context):
         text=re.sub(pattern,lambda m:m[1] if feature in features else '',text,flags=re.S)
     apis={'byte':'string.byte','char':'string.char','sub':'string.sub','concat':'table.concat',
           'info':'debug.getinfo','hook':'debug.gethook','pcall':'pcall'}
-    inspector=inspector_source().replace('if _ENV_CHECK then _ENV_CHECK() end',
+    inspector=inspector_source().replace('function S.inspect(force)',
+        'function S.inspect(force,guest)\n if guest and validation_phase~=2 then return false end').replace('if _ENV_CHECK then _ENV_CHECK() end',
         "if kind(factory_bank)~='table' or P[6](factory_bank)~=nil then return false end\n if _ENV_CHECK then _ENV_CHECK() end")
     text=text.replace('__SHARED_INSPECTOR__',inspector)
     from .runtime_probes import bootstrap_source, verifier_source, EVIDENCE_SOURCE, new_plan
@@ -139,12 +140,12 @@ def prepare(ir, plan, context):
     driver=f'''return function(make,P,self,payload,line)
 local validate={verifier_source(probe_plan)}
 local S,install=make(P,self,payload,line)
-local inspect,fail=S[{p.slots['inspect']}],S[{p.slots['fail']}]
-local function guard(force) if not inspect(force) then fail() end end
-install(guard);guard(true)
+local inspect,fail,complete=S[{p.slots['inspect']}],S[{p.slots['fail']}],S[{p.slots['complete']}]
+local function guard(force) if not inspect(force,true) then fail() end end
+install(guard);if not inspect(true) then fail() end
 local evidence,kind,call=S[{p.slots['evidence']}]()
 local ok,result=call(validate,evidence,kind)
-S[{p.slots['complete']}](ok and result==true)
+complete(ok and result==true);guard(true)
 return S
 end'''
     security=context.target.build_ir(context.target.compile(driver,context.toolchain))

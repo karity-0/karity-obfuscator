@@ -10,3 +10,6 @@
 
 - Classic/Karity/MOV validate decoded instructions, metadata and scalar constants; Bare checks its factory bank and external constants.
 - Checks run at initialization, entry, constant use and periodic checkpoints; persistent region edits can take up to `127 * region_count` guard events to detect.
+
+- Guest entry and its protected-data access require completed validation; failure revokes program admission and subsequent protected-string reads.
+- Policy fields use exact build-derived comparisons and captured helpers without changing key/blob formats. Private-state forgery and restored-between-checks edits remain limits.

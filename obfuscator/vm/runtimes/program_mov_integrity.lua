@@ -4,6 +4,7 @@ local alphas={}
 for i=1,#mov_specs do local r=mov_specs[i];if r[1]==0 then alphas[r[2]]=i end end
 local function mov_digest(index)
  local spec=mov_specs[index];local owner=table0(mov_objects[0])
+ if not policy(#specs+index,0,spec) then return false end
  local kit=table0(raw(owner,spec[2]))
  if kit~=mov_objects[spec[2]] then return false end
  local h=spec[6]

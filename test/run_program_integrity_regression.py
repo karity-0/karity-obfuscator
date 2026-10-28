@@ -24,7 +24,7 @@ def build(version,backend,mutation='',late=False,guest=SOURCE,config=None):
 _ENV_NATIVE.PROGRAM_TEST_COUNT=function()return __COUNT__ end
 _ENV_NATIVE.PROGRAM_TEST_REINITIALIZE=function()return _PG.initialize(proto)end
 '''.replace('__COUNT__',str(next(r for r in reversed(context.profile) if r['phase']=='program_integrity')['periodic_regions']))
-        marker='_PG.initialize(proto,_mov_kits)' if backend=='mov' else '_PG.initialize(proto)'
+        marker=program_integrity.initialization_source(version,backend)
         assert result.count(marker)==1
         if late:
             if late=='child-word':
@@ -194,13 +194,15 @@ return true''')
                     result=original(source,layout,context,blob,**kwargs)
                     child=layout.functions.children[0]
                     index=next(i for i,v in enumerate(child.source.constants,1) if v==991)
-                    marker='_PG.initialize(proto,_mov_kits)' if backend=='mov' else '_PG.initialize(proto)'
+                    marker=program_integrity.initialization_source(version,backend)
                     result=result.replace(marker,marker+f'''
+local original_test_guard=_PS_GUARD
 _ENV_NATIVE.PROGRAM_TOUCH=function()
  local k=proto.protos[1].constants[{index}];k[2]=k[2]+1
  _PG.check=function()return true end
+ _PS_GUARD=function()end
 end
-_ENV_NATIVE.PROGRAM_TEST_GUARD=function(force)return _PS_GUARD(force)end
+_ENV_NATIVE.PROGRAM_TEST_GUARD=function(force)return original_test_guard(force)end
 ''')
                     marker='if not success or result~=true then reject() end'
                     self.assertEqual(1,result.count(marker))
@@ -267,9 +269,9 @@ return answer,first,again'''))
     def test_only_new_invocations_are_admitted_not_karity_continuation_returns(self):
         original=program_integrity.prepare
         def count(*args,**kwargs):
-            source=original(*args,**kwargs);marker='function out.check(p)return'
+            source=original(*args,**kwargs);marker='function out.check(p)\n'
             self.assertEqual(1,source.count(marker))
-            return source.replace(marker,'function out.check(p)\n _ENV_NATIVE.PROGRAM_ENTRIES=(_ENV_NATIVE.PROGRAM_ENTRIES or 0)+1\n return')
+            return source.replace(marker,marker+' _ENV_NATIVE.PROGRAM_ENTRIES=(_ENV_NATIVE.PROGRAM_ENTRIES or 0)+1\n')
         guest='local function bump(x)return x+10 end;return function()local n=0;for i=1,60 do n=bump(n)end;return n end'
         for version in ('5.1','5.3'):
             for backend in ('classic','karity','mov'):
@@ -289,8 +291,9 @@ local answer=f();return answer,PROGRAM_ENTRIES-before''')
             index=next(i for i,v in enumerate(layout.functions.source.constants,1) if v==777)
             self.assertTrue(layout.functions.stream_integrity)
             self.assertIn(index-1,layout.functions.integrity_indices)
-            source=source.replace('_PG.initialize(proto)',
-                f'_ENV_NATIVE.PROGRAM_ENCODED_TARGET=proto.constants[{index}]\n_PG.initialize(proto)')
+            marker=program_integrity.initialization_source('5.3','karity')
+            source=source.replace(marker,
+                f'_ENV_NATIVE.PROGRAM_ENCODED_TARGET=proto.constants[{index}]\n'+marker)
             marker='local function _program_kval(k,proto,_program_mix)'
             self.assertEqual(1,source.count(marker))
             source=source.replace(marker,marker+"\n if _ENV_NATIVE.PROGRAM_INTEGRITY_ONLY and k==_ENV_NATIVE.PROGRAM_ENCODED_TARGET then error('unexpected original integer materialization',0) end")

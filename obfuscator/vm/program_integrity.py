@@ -97,6 +97,49 @@ def _literal(value, fields=SPEC_FIELDS):
     return str(value)
 
 
+def initialization_source(version, backend):
+    line='ctx.line_state or 0' if version=='5.1' else '_LS or 0'
+    kits='_mov_kits' if backend=='mov' else 'nil'
+    return f'_PG_INIT(proto,{kits},crc,{line})'
+
+
+def _decision(name, entries):
+    if not entries:return 'return nil'
+    if len(entries)==1:
+        key,body=entries[0]
+        return f'if {name}=={key} then {body} end'
+    mid=len(entries)//2
+    return (f'if {name}<={entries[mid-1][0]} then '+_decision(name,entries[:mid])+
+            ' else '+_decision(name,entries[mid:])+' end')
+
+
+def _vector(value, numbers):
+    if len(numbers)<=8:
+        return 'vector('+value+','+str(len(numbers))+('' if not numbers else ','+','.join(map(str,numbers)))+')'
+    return ('(#table0('+value+')=='+str(len(numbers))+' and '+
+            ' and '.join(f'{value}[{i}]=={number}' for i,number in enumerate(numbers,1))+')')
+
+
+def policy_source(records, mov_records, fields):
+    """Exact literal field comparisons, without a mutable expected policy bank."""
+    rows=[]
+    for domain,record in enumerate(records,1):
+        checks=['#value=='+str(len(fields))]
+        for i,key in enumerate(fields,1):
+            value=f'value[{i}]'
+            if key=='constants':checks.append('#table0('+value+')=='+str(len(record[key])))
+            elif isinstance(record[key],list):checks.append(_vector(value,record[key]))
+            else:checks.append(value+'=='+str(record[key]))
+        tags=[(0,'return '+' and '.join(checks))]
+        tags.extend((i,'return '+('value==0' if leaf==0 else _vector('value',leaf)))
+                    for i,leaf in enumerate(record['constants'],1))
+        rows.append((domain,_decision('ordinal',tags)))
+    for i,value in enumerate(mov_records,len(records)+1):
+        rows.append((i,'if ordinal==0 then return '+_vector('value',value)+' end'))
+    return ('local function policy(domain,ordinal,value) '
+            'if value~=0 then table0(value) end '+_decision('domain',rows)+' end')
+
+
 def mov_manifest(kits, linked):
     from .mov.tables import banks, STATE_COUNTS
     records=[]
@@ -121,7 +164,7 @@ def mov_manifest(kits, linked):
     return records
 
 
-def prepare(source, layout, context, blob, mov=None):
+def prepare(source, layout, context, blob, mov=None, validation_id=None):
     from .backends.handler_codec import BinReader
     reader=BinReader(blob);reader.header()
     header=[reader.u16(),reader.u32(),reader.u16()]
@@ -130,10 +173,16 @@ def prepare(source, layout, context, blob, mov=None):
     mov_records=[] if mov is None else mov_manifest(mov['kits'],mov['linked'])
     native=(Path(__file__).parent/'runtimes/program_integrity.lua').read_text(encoding='utf8')
     fields=random.sample(SPEC_FIELDS,len(SPEC_FIELDS))
+    from .backends.handler_layout import iter_protos
+    validators=[i for i,p in enumerate(iter_protos(layout.functions.source),1) if p.id==validation_id]
+    if len(validators)!=1:raise ValueError('program admission requires exactly one private validator')
+    native=native.replace('--<<PROGRAM_POLICY>>',policy_source(records,mov_records,fields))
+    native=native.replace('__PROGRAM_VALIDATOR__',str(validators[0]))
     for slot,field in enumerate(fields,1):
         native=native.replace('__PROGRAM_SPEC_'+field.upper()+'__',str(slot))
     native=native.replace('__PROGRAM_MANIFEST__',_literal(records,fields))
-    native=native.replace('__PROGRAM_HEADER__',_literal(header))
+    native=native.replace('__PROGRAM_HEADER_CHECK__',
+        ' or '.join('_IT.'+key+'~='+str(value) for key,value in zip(('seed','layout','vmc'),header)))
     if context.target.lua_version=='5.1':
         template=context.target.runtime_template('mov_exec.lua')
         start=template.index('local function _mov_f64_words(value)')
@@ -142,7 +191,7 @@ def prepare(source, layout, context, blob, mov=None):
         words=original_words.replace('_mov_f64_words','words',1)
         if mov is not None:
             if source.count(original_words)!=1:raise ValueError('shared MOV numeric normalization boundary is missing')
-            source=source.replace(original_words,'local _mov_f64_words=_PG.words\n')
+            source=source.replace(original_words,'local _mov_f64_words=_PG_WORDS\n')
         numeric_type=''
         encoded_word="local word=raw(k,2);table0(word);return raw(word,1)==lo and raw(word,2)==hi,mix"
     else:
@@ -183,27 +232,27 @@ end'''
     body=body.replace(resolver,'local function _program_kval(k,proto,_program_mix)').replace(
         '_ieval(k[3],proto)','(_program_mix or _ieval(k[3],proto))')
     source=source[:start]+body+source[end:]
-    source=source.replace(marker,'local function kval(k,proto)return _PG.value(proto,k,_program_kval) end\n'+marker)
+    source=source.replace(marker,'local function kval(k,proto)return _PG_VALUE(proto,k,_program_kval) end\n'+marker)
     # Stream arithmetic consumes the encoded operand. Validate its build shares
     # with the existing expression mix, without using the native-value resolver.
-    source=source.replace('rset(A,consts[Bx+1][2])','rset(A,_PG.encoded(proto,consts[Bx+1]))')
+    source=source.replace('rset(A,consts[Bx+1][2])','rset(A,_PG_ENCODED(proto,consts[Bx+1]))')
     # This is after all backend-specific parsing, including MOV extension loading.
     anchor='local env_box={v='
     if source.count(anchor)!=1:raise ValueError('program integrity initialization boundary is missing')
-    source=source.replace(anchor,('_PG.initialize(proto,_mov_kits)' if mov_records else '_PG.initialize(proto)')+'\n    '+anchor)
+    source=source.replace(anchor,initialization_source(context.target.lua_version,'mov' if mov_records else 'classic')+'\n    '+anchor)
     pattern=r'((?:exec|_mov_dispatch\[[0-9]+\]) = function\(proto,[^\n]+\)\n)'
     source,count=re.subn(pattern,lambda match:match[1]+(
         '    if not _fr then _PS_GUARD(false,proto) end\n' if re.search(r'\b_fr\b',match[1])
         else '    _PS_GUARD(false,proto)\n'),source)
     expected=layout.vm_count if '_mov_dispatch[' in source else 1
     if count!=expected:raise ValueError('program integrity function-entry boundary is missing')
-    source=source.replace('local _PS,_PS_GUARD\n','local _PS,_PS_GUARD,_PG\n')
+    source=source.replace('local _PS,_PS_GUARD\n','local _PS,_PS_GUARD,_PG,_PG_INIT,_PG_VALUE,_PG_ENCODED,_PG_WORDS\n')
     replacements={
         'function S.guard(force)':'function S.guard(force,program)',
         'if failed then fail() end\n ticks=':
-            'if failed then fail() end\n if program and (not _PG or not _PG.check(program)) then fail() end\n ticks=',
+            'if failed then fail() end\n if program and (not program_check or not program_check(program)) then fail() end\n ticks=',
         'if ticks==0 then\n  for i=1,#periodic':
-            'if ticks==0 then\n  if _PG and not _PG.poll() then fail() end\n  for i=1,#periodic',
+            'if ticks==0 then\n  if program_poll and not program_poll() then fail() end\n  for i=1,#periodic',
     }
     for anchor,replacement in replacements.items():
         if source.count(anchor)!=1:raise ValueError('program integrity guard boundary is missing')
@@ -213,5 +262,7 @@ end'''
                             'initial':True,'function_entry':True,'period_guard_events':127,
                             'periodic_regions':len(records)+len(mov_records),'mov_regions':len(mov_records),
                             'manifest_fields':fields,
+                            'policy_exact_literals':True,'periodic_canonical_decode':True,
+                            'captured_consumers':True,'bootstrap_stage_admission':True,
                             'format_changed':False})
     return source

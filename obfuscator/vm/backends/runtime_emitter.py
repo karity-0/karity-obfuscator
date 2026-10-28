@@ -751,7 +751,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
                                       **target.security_runtime_options())
     from ..program_integrity import prepare as prepare_program_integrity
     runtime_source=prepare_program_integrity(runtime_source,prepared,context,blob,
-        mov=lowered_ir.backend_data if backend_adapter.mov_microcode else None)
+        mov=lowered_ir.backend_data if backend_adapter.mov_microcode else None,
+        validation_id=validation['function'])
     runtime_source = prepare_intrinsic_runtime(runtime_source, protected_semantic_ir)
     from ..synthesis.storage import prepare_reader
     runtime_source=prepare_reader(runtime_source,blob,instr_layout)

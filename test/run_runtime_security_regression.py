@@ -27,10 +27,38 @@ def kernel(version,script=123,line=456):
     body=body.replace('__PS_UNPACK__','unpack' if version=='5.1' else 'table.unpack').replace('__PS_BINDINGS__','{}')
     runtime=(Lua51 if version=='5.1' else Lua53)(encoding=None)
     ps=runtime.execute((f'local _IT={{script={script},line={line},seed=7}}; local function _kss(v) return v end; local _PS,_PS_GUARD;'+xor+body+';return _PS').encode())
+    ps[b'bind_identity'](script,line)
     return runtime,ps
 
 
 class RuntimeSecurity(unittest.TestCase):
+    def test_identity_pointer_check_cannot_call_a_forged_equality_method(self):
+        for version in ('5.1','5.3'):
+            runtime,ps=kernel(version)
+            value=ps[b'seal'](b'identity-bound')
+            forge=runtime.eval(b'''function(bind)
+ local slot,original
+ for i=1,40 do local name,v=debug.getupvalue(bind,i)
+  if name=='_IT' then slot,original=i,v;break end
+ end
+ assert(slot and type(original)=='table')
+ local calls=0;local mt={__eq=function()calls=calls+1;return true end}
+ setmetatable(original,mt)
+ debug.setupvalue(bind,slot,setmetatable({script=123,line=456,seed=7},mt))
+ return function()return calls end
+end''')
+            calls=forge(ps[b'bind_identity'])
+            with self.assertRaises(Exception):ps[b'open'](value)
+            self.assertEqual(0,calls())
+
+    def test_terminal_failure_revokes_existing_protected_string_reads(self):
+        for version in ('5.1','5.3'):
+            runtime,ps=kernel(version)
+            value=ps[b'seal'](b'held-before-failure')
+            self.assertEqual(b'held-before-failure',ps[b'open'](value))
+            with self.assertRaises(Exception):ps[b'program_error']()
+            with self.assertRaises(Exception):ps[b'open'](value)
+
     def test_terminal_native_capture_preserves_shadowing_and_function_identity(self):
         from obfuscator.vm.runtime_finalization import capture_generated_apis
         source = '''return function()
@@ -301,6 +329,7 @@ return r.iword(),"iword metadata header",r'''
         from obfuscator.vm.runtime_security import _capture_source, _freeze_calls
         runtime_body=guarded_template()
         body='''
+_PS.bind_identity(123,456)
 local function exercise()
  local S={length=function() return 'shadow-length' end}
  local A={max=function() return 'shadow-max' end}

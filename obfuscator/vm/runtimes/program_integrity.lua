@@ -1,15 +1,20 @@
-_PG=(function()
+_PG,_PG_INIT,_PG_VALUE,_PG_ENCODED,_PG_WORDS=(function()
  local specs=__PROGRAM_MANIFEST__
- local header=__PROGRAM_HEADER__
  local kind,raw,meta,call,next0,floor=type,rawget,getmetatable,pcall,next,math.floor
  local decoder,mask=decode,_ksm
- local reject=_PS.program_error
+ local raise,bind_identity,admission=_PS.program_error,_PS.bind_identity,_PS.admission
  local mask_seed
  local seals={}
  local ids=setmetatable({},{__mode='k'})
  local constant_ids=setmetatable({},{__mode='k'})
  local objects=setmetatable({},{__mode='v'})
- local cursor,ready,initializing=0,false,false
+ local cursor,lifecycle=0,0
+ local function reject()
+  lifecycle=3
+  ids=setmetatable({},{__mode='k'});constant_ids=setmetatable({},{__mode='k'})
+  objects=setmetatable({},{__mode='v'});seals={}
+  raise();local n=nil;return n[n]
+ end
  local string_spec={CK_STR}
  local function table0(t)
   if kind(t)~='table' or meta(t)~=nil then error(nil,0) end
@@ -19,6 +24,13 @@ _PG=(function()
   if kind(v)~='number' or v<0 or v>4294967295 or v%1~=0 then error(nil,0) end
   return (h*65599+v)%2147483647
  end
+ local function vector(value,n,a,b,c,d,e,f,g,h)
+  table0(value)
+  return #value==n and raw(value,1)==a and raw(value,2)==b and raw(value,3)==c
+   and raw(value,4)==d and raw(value,5)==e and raw(value,6)==f
+   and raw(value,7)==g and raw(value,8)==h
+ end
+ --<<PROGRAM_POLICY>>
  --<<PROGRAM_NUMBER_WORDS>>
  local function valid_value(spec,value)
   if spec[1]==CK_STR then return true end
@@ -39,7 +51,9 @@ _PG=(function()
  local function constant(p,k)
   local id=ids[p];local record=constant_ids[k]
   if not id or not record or record[1]~=id then return nil end
-  local spec=specs[id][__PROGRAM_SPEC_CONSTANTS__][record[2]];table0(k)
+  local bank=table0(raw(specs[id],__PROGRAM_SPEC_CONSTANTS__))
+  local spec=raw(bank,record[2]);table0(k)
+  if not policy(id,record[2],spec) then return nil end
   if spec==0 then spec=string_spec end
   if raw(table0(raw(p,'constants')),record[2])~=k or raw(k,1)~=spec[1] then return nil end
   return spec
@@ -53,9 +67,12 @@ _PG=(function()
   --<<PROGRAM_ENCODED_WORD>>
  end
  local function digest(p,id,all_constants)
-  if _IT.seed~=header[1] or _IT.layout~=header[2] or _IT.vmc~=header[3] then return false end
+  local initializing=lifecycle==1
+  table0(_IT)
+  if __PROGRAM_HEADER_CHECK__ then return false end
   if decode~=decoder or _ksm~=mask or _ksd~=mask_seed then return false end
   local spec=specs[id];table0(p)
+  if not policy(id,0,spec) then return false end
   local words=table0(raw(p,'code'));local constants=table0(raw(p,'constants'))
   local captures=table0(raw(p,'upvalues'));local children=table0(raw(p,'protos'))
   if #words~=spec[__PROGRAM_SPEC_CODE_COUNT__] or #constants~=spec[__PROGRAM_SPEC_CONSTANT_COUNT__]
@@ -80,7 +97,7 @@ _PG=(function()
    local word=raw(words,i)
    if kind(word)~='number' or word<0 or word>=281474976710656 or word%1~=0 then return false end
    sealed=((sealed*65599+word%16777216)%2147483647*65599+floor(word/16777216))%2147483647
-   if initializing then
+   if initializing or all_constants then
     local op,a,b,c=decoder(word,mask(i))
     h=((((h*65599+op)%2147483647*65599+a)%2147483647*65599+b)%2147483647*65599+c)%2147483647
    end
@@ -98,7 +115,8 @@ _PG=(function()
    else g=g*65599%2147483647 end
    end
   end
-  if (initializing and h~=spec[__PROGRAM_SPEC_CODE_TAG__]) or (not initializing and sealed~=seals[id]) then return false end
+  if ((initializing or all_constants) and h~=spec[__PROGRAM_SPEC_CODE_TAG__])
+   or (not initializing and sealed~=seals[id]) then return false end
   local routes=table0(raw(p,'block_routes'));g=add(g,#routes)
   for i=1,#routes do local route=table0(raw(routes,i));g=add(g,#route)
    for j=1,#route do g=add(g,raw(route,j)) end
@@ -122,13 +140,15 @@ _PG=(function()
   local id=ids[p]
   if not id then return false end
   local ok,result,sealed=call(digest,p,id,all_constants)
-  if initializing and ok and result==true then seals[id]=sealed end
+  if lifecycle==1 and ok and result==true then seals[id]=sealed end
   return ok and result==true
  end
  local out={}
  --<<PROGRAM_MOV_DECL>>
- function out.initialize(root,kits)
-  if ready then reject() end
+ function out.initialize(root,kits,script,line)
+  if lifecycle~=0 then reject() end
+  lifecycle=1
+  bind_identity(script,line)
   local n=0
   local function attach(p)
    table0(p);n=n+1
@@ -146,13 +166,18 @@ _PG=(function()
   end
   local ok=call(attach,root)
   if not ok or n~=#specs then reject() end
-  ready=true;initializing=true;mask_seed=_ksd
+  mask_seed=_ksd
   --<<PROGRAM_MOV_INIT>>
   -- Use the existing latched guard to reject; do not add a second error latch.
   for i=1,n do _PS_GUARD(false,objects[i]) end
-  initializing=false
+  lifecycle=2
  end
- function out.check(p)return ready and checked(p,initializing) --<<PROGRAM_MOV_ENTRY>>
+ function out.check(p)
+  local id=ids[p]
+  local valid=id~=nil and (lifecycle==1 or (lifecycle==2 and admission(id==__PROGRAM_VALIDATOR__)))
+   and checked(p,lifecycle==1) --<<PROGRAM_MOV_ENTRY>>
+  if not valid then reject() end
+  return true
  end
  local function restore(p,k,resolver)
   local spec=constant(p,k)
@@ -166,6 +191,7 @@ _PG=(function()
   return valid_value(spec,value),value
  end
  function out.value(p,k,resolver)
+  if lifecycle~=2 or not admission(ids[p]==__PROGRAM_VALIDATOR__) then reject() end
   local success,result,value=call(restore,p,k,resolver)
   if not success or result~=true then reject() end
   return value
@@ -175,17 +201,23 @@ _PG=(function()
   return spec and spec[1]==CK_IEXPR and valid_encoded(p,k,spec)
  end
  function out.encoded(p,k)
+  if lifecycle~=2 or not admission(ids[p]==__PROGRAM_VALIDATOR__) then reject() end
   local ok,valid=call(encoded,p,k)
   if not ok or valid~=true then reject() end
   return raw(k,2)
  end
- function out.poll()
-  if not ready then return true end
+ local function poll_region()
   cursor=cursor%(#specs+__PROGRAM_EXTRA_COUNT__)+1
   --<<PROGRAM_MOV_POLL>>
   local p=objects[cursor]
   return p==nil or checked(p,true)
  end
+ function out.poll()
+  if lifecycle==0 then return true end
+  if (lifecycle~=1 and lifecycle~=2) or not poll_region() then reject() end
+  return true
+ end
  out.words=words
- return out
+ _PS.bind_program(out)
+ return out,out.initialize,out.value,out.encoded,out.words
 end)()

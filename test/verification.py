@@ -23,7 +23,7 @@ FEATURE_SUITES = {
     'functions': 'function_boundary function_loop function_nested function_merge function_lua51 function_cost selection literal_mosaic string_obf lua51_pass_matrix vm_output_emitter',
     'formatting': 'minify semicolon strip_info selection vm_finalize line_state string_encode runtime_security',
     'naming': 'rename strip_info selection function_boundary vm_finalize vm_output_emitter runtime_security',
-    'security': 'anti_env source_protection guard_policy runtime_security runtime_probes runtime_validation program_integrity line_state signature runtime_skeleton vm_lifetime closure_gc bare_backend helper_integrity',
+    'security': 'anti_env source_protection guard_policy runtime_security runtime_probes runtime_validation program_integrity integrity_consumption line_state signature runtime_skeleton vm_lifetime closure_gc bare_backend helper_integrity',
     'packing': 'packer signature line_state string_encode string_obf runtime_security vm_finalize',
     'selection': 'selection kes kes_integration user_presets function_cost target_capability',
     'gui': 'gui gui_experience user_presets signature',

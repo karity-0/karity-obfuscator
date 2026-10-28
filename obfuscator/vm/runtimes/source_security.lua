@@ -3,7 +3,8 @@ return function(P,self,payload,line)
  local same=rawequal
  local N,_ENV_CHECK,_ENV_REFRESH=P[11],P[12],P[13]
  local failed,ticks,pending_evidence=false,0,nil
- local function fail() failed=true;pending_evidence=nil;throw(nil,0);local n=nil;return n[n] end
+ local validation_phase=0
+ local function fail() failed=true;validation_phase=3;pending_evidence=nil;throw(nil,0);local n=nil;return n[n] end
  local A=__API__
  local hook0=A.hook
  local bindings=__BARE_NATIVE_BINDINGS__
@@ -78,7 +79,7 @@ return function(P,self,payload,line)
   return a*16+b
  end
  local function u32(i) return byte(i)+byte(i+1)*256+byte(i+2)*65536+byte(i+3)*16777216 end
- function S.constant(index)
+ local function recover(index)
   if failed then fail() end
   local c=cache[index]
   if c then if kind(c)~='table' or c[1]~=expected[index] then fail() end;return c[1] end
@@ -116,6 +117,10 @@ return function(P,self,payload,line)
   cache[index]={value};expected[index]=value
   return value
  end
+ function S.constant(index)
+  if validation_phase~=2 then fail() end
+  return recover(index)
+ end
 --<<script_hash>>
  function S.script_hash() return script end
 --<<ENDscript_hash>>
@@ -123,7 +128,7 @@ return function(P,self,payload,line)
  for name,value in next0,A do trusted[#trusted+1]={A,name,value} end
  for name,value in next0,P do trusted[#trusted+1]={P,name,value} end
  for name,value in next0,_BCore do trusted[#trusted+1]={_BCore,name,value} end
- if S.constant(__SENTINEL_SLOT__)~=__SENTINEL__ then fail() end
+ if recover(__SENTINEL_SLOT__)~=__SENTINEL__ then fail() end
  S.guard(true)
  return S,function(g)
   S.guard=g
