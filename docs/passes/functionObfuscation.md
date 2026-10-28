@@ -2,7 +2,9 @@
 
 `function_obf` transforms source function boundaries and eligible nested bodies.
 It can introduce vararg wrappers, helper closures, safe helper inlining,
-state-machine control flow and junk blocks. Compound-loop transforms can split,
+state-machine control flow and junk blocks. Eligible sibling local functions can
+share one CFF worker with distinct callable wrappers; see [function merging](functionMerging.md)
+for capture, visibility and Lua-version constraints. Compound-loop transforms can split,
 unroll or lower eligible loops within configured growth limits. These are source
 rewrites, separate from VM opcode/handler mutation.
 
@@ -94,6 +96,8 @@ and `test/run_function_nested_regression.py` exercise boundary, control-flow and
 recursive processing cases and are included in `python test/run_ci.py`.
 `test/run_function_lua51_regression.py` additionally executes native Lua 5.1/5.3
 differential cases, and the Lua 5.1 pass matrix checks generated VM output.
+`test/run_function_merge_regression.py` checks real shared bodies, capture and
+function lifetimes, call/return semantics and source/VM/packer composition.
 `test/run_function_cost_regression.py` exercises large dispatcher splits,
 numeric origins, coroutine/error behavior and CFF-protected string macros.
 `tools/profile_cff.py INPUT --profile high --output REPORT.json` records per-pass

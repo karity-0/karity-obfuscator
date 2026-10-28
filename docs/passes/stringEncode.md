@@ -7,7 +7,7 @@ It remains independent of String Obf and String Flow Obf reconstruction.
 | Target | Forms |
 |---|---|
 | Lua 5.1 | Single/double quotes, variable-level long brackets, decimal and short escapes |
-| Lua 5.3 | Also hex and Unicode escapes, and `\z` with horizontal whitespace or a newline |
+| Lua 5.3 | Also hex and Unicode escapes, and `\z` with horizontal whitespace |
 
 Each occurrence can use one literal or up to four fragments joined with `..`.
 Fragments independently choose plain quotes, mixed escapes or long brackets.
@@ -19,11 +19,11 @@ local value = ("Ka" .. [=[ri]=] .. "\x74" .. '\u{79}')
 ```
 
 Long-bracket levels are chosen to avoid closing-delimiter collisions, including
-collisions at the end of a fragment. Lua ignores an initial physical newline;
-the generator can insert that discarded newline and inserts an additional one
-when the original value itself begins with LF. Minify preserves these newlines
-inside the string. Source-line-sensitive generators can prohibit new lines.
-Generated physical newlines use LF so Windows text I/O cannot translate CRLF twice.
+collisions at the end of a fragment. Default spelling never inserts physical
+newlines: `\z` uses spaces/tabs, and fragments containing LF use quoted escapes
+instead of long brackets. Original LF, CR and CRLF bytes retain their values.
+Internal callers can explicitly allow multiline values; even then, no random
+discarded newline is added to a value without LF.
 
 CR and unsafe controls stay escaped. Long brackets are used only for valid UTF-8
 that round-trips unchanged; arbitrary binary and malformed UTF-8 remain byte
@@ -36,7 +36,9 @@ Decoded literals are cached only within a pass; equal occurrences receive fresh
 spelling. `--seed` reproduces a build. Generated fragments stay typed in the VM
 emitter, so later String Obf/Flow can process them without misreading a concat
 expression as a literal. Source/output activation remains independent; NO_OBF
-exclusions still apply. Existing preset selections are unchanged.
+exclusions still apply. Balanced, Strong and Maximum enable String Mosaic on
+VM output; Maximum also enables it on the packer loader. Fast retains its
+existing lightweight output list.
 
 ## Shared generation
 

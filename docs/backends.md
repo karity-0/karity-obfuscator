@@ -114,15 +114,71 @@ backend, not a source-pass shortcut: it consumes the same optimized/protected IR
 including supported IR morphing and junk insertion.
 
 Control flow uses program-specific blocks selected by a randomized position
-variable. Short straight-line regions stay together; long regions are split at
-16–32 semantic emission units, keeping each protection call atomic. Random IDs and
-threshold branches place them in a binary decision tree. Leaves contain emitted
+variable. Initial segments contain 16–32 semantic emission units, keeping each
+protection call atomic. Bounded single-predecessor chains can share one leaf.
+Random IDs and threshold branches place them in a binary decision tree. Leaves contain emitted
 Lua operations rather than opcode handlers. This runs on both Lua 5.1 and 5.3,
 including irreducible input CFGs on Lua 5.3, without emitted `goto` statements.
 Numeric-loop coercion and bounds use the existing Classic conversion helper.
 Only helpers required by the input are emitted. There is no instruction blob,
 reader or opcode interpreter. Output passes still apply; the generated dispatcher
 has the common marker that excludes it from redundant generic CFF.
+
+The Bare optimizer validates an emission view that omits CFG-unreachable blocks;
+the original protected semantic IR and its identities remain available for
+diagnostics. Every reachable guard, morph boundary and guest effect stays in
+order. Private scratch tables are allocated only when emitted operations use
+them. Functions with open/wide register ranges can retain native locals below
+every such range, while a separate table handles the dynamic tail and its
+captured cells. Wide native parameter wrappers retain their existing lifetime
+and local-variable budget rules.
+
+Within one emitted segment, proved nonallocating, nonthrowing primitive work can
+combine into bounded single-use expressions and independent parallel assignments.
+Read/write conflicts prevent parallel grouping. A bounded compiler-cost cache
+admits a group only when neither native instruction count nor generated statement
+length increases, and at least one decreases. This matters because Lua can add
+temporary MOVE instructions for a parallel assignment. Captures, guest spill registers,
+protection/morph instructions, calls, control edges and potentially throwing or
+metamethod operations are barriers. Generator-owned constant recovery contracts
+refine result types while retaining call effects and capture invalidation; proved
+numeric reads of private scratch slots can participate without moving recovery
+calls. Only proved non-reference primitive clears
+are omitted; guest reference clearing and close edges retain their lifetime
+semantics. Parallel batches contain at most 24 assignments; fused chains contain
+at most eight operations and 512 expression characters. These compiler
+optimizations are automatic, independent of the user's source presets.
+`bare_optimization` profiling and backend optimization diagnostics report removed
+blocks, scratch/cell tables, retained dynamic-prefix locals and statement changes.
+
+The emission graph also coalesces single-predecessor straight-line chains up to
+64 units/8,192 code characters, retaining all original guards and close operations.
+Noninterfering native temporary registers can share storage, with copy preference;
+parameters, captured cells, dynamic tails and explicit junk/morph registers keep
+dedicated slots. A dead logical alias cannot clear a physical slot owned by a live
+value. Active source-local references remain resident across their scope,
+including locals that have no later guest reads; their original PC provenance
+survives protection expansion. Scope-exit releases follow the chosen CFG edge,
+including edges absorbed into an inner loop. This preserves weak-table and
+callback observations while permitting primitive/anonymous temporary reuse.
+Register reuse is not general dead-store removal.
+
+Conditional transfers choose compiler-checked forms, typically a default numeric
+state followed by a conditional override. Comparisons are still evaluated once,
+before the existing reference clears. A `<` comparison is not replaced with `>=`.
+Default-state forms are disabled when later NumberObf/MemeStrings passes would
+duplicate nontrivial tag evaluation. Single-entry cycles with one conditional exit
+can become native inner loops. Existing FOR_PREP/FOR_LOOP operations and guards
+remain; native `for` coercion/overflow semantics are not substituted. Regions allow
+at most 16 straight-line body nodes, 192 units, 16,384 code characters and two nested
+levels. Multiple-entry/irreducible or branching-body cycles retain dispatch.
+
+Explicit junk/morph boundaries and security-owned driver functions keep their
+original flow shape. A final per-function compiler/source-size check admits flow
+changes only when neither instruction count nor emitted graph length increases.
+`bare_flow_plans` records groups, loop depth, admission and measured costs;
+`bare_frame_plans` records logical prefixes and physical register maps. These
+changes do not insert new junk or promise increased analysis resistance.
 
 Bare compiles guard decisions and guest protection boundaries into semantic IR.
 Small groups of guard/constant/write IR instructions emit as one direct call,
@@ -221,6 +277,8 @@ unsupported controls, including values inherited from a profile.
 
 | Option | Karity | Classic | MOV | Bare |
 |---|---|---|---|---|
+| `encoded_bitwise` | Yes | No | No | No |
+| `distributed_integrity` | Yes | No | No | No |
 | `opcode_synthesis` | Yes | Yes | Yes | No |
 | `synthesis_policy` | Yes | Yes | Yes | No |
 | `synthesis_max_code_growth` | Yes | Yes | Yes | No |

@@ -166,10 +166,18 @@ contain those program values.
 
 Each write selects a new representation epoch. Selected control and call edges
 also rotate long-lived values by transforming both shares directly, without
-materializing the program value. ADD, SUB, and UNM use encoded-domain affine
+materializing the program value. ADD, SUB, MUL, and UNM use encoded-domain affine
 transforms when their operands are integer representations; unsupported dynamic
 operations decode only their required operands into handler-local temporaries and
 immediately re-encode their results.
+
+On Karity/Lua 5.3, `encoded_bitwise` enables automatic integer representation
+selection by default. Boolean-share circuits cover bitwise operations, shifts,
+comparisons, floor division and modulo; representation conversions use masked
+circuits. Whole-program type proofs remove unnecessary general-operation paths
+from proven handlers. `distributed_integrity` is also enabled by default on that
+target. Both retain explicit opt-out controls. See [runtime hardening](runtime-hardening.md)
+for semantic/native boundaries, graph integration and execution costs.
 
 Logical registers do not directly index their persistent representation tables.
 Value shares, companion shares, epochs, and type tags use four independent
@@ -292,6 +300,20 @@ def render_pass(name: str, info: dict) -> list[str]:
             "boolean switches (all default to `true`). Inlining and compound-loop",
             "transforms run as components of the CFF rewrite. Source directives can",
             "override these options per function; see [selective protection](selective-obfuscation.md).",
+            "",
+            "`merge` (default `true`) combines eligible adjacent sibling local functions into",
+            "one shared CFF worker while retaining distinct tail-entry wrappers. This moves",
+            "the real bodies into a common shuffled block dispatcher; it is separate from",
+            "inlining and VM opcode fusion. `merge_max_functions` (default `4`, range `2..8`)",
+            "bounds each group; `merge_max_groups` (default `64`, range `0..256`) bounds the pass.",
+            "Set `merge=false` or `merge_max_groups=0` to disable it. It runs as part of source",
+            "CFF, after safe chunk inlining; generated VM-output dispatchers are excluded.",
+            "Groups require equal lexical captures and compatible selection policies, preserving",
+            "declaration visibility and guest object/function lifetimes. Vararg owners, goto/labels,",
+            "environment rebinding and frame pooling are excluded. Lua 5.1 additionally excludes",
+            "escaped function references and environment/reflection-sensitive bodies. Budget or",
+            "capture-layout failures retain individual function protection and report a reason.",
+            "See [function merging](passes/functionMerging.md) for the execution contract.",
             "",
             "Loop/compound transformation is controlled by `loop_split` (default:",
             "`true`) and `loop_unroll` (default: `true`). Static integer numeric-for",

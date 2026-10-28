@@ -74,6 +74,7 @@ _OPTION_GROUPS = {
     "fake_handlers": "Handlers", "mutate_handlers": "Handlers",
     "junk_instructions": "Handlers", "junk_rate": "Handlers",
     "integrity_constants": "Integrity", "integrity_constant_rate": "Integrity",
+    'distributed_integrity': 'Integrity', 'encoded_bitwise': 'Semantic routing',
     "graph_execution_rate": "Semantic routing", "cross_instruction_rate": "Semantic routing",
     "state_dependency_limit": "Semantic routing",
     "runtime_polymorphism_rate": "Runtime diversity", "runtime_trace": "Runtime diversity",
@@ -110,6 +111,7 @@ _OPTION_LABELS = {
     "cross_instruction_rate": "Cross-instruction rate",
     "runtime_polymorphism_rate": "Runtime polymorphism rate",
     "runtime_trace": "Runtime trace diagnostics", "block_variant_rate": "Block variant rate",
+    'distributed_integrity': 'Distributed helper integrity', 'encoded_bitwise': 'Encoded integer operations',
     "block_variant_count": "Block variants",
     "block_variant_max_instructions": "Block size limit",
     "helper_variant_count": "Helper variants", "helper_diversity_rate": "Helper diversity rate",
@@ -230,8 +232,10 @@ def _vm_option_meta() -> list[dict]:
             "resolution": {backend: vm_option_resolution(backend, name) for backend in VM_BACKENDS},
             "supported_backends": [backend for backend in VM_BACKENDS
                                    if name not in unsupported_vm_options(backend)],
-            "supported_lua_versions": ['5.3'] if name in ('ir_mba_rate','ir_rematerialization_rate') else ['5.1','5.3'],
+            "supported_lua_versions": ['5.3'] if name in ('ir_mba_rate','ir_rematerialization_rate','encoded_bitwise','distributed_integrity') else ['5.1','5.3'],
         }
+        if name in ('encoded_bitwise', 'distributed_integrity'):
+            item['default_target'] = {'backend': 'karity', 'lua_version': '5.3'}
         if name == "requirements":
             from obfuscator.vm.protection import protection_features
             item["kind"] = "requirements"
@@ -376,9 +380,14 @@ class Api:
                     for key, label, common in (
                         ('cff', 'CFF', True), ('junk', 'Junk', True),
                         ('inline', 'Inline helpers', True), ('wrapper', 'Wrapper', True),
+                        ('merge', 'Merge functions', True),
                         ('loop_split', 'Loop splitting', False), ('loop_unroll', 'Loop unrolling', False),
                         ('nested', 'Nested functions', False))]
         function += [
+            {'name': 'merge_max_functions', 'label': 'Functions per merge', 'kind': 'integer',
+             'min': 2, 'max': 8, 'step': 1, 'common': False},
+            {'name': 'merge_max_groups', 'label': 'Merge groups', 'kind': 'integer',
+             'min': 0, 'max': 256, 'step': 1, 'common': False},
             {'name': 'boundary_mode', 'label': 'Boundary mode', 'kind': 'enum',
              'choices': ['mixed', 'split', 'cff'], 'common': False},
             {'name': 'nested_max_depth', 'label': 'Nested depth', 'kind': 'integer',

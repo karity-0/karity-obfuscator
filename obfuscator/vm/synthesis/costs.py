@@ -117,6 +117,9 @@ pay for distinct forms even without a performance saving. Efficiency never does.
     target=context.target
     loader=target.runtime_template('vm.lua') if target else (Path(__file__).parents[1]/'vm.lua').read_text(encoding='utf-8')
     source=loader if lowered.backend=='karity' else target.runtime_template('classic_exec.lua') if target else classic_executor()
+    if lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False):
+        from ..backends.karity_integer import prepare_runtime
+        source=prepare_runtime(source,lowered)
     lowered.backend_data['synthesis_template']=source
     policy=context.options.get('synthesis_policy','balanced')
     # Growth is an explicit cost allowance, independent of hard compiler safety.
@@ -269,7 +272,8 @@ pay for distinct forms even without a performance saving. Efficiency never does.
         specializations=len({tuple('defer' if state['instruction_forms'][indexes[s]][variant_index][0]=='defer' else 'normal'
             for s in occurrence.source_ids) for variant_index in range(len(state['instruction_forms'][indexes[occurrence.source_ids[0]]]))})
         extra=0 if key in forms else (report['bytes']+24)*specializations
-        if occurrence.local_values and form!='materialized':
+        if (occurrence.local_values and form!='materialized'
+                and not (lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False))):
             from .register_local import helper_source,helper_arities
             arities=set().union(*(helper_arities(replace(entry,original_vops=signature[2]),vm_maps[vm][3])
                 for signature in signatures))

@@ -84,6 +84,13 @@ class VMBuildPipeline(PostPass):
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain(lua_version=target.lua_version if target else "5.3")
         self.target_profile = target or TargetProfile(backend=self.backend)
+        if self.backend == 'karity' and self.target_profile.lua_version == '5.3':
+            self.vm_options.setdefault('encoded_bitwise', True)
+            self.vm_options.setdefault('distributed_integrity', True)
+        if self.backend == 'karity' and self.target_profile.lua_version != '5.3':
+            for option in ('encoded_bitwise', 'distributed_integrity'):
+                if self.vm_options.get(option):
+                    raise ValueError(f'{option} requires Lua 5.3')
         validate_pass_target("vm", self.target_profile)
         for name in self.vm_output_passes:
             validate_vm_output_pass_target(name, self.target_profile)

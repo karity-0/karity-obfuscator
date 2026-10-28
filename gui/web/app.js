@@ -45,7 +45,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const titleCase = (value) => String(value || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   const formatPercent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
-  const presetLabels = { 'builtin:fast': ['빠르게', '선택 보호'], 'builtin:balanced': ['균형', '선택 보호'], 'builtin:strong': ['강하게', '전체 보호'], 'builtin:maximum': ['최대', '전체 보호'] };
+  const presetLabels = {
+    'builtin:fast': ['빠르게', '최소 소스 변환 · 1 VM'],
+    'builtin:balanced': ['균형', 'Boolean + Table + Compact String · 1 VM'],
+    'builtin:strong': ['강하게', 'Flow String + CFF + Number · 2 VM'],
+    'builtin:maximum': ['최대', '강화된 소스 보호 + Packer · 3 VM'],
+  };
   const preferenceTabs = ['appearance', 'gui', 'editor', 'general'];
   const editors = [window.LuaCodeEditor.attach(ui.input), window.LuaCodeEditor.attach(ui.output)];
   const tr = text => window.GuiI18n.tr(text, preferences?.language || 'ko');
@@ -138,7 +143,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const button = document.createElement('button');
       button.className = 'preset-button';
       button.dataset.preset = name;
-      button.title = presetLabels[name]?.[1] || titleCase(name);
+      button.title = tr(presetLabels[name]?.[1] || titleCase(name));
       const [label] = presetLabels[name] || [titleCase(name)];
       const title = document.createElement('strong'); title.textContent = label;
       button.append(title);
@@ -659,7 +664,11 @@ document.addEventListener('DOMContentLoaded', () => {
     row.dataset.hint = option.description;
     row.innerHTML = `<div><span class="option-label">${option.label}</span><small class="option-description">${option.name}</small></div><div class="option-control"></div>`;
     const host = row.querySelector('.option-control');
-    const current = state.config.vm_options[option.name] ?? option.default;
+    const defaultBackend = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
+    const targetDefault = option.default_target
+      ? option.default_target.backend === defaultBackend && option.default_target.lua_version === (state.config.target?.lua_version ?? '5.3')
+      : option.default;
+    const current = state.config.vm_options[option.name] ?? targetDefault;
 
     if (option.kind === 'requirements') {
       const fields = document.createElement('div');

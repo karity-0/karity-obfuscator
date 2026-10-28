@@ -16,6 +16,7 @@ class RuntimeLayout:
     constant_kinds: dict
     graph_sites: set[int]
     vm_count: int
+    encoded_bitwise: bool = False
 
 
 def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
@@ -90,7 +91,8 @@ def prepare_layout(backend_adapter, lowered_ir, context) -> RuntimeLayout:
     install_regions(lowered_ir,functions,vm_maps,context)
     validate_layout(functions, vm_maps)
     return RuntimeLayout(functions, vm_maps, used_ops_list, instr_layout, constant_tags,
-                         constant_kinds, graph_sites, n)
+                         constant_kinds, graph_sites, n,
+                         bool(lowered_ir.policy.get('encoded_bitwise', False)))
 
 
 def iter_functions(function):

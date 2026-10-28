@@ -2,6 +2,7 @@
 import math
 import random
 import time
+from collections import Counter
 
 from .bare_dispatch import emit as emit_dispatch
 
@@ -32,7 +33,10 @@ class Program:
         self.lowered, self.context = lowered, context
         self.version = context.target.lua_version
         self.security = lowered.backend_data['source_protection']
-        self.functions = list(lowered.semantic_ir.functions())
+        self.functions = list(lowered.backend_data['bare_emission_ir'].functions())
+        self.optimization = Counter(lowered.backend_data['optimization'])
+        self.frame_plans = []
+        self.flow_plans = []
         slots=random.sample(range(31,2**24),len(self.functions))
         self.factories = {f.id: '_BF[' + str(slot) + ']' for f,slot in zip(self.functions,slots)}
         self.helpers = {}
@@ -102,20 +106,36 @@ class Function:
         # table before the body starts. Its old argument frame then disappears,
         # preserving GC lifetimes without exhausting Lua's local budget.
         self.wide = function.params >= 128
-        self.dynamic = self.open or any(o.kind == 'register_range' and (o.count or 0) > 32
-                                       for b in function.blocks for i in b.instructions for o in i.operands)
-        self.local_count = 0 if self.dynamic or self.wide else min(self.original_stack, max(0, 140 - function.params), 48)
-        self.uses_spill = self.local_count < self.original_stack
+        dynamic_starts = [o.value for b in function.blocks for i in b.instructions for o in i.operands
+                          if o.kind == 'register_range' and (o.count is None or o.count > 32)]
+        self.dynamic = bool(dynamic_starts)
+        self.dynamic_start = min(dynamic_starts, default=self.original_stack)
+        self.local_count = 0 if self.wide else min(self.original_stack, max(0, 140 - function.params),
+                                                  48, self.dynamic_start)
+        self.uses_spill = self.dynamic or self.local_count < self.original_stack
+        self.uses_scratch = False
         self.support = set()
         self.conditions = {}
         self.liveness = program.lowered.backend_data['liveness'][function.id]
+        self.facts = program.lowered.backend_data['bare_facts'][function.id]
+        from .bare_registers import allocate
+        self.register_map = allocate(self)
+        self.local_slots = tuple(sorted(set(self.register_map.values())))
+        self.local_releases=program.lowered.backend_data['bare_local_releases'][function.id]
+        self.edge_releases=program.lowered.backend_data['bare_edge_releases'][function.id]
+        self.blocks_by_id={b.id:b for b in function.blocks}
 
     def name(self, kind): return self.program.name(kind)
     def api(self, key): return self.program.api(key)
 
     def slot(self, index):
-        if self.scratch_base is not None and index>=self.scratch_base:return '_BX['+str(index-self.scratch_base)+']'
-        return '_Br' + str(index) if index < self.local_count else '_BS[' + str(index) + ']'
+        if self.scratch_base is not None and index>=self.scratch_base:
+            self.uses_scratch = True
+            return '_BX['+str(index-self.scratch_base)+']'
+        return '_Br' + str(self.physical(index)) if index < self.local_count else '_BS[' + str(index) + ']'
+
+    def physical(self, index):
+        return self.register_map.get(index,index)
 
     def r(self, index):
         result = self.slot(index)
@@ -147,7 +167,7 @@ class Function:
     def close(self, first):
         if first is None: return ''
         return ''.join(self.slot(i) + '={' + self.r(i) + '}\n' +
-                       ('_BC[' + str(i) + ']=' + self.slot(i) + '\n' if self.dynamic else '')
+                       ('_BC[' + str(i) + ']=' + self.slot(i) + '\n' if self.dynamic and i>=self.local_count else '')
                        for i in sorted(self.captured) if i >= first)
 
     def source(self):
@@ -156,21 +176,27 @@ class Function:
         signature = ','.join(params + (['...'] if self.function.vararg else []))
         init = []
         if self.program.poisoned: init.append('if _BP then ' + self.api('error') + '(nil,0) end\n')
-        locals_ = [self.slot(i) for i in range(self.local_count)] + sorted(self.outer_locals)
+        locals_ = ['_Br'+str(i) for i in self.local_slots] + sorted(self.outer_locals)
         if self.uses_spill and not self.wide: locals_.append('_BS')
         if self.open: locals_.append('_BT')
-        if self.scratch_base is not None:locals_.append('_BX')
+        if self.uses_scratch:locals_.append('_BX')
         if (1 if self.wide else len(params)) + len(locals_) > 190:
             raise ValueError('Bare function exceeds the native Lua local-variable budget')
         if locals_: init.append('local ' + ','.join(locals_) + '\n')
         if self.uses_spill and not self.wide: init.append('_BS={}\n')
         if self.open: init.append('_BT=-1\n')
-        if self.scratch_base is not None:init.append('_BX={}\n')
+        if self.uses_scratch:init.append('_BX={}\n')
+        elif self.scratch_base is not None:self.program.optimization['scratch_tables_elided'] += 1
         for i in sorted(self.captured):
             init.append(self.slot(i) + '={' + (self.slot(i) if self.wide and i < self.function.params else '') + '}\n')
         if not self.wide:
             for i, param in enumerate(params): init.append(self.r(i) + '=' + param + '\n' + param + '=nil\n')
         init.append(self.helpers())
+        if self.dynamic and self.local_count:self.program.optimization['dynamic_prefix_locals'] += len(self.local_slots)
+        self.program.frame_plans.append({'function':self.function.id,'locals':len(self.local_slots),
+            'local_prefix':self.local_count,'register_map':tuple(sorted(self.register_map.items())),
+            'dynamic':self.dynamic,'dynamic_start':self.dynamic_start,'scratch':self.uses_scratch,
+            'wide':self.wide,'spill':self.uses_spill,'original_stack':self.original_stack})
         name = self.program.factories[self.function.id]
         register='_Bregister' if self.program.tailcalls else ''
         if self.wide:
@@ -185,10 +211,16 @@ class Function:
         result = ''
         if self.dynamic:
             # Dynamic open result ranges share the same cells as static reads.
-            cell_entries = ','.join('[' + str(i) + ']=' + self.slot(i) for i in sorted(self.captured))
-            result += 'local _BC={' + cell_entries + '}\n'
-            result += 'local function _Bg(i) local c=_BC[i];if c then return c[1] end;return _BS[i] end\n'
-            result += 'local function _Bs(i,v) local c=_BC[i];if c then c[1]=v else _BS[i]=v end end\n'
+            cells = sorted(i for i in self.captured if i>=self.local_count)
+            if cells:
+                cell_entries = ','.join('[' + str(i) + ']=' + self.slot(i) for i in cells)
+                result += 'local _BC={' + cell_entries + '}\n'
+                result += 'local function _Bg(i) local c=_BC[i];if c then return c[1] end;return _BS[i] end\n'
+                result += 'local function _Bs(i,v) local c=_BC[i];if c then c[1]=v else _BS[i]=v end end\n'
+            else:
+                self.program.optimization['cell_tables_elided'] += 1
+                result += 'local function _Bg(i) return _BS[i] end\n'
+                result += 'local function _Bs(i,v) _BS[i]=v end\n'
         if 'fixed' in self.support:
             result += ('local function _Bfixed(a,n,...) for i=1,n do _Bs(a+i-1,'
                        + self.api('select') + '(i,...)) end end\n')
@@ -220,13 +252,53 @@ class Function:
 
     def condition(self, block): return self.conditions[block.id]
 
+    def clear(self, indices, live=()):
+        # Keep reference releases at their original instruction boundary.
+        prefix=self.function.id+':r'
+        owners={self.physical(int(key[len(prefix):])) for key in live
+                if key.startswith(prefix) and key[len(prefix):].isdigit() and int(key[len(prefix):])<self.local_count}
+        filtered=[];seen=set()
+        for i in indices:
+            if i<self.local_count and self.physical(i) in owners:continue
+            key=('local',self.physical(i)) if i<self.local_count else ('indexed',i)
+            if key not in seen:filtered.append(i);seen.add(key)
+        indices=filtered
+        return ''.join(','.join(self.r(i) for i in indices[first:first+24])+'='+
+                       ','.join('nil' for _ in indices[first:first+24])+'\n'
+                       for first in range(0,len(indices),24))
+
+    def instructions(self, instructions, block):
+        from .bare_statements import emit
+        return emit(self, instructions, block)
+
+    def dead_indices(self, ins):
+        dead=(set(ins.inputs)|set(ins.outputs))-self.liveness.after[ins.id]
+        prefix=self.function.id+':r'
+        result={int(key[len(prefix):]) for key in dead if key.startswith(prefix) and key[len(prefix):].isdigit()}
+        return sorted(result|set(self.local_releases.get(ins.id,())))
+
+    def edge_clear(self, block, target):
+        return self.clear(self.edge_releases.get((block.id,target),()),
+            self.liveness.before[self.blocks_by_id[target].instructions[0].id])
+
+    def coalesced_copy(self, ins):
+        if ins.operation!='MOVE' or 'protection_origin' in ins.metadata or self.program.poisoned:return None
+        fields={o.role:o.value for o in ins.operands}
+        a,b=fields['source'],fields['destination']
+        if a>=self.local_count or b>=self.local_count or a in self.captured or b in self.captured:return None
+        if self.physical(a)!=self.physical(b):return None
+        self.program.optimization['copies_elided'] += 1
+        return self.clear(self.dead_indices(ins),self.liveness.after[ins.id])
+
     def instruction(self, ins, block):
         if ins.metadata.get('bare_call_skip'):return ''
         compact=ins.metadata.get('bare_call')
         if compact:
             if compact[0]=='guard':
                 index=self.function.debug_metadata['security_guard_upvalue']
-                return '_BU['+str(index+1)+'][1]('+literal(compact[1])+')\n'
+                end=ins.metadata['bare_call_end']
+                return ('_BU['+str(index+1)+'][1]('+literal(compact[1])+')\n'+
+                        self.clear(self.local_releases.get(end,()),self.liveness.after[end]))
             from ..ir.model import IROperand
             _,name,args,result=compact
             context=self.function.debug_metadata['security_context_upvalue']
@@ -236,7 +308,11 @@ class Function:
             after=self.liveness.after[ins.metadata['bare_call_end']]
             dead=sorted({value for kind,value in args if kind=='register'
                          and f'{self.function.id}:r{value}' not in after})
-            if dead:code+=','.join(self.r(i) for i in dead)+'='+','.join('nil' for _ in dead)+'\n'
+            if dead:code+=self.clear(dead,after)
+            # The compact group executes all of its logical instructions at
+            # once, including any lexical-scope release at the group end.
+            expired=self.local_releases.get(ins.metadata['bare_call_end'],())
+            if expired:code+=self.clear(expired,after)
             return code
         fields = {o.role: o for o in ins.operands if o.role != 'capture'}
         op = ins.operation
@@ -248,7 +324,7 @@ class Function:
         elif op == 'LOAD_BOOL': code = dest(v('value'))
         elif op == 'LOAD_NIL':
             span = fields['destination']
-            code = ''.join(self.r(i) + '=nil\n' for i in range(span.value, span.value + span.count))
+            code = ''.join(self.r(i)+'=nil\n' for i in range(span.value,span.value+span.count))
         elif op == 'GET_UPVALUE': code = dest(v('source'))
         elif op in ('GET_UPVALUE_TABLE', 'GET_TABLE'): code = dest('(' + v('table') + ')[' + v('key') + ']')
         elif op in ('SET_UPVALUE_TABLE', 'SET_TABLE'): code = v('table') + '[' + v('key') + ']=' + v('value') + '\n'
@@ -347,12 +423,7 @@ class Function:
             code += condition_name + '=' + self.conditions[block.id] + '\n'
             self.conditions[block.id] = condition_name
         if op not in ('RETURN', 'TAIL_CALL'):
-            dead = (set(ins.inputs) | set(ins.outputs)) - self.liveness.after[ins.id]
-            indices = sorted(int(key.rsplit(':r', 1)[1]) for key in dead
-                             if key.startswith(self.function.id + ':r') and ':runtime_' not in key)
-            for first in range(0, len(indices), 24):
-                group = indices[first:first + 24]
-                code += ','.join(self.r(i) for i in group) + '=' + ','.join('nil' for _ in group) + '\n'
+            code += self.clear(self.dead_indices(ins),self.liveness.after[ins.id])
         if self.program.poisoned:
             code = 'if _BP then ' + self.api('error') + '(nil,0) end\n' + code
         return code
@@ -361,6 +432,11 @@ def emit(lowered, context):
     started = time.perf_counter()
     program = Program(lowered, context)
     source = program.source()
+    lowered.backend_data['optimization'] = dict(program.optimization)
+    lowered.backend_data['bare_frame_plans'] = program.frame_plans
+    lowered.backend_data['bare_flow_plans'] = program.flow_plans
+    context.profile.append({'phase':'bare_optimization','elapsed':0.0,**program.optimization,
+                            'frames':program.frame_plans})
     from ..native_capture import bind_native_calls
     forced=['string.match','string.find','string.sub','tonumber',
         'string.byte','pcall','type','debug.getinfo','debug.gethook','debug.getmetatable']

@@ -32,10 +32,10 @@ depends on the input. See [backend choices](docs/backends.md).
 
 | Preset | Use |
 |---|---|
-| **Fast · 빠르게** | Lightweight VM protection; use markers for heavy source passes. |
-| **Balanced · 균형** | More VM diversity with light source transformations. |
-| **Strong · 강하게** | Full source protection, including String Flow Obf and CFF. |
-| **Maximum · 최대** | Larger protection budgets, more VM variants, and packing. |
+| **Fast · 빠르게** | Minimal source transforms, 1 lightweight VM, existing lightweight output. |
+| **Balanced · 균형** | Boolean + Table + Compact String, 1 VM, String Mosaic output. |
+| **Strong · 강하게** | Flow String + CFF + Number, 2 VMs, String Mosaic output. |
+| **Maximum · 최대** | Strong with larger budgets and source renaming, 3 VMs, Packer + diverse output. |
 
 Every preset keeps NumberObf and MemeStrings on the VM output. Preset and
 backend selections are independent; advanced settings let you customize either.

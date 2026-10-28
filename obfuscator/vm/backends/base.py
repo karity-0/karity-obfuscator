@@ -305,6 +305,7 @@ CLASSIC_OPTIONS = SHARED_OPTIONS | frozenset((
 ))
 
 KARITY_ONLY_OPTIONS = frozenset((
+    'encoded_bitwise', 'distributed_integrity',
     "state_dependency_limit",
     "graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
     "runtime_trace", "block_variant_rate", "block_variant_count",

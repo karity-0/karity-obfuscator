@@ -146,9 +146,14 @@ def storage_checks(backends,versions):
             print('synthesis-storage-ok',backend,version,storage['synthesis_storage_saved_bytes'],flush=True)
             if backend=='karity':
                 from obfuscator.vm.backends import handler_codec
-                settings={**BASE,**PROTECTED,'opcode_synthesis':True,'synthesis_policy':'efficiency',
-                    'synthesis_max_steps':4,'synthesis_max_recipes':64,'synthesis_max_occurrences':1024,
-                    'synthesis_max_code_growth':64,'block_variant_rate':0,'physical_block_permutation_rate':0}
+                # Encoded integer kernels retain representation boundaries in
+                # place of raw-local borrowing. Efficiency can reject all of
+                # this protected fixture; use Protection to exercise dictionary
+                # storage and event equivalence independently of admission.
+                settings={**BASE,**PROTECTED,'opcode_synthesis':True,'synthesis_policy':'protection',
+                    'synthesis_max_steps':4,'synthesis_max_recipes':256,'synthesis_max_occurrences':1024,
+                    'synthesis_max_code_growth':64,'block_variant_rate':0,'physical_block_permutation_rate':0,
+                    'mutate_handlers':False}
                 source=STORAGE.replace('1,3','1,1')
                 compact,_,protected=build(source,backend,version,settings,event_trace=True)
                 assert next(row for row in protected.last_profile if row['phase']=='serialize_blob')['format_version']==3

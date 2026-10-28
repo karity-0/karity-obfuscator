@@ -48,8 +48,9 @@ class BareBackend(VMBackend):
 
     def optimize(self, lowered: LoweredIR, context: BackendContext) -> LoweredIR:
         from ..ir import validate_semantic_ir
+        from .bare_optimizer import prepare_emission
         validate_semantic_ir(lowered.semantic_ir)
-        return lowered
+        return prepare_emission(lowered, context.target.lua_version)
 
     def emit(self, lowered: LoweredIR, context: BackendContext) -> str:
         from .bare_emitter import emit

@@ -16,9 +16,11 @@ class Alternatives:
     def __init__(self, source, variant, vm_map, compile_body, fetch, policy):
         self.variant=variant;self.maps=vm_map;self.compile=compile_body;self.fetch=fetch
         self.policy=policy;self.plans={}
+        self.encoded=bool(policy.get('encoded_bitwise',False)) and 'local function _ecmp2(' in source
         self.native='--<<TARGET_CLASSIC_EXEC_NATIVE>>' in source or '--<<TARGET_KARITY_EXEC_STATE>>' in source
         patched=apply_vop_to_vm(source,vm_map[0],variant['semantic_alias_modes'],
-            native_state=self.native,alias_transition_indices=variant['alias_transition_indices'])
+            native_state=self.native,alias_transition_indices=variant['alias_transition_indices'],
+            encoded_integer=self.encoded)
         a,b=_find_chain(patched);self.aliases=_parse_handler_blocks(patched[a:b])
         self.cache={};self.protected={};self.empty=compile_body('')['instructions']
 
@@ -29,9 +31,13 @@ class Alternatives:
             body=self.aliases[value];ordinal=self.maps[0][op].index(value)
             identity=f'alias:{op}:{ordinal}'
         elif kind=='fuse':
-            body=fused_handler_body(op,value,native_state=self.native);identity=f'fuse:{op}:{value}'
+            body=fused_handler_body(op,value,native_state=self.native,
+                                    encoded_integer=self.encoded);identity=f'fuse:{op}:{value}'
         elif kind=='split':
             parts,part=value;body=split_handler_bodies(op,parts)[part];identity=f'split:{op}:{parts}:{part}'
+            if self.encoded:
+                from ..backends.karity_integer import SUPPORTED,split_integer_bodies
+                if op in SUPPORTED:body=split_integer_bodies(op,parts,proven=False)[part]
         else:
             # Deferred arithmetic uses the same real producer token and ABI.
             slot='UNM' if op==25 else 'ADD' if op==13 else 'SUB'

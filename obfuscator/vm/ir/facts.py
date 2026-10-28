@@ -25,6 +25,9 @@ INTEGER = ValueFact('integer')
 NUMBER = ValueFact('number')
 _INTEGER_OPS = frozenset(('ADD','SUB','MUL','NEGATE','BIT_AND','BIT_OR','BIT_XOR',
                           'BIT_NOT','SHIFT_LEFT','SHIFT_RIGHT'))
+# Result-type inference does not expand the non-throwing/rematerializable
+# operation whitelist. Integer division/remainder can still raise on zero.
+_INTEGER_RESULTS = _INTEGER_OPS | frozenset(('MOD','FLOOR_DIV'))
 
 
 def cfg_components(function):
@@ -111,7 +114,7 @@ class FunctionFacts:
     def dominates(self, first, second):
         return bool(self.dominance.get(second,0) & (1 << self.block_indices[first]))
 
-def analyze_function(function, version, *, cfg=None, liveness=None):
+def analyze_function(function, version, *, cfg=None, liveness=None, result_hints=None):
     blocks={b.id:b for b in function.blocks}
     predecessors,components=cfg or cfg_components(function)
     live=analyze_liveness(function) if liveness is None else liveness
@@ -123,6 +126,10 @@ def analyze_function(function, version, *, cfg=None, liveness=None):
     producers={i.id:i for b in function.blocks for i in b.instructions}
 
     def evaluate(instruction, facts):
+        # Generator-owned return contracts refine the result, never the call's
+        # effects: capture invalidation, throwing and open-top barriers remain.
+        if instruction.operation=='CALL' and result_hints is not None and instruction.id in result_hints:
+            return result_hints[instruction.id]
         operands={v.role:v for v in instruction.operands if v.role!='capture'}
         def get(role):
             v=operands[role]
@@ -132,7 +139,7 @@ def analyze_function(function, version, *, cfg=None, liveness=None):
         if op=='LOAD_BOOL':return literal_fact(operands['value'].value,version)
         if op in ('MOVE','TEST_SET'):return get('source' if op=='MOVE' else 'condition')
         if op=='LOGICAL_NOT':return ValueFact('boolean')
-        if op in _INTEGER_OPS:
+        if op in _INTEGER_RESULTS:
             args=[get('source')] if op in ('NEGATE','BIT_NOT') else [get('left'),get('right')]
             if version=='5.3' and all(v.kind=='integer' for v in args):return INTEGER
             if op in ('ADD','SUB','MUL','NEGATE') and all(v.kind in ('integer','float','number') for v in args):

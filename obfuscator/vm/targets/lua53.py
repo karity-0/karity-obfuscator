@@ -101,12 +101,12 @@ class Lua53Target:
         from ..backends.runtime_emitter import _dump_function_stripped
         return _dump_function_stripped(source, header, toolchain)
 
-    def wrap(self, source, vm_name, blob, *, forward_args=False):
+    def wrap(self, source, vm_name, blob, *, forward_args=False, factory_argument=''):
         returned = re.match(r'\Areturn\b', source)
         if returned is None:
             raise ValueError('Lua 5.3 VM source must return its runtime function')
         body = source[returned.end():].lstrip()
         arguments=",{n=select('#',...),...}" if forward_args else ''
         return (f'local {vm_name}={body};'
-                f'return ({vm_name}())'
+                f'return ({vm_name}({factory_argument}))'
                 f'({blob},{vm_name}{arguments})')

@@ -1,5 +1,72 @@
 # Runtime hardening
 
+## Encoded integer operations and helper integrity
+
+Karity on Lua 5.3 enables `encoded_bitwise` and `distributed_integrity` by
+default. Either can be explicitly disabled with `--vm-option NAME=false`.
+Lua 5.1 and other backends do not implicitly enable these features.
+
+`encoded_bitwise` is the compatibility option name for automatic integer
+representation selection. It covers AND/OR/XOR/NOT, signed and oversized shifts,
+EQ/LT/LE, floor division and modulo. ADD/SUB/MUL/NEGATE retain the existing cheap
+modular affine route; Boolean packets can continue through shared arithmetic.
+Single operations, joins and nonadjacent consumers are supported. A conversion
+cache is guarded by the register epoch and map generation. It holds only integer
+shares and does not retain guest objects.
+
+Boolean circuits implement addition, selection, comparison, multiplication and
+restoring division. Negative division uses Lua floor correction, minimum integer
+divided by -1 wraps, and zero divisors raise the appropriate Lua error. Shift
+counts remain shared throughout the six-stage selection and range check,
+including negative and minimum-integer counts. Affine/Boolean conversions use
+masked circuits; combining shares at conversion produces an affine encoded word,
+not the original integer. These circuits have nontrivial execution cost.
+
+Whole-program semantic type analysis proves whether every physical use of a
+handler has integer operands. Proven aliases omit the general guest operation
+route; unused integer aliases and composite bodies are removed too. Missing or
+mixed facts retain Lua float, coercion and metamethod behavior. Analysis does not
+infer function parameter types from observed calls. Backend diagnostics report
+proof coverage, retained/elided decisions and reasons; these are static
+opportunities, not counts of executed paths.
+
+Proved split/fused/deferred handlers and synthesized regions share the integer
+paths. Split/fused boundaries can normalize back to affine storage without
+materializing an original integer. Active arithmetic graphs execute through
+integer-specialized graph entry points and retain their occurrence, scratch,
+state and ledger effects; graph-required evaluation is an explicit native-value
+boundary. Protected captured integer cells use their existing cross-frame affine
+format directly; native cells and cells with external accessors use their coherent
+native API. Native calls, returns and table operations also use ordinary values
+where their existing contracts require them. Guest DIV
+and POW remain native floating operations, including with integer inputs. This
+is not a claim that all Lua operations or host boundaries avoid native values.
+
+`distributed_integrity` relocates two or three eligible pure generated helpers
+into a private bank and rewrites their actual lexical execution references to
+that bank. Independent checkers cover those helpers and neighboring checkers.
+They compare both original function identity and the stripped function dump.
+Expected fingerprints are extracted from final child prototype bytes, stored
+outside hashed code and bound into the existing VM key. The source/prototype
+correspondence is validated; no guest code is executed to obtain fingerprints.
+Native 32-bit and 64-bit size_t dump layouts are supported. Initial checks cover
+all selected regions; sparse loop/executor checkpoints use periods 257/509/1021.
+These counters are internal execution checkpoints, not wall-clock guarantees.
+Heavy output transformations that eliminate all eligible pure helpers fail
+explicitly rather than claiming coverage. The option adds code and runtime cost.
+
+Explicitly enabling either control is rejected for Karity Lua 5.1 and reported
+unsupported on other backends. Their defaults are target-specific; preset budgets
+are unchanged. Existing environment, source
+line, self-dump and guest lifetime contracts remain active. Local fingerprints
+and identity snapshots do not authenticate a fully controlled host or supply an
+externally held secret.
+
+`test/run_encoded_operations_regression.py` checks encoded arithmetic and actual
+native execution; `test/run_helper_integrity_regression.py` checks each helper/
+checker replacement, same-bytecode replacement, manifests, module environments
+and packed execution.
+
 Every generated VM checks its essential native dependencies, including string
 assembly functions, rather than randomly omitting them. The core loader captures
 validated call targets. Entry from the host, native-call boundaries and sparse

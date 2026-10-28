@@ -13,11 +13,18 @@ def generated_names(body,mapping):
 def ordered_bodies(lowered,variant,aliases,native):
     from ..vm_obfuscation import apply_vop_to_vm,_find_chain,_parse_handler_blocks
     source=lowered.backend_data['synthesis_template']
-    key=(source,repr(aliases),repr(variant['semantic_alias_modes']),repr(variant['alias_transition_indices']),native)
+    proofs=frozenset()
+    if lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False):
+        layout=lowered.backend_data.get('layout')
+        if layout is not None:
+            vm=next(n for n,mapping in enumerate(layout.vm_maps) if mapping[0]==aliases)
+            proofs=lowered.backend_data.get('integer_aliases',())[vm]
+    key=(source,repr(aliases),repr(variant['semantic_alias_modes']),repr(variant['alias_transition_indices']),native,proofs)
     cache=lowered.backend_data.setdefault('synthesis_ordered_bodies',{})
     if key not in cache:
         script=apply_vop_to_vm(source,aliases,variant['semantic_alias_modes'],native_state=native,
-            alias_transition_indices=variant['alias_transition_indices'])
+            alias_transition_indices=variant['alias_transition_indices'],integer_aliases=proofs,
+            encoded_integer=lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False))
         a,b=_find_chain(script);cache[key]=_parse_handler_blocks(script[a:b])
     return cache[key]
 
@@ -25,7 +32,8 @@ def ordered_bodies(lowered,variant,aliases,native):
 def prepare_kernel(entry,lowered,variant,fetch,aliases,defers,native):
     from .emission import render_kernel
     from ..vm_mutation import mutate_handlers,planned_mutation_seeds,_native_scratch_locals
-    ordinary=ordered_bodies(lowered,variant,aliases,native) if entry.occurrence.numeric_domain=='ordered' else None
+    encoded=lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False)
+    ordinary=ordered_bodies(lowered,variant,aliases,native) if entry.occurrence.numeric_domain=='ordered' or encoded else None
     body=render_kernel(entry,lowered,variant,fetch,aliases,defers,native,ordinary)
     names=lowered.backend_data.get('vm_key_renames',{})
     # This is the exact generator's injective key-renaming map, not inferred

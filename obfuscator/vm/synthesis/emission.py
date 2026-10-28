@@ -22,7 +22,8 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native,ordinary=Non
             lines.append('local '+','.join(f'_sv{i}' for i in range(len(recipe.steps))))
     elif cells:lines.append('local _sx={}')
     from .register_local import active_values,guarded_read
-    local_values=active_values(entry,defers) if entry.execution_form!='materialized' else set()
+    encoded=lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False)
+    local_values=active_values(entry,defers) if entry.execution_form!='materialized' and not encoded else set()
     if local_values:
         if cells:lines.append('local _sl,_se,_sg,_sp={},{},{},{}')
         else:
@@ -80,13 +81,15 @@ def render_kernel(entry,lowered,variant,fetch,aliases,defers,native,ordinary=Non
             if deferred:
                 token='__VM_PENDING_'+('UNM' if step.operation=='NEGATE' else step.operation)+'__'
                 body=f'_defer1r(A,B,_av,{slot},{token})' if step.operation=='NEGATE' else f'_defer2r(A,B,C,_av,{slot},{token})'
+                if encoded and any(original in values for values in lowered.backend_data.get('integer_aliases',())):
+                    body=body.replace('_defer','_edefer',1)
                 lines.append(fields(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]').replace('A,B','_sx[1],_sx[2]') if cells else body))
             elif step.operation in UNARY:
                 extra=(',-1' if step.operation=='NEGATE' else ',nil') if lowered.backend=='karity' else ''
                 body=f'_arith1r(A,B,_av,{slot}{extra})'
                 emit_commit(body.replace('A,B','_sx[1],_sx[2]') if cells else body)
             else:
-                extra=(',1' if step.operation=='ADD' else ',-1' if step.operation=='SUB' else ',nil') if lowered.backend=='karity' else ''
+                extra=(',1' if step.operation=='ADD' else ',-1' if step.operation=='SUB' else ',0' if step.operation=='MUL' else ',nil') if lowered.backend=='karity' else ''
                 body=f'_arith2r(A,B,C,_av,{slot}{extra})'
                 emit_commit(body.replace('A,B,C','_sx[1],_sx[2],_sx[3]') if cells else body)
         else:
@@ -135,7 +138,8 @@ def inject_handlers(source,lowered,variant,vm_index):
     from .kernels import prepare_kernel
     from .register_local import helper_source,helper_arities,active_values
     from .kernels import generated_names
-    local_entries=[e for e in entries.values() if active_values(e,defers) and e.execution_form!='materialized']
+    encoded=lowered.backend=='karity' and lowered.policy.get('encoded_bitwise',False)
+    local_entries=[e for e in entries.values() if active_values(e,defers) and e.execution_form!='materialized' and not encoded]
     arities=set().union(*(helper_arities(e,defers) for e in local_entries)) if local_entries else set()
     helpers=helper_source(lowered.backend_data['synthesis_template'],arities) if arities else ''
     if helpers:

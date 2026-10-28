@@ -26,6 +26,8 @@ class KarityBackend(VMBackend):
         from .karity_optimizer import comparison_specializations
         validate_handler_dispatch(lowered, delayed=True)
         validate_state(lowered)
+        from .karity_integer import validate_proofs
+        validate_proofs(lowered)
         specialized = lowered.backend_data.get("comparison_specializations")
         if ("karity_optimized_deferred_signature" in lowered.backend_data
                 and specialized is None):
@@ -36,6 +38,13 @@ class KarityBackend(VMBackend):
 
     def lower(self, protected_ir, context):
         lowered = super().lower(protected_ir, context)
+        from .karity_integer import integer_aliases
+        proven, events = integer_aliases(lowered)
+        lowered.backend_data['integer_aliases'] = proven
+        lowered.backend_data['integer_proof_events'] = events
+        context.profile.append({'phase': 'karity_integer_proofs', 'elapsed': 0.0,
+                                'proven_aliases': sum(map(len, proven)),
+                                'retained_aliases': sum(event['outcome']=='retained' for event in events)})
         from .karity_state import lower_state, seed_state_validation
         root = lowered.protection_plan.functions[lowered.semantic_ir.root.id]
         lowered.backend_data["karity_state"] = lower_state(
@@ -67,6 +76,9 @@ class KarityBackend(VMBackend):
         before_inputs = state_input_signature(layout)
         validate_state(lowered)
         statistics, events, specialized = optimize_layout(layout)
+        events += lowered.backend_data.get('integer_proof_events', ())
+        if layout.encoded_bitwise:
+            statistics['integer_aliases_proven'] = sum(map(len, lowered.backend_data['integer_aliases']))
         after_state = (before_state if before_inputs == state_input_signature(layout)
                        else lower_state(layout,routes,rotation,profile=context.profile))
         if after_state != before_state:
@@ -112,15 +124,24 @@ class KarityBackend(VMBackend):
         from ..vm_obfuscation import (apply_execution_kit, apply_dispatch_target_hiding,
                                       wire_exec_router, build_next_router_kit, build_exec_variants)
         count = lowered.backend_data['layout'].vm_count
+        if lowered.backend_data['layout'].encoded_bitwise:
+            from .karity_integer import prepare_runtime
+            source = prepare_runtime(source, lowered)
         specializations = lowered.backend_data.get(
             'comparison_specializations', tuple(frozenset() for _ in range(count))
         )
         def render(template, index):
             variant = variants[index]
+            bitwise = frozenset(lowered.backend_data['karity_state'].bitwise_aliases[index])
+            if not lowered.backend_data['layout'].encoded_bitwise:
+                import re
+                template = re.sub(r'--<<BITWISE_(BINARY|UNARY)_PATH>>.*?--<<ENDBITWISE_\1_PATH>>', '', template, flags=re.S)
             native_state = '--<<TARGET_KARITY_EXEC_STATE>>' in template
             result = single_handlers(template, lowered, variant, vm_index=index,
                                      executor_name=f'_ex{index}' if count > 1 else None,
-                                     comparison_specializations=specializations[index])
+                                     comparison_specializations=specializations[index],
+                                     bitwise_aliases=bitwise,
+                                     integer_aliases=lowered.backend_data['integer_aliases'][index])
             result = apply_execution_kit(result, variant['helper_variant_count'], 0.0, variant)
             if lowered.policy.get('dispatcher_target_hiding', False):
                 result = apply_dispatch_target_hiding(result, native_state=native_state)
@@ -146,6 +167,9 @@ class KarityBackend(VMBackend):
             source, shared_helpers=self.shared_runtime_helpers if count > 1 else (),
         )
         lowered.backend_data['runtime_emission'] = statistics
+        statistics['bitwise_aliases'] = [list(values) for values in lowered.backend_data['karity_state'].bitwise_aliases]
+        statistics['integer_aliases'] = [sorted(values) for values in lowered.backend_data['integer_aliases']]
+        statistics['integer_conversion_policy'] = ('masked-circuits' if lowered.backend_data['layout'].encoded_bitwise else 'affine')
         return source
 
     def emit_runtime_body(self, source, lowered, *, target):

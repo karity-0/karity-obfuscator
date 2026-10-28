@@ -24,6 +24,8 @@ class LiteralMosaicOptions(TypedDict, total=False):
 
 
 class ProtectionOptions(TypedDict, total=False):
+    encoded_bitwise: bool
+    distributed_integrity: bool
     ir_mba_rate: float
     ir_test_set_rate: float
     ir_tail_duplication_rate: float
@@ -106,6 +108,9 @@ class FunctionOptions(TypedDict, total=False):
     junk: bool
     inline: bool
     wrapper: bool
+    merge: bool
+    merge_max_functions: int
+    merge_max_groups: int
     boundary_mode: Literal["mixed", "split", "cff"]
     nested: bool
     nested_max_depth: int

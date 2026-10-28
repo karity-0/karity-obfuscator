@@ -62,16 +62,31 @@ end'''
         self.assertEqual('A', Lua53().execute(output)())
 
     def test_late_environment_strings_share_selected_protection(self):
+        from unittest.mock import patch
+        from obfuscator.passes.string_mosaic import StringMosaic
         from obfuscator.vm.environment import bind_environment
         from obfuscator.vm.runtime_finalization import output_finalizer
         template = 'return function() _ENV_CHECK();return _ENV_NATIVE end'
         for version, runtime_type, passes in (('5.1', Lua51, ['string_encode']),
                 ('5.3', Lua53, ['string_obf', 'minify'])):
             random.seed(4147)
-            source, _ = bind_environment(template, lua_version=version, policy='compatible',
-                compact=False, output_passes=passes)
-            for word in ('getmetatable', '__index', '__newindex', 'function', 'rawget'):
-                self.assertNotIn('"'+word+'"', source)
+            seen = set()
+            original = StringMosaic.fragments
+            def observe(generator, data, **kwargs):
+                if generator.policy.enabled:
+                    seen.add(data.encode() if isinstance(data,str) else data)
+                return original(generator, data, **kwargs)
+            with patch.object(StringMosaic, 'fragments', observe):
+                source, _ = bind_environment(template, lua_version=version, policy='compatible',
+                    compact=False, output_passes=passes)
+            words = ('getmetatable', '__index', '__newindex', 'function', 'rawget')
+            if 'string_encode' in passes:
+                # Mosaic deliberately permits plain quoted spelling. Verify
+                # activation, not an accidental spelling chosen by one seed.
+                self.assertTrue({word.encode() for word in words} <= seen)
+            else:
+                for word in words:
+                    self.assertNotIn('"'+word+'"', source)
             source = output_finalizer(passes, lua_version=version)(source)
             self.assertNotIn('string.char', source)
             self.assertNotIn('table.concat', source)
@@ -156,12 +171,18 @@ assert(comparisons==1)
                 'fake_handlers':False,'mutate_handlers':False,'junk_instructions':False,
                 'graph_execution_rate':0.0,'block_variant_rate':0.0,
             },vm_output_passes=['strip_info','rename_obf','minify']).run(source)
-            self.assertRegex(output,r'\Alocal \w+=function\(\.\.\.\)local ')
+            self.assertRegex(output,r'\Alocal \w+=function\((?:\w+,)?\.\.\.\)local ')
             match=_VM_TAIL_RE.search(output)
             self.assertIsNotNone(match)
             self.assertIsNone(match.group('tail'))
-            self.assertEqual('',match.group('args'))
-            self.assertEqual([],_alloc_plan(output).vm_args)
+            if version=='5.3':
+                # The default helper-integrity manifest is one factory argument;
+                # it must remain distinct from guest varargs and the old tail.
+                self.assertRegex(match.group('args'),r'\A"[0-9a-f]{32}(?:[0-9a-f]{16})?"\Z')
+                self.assertEqual([match.group('args')],_alloc_plan(output).vm_args)
+            else:
+                self.assertEqual('',match.group('args'))
+                self.assertEqual([],_alloc_plan(output).vm_args)
             self.assertTrue(match.group('forward_args'))
             for token in ('karityObfuscator/','runtime integrity mismatch','line_state','function_dump','_runctx'):
                 self.assertNotIn(token,output)

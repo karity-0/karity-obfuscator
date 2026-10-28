@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT))
 def main():
     from obfuscator.registry import resolve_config_profile, validate_config, build_pipeline_from_config, validate_deployment_config, validate_release_config, ReleaseCheckError
     from obfuscator.pipeline import Pipeline
-    from obfuscator.presets import USER_PRESETS, PREFIX, REVISION
+    from obfuscator.presets import PRESETS, USER_PRESETS, PREFIX, REVISION, user_preset, selection_profiles
     from obfuscator.passes.literal_mosaic import LiteralMosaic, use_mosaic
     from obfuscator.passes.numeric_provenance import CodeText
     from obfuscator.passes.mosaic_metrics import expression_summary
@@ -39,6 +39,28 @@ def main():
     assert 'vm' in resolve_config_profile(collision, 'builtin:fast')['passes']
     assert resolve_config_profile({'passes': ['minify']})['passes'] == ['minify']
 
+    assert tuple(PRESETS) == USER_PRESETS == ('fast', 'balanced', 'strong', 'maximum')
+    assert REVISION == 5
+    for name in USER_PRESETS:
+        assert user_preset(name) == user_preset(PREFIX + name) == PRESETS[name]
+    snapshot = user_preset('balanced')
+    snapshot['passes'].clear()
+    snapshot['literal_mosaic']['output_cost']['hot_operations'] = 999
+    snapshot['vm_options']['vm_count'] = 99
+    profiles = selection_profiles()
+    profiles['balanced']['vm_output_passes'].clear()
+    assert 'string_obf' in user_preset('balanced')['passes']
+    assert user_preset('balanced')['literal_mosaic']['output_cost']['hot_operations'] == 2
+    assert user_preset('balanced')['vm_options']['vm_count'] == 1
+    assert 'string_encode' in profiles['builtin:balanced']['vm_output_passes']
+    assert 'string_encode' in user_preset('balanced')['vm_output_passes']
+    try:
+        user_preset('unknown')
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('unknown preset accepted')
+
     for name in USER_PRESETS:
         config = resolve_config_profile({'vm_options': {'backend': 'mov'}}, name)
         assert config['vm_options']['backend'] == 'mov'
@@ -47,6 +69,20 @@ def main():
         assert {'number_obf','meme_strings'} <= set(config['vm_output_passes'])
         assert config['vm_options']['opcode_synthesis'] is True
         assert config['vm_options']['synthesis_policy']=={'fast':'efficiency','balanced':'balanced','strong':'protection','maximum':'protection'}[name]
+        assert config['vm_options']['vm_count'] == {'fast':1,'balanced':1,'strong':2,'maximum':3}[name]
+        assert ('string_encode' in config['vm_output_passes']) == (name != 'fast')
+        assert ('string_encode' in config['packer_output_passes']) == (name != 'fast')
+        assert ('pack' in config['passes']) == (name == 'maximum')
+        if name == 'fast':
+            assert not {'boolean_obf','table_obf','string_obf','string_flow_obf','function_obf'} & set(config['passes'])
+        elif name == 'balanced':
+            assert {'boolean_obf','table_obf','string_obf','localize_globals'} <= set(config['passes'])
+            assert not {'string_flow_obf','function_obf','number_obf'} & set(config['passes'])
+        else:
+            assert {'boolean_obf','table_obf','string_flow_obf','function_obf','number_obf'} <= set(config['passes'])
+            assert config['function_obf_options']['all_source_functions']
+        if name == 'maximum':
+            assert 'rename_obf' in config['passes']
         validate_config(config)
         validate_deployment_config(config)
     try:

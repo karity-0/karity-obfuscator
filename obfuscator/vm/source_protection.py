@@ -203,9 +203,12 @@ def _instrument(ir, plan, protection, context):
             return compact([make('GET_UPVALUE',(reg('destination',base),O('source','upvalue',guard_up))),
                     make('LOAD_BOOL',(reg('destination',base+1),O('value','immediate',force),O('skip','immediate',False))),
                     make('CALL',(reg('callee',base),O('arguments','register_range',base+1,1),O('results','register_range',base,0)))],('guard',force))
+        source_pcs={i.id:i.metadata.get('source_pc') for b in function.blocks for i in b.instructions}
         blocks=[]
         for block in function.blocks:
             instructions=guard(block.id==function.blocks[0].id)
+            entry_pc=next((i.metadata['source_pc'] for i in block.instructions if isinstance(i.metadata.get('source_pc'),int)),None)
+            instructions=[replace(i,metadata={**i.metadata,'source_pc':entry_pc}) for i in instructions]
             for original in block.instructions:
                 start=len(instructions)
                 operands=[]
@@ -241,6 +244,11 @@ def _instrument(ir, plan, protection, context):
                 # Original edges belong only to the final replacement operation.
                 if original.targets:
                     instructions[-1]=replace(instructions[-1],targets=original.targets)
+                # Keep native source-local residence available after guard and
+                # constant/write call expansion. This is debug provenance only.
+                for index in range(start,len(instructions)):
+                    instructions[index]=replace(instructions[index],metadata={**instructions[index].metadata,
+                        'source_pc':original.metadata.get('source_pc',source_pcs.get(original.metadata.get('protected_instruction')))})
                 if len(instructions)==start:raise AssertionError('empty protected instruction')
             blocks.append(replace(block,instructions=tuple(instructions)))
         children=tuple(transform(c,context_up,guard_up) for c in function.children)

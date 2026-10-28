@@ -3,7 +3,8 @@
 The GUI's four user policies are `builtin:fast`, `builtin:balanced`,
 `builtin:strong` and `builtin:maximum`. Their only definition is
 `obfuscator/presets.py`; the CLI, GUI bootstrap and VM selection resolver share
-it. `fast`, `balanced`, `strong`, `maximum` are convenient CLI aliases when the
+it as a name-keyed `PRESETS` catalog (revision 5, version 1.6.0).
+`fast`, `balanced`, `strong`, `maximum` are convenient CLI aliases when the
 project does not define a profile with that name. Qualified IDs explicitly
 select the builtins. The default backend remains Karity.
 
@@ -38,12 +39,19 @@ two-VM rule merely because the checkbox was already checked.
 ## Source and final output have different roles
 
 Fast defaults to stripping, anti-debug, anti-decompile, minification and VM.
-Balanced adds BooleanObf and localized globals. Their heavy source passes are
-enabled selectively by existing macros/directives. Unmarked source can retain
-more of its original structure after VM lifting; these presets deliberately
-trade default source coverage for lower cost.
+Balanced adds BooleanObf, TableObf, Compact String Obf and localized globals to
+the eligible source, so unmarked source receives more protection than Fast.
+Neither enables whole-source CFF or Flow String by default; existing
+macros/directives can still select these passes.
 
-Strong/maximum apply Boolean/Table/StringObf -> FunctionObf -> NumberObf and
+| Preset | Source protection | VM protection | Final output |
+|---|---|---|---|
+| Fast | Minimal transforms | Lightweight, 1 VM | Existing lightweight output |
+| Balanced | Boolean + Table + Compact String | Medium, 1 VM | String Mosaic |
+| Strong | Flow String + CFF + Number + source memes | High, 2 VMs | String Mosaic |
+| Maximum | Strong with larger budgets + source renaming | Highest budgets, 3 VMs | Packer + String Mosaic + larger numeric diversity budgets |
+
+Strong/maximum apply Boolean/Table/String Flow Obf -> FunctionObf -> NumberObf and
 source memes to the whole eligible source. `all_source_functions` removes the
 default SOURCE nesting-depth cutoff, without overriding explicit exclusions or
 compiler/semantic safety fallbacks. Generated CFF helpers are not recursively
@@ -67,9 +75,13 @@ define a backend.
 Every tier uses StripInfo, RenameObf, MemeStrings, NumberObf and Minify on the VM
 output. General output CFF/StringObf are off; VM's own handler, dispatcher,
 state and instruction protection remain enabled according to backend support.
-StringEncode remains available but is absent from user defaults. Maximum packs
-the result and applies the same visible Number/Meme pass list to the packer
-loader, with independent output scope. Legacy max is unchanged.
+Balanced/strong/maximum also enable StringEncode (String Mosaic) on VM output.
+It changes literal spelling without a decoder or runtime helper and does not
+insert physical newlines. Fast keeps its existing output list. Maximum packs
+the result and applies String Mosaic and the visible Number/Meme passes to the
+packer loader, with independent output scope and larger numeric budgets.
+Maximum also renames source identifiers before minification and VM lifting.
+Legacy max is unchanged.
 
 The complete user policies currently require Lua 5.3: existing AntiDebug,
 String/Boolean/Number/Meme and packer capability declarations still reject

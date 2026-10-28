@@ -232,6 +232,8 @@ class UnsupportedProtectionError(ValueError):
 
 
 _OPTION_FEATURES = {
+    'encoded_bitwise': 'encoded_bitwise',
+    'distributed_integrity': 'distributed_integrity',
     'opcode_synthesis':'opcode_synthesis','synthesis_policy':'opcode_synthesis',
     'synthesis_max_steps':'opcode_synthesis','synthesis_max_recipes':'opcode_synthesis','synthesis_max_occurrences':'opcode_synthesis','synthesis_max_code_growth':'opcode_synthesis',
     "ir_mba_rate": "semantic_ir_morphing", "ir_test_set_rate": "semantic_ir_morphing",

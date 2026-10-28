@@ -211,7 +211,8 @@ class SelectionRuntime:
         # dictionary. Those defaults also govern region lowering and nesting.
         self._function_defaults = {
             **pass_.features,
-            **{key: getattr(pass_, key) for key in ("boundary_mode", "nested", "nested_max_depth", "reconstruction_group_size", "all_source_functions")},
+            **{key: getattr(pass_, key) for key in ("boundary_mode", "nested", "nested_max_depth", "reconstruction_group_size", "all_source_functions",
+                                                 "merge", "merge_max_functions", "merge_max_groups")},
             **{"loop_" + key: value for key, value in pass_.compound_options.items()},
         }
         from .statement_regions import lower_region, transport_prelude

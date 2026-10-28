@@ -213,6 +213,14 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    'encoded_bitwise': {
+        'description': 'Automatically select encoded integer representations, including bitwise, shift, comparison and division circuits (Karity, Lua 5.3; enabled by default on that target).',
+        'default': True,
+    },
+    'distributed_integrity': {
+        'description': 'Cross-check a bounded set of actual runtime helper references with externally bound prototype fingerprints (Karity, Lua 5.3; enabled by default on that target).',
+        'default': True,
+    },
     "opcode_synthesis": {"description": "Synthesize connected arithmetic, bitwise and ordered table/upvalue IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.", "default": False},
     "synthesis_policy": {"description": "Choose estimated work savings or bounded regional opcode diversity. All policies enforce the same semantic and protection gates.", "default": "balanced", "values": [("efficiency","Prefer shared recipes and low overhead"),("balanced","Share common recipes with bounded regional forms"),("protection","Prefer bounded region-specific recipes")]},
     "synthesis_max_code_growth": {"description": "Per-VM additional kernel source budget relative to the target loader. Efficiency uses half, Balanced the full budget and Protection twice this allowance; compiler safety bounds always apply.", "default": 0.1, "min": 0.0, "max": 64.0},
@@ -538,11 +546,17 @@ def validate_config(config: object) -> None:
     _validate_string_obf_options(config.get('string_flow_obf_options', {}))
     _validate_literal_pass_options(config)
     _validate_function_obf_options(config.get("function_obf_options", {}))
-    _validate_vm_options(config.get("vm_options", {}))
+    target_options = config.get('target', {})
+    _validate_vm_options(config.get("vm_options", {}), lua_version=(
+        target_options.get('lua_version', '5.3') if isinstance(target_options, dict) else '5.3'))
     _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
     try:
         target = TargetProfile.from_config(cast(ObfuscatorConfig, config))
+        if target.backend == 'karity' and target.lua_version != '5.3':
+            for option in ('encoded_bitwise', 'distributed_integrity'):
+                if config.get('vm_options', {}).get(option):
+                    raise ValueError(f'{option} requires Lua 5.3')
         if target.host_images and "vm" not in config.get("passes", []):
             raise ValueError("target.host_images requires the VM materialization stage")
         for name in config.get("passes", []):
@@ -704,7 +718,7 @@ def _validate_function_obf_options(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'function_obf_options' must be an object")
     allowed = {
-        "cff", "junk", "inline", "wrapper",
+        "cff", "junk", "inline", "wrapper", "merge", "merge_max_functions", "merge_max_groups",
         "all_source_functions",
         "max_pass_expansion_ratio",
         "boundary_mode", "nested", "nested_max_depth",
@@ -739,11 +753,13 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError(
             "function_obf_options.nested_max_depth must be an integer between 0 and 16"
         )
-    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper", "all_source_functions"):
+    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper", "merge", "all_source_functions"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"function_obf_options.{key} must be a boolean")
     for key, minimum, maximum in (
+        ("merge_max_functions", 2, 8),
+        ("merge_max_groups", 0, 256),
         ("loop_unroll_max_iterations", 0, 32),
         ("loop_max_generated_blocks", 1, 1024),
         ("loop_max_depth", 0, 16),
@@ -788,7 +804,7 @@ def _validate_function_obf_options(options: dict) -> None:
         )
 
 
-def _validate_vm_options(options: dict) -> None:
+def _validate_vm_options(options: dict, *, lua_version='5.3') -> None:
     if not isinstance(options, dict):
         raise ConfigError("'vm_options' must be an object")
     unknown = sorted(set(options) - set(VM_OPTION_DOCS))
@@ -834,7 +850,7 @@ def _validate_vm_options(options: dict) -> None:
 
     for key in ("fake_handlers", "mutate_handlers", "junk_instructions",
                 "opcode_synthesis", "opcode_splitting", "opcode_fusion",
-                "integrity_constants", "runtime_trace",
+                "integrity_constants", "runtime_trace", "encoded_bitwise", "distributed_integrity",
                 "dispatcher_target_hiding", "semantic_state_threading",
                 "argument_virtualization", "upvalue_virtualization",
                 "table_virtualization", "branch_virtualization"):
@@ -878,6 +894,9 @@ def _validate_vm_options(options: dict) -> None:
     from .vm.protection import protection_requests, resolve_capabilities
     try:
         effective = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
+        backend = normalize_vm_backend(options.get('backend'))
+        for option in ('encoded_bitwise', 'distributed_integrity'):
+            effective[option] = backend == 'karity' and lua_version == '5.3'
         effective.update(options)
         resolve_capabilities(protection_requests(cast(VMOptions, effective)),
                              backend_capabilities(normalize_vm_backend(options.get("backend"))))

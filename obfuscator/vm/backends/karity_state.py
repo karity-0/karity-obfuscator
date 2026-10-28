@@ -92,6 +92,7 @@ class KarityState:
     functions: tuple[KarityFunctionState, ...]
     representation_routes: tuple[tuple[str, tuple[tuple[str, bool], ...]], ...]
     rotation_policy: tuple[tuple[str, object], ...]
+    bitwise_aliases: tuple[tuple[int, ...], ...] = ()
 
     def occurrence_inventory(self) -> tuple[frozenset[int], frozenset[int]]:
         """Physical graph sites and their runtime families, including dead routes."""
@@ -111,6 +112,8 @@ class KarityState:
             + ",".join(f"{name}:{int(graph)}" for name, graph in routes)
             for group, routes in self.representation_routes
         ]
+        lines.extend(f'karity-bitwise vm={vm} aliases={values}'
+                     for vm, values in enumerate(self.bitwise_aliases) if values)
         policy = dict(self.rotation_policy)
         lines.append(
             f"karity-rotation boundaries={','.join(policy['boundaries'])} "
@@ -167,7 +170,10 @@ class KarityState:
 
 
 _DEFERRED_OPERATIONS = frozenset(("ADD", "SUB", "NEGATE"))
-_LINEAR_OPERATIONS = _DEFERRED_OPERATIONS
+_LINEAR_OPERATIONS = _DEFERRED_OPERATIONS | frozenset(("MUL",))
+_BITWISE_OPERATIONS = frozenset(('BIT_AND', 'BIT_OR', 'BIT_XOR', 'BIT_NOT',
+                                'SHIFT_LEFT', 'SHIFT_RIGHT', 'MOD', 'FLOOR_DIV'))
+_INTEGER_PENDING_OPERATIONS = _BITWISE_OPERATIONS | _LINEAR_OPERATIONS
 _TERMINALS = frozenset(("RETURN", "TAIL_CALL"))
 _CONDITIONALS = frozenset((
     "EQUAL", "LESS_THAN", "LESS_EQUAL", "TEST", "TEST_SET",
@@ -445,6 +451,10 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
     materialized = resolved_pending if not transition.encoded_fast_path else ()
     for register in resolved_pending:
         current = values[register]
+        if transition.pending_guard == ('all-inputs-integer-kind', 'selected-bitwise-region'):
+            # A Boolean-share consumer may reuse a packet without completing it.
+            # Preserve the possible producer until a definite native consumer.
+            continue
         values[register] = RegisterState(
             Representation.ENCODED, current.epoch,
             epochs=current.epochs or (current.epoch,),
@@ -470,10 +480,12 @@ def _transfer(transition: KarityTransition, state: tuple[RegisterState, ...],
     )
 
 
-def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityFunctionState:
+def _function_state(function: PhysicalFunction, vm_map, profile=None, bitwise_aliases=frozenset(),
+                    encoded_integer=False) -> KarityFunctionState:
     started = time.perf_counter()
     split_parts, internal, deferred = _forms(function, vm_map)
     aliases = vm_map[0]
+    heads = {entry.start: entry.original_vops[0] for entry in function.synthesis}
     transitions: list[KarityTransition] = []
     for pc, item in enumerate(function.code):
         reads, writes = _operation_accesses(item.instruction, function.source.max_stack_size)
@@ -489,16 +501,25 @@ def _function_state(function: PhysicalFunction, vm_map, profile=None) -> KarityF
                           and item.instruction.operation in _DEFERRED_OPERATIONS
                           and writes and ungraphed) else None
         )
+        effective_vop = heads.get(pc, item.vop) if encoded_integer else item.vop
+        bitwise = (encoded_integer and ungraphed
+                   and item.instruction.operation in _INTEGER_PENDING_OPERATIONS
+                   and effective_vop in aliases.get(item.instruction.op, ()))
+        integer_compare = encoded_integer and item.instruction.operation in _CONDITIONALS - {'TEST','TEST_SET'}
+        if bitwise and writes:
+            pending_write = writes[0]
         pending_guard = (
             ("all-inputs-integer-kind", "runtime-poly-lazy")
             if pending_write is not None else ()
         )
+        if bitwise or integer_compare:
+            pending_guard = ('all-inputs-integer-kind', 'selected-bitwise-region')
         direct_linear = (
             item.instruction.operation in _LINEAR_OPERATIONS
-            and item.vop in aliases.get(item.instruction.op, ())
+            and effective_vop in aliases.get(item.instruction.op, ())
         )
         encoded_fast_path = (
-            (pending_write is not None or direct_linear)
+            (pending_write is not None or direct_linear or bitwise or integer_compare)
             and ungraphed
         )
         boxes_created = tuple(sorted(set(captures)))
@@ -634,7 +655,7 @@ def state_input_signature(layout):
     Instructions/descriptors are frozen. Unreferenced deferred handlers have
     no transfer and do not belong to this signature; removing them is safe.
     """
-    result = []
+    result = [getattr(layout, 'encoded_bitwise', False)]
     for function in iter_functions(layout.functions):
         mapping = layout.vm_maps[function.vm_id]
         split,internal,deferred = _forms(function,mapping)
@@ -653,14 +674,18 @@ def lower_state(layout, representation_routes, rotation_policy, *, profile=None)
         raise ValueError("Karity lowered state requires planned representation routes")
     if rotation_policy is None:
         raise ValueError("Karity lowered state requires planned runtime rotation policy")
+    from .karity_bitwise import select_aliases
+    bitwise = select_aliases(layout)
     return KarityState(
         tuple(
-            _function_state(function, layout.vm_maps[function.vm_id], profile)
+            _function_state(function, layout.vm_maps[function.vm_id], profile, bitwise[function.vm_id],
+                            layout.encoded_bitwise)
             for function in iter_functions(layout.functions)
         ),
         tuple((group, tuple((name, route) for name, route in routes))
               for group, routes in representation_routes),
         tuple(sorted(rotation_policy.items())),
+        tuple(tuple(sorted(values)) for values in bitwise),
     )
 
 
@@ -734,14 +759,17 @@ def validate_state(lowered) -> None:
             if transition.close_materialized != expected_close_materialized:
                 raise ValueError("Karity upvalue close failed to materialize a pending value")
             if transition.pending_write is not None:
-                if transition.operation not in _DEFERRED_OPERATIONS:
+                if transition.operation not in _INTEGER_PENDING_OPERATIONS:
                     raise ValueError("Karity pending producer has an unsupported operation")
                 if (transition.graph_descriptors
                         and transition.graph_descriptors[0][0] != 0):
                     raise ValueError("Karity graphed deferred handler cannot leave a pending value")
                 if transition.pending_write not in transition.writes:
                     raise ValueError("Karity pending producer does not write its destination")
-                if transition.pending_guard != ("all-inputs-integer-kind", "runtime-poly-lazy"):
+                guards = {('all-inputs-integer-kind', 'selected-bitwise-region')}
+                if transition.operation in _DEFERRED_OPERATIONS:
+                    guards.add(("all-inputs-integer-kind", "runtime-poly-lazy"))
+                if transition.pending_guard not in guards:
                     raise ValueError("Karity pending producer is missing its runtime guard")
             if any(register not in transition.reads for register in transition.materialized):
                 raise ValueError("Karity materialization is not backed by an rget use")
@@ -763,7 +791,7 @@ def validate_state(lowered) -> None:
             if (transition.maybe_materialized and not transition.encoded_fast_path):
                 raise ValueError("Karity conditional materialization has no encoded fast path")
             if (transition.encoded_fast_path
-                    and (transition.operation not in _LINEAR_OPERATIONS
+                    and (transition.operation not in _LINEAR_OPERATIONS | _BITWISE_OPERATIONS | {'EQUAL','LESS_THAN','LESS_EQUAL'}
                          or (transition.graph_descriptors
                              and transition.graph_descriptors[0][0] != 0))):
                 raise ValueError("Karity encoded fast path has an invalid operation or graph route")
