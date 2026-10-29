@@ -28,6 +28,7 @@ REGRESSIONS = (
     'runtime_validation',
     'program_integrity',
     'integrity_consumption',
+    'integrity_integration',
     'block_permutation',
     'ir_facts',
     'ir_morphing',

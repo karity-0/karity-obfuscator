@@ -157,7 +157,11 @@ def inject_handlers(source,lowered,variant,vm_index):
     failures={opcode:report['error'] for opcode,report in measurements.items() if 'error' in report}
     if failures:raise ValueError(f'synthesized handler cannot compile: vm={vm_index} errors={failures!r}')
     instructions=sum(report['total_instructions'] for report in measurements.values())
-    bank=instructions>MAX_JUMP//4;kernel_bytes=sum(len(body.encode()) for body in blocks.values());bank_bytes=0
+    # Integer helpers occupy the executor's local budget; mutation hoists the
+    # step locals. Keep those kernels in the existing per-frame closure bank.
+    lexical_pressure=encoded and variant['mutate_handlers']
+    bank=instructions>MAX_JUMP//4 or lexical_pressure
+    kernel_bytes=sum(len(body.encode()) for body in blocks.values());bank_bytes=0
     if bank:
         # Bound the enclosing dispatch jump even at large explicit budgets.
         # Each body becomes a private per-frame closure with the same events,

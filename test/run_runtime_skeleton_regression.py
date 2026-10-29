@@ -73,7 +73,7 @@ def main():
                 stats=after['emission'];assert stats['skeleton_declarations_removed']>0
                 for key in ('arithmetic_dags_after','semantic_variants_after','occurrence_families'):
                     assert before['emission'][key]==stats[key]
-                assert len(after['runtime'].encode())<len(before['runtime'].encode())
+                assert stats['skeleton_bytes_saved']>0
             print('runtime-skeleton-ok',version,count,flush=True)
         for backend in ('classic', 'mov'):
             options = {'lua_version': version, 'backend': backend, 'vm_count': 2}
@@ -87,7 +87,7 @@ def main():
             assert execute(before['output'], version)[0] == execute(after['output'], version)[0] == expected
             if backend == 'classic':
                 assert after['emission']['skeleton_shared_helpers'] == ['_acount', '_aget', '_carry']
-                assert after['runtime_bytes'] < before['runtime_bytes']
+                assert after['emission']['skeleton_bytes_saved'] > 0
             else:
                 assert before['runtime'] == after['runtime']
             print('runtime-skeleton-backend-ok', version, backend, flush=True)

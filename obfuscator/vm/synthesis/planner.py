@@ -164,9 +164,11 @@ def build_plan(ir,*,lua_version='5.3',enabled=False,policy='balanced',seed=0,max
     repetitions=Counter(recipe.id for recipe,_ in candidates)
     regional_count=0
     if backend!='prototype':
+        owned={f.id for f in ir.functions() if f.debug_metadata.get('security_owned')}
         # A newly supported cold call/branch must not consume a small recipe
         # budget before recurring loop DAGs in child functions are considered.
-        candidates.sort(key=lambda item:(item[1].cost.loop_region,repetitions[item[0].id],backend_work(item[1],backend)['net_work_estimate']),reverse=True)
+        candidates.sort(key=lambda item:(item[1].function not in owned,item[1].cost.loop_region,
+            repetitions[item[0].id],backend_work(item[1],backend)['net_work_estimate']),reverse=True)
     for recipe,occurrence in candidates:
         # No claimed nanosecond speedup: retain structural dispatch/access
         # costs separately from the logical events that must still run.

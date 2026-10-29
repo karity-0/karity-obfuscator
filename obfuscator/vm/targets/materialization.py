@@ -82,15 +82,28 @@ class MaterializationPlan:
         marker = 'local function read_proto(r, acc_state)'
         if source.count(marker) != 1:
             raise ValueError('host materialization requires one prototype reader')
-        source = source.replace(marker, emit_host_reader(self.references) +
+        source = source.replace(marker, emit_host_reader(self.references) + '''
+local _host_pending={}
+local function _host_initialize()
+    for i=1,#_host_pending do local entry=_host_pending[i]
+        entry[1][3]=_PS.cell_set(entry[1],entry[2]);_host_pending[i]=nil
+    end
+    _host_pending=nil
+end
+''' +
                                 '\nlocal _host_slots=' + slots + '\nlocal _host_ordinal=0\n' + marker +
                                 '\n_host_ordinal=_host_ordinal+1;local _host_function=_host_ordinal')
+        identity='  bind_identity(script,line)\n'
+        if source.count(identity)!=1:
+            raise ValueError('host materialization identity boundary is missing')
+        source=source.replace(identity,identity+'  _host_initialize()\n')
         marker = 'n=r.uint(); p.upvalues={}'
         if source.count(marker) != 1:
             raise ValueError('host materialization constant boundary is missing')
         return source.replace(marker,
                               'for slot,reference in pairs(_host_slots[_host_function] or {}) do '
-                              'p.constants[slot]={CK_STR,"",_PS.seal(_host_read(reference))} end\n' + marker)
+                              'local k={CK_STR,""};p.constants[slot]=k;'
+                              '_host_pending[#_host_pending+1]={k,_host_read(reference)} end\n' + marker)
 
 
 def plan_materialization(functions, provider: ConstantProvider) -> MaterializationPlan:

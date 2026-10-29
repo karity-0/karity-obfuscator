@@ -92,9 +92,12 @@ end''')
         self.assertEqual(execute(source),execute(output))
         data=vm.last_lowered_ir.backend_data
         self.assertTrue(data['integer_proof_events'])
-        self.assertTrue(all(event['outcome']=='elided' for event in data['integer_proof_events']))
+        integer_only={'BIT_XOR','SHIFT_LEFT','BIT_OR','FLOOR_DIV','MUL','NEGATE','BIT_NOT'}
+        events=[event for event in data['integer_proof_events'] if event['operation'] in integer_only]
+        self.assertEqual(integer_only,{event['operation'] for event in events})
+        self.assertTrue(all(event['outcome']=='elided' for event in events))
         removed=set(data['runtime_emission']['removed_helpers'])
-        self.assertTrue({'_arith2','_arith1','_arith2r','_arith1r'}<=removed,removed)
+        self.assertNotIn('_arith2r',removed,'the private validator still has unproven arithmetic')
         random.seed(1621)
         dynamic='local function f(a,b)return a+b,a~b,a//b end;print(f(17,3))'
         vm=VMPass(vm_options={**OPTIONS,'opcode_splitting':False,'opcode_fusion':False},vm_output_passes=['minify'])

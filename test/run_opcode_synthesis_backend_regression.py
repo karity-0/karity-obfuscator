@@ -9,7 +9,7 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'tools'),str(ROOT/'test')]
 from profile_opcode_synthesis import build,BASE,PROTECTED,SOURCE,REPEATED,FUNCTIONS,LONG_DAG
 from profile_vm_runtime import execute
-from run_opcode_synthesis_regression import must_fail
+from run_opcode_synthesis_regression import must_fail,guest_plan
 from obfuscator.vm.synthesis.planner import validate_plan
 from obfuscator.vm.backends.handler_layout import validate_layout
 from obfuscator.vm.backends.runtime_layout import iter_functions
@@ -43,7 +43,7 @@ def vocabulary_checks(backends,versions):
                         'opcode_synthesis':True,'synthesis_max_steps':8,'synthesis_max_code_growth':64})
                     assert data['regions'] and data['handlers'],(backend,source,protected)
                     assert execute(output,version)[0]==execute(source,version)[0],(backend,source,protected)
-                    plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                    plan=guest_plan(p)
                     recipes={r.id:r for r in plan.recipes}
                     from obfuscator.vm.synthesis.strategies import TERMINAL
                     numeric=[o for o in plan.occurrences if recipes[o.recipe].steps[-1].operation not in TERMINAL]
@@ -58,7 +58,7 @@ def vocabulary_checks(backends,versions):
                 'local a=1.5;local ok=pcall(function()local b=a~3;local c=b&7;local d=c|16;return d end);print(ok)',
             ):
                 output,data,p=build(source,backend,version,{**BASE,'opcode_synthesis':True})
-                plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                plan=guest_plan(p)
                 assert all(o.numeric_domain!='integer' and o.materialize for o in plan.occurrences),(backend,source)
                 assert execute(output,version)[0]==execute(source,version)[0],(backend,source)
                 count+=1
@@ -78,7 +78,7 @@ def cost_checks(backends,versions):
             output,data,p=build(SOURCE,backend,version,{**BASE,'opcode_synthesis':True,
                 'opcode_fusion':True,'synthesis_policy':'efficiency'})
             assert execute(output,version)[0]==execute(SOURCE,version)[0]
-            plan=p.last_lowered_ir.backend_data['synthesis_plan']
+            plan=guest_plan(p)
             for decision in plan.decisions:
                 alternatives=decision['alternatives']
                 assert {'ordinary','fusion','planned','synthesis','baseline'}<=alternatives.keys()
@@ -104,7 +104,7 @@ def cost_checks(backends,versions):
                 'synthesis_policy':'balanced','vm_count':3,'synthesis_max_recipes':1,
                 'synthesis_max_code_growth':.00001})
             assert execute(output,version)[0]==execute(FUNCTIONS,version)[0]
-            plan=p.last_lowered_ir.backend_data['synthesis_plan']
+            plan=guest_plan(p)
             assert not data['handlers'] and dict(plan.rejected).get('cost_probe_handler_budget')
             selection=next(r for r in p.last_profile if r['phase']=='synthesis_cost_selection')
             assert selection['physical_signatures_probed']<=1
@@ -113,12 +113,12 @@ def cost_checks(backends,versions):
         source='local s=0;for i=1,40 do local a=i*3;local b=a+7;local c=b*5;s=s+c;local d=i*4;local e=d-9;local f=e*6;s=s+f end;print(s)'
         settings={**BASE,'opcode_synthesis':True,'synthesis_policy':'efficiency','synthesis_max_steps':4}
         output,data,p=build(source,'karity','5.3',{**settings,'synthesis_max_code_growth':64})
-        assert data['regions']==2 and execute(output,'5.3')[0]==execute(source,'5.3')[0]
-        first=p.last_lowered_ir.backend_data['synthesis_plan'].decisions[0]['incremental_bytes']
+        assert len(guest_plan(p).occurrences)==2 and execute(output,'5.3')[0]==execute(source,'5.3')[0]
+        first=guest_plan(p).decisions[0]['incremental_bytes']
         allowance=first*1.02/(len(p._backend.target.runtime_template('vm.lua').encode())*.5)
         output,data,p=build(source,'karity','5.3',{**settings,'synthesis_max_code_growth':allowance})
-        assert not data['regions'] and execute(output,'5.3')[0]==execute(source,'5.3')[0]
-        plan=p.last_lowered_ir.backend_data['synthesis_plan']
+        assert not guest_plan(p).occurrences and execute(output,'5.3')[0]==execute(source,'5.3')[0]
+        plan=guest_plan(p)
         assert dict(plan.rejected).get('frame_head_work'),'budget fallbacks must be repriced as ordinary dispatches'
         selection=next(row for row in p.last_profile if row['phase']=='synthesis_cost_selection')
         assert not selection['code_bytes_reserved']
@@ -264,26 +264,26 @@ def main():
                     output,data,p=build(source,backend,version,{**BASE,**options,'opcode_synthesis':True,'synthesis_policy':policy})
                     actual,_=execute(output,version)
                     assert actual==expected,(backend,version,name,actual,expected)
-                    if data['regions']:
-                        plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                    plan=guest_plan(p)
+                    if plan.occurrences:
                         assert plan.decisions and all(d.get('accepted_for') or d.get('fallback') for d in plan.decisions)
                         for decision in plan.decisions:
                             if decision.get('accepted_for'):
                                 assert decision['incremental_bytes']<=decision['code_budget_bytes']
                                 assert decision['operand_encodings']['event_slots']['bytes']<decision['operand_encodings']['recipe_table_with_event_slots']['bytes']
                     if name in ('dag','overwrite','float','pending_head') or name=='shared' and policy!='efficiency':
-                        assert data['regions']>0 and data['handlers']>0,(backend,version,name,data)
-                    if name=='shared' and policy=='efficiency' and not data['regions']:
-                        assert dict(p.last_lowered_ir.backend_data['synthesis_plan'].rejected).get('measured_kernel_work'),data
-                    if name=='semantics' and data['regions']:
-                        assert any(r.ordered for r in p.last_lowered_ir.backend_data['synthesis_plan'].recipes)
+                        assert plan.occurrences and data['handlers']>0,(backend,version,name,data)
+                    if name=='shared' and policy=='efficiency' and not plan.occurrences:
+                        assert dict(guest_plan(p).rejected).get('measured_kernel_work'),data
+                    if name=='semantics' and plan.occurrences:
+                        assert any(r.ordered for r in guest_plan(p).recipes)
                     if name=='multivm':
-                        plan=p.last_lowered_ir.backend_data['synthesis_plan'];recipes={r.id:r for r in plan.recipes}
+                        plan=guest_plan(p);recipes={r.id:r for r in plan.recipes}
                         assert sum(not recipes[o.recipe].ordered for o in plan.occurrences)==2
                         assert data['regions']>=2 and data['handlers']>=2
                         assert p.last_lowered_ir.backend_data['layout'].vm_count==3
                     if name=='dag':
-                        plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                        plan=guest_plan(p)
                         must_fail(lambda:validate_plan(p.last_semantic_ir,replace(plan,protection_signature='stale'),protection_plan=p.last_protection_plan))
                         layout=p.last_lowered_ir.backend_data['layout'];function=next(f for f in iter_functions(layout.functions) if f.synthesis)
                         original=function.synthesis
@@ -323,7 +323,7 @@ def main():
             output,data,p=build(FUNCTIONS,backend,version,{**BASE,'vm_count':3,'opcode_fusion':True,'opcode_splitting':True,'opcode_synthesis':True,'synthesis_policy':'balanced','synthesis_max_recipes':1})
             assert execute(output,version)[0]==execute(FUNCTIONS,version)[0]
             assert data['handlers']<=1
-            assert data['fallbacks']>0 or dict(p.last_lowered_ir.backend_data['synthesis_plan'].rejected).get('cost_probe_handler_budget')
+            assert data['fallbacks']>0 or dict(guest_plan(p).rejected).get('cost_probe_handler_budget')
             count+=1
             baseline,base_data,base_pass=build(SOURCE,backend,version,BASE)
             output,data,p=build(SOURCE,backend,version,{**BASE,'opcode_synthesis':True,'synthesis_max_code_growth':0})
@@ -333,7 +333,7 @@ def main():
             assert data['blob_hash']==base_data['blob_hash'],'zero cost budget must leave original operand storage intact'
             assert p.last_lowered_ir.backend_data['layout'].functions.code==base_pass.last_lowered_ir.backend_data['layout'].functions.code
             assert execute(output,version)[0]==execute(baseline,version)[0]
-            assert dict(p.last_lowered_ir.backend_data['synthesis_plan'].rejected)['emitted_code_budget']
+            assert dict(guest_plan(p).rejected)['emitted_code_budget']
             count+=1
             # Exercise suspension/error after a region that really is synthesized.
             source='local co=coroutine.create(function() '+SOURCE.replace('print(sum)','coroutine.yield(sum,nil);error("expected",0)')+' end);print(coroutine.resume(co));print(coroutine.resume(co))'

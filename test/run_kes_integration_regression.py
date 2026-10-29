@@ -42,15 +42,20 @@ def main():
                 vm=VMPass(vm_options=settings(backend,'protected',124),target=TargetProfile(lua_version=version,backend=backend))
                 target=vm._backend.target
                 dump=target.dump_function;bind=target.bind_lines;observed={}
+                from obfuscator.vm.helper_integrity import HelperIntegrity
+                manifest=HelperIntegrity.manifest
+                def capture_manifest(plan,*args):
+                    value=manifest(plan,*args);observed['manifest']=value;return value
                 def capture_dump(*args):
                     value=dump(*args);observed['dump']=value;return value
                 def capture_lines(*args):
                     value=bind(*args);observed['line']=value[1];return value
-                with patch.object(target,'dump_function',capture_dump),patch.object(target,'bind_lines',capture_lines):
+                with patch.object(target,'dump_function',capture_dump),patch.object(target,'bind_lines',capture_lines),patch.object(HelperIntegrity,'manifest',capture_manifest):
                     output=vm.run(contract)
                 layout=vm.last_lowered_ir.backend_data['layout']
                 from obfuscator.vm.backends.handler_codec import _layout_hash
                 script_hash=(zlib.crc32(observed['dump'])^observed['line'])&0xffffffff
+                if 'manifest' in observed:script_hash^=zlib.crc32(observed['manifest'].encode('ascii'))&0xffffffff
                 def expected(function):return [script_hash,layout.vm_count,function.vm_id,_layout_hash(layout.instruction_layout),len(function.code)]
                 root,child=expected(layout.functions),expected(layout.functions.children[0])
                 harness=work/'getters-harness.lua'

@@ -103,14 +103,22 @@ def initialization_source(version, backend):
     return f'_PG_INIT(proto,{kits},crc,{line})'
 
 
-def _decision(name, entries):
-    if not entries:return 'return nil'
-    if len(entries)==1:
-        key,body=entries[0]
-        return f'if {name}=={key} then {body} end'
+def _decision(name, entries, handlers=False):
+    if len(entries)<=8:
+        definitions=[];branches=[]
+        for i,(key,body) in enumerate(entries):
+            if handlers:
+                definitions.append(f'local h{i}={body}')
+                body=f'return h{i}(domain,ordinal,value)'
+            branches.append(('if' if i==0 else 'elseif')+f' {name}=={key} then {body}')
+        body=' '.join(branches)+(' end' if branches else '')
+        function='function(domain,ordinal,value) '+body+' end'
+        return '(function() '+' '.join(definitions)+' return '+function+' end)()' if handlers else function
     mid=len(entries)//2
-    return (f'if {name}<={entries[mid-1][0]} then '+_decision(name,entries[:mid])+
-            ' else '+_decision(name,entries[mid:])+' end')
+    return ('(function() local left='+_decision(name,entries[:mid],handlers)+
+        ' local right='+_decision(name,entries[mid:],handlers)+
+        ' return function(domain,ordinal,value) '+f'if {name}<={entries[mid-1][0]} then '+
+        'return left(domain,ordinal,value) else return right(domain,ordinal,value) end end end)()')
 
 
 def _vector(value, numbers):
@@ -135,9 +143,10 @@ def policy_source(records, mov_records, fields):
                     for i,leaf in enumerate(record['constants'],1))
         rows.append((domain,_decision('ordinal',tags)))
     for i,value in enumerate(mov_records,len(records)+1):
-        rows.append((i,'if ordinal==0 then return '+_vector('value',value)+' end'))
-    return ('local function policy(domain,ordinal,value) '
-            'if value~=0 then table0(value) end '+_decision('domain',rows)+' end')
+        rows.append((i,_decision('ordinal',[(0,'return '+_vector('value',value))])))
+    return ('local policy_dispatch='+_decision('domain',rows,True)+
+            '\nlocal function policy(domain,ordinal,value) '
+            'if value~=0 then table0(value) end return policy_dispatch(domain,ordinal,value) end')
 
 
 def mov_manifest(kits, linked):
@@ -168,8 +177,10 @@ def prepare(source, layout, context, blob, mov=None, validation_id=None):
     from .backends.handler_codec import BinReader
     reader=BinReader(blob);reader.header()
     header=[reader.u16(),reader.u32(),reader.u16()]
+    binary64=context.target.user_number_model=='binary64'
+    version='5.1' if binary64 else '5.3'
     records=manifest(layout.functions,None if mov is None else mov['linked'][1],
-                     kinds=layout.constant_kinds,version=context.target.lua_version)
+                     kinds=layout.constant_kinds,version=version)
     mov_records=[] if mov is None else mov_manifest(mov['kits'],mov['linked'])
     native=(Path(__file__).parent/'runtimes/program_integrity.lua').read_text(encoding='utf8')
     fields=random.sample(SPEC_FIELDS,len(SPEC_FIELDS))
@@ -183,7 +194,7 @@ def prepare(source, layout, context, blob, mov=None, validation_id=None):
     native=native.replace('__PROGRAM_MANIFEST__',_literal(records,fields))
     native=native.replace('__PROGRAM_HEADER_CHECK__',
         ' or '.join('_IT.'+key+'~='+str(value) for key,value in zip(('seed','layout','vmc'),header)))
-    if context.target.lua_version=='5.1':
+    if binary64:
         template=context.target.runtime_template('mov_exec.lua')
         start=template.index('local function _mov_f64_words(value)')
         end=template.index('local function _mov_f64_value(',start)
@@ -239,7 +250,7 @@ end'''
     # This is after all backend-specific parsing, including MOV extension loading.
     anchor='local env_box={v='
     if source.count(anchor)!=1:raise ValueError('program integrity initialization boundary is missing')
-    source=source.replace(anchor,initialization_source(context.target.lua_version,'mov' if mov_records else 'classic')+'\n    '+anchor)
+    source=source.replace(anchor,initialization_source(version,'mov' if mov_records else 'classic')+'\n    '+anchor)
     pattern=r'((?:exec|_mov_dispatch\[[0-9]+\]) = function\(proto,[^\n]+\)\n)'
     source,count=re.subn(pattern,lambda match:match[1]+(
         '    if not _fr then _PS_GUARD(false,proto) end\n' if re.search(r'\b_fr\b',match[1])

@@ -11,7 +11,7 @@ from profile_opcode_synthesis import build,BASE,PROTECTED
 from profile_vm_runtime import execute
 from obfuscator.vm.synthesis import planner
 from obfuscator.vm.synthesis.lowering import dump_plan
-from run_opcode_synthesis_regression import must_fail
+from run_opcode_synthesis_regression import must_fail,guest_plan
 
 
 def guard_contract(version):
@@ -52,6 +52,7 @@ def stress_checks(version):
         for form in ('locals','cells'):
             with force_local_form(form):
                 output,data,p=build(source,'karity',version,{**BASE,**PROTECTED,'mutate_handlers':mutate,
+                    'encoded_bitwise':False,
                     'opcode_synthesis':True,'synthesis_policy':'protection','synthesis_max_steps':16,
                     'synthesis_max_code_growth':64,'block_variant_rate':0,'physical_block_permutation_rate':0})
             assert data['handlers'] and execute(output,version)[0]==execute(source,version)[0]
@@ -134,7 +135,8 @@ def main():
                     output,data,p=build(source,backend,version,settings)
                     assert execute(output,version)[0]==execute(source,version)[0],(backend,version,name,protected)
                     assert data['regions'] and data['handlers'],(backend,version,name,protected,data['rejected'])
-                    plan=p.last_lowered_ir.backend_data['synthesis_plan']
+                    plan=guest_plan(p)
+                    assert plan.occurrences,(backend,version,name,protected)
                     assert all(s.operation not in ('TAIL_CALL','RETURN','CLOSURE','VARARG')
                                for r in plan.recipes for s in r.steps)
                     if name=='mixed_proofs':
@@ -174,6 +176,7 @@ def main():
                 return found,reason
             for protected in (False,True):
                 settings={**BASE,**(PROTECTED if protected else {}),'opcode_synthesis':True,
+                    'encoded_bitwise':False,
                     'synthesis_policy':'protection','synthesis_max_code_growth':64,
                     'block_variant_rate':0,'physical_block_permutation_rate':0}
                 with patch.object(planner,'_region',no_local):

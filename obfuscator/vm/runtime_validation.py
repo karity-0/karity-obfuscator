@@ -49,8 +49,9 @@ def entry_source(backend, target, layout, function_id):
     if len(indices)!=1:raise ValueError('runtime validator private prototype is missing or ambiguous')
     index=indices[0]
     if backend=='karity':
-        prefix='ctx.' if target.lua_version=='5.1' else '_'
-        environment='self_func' if target.lua_version=='5.1' else 'env_box.v'
+        function_environment=target.capabilities['env_model']=='function'
+        prefix='ctx.' if function_environment else '_'
+        environment='self_func' if function_environment else 'env_box.v'
         entry=(f'{prefix}CG[__VM_ROUTE_ENTER__]({prefix}NX[_rv_proto.vm_id+1],'
             '{[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=_rv_proto,'
             '[__VM_Q_UPVALS__]={env_box,environment='+environment+'},'
