@@ -117,6 +117,9 @@ pay for distinct forms even without a performance saving. Efficiency never does.
     target=context.target
     loader=target.runtime_template('vm.lua') if target else (Path(__file__).parents[1]/'vm.lua').read_text(encoding='utf-8')
     source=loader if lowered.backend=='karity' else target.runtime_template('classic_exec.lua') if target else classic_executor()
+    if lowered.backend in {'classic','mov'}:
+        from ..call_arity import prepare_classic_calls
+        source=prepare_classic_calls(source,lowered,target)
     if lowered.backend=='karity':
         from ..runtime_security import _karity
         source=_karity(source)

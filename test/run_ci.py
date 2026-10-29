@@ -37,6 +37,7 @@ REGRESSIONS = (
     'opcode_synthesis_backend',
     'opcode_edges',
     'vm_lifetime',
+    'fixed_arity',
     'kes',
     'kes_integration',
     'synthesis_dag',

@@ -20,6 +20,8 @@ class MovBackend(VMBackend):
         from .runtime_templates import classic_executor, direct_executor
         from ..mov.builder import build_runtime
         executor_template = target.runtime_template('classic_exec.lua') if target else classic_executor()
+        from ..call_arity import prepare_classic_calls
+        executor_template=prepare_classic_calls(executor_template,lowered,target)
         # MOV reuses Classic's host-handler template, then injects its own
         # microcode expressions.  Those expressions still use the target
         # lowering markers, so only Classic itself may retain this native
