@@ -39,7 +39,7 @@ FEATURE_SUITES = {
     'targets': 'lua_frontend lua51_word lua51_runtime lua51_pass_matrix lua51_semantic_matrix fixed_arity dump51 lua51_toolchain target_capability closure_gc host_materialization',
     'host': 'image_resolver host_materialization native_lowering target_capability',
     'toolchain': 'toolchain lua51_toolchain dump51 lua_frontend',
-    'serialization': 'serialization blob_form source_protection opcode_edges',
+    'serialization': 'serialization constant_pool blob_form source_protection opcode_edges',
 }
 FEATURE_SUITES = {k: frozenset(v.split()) for k, v in FEATURE_SUITES.items()}
 PASS_FEATURES = {
@@ -124,6 +124,7 @@ PATH_FEATURES = (
     ('obfuscator/vm/output_emitter.py', 'strings numbers functions naming'),
     ('obfuscator/vm/native_capture.py', 'security naming'),
     ('obfuscator/vm/blob_formats.py', 'serialization'),
+    ('obfuscator/vm/constant_pool.py', 'serialization ir'),
     ('obfuscator/serializer*.py', 'serialization'),
     ('gui/**', 'gui'),
     ('obfuscator_gui.py', 'gui'),

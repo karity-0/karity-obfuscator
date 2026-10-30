@@ -101,7 +101,10 @@ def prepare(ir, plan, context):
     if context.target.lua_version=='5.1' and operations & {'GLOBAL_GET','GLOBAL_SET'}:features.add('global_get')
     if context.target.lua_version=='5.1' and 'GLOBAL_SET' in operations:features.add('global_set')
     protected=_instrument(ir,plan,p,context)
-    if any(isinstance(v,(str,bytes)) for v in p.constants):features.add('string')
+    used_constants={key for f in ir.functions() for b in f.blocks
+                    for i in b.instructions for key in i.constants}
+    if any(v.id in used_constants and v.kind=='constant' and isinstance(v.literal,(str,bytes))
+           for f in ir.functions() for v in f.values):features.add('string')
     p.features=frozenset(features)
     text=(Path(__file__).parent/'runtimes/source_security.lua').read_text(encoding='utf8')
     for feature in ('string','write','setmeta','script_hash','global_get','global_set'):

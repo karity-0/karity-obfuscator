@@ -24,6 +24,7 @@ REGRESSIONS = (
     'import',
     'blob_form',
     'serialization',
+    'constant_pool',
     'runtime_security',
     'runtime_probes',
     'runtime_validation',

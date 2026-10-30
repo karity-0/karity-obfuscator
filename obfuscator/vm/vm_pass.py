@@ -191,6 +191,8 @@ class VMBuildPipeline(PostPass):
         if backend.name!='bare':
             from .runtime_validation import attach
             optimized_ir,private_validator=attach(optimized_ir,context)
+        from .constant_pool import inject_decoy_strings
+        optimized_ir = inject_decoy_strings(optimized_ir)
         resolution_started = time.perf_counter()
         initial_plan = planner.build(optimized_ir)
         resolution = resolve_capabilities(initial_plan, backend.capabilities)
