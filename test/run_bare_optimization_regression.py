@@ -11,6 +11,7 @@ from obfuscator import Pipeline,build_pipeline_from_config
 from obfuscator.vm import VMPass
 from obfuscator.vm.targets.profile import TargetProfile
 from obfuscator.vm.backends.bare_emitter import Function
+from obfuscator.vm.backends import bare_registers
 from obfuscator.vm.protection import protect
 from obfuscator.vm.ir import validate_semantic_ir
 from run_vm_backend_regression import options
@@ -36,6 +37,133 @@ class BareOptimizationTests(unittest.TestCase):
         output,vm,texts=build(source,version,**kwargs)
         self.assertEqual(execute(version,source),execute(version,output))
         return vm,texts
+
+    def compare_frame_allocation(self,source,version,**kwargs):
+        vm,texts=self.compare(source,version,**kwargs)
+        allocate=bare_registers.allocate
+        with patch.object(bare_registers,'allocate',lambda e:allocate(e,expand=False)):
+            before,_=self.compare(source,version,**kwargs)
+        def guards(lowered):
+            return [(f.id,i.metadata.get('guard_event'),i.metadata.get('guard_proof'),i.metadata['bare_call'])
+                for f in lowered.semantic_ir.functions() if not f.debug_metadata.get('security_owned')
+                for b in f.blocks for i in b.instructions if i.metadata.get('bare_call',())[0:1]==('guard',)]
+        self.assertEqual(guards(before.last_lowered_ir),guards(vm.last_lowered_ir))
+        for frame in vm.last_lowered_ir.backend_data['bare_frame_plans']:
+            self.assertLessEqual(frame['local_prefix'],frame['dynamic_start'])
+            if frame['local_prefix']>frame['initial_prefix']:
+                self.assertLessEqual(frame['locals'],frame['local_budget'])
+        return vm,texts
+
+    @staticmethod
+    def live_frame(count):
+        return ('local '+','.join('v'+str(i) for i in range(count))+'='+
+                ','.join(str(i+1) for i in range(count))+';local n=0;for k=1,8 do n=n+'+
+                '+'.join('v'+str(i) for i in range(count))+' end;print(n,v0,v'+str(count-1)+')')
+
+    def test_native_prefix_expands_with_physical_budget(self):
+        for version in ('5.1','5.3'):
+            vm,texts=self.compare_frame_allocation(self.live_frame(70),version,protected=True)
+            frame=next(p for p in vm.last_lowered_ir.backend_data['bare_frame_plans'] if p['function']=='f0')
+            self.assertGreater(frame['local_prefix'],48)
+            self.assertFalse(frame['spill'])
+            self.assertNotIn('_BS',texts['f0'])
+            self.assertGreater(vm.last_lowered_ir.backend_data['optimization']['native_registers_promoted'],0)
+
+    def test_native_prefix_falls_back_before_lua_limits(self):
+        for version in ('5.1','5.3'):
+            vm,_=self.compare_frame_allocation(self.live_frame(170),version,protected=True)
+            frame=next(p for p in vm.last_lowered_ir.backend_data['bare_frame_plans'] if p['function']=='f0')
+            self.assertGreater(frame['local_prefix'],48)
+            self.assertTrue(frame['spill'])
+            self.assertLessEqual(frame['locals'],frame['local_budget'])
+
+    def test_large_logical_prefix_can_reuse_few_physical_locals(self):
+        count=170
+        source=('local '+','.join('v'+str(i) for i in range(count))+'='+
+                ','.join(str(i+1) for i in range(count))+';print(v0,v169)')
+        for version in ('5.1','5.3'):
+            vm,_=self.compare_frame_allocation(source,version,protected=True)
+            frame=next(p for p in vm.last_lowered_ir.backend_data['bare_frame_plans'] if p['function']=='f0')
+            self.assertGreater(frame['local_prefix'],frame['local_budget'])
+            self.assertLessEqual(frame['locals'],frame['local_budget'])
+            self.assertFalse(frame['spill'])
+
+    def test_expanded_frame_with_output_transforms_and_protected_junk(self):
+        from run_bare_flow_regression import build as build_flow
+        source=self.live_frame(70)
+        passes=('strip_info','function_obf','rename_obf','localize_globals','string_encode','minify')
+        for version in ('5.1','5.3'):
+            # The existing 5.1 localizer uses _ENV when new globals remain
+            # after function_obf. Both frame layouts fail without that host
+            # binding; exercise the ordinary 5.1 passes independently of it.
+            target_passes=tuple(p for p in passes if version!='5.1' or p!='localize_globals')
+            self.compare_frame_allocation(source,version,protected=True,passes=target_passes)
+            output,vm,rendered=build_flow(source,version,extra={'junk_instructions':True,'junk_rate':1.0})
+            self.assertEqual(execute(version,source),execute(version,output))
+            data=vm.last_lowered_ir.backend_data
+            expected={i.id for f in data['bare_emission_ir'].functions() for b in f.blocks for i in b.instructions
+                      if i.metadata.get('protection_origin')=='junk'}
+            self.assertEqual(expected,rendered)
+            frames={p['function']:p for p in data['bare_frame_plans']}
+            for f in data['bare_emission_ir'].functions():
+                mapping=dict(frames[f.id]['register_map'])
+                for b in f.blocks:
+                    for ins in b.instructions:
+                        if ins.metadata.get('protection_origin')=='junk':
+                            for operand in ins.operands:
+                                if operand.kind=='register' and operand.value in mapping:
+                                    self.assertEqual(operand.value,mapping[operand.value])
+
+    def test_expanded_frame_preserves_capture_close_and_weak_roots(self):
+        prefix=self.live_frame(70)
+        source=prefix+'''
+local weak=setmetatable({},{__mode='v'});local saved={}
+for i=1,3 do
+ do local object={n=i};weak[1]=object
+  saved[i]=function()return object.n,v69 end
+  collectgarbage('collect');assert(weak[1]~=nil)
+ end
+end
+print(saved[1](),saved[3]());saved=nil
+collectgarbage('collect');collectgarbage('collect');assert(weak[1]==nil)
+local function show(...)print(select('#',...),...)end
+local function values()return 7,nil,false,nil end
+show(values());print(v0,v69)'''
+        for version in ('5.1','5.3'):
+            self.compare_frame_allocation(source,version,protected=True)
+
+    def test_expanded_frame_reserves_long_call_temporaries(self):
+        count=80
+        source=self.live_frame(count)+'''
+local function sink(...)return select('#',...)end
+local n=sink('''+','.join('v'+str(i%count) for i in range(160))+''')
+print(n,v0,v79)'''
+        for version in ('5.1','5.3'):
+            self.compare_frame_allocation(source,version)
+
+    def test_parameter_storage_stays_within_native_local_budget(self):
+        for count in (100,127,128):
+            params=','.join('p'+str(i) for i in range(count))
+            source=('local function f('+params+')local function get()return p'+str(count-1)+
+                    ' end;return p0,get()end;print(f('+','.join(str(i) for i in range(count))+'))')
+            for version in ('5.1','5.3'):
+                self.compare_frame_allocation(source,version)
+
+    def test_expanded_frames_keep_immediate_host_tamper_detection(self):
+        from run_source_protection_regression import run
+        count=70
+        source=('local '+','.join('v'+str(i) for i in range(count))+'='+
+                ','.join(str(i+1) for i in range(count))+';local n=host();AFTER=true;print(n+'+
+                '+'.join('v'+str(i) for i in range(count))+')')
+        allocate=bare_registers.allocate
+        for version in ('5.1','5.3'):
+            for expanded in (False,True):
+                with patch.object(bare_registers,'allocate',lambda e:allocate(e,expand=expanded)):
+                    output,_,_=build(source,version,protected=True,passes=('strip_info','rename_obf','minify'))
+                for mutation in ("string.byte=function()return 0 end", "debug.sethook(function()end,'',100)"):
+                    setup=('AFTER=false;function host()'+mutation+';return 7 end').encode()
+                    observe=b"local ok=pcall(assert((loadstring or load)(source)));debug.sethook();return ok,AFTER"
+                    self.assertEqual((False,False),run(version,output,setup,observe))
 
     def test_reachability_keeps_original_proof_and_reachable_guards(self):
         source='local function f(a)return a+7 end;print(f(3))'

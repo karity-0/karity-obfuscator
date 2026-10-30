@@ -8,7 +8,7 @@ from itertools import combinations
 
 
 def native_prefix(function):
-    """Shared pre/post-protection frame bound for nonallocating result stores."""
+    """Conservative pre/post-protection bound used by existing guard proofs."""
     scratch=function.debug_metadata.get('security_scratch_base')
     original=function.max_stack_size if scratch is None else scratch
     starts=[o.value for b in function.blocks for i in b.instructions for o in i.operands
@@ -17,8 +17,39 @@ def native_prefix(function):
             min(original,max(0,140-function.params),48,min(starts,default=original)))
 
 
-def allocate(emitter):
-    function, limit = emitter.function, emitter.local_count
+def allocate(emitter, *, expand=True):
+    function=emitter.function
+    initial=emitter.local_count
+    # Keep parameters/helpers and expression temporaries below Lua's separate
+    # local and VM-register limits. Long fixed calls/returns need extra space.
+    peak=max((o.count+(3 if i.operation in ('CALL','TAIL_CALL') else 1)
+              for b in function.blocks for i in b.instructions
+              if i.operation in ('CALL','TAIL_CALL','RETURN') for o in i.operands
+              if o.role in ('arguments','values') and o.kind=='register_range'
+              and o.count is not None),default=0)
+    budget=max(0,min(140-function.params,240-function.params-max(60,peak+12)))
+    emitter.native_budget=budget
+    maximum=initial
+    if expand and not (emitter.wide or emitter.program.poisoned or function.debug_metadata.get('security_owned')):
+        maximum=min(emitter.original_stack,emitter.dynamic_start)
+    # Try coloring the complete static prefix first: many logical registers
+    # can fit into few physical locals. A bounded second attempt avoids a
+    # repeated search over every prefix when the live frame exceeds budget.
+    candidates=dict.fromkeys((maximum,max(initial,min(maximum,budget)),initial))
+    for limit in candidates:
+        result=_allocate(emitter,limit)
+        if limit==initial or len(set(result.values()))<=budget:
+            break
+    emitter.local_count=limit
+    emitter.program.optimization['native_slots_elided'] += limit-len(set(result.values()))
+    if limit>initial:
+        emitter.program.optimization['native_prefix_expansions'] += 1
+        emitter.program.optimization['native_registers_promoted'] += limit-initial
+    return result
+
+
+def _allocate(emitter, limit):
+    function=emitter.function
     identity = {r:r for r in range(limit)}
     if ((function.debug_metadata.get('security_owned') and not function.debug_metadata.get('security_optimization_safe'))
             or emitter.program.poisoned):
@@ -37,7 +68,11 @@ def allocate(emitter):
     def registers(names):
         return {int(name[len(prefix):]) for name in names
                 if name.startswith(prefix) and name[len(prefix):].isdigit() and int(name[len(prefix):]) in eligible}
+    previous=None
     def interfere(values):
+        nonlocal previous
+        if values==previous:return
+        previous=values
         for a,b in combinations(sorted(values),2):
             graph[a].add(b);graph[b].add(a)
     copies = []
@@ -70,5 +105,4 @@ def allocate(emitter):
     # Allocation bugs fail at build time rather than corrupting a guest frame.
     if any(result[a]==result[b] for a in graph for b in graph[a]):
         raise RuntimeError('Bare register allocation violates interference')
-    emitter.program.optimization['native_slots_elided'] += limit-len(set(result.values()))
     return result

@@ -133,7 +133,7 @@ class Function:
         self.dynamic_start = min(dynamic_starts, default=self.original_stack)
         from .bare_registers import native_prefix
         self.local_count = native_prefix(function)
-        self.uses_spill = self.dynamic or self.local_count < self.original_stack
+        self.initial_local_count = self.local_count
         self.uses_scratch = False
         self.support = set()
         self.conditions = {}
@@ -142,6 +142,7 @@ class Function:
         from .bare_registers import allocate
         self.register_map = allocate(self)
         self.local_slots = tuple(sorted(set(self.register_map.values())))
+        self.uses_spill = self.dynamic or self.local_count < self.original_stack
         self.local_releases=program.lowered.backend_data['bare_local_releases'][function.id]
         self.edge_releases=program.lowered.backend_data['bare_edge_releases'][function.id]
         self.blocks_by_id={b.id:b for b in function.blocks}
@@ -220,7 +221,8 @@ class Function:
         init.append(self.helpers())
         if self.dynamic and self.local_count:self.program.optimization['dynamic_prefix_locals'] += len(self.local_slots)
         self.program.frame_plans.append({'function':self.function.id,'locals':len(self.local_slots),
-            'local_prefix':self.local_count,'register_map':tuple(sorted(self.register_map.items())),
+            'local_prefix':self.local_count,'initial_prefix':self.initial_local_count,
+            'local_budget':getattr(self,'native_budget',None),'register_map':tuple(sorted(self.register_map.items())),
             'dynamic':self.dynamic,'dynamic_start':self.dynamic_start,'scratch':self.uses_scratch,
             'wide':self.wide,'spill':self.uses_spill,'original_stack':self.original_stack})
         name = self.program.factories[self.function.id]
