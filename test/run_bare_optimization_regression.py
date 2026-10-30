@@ -78,6 +78,37 @@ show(values(total));show(values(3));print(total)'''
             self.assertTrue(prefix)
             self.assertTrue(all(p['locals']<=p['dynamic_start'] for p in prefix))
 
+    def test_open_spans_use_private_storage_without_losing_nil_counts(self):
+        source='''local function values(...)return ...end
+local function show(...)print(select('#',...),...)end
+local function forward(...)show(...);return values(...)end
+show(forward());show(forward(nil));show(forward(7,nil,false,nil))
+local function suspend(...)coroutine.yield(...);return ...end
+local co=coroutine.create(suspend)
+show(coroutine.resume(co,7,nil,false,nil));show(coroutine.resume(co))
+local t={values(7,nil,false,nil)};print(t[1],t[2],t[3],t[4])'''
+        for version in ('5.1','5.3'):
+            vm,texts=self.compare(source,version,protected=True)
+            self.assertGreater(vm.last_lowered_ir.backend_data['optimization'].get('dynamic_value_copies_elided',0),0)
+            self.assertTrue(any('_BS,' in text and '_BT)' in text for text in texts.values()))
+
+    def test_open_spans_keep_overlapping_capture_cells(self):
+        # Open calls below a later captured local must still use _Bg. They may
+        # cross that slot at runtime, even when the observed result is short.
+        source='''local saved
+local function f(...)
+ do local a,b,c=7,nil,9
+  saved=function()return a,b,c end
+ end
+ return ...
+end
+local function show(...)print(select('#',...),...)end
+show(f(3,nil,false,nil));show(saved());show(f());show(saved())'''
+        for version in ('5.1','5.3'):
+            _,texts=self.compare(source,version,protected=True)
+            self.assertTrue(any('local function _Bvalues(a,n) local t={}' in text
+                                and 'local _BC=' in text for text in texts.values()))
+
     def test_captured_prefix_and_tail_close_reentry_and_coroutines(self):
         source='''local function factory(...)
 local args={...};local value={n=7}

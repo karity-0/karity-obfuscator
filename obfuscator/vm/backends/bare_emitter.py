@@ -170,6 +170,11 @@ class Function:
 
     def span(self, operand):
         if operand.count is None:
+            # The open tail is private spill storage. Captured cells live in
+            # separate tables and require the original _Bg snapshot path.
+            if operand.value>=self.local_count and not any(i>=operand.value for i in self.captured):
+                self.program.optimization['dynamic_value_copies_elided'] += 1
+                return self.api('unpack')+'(_BS,'+str(operand.value)+',_BT)'
             self.support.add('values')
             return '_Bvalues(' + str(operand.value) + ',_BT-' + str(operand.value) + '+1)'
         return ','.join(self.r(i) for i in range(operand.value, operand.value + operand.count))
@@ -402,7 +407,6 @@ class Function:
         elif op == 'SET_LIST':
             span = fields['values']; base = (fields['batch'].value - 1) * 50
             if span.count is None:
-                self.support.add('values')
                 index = self.name('list')
                 code = 'for ' + index + '=1,_BT-' + str(span.value) + '+1 do ' + v('table') + '[' + str(base) + '+' + index + ']=_Bg(' + str(span.value - 1) + '+' + index + ') end\n'
             else:
