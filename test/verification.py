@@ -35,7 +35,7 @@ FEATURE_SUITES = {
     'backends': 'backend_options vm_backend mov_backend bare_backend bare_optimization bare_flow fixed_arity block_permutation vm_ir cross_backend_generated integrity_integration',
     'karity': 'karity_analysis state_coupling vm_backend register_cache runtime_poly runtime_trace vm_choke vm_runtime_size encoded_operations helper_integrity',
     'mov': 'mov_backend vm_backend cross_backend_generated opcode_edges',
-    'bare': 'bare_backend bare_optimization bare_flow source_protection runtime_security cross_backend_generated',
+    'bare': 'bare_backend bare_optimization bare_flow bare_expressions source_protection runtime_security cross_backend_generated',
     'targets': 'lua_frontend lua51_word lua51_runtime lua51_pass_matrix lua51_semantic_matrix fixed_arity dump51 lua51_toolchain target_capability closure_gc host_materialization',
     'host': 'image_resolver host_materialization native_lowering target_capability',
     'toolchain': 'toolchain lua51_toolchain dump51 lua_frontend',

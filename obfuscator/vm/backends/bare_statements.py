@@ -29,6 +29,7 @@ class Assignment:
     expression: str
     reads: frozenset[int]
     depth: int = 1
+    graph: bool = False
 
 
 def _expression(emitter, instruction, overrides=None):
@@ -111,7 +112,7 @@ def _old_primitive(emitter, assignment):
     return bool(definitions)
 
 
-def emit(emitter, instructions, block):
+def emit(emitter, instructions, block, *, planned=True):
     result = []
     run: list[Assignment] = []
     statistics = emitter.program.optimization
@@ -146,12 +147,17 @@ def emit(emitter, instructions, block):
         output();run.clear()
 
     for instruction in instructions:
-        copy=emitter.coalesced_copy(instruction)
+        node=getattr(emitter,'expression_plan',{}).get(instruction.id) if planned else None
+        if node is not None and node.elided:continue
+        copy=emitter.coalesced_copy(instruction) if node is None else None
         if copy is not None:
             flush();result.append(copy);continue
         if emitter.local_releases.get(instruction.id):
             flush();result.append(emitter.instruction(instruction,block));continue
-        statement = _assignment(emitter, instruction)
+        if node is not None:
+            from .bare_expressions import render,reads
+            statement=Assignment(instruction,node.target,render(emitter,node),reads(node),graph=True)
+        else:statement = _assignment(emitter, instruction)
         if statement is None:
             flush()
             result.append(emitter.instruction(instruction, block))
@@ -160,7 +166,7 @@ def emit(emitter, instructions, block):
         # Such dead registers cannot prolong guest object lifetimes.
         statistics['primitive_clears_elided'] += len((set(instruction.inputs) | set(instruction.outputs))
                                                     - emitter.liveness.after[instruction.id])
-        if run:
+        if run and not statement.graph and not run[-1].graph:
             previous = run[-1]
             uses = sum(o.kind == 'register' and o.role != 'destination' and o.value == previous.target
                        for o in instruction.operands)

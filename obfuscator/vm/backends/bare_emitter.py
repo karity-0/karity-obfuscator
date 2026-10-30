@@ -146,6 +146,8 @@ class Function:
         self.local_releases=program.lowered.backend_data['bare_local_releases'][function.id]
         self.edge_releases=program.lowered.backend_data['bare_edge_releases'][function.id]
         self.blocks_by_id={b.id:b for b in function.blocks}
+        from .bare_expressions import prepare
+        prepare(self)
 
     def name(self, kind): return self.program.name(kind)
     def api(self, key): return self.program.api(key)

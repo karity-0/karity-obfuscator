@@ -47,12 +47,14 @@ def prepare_emission(lowered, lua_version):
                     hints[function.id][instruction.metadata['bare_call_end']] = literal_fact(constants[slot],lua_version)
     lowered.backend_data['bare_facts'] = {f.id: analyze_function(f, lua_version,
         liveness=lowered.backend_data['liveness'][f.id],result_hints=hints[f.id]) for f in view.functions()}
+    lowered.backend_data['bare_result_hints'] = hints
     from .bare_lifetimes import preserve_locals
     lowered.backend_data['bare_local_releases']={}
     lowered.backend_data['bare_edge_releases']={}
     for function in view.functions():
         info=lowered.backend_data['bare_facts'][function.id]
-        releases={};edges={}
+        releases: dict[str,tuple[int,...]]={}
+        edges: dict[tuple[str,str],tuple[int,...]]={}
         lifetime=preserve_locals(function,info.liveness,info,hints[function.id],releases,edges)
         info.liveness=lifetime
         lowered.backend_data['liveness'][function.id]=lifetime

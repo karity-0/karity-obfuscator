@@ -49,7 +49,7 @@ def allocate(emitter, *, expand=True):
 
 
 def _allocate(emitter, limit):
-    function=emitter.function
+    function=getattr(emitter,'storage_function',emitter.function)
     identity = {r:r for r in range(limit)}
     if ((function.debug_metadata.get('security_owned') and not function.debug_metadata.get('security_optimization_safe'))
             or emitter.program.poisoned):
@@ -80,7 +80,7 @@ def _allocate(emitter, limit):
         for instruction in block.instructions:
             interfere(registers(emitter.liveness.before[instruction.id]))
             interfere(registers(emitter.liveness.after[instruction.id]) | registers(instruction.outputs))
-            if instruction.operation=='MOVE' and 'protection_origin' not in instruction.metadata:
+            if instruction.operation=='MOVE' and instruction.outputs and 'protection_origin' not in instruction.metadata:
                 fields={o.role:o.value for o in instruction.operands}
                 if fields['source'] in eligible and fields['destination'] in eligible:
                     copies.append((fields['source'],fields['destination']))

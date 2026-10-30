@@ -17,6 +17,7 @@ REGRESSIONS = (
     'bare_backend',
     'bare_optimization',
     'bare_flow',
+    'bare_expressions',
     'source_protection',
     'guard_policy',
     'anti_env',
