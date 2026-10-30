@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from obfuscator.passes.meme_strings import MemeStringsPass, STRINGS_BY_LENGTH, MEME_STRINGS
+from obfuscator.passes.meme_expressions import MEME_STRING_GROUPS, MemeExpressionEngine
 from obfuscator.passes.minify import MinifyPass
 from obfuscator.passes.packer import _obfuscate_packer_output
 from obfuscator.pipeline import Pipeline
@@ -27,7 +28,37 @@ def execute(source):
     return result.stdout
 
 
+def check_group_selection():
+    from lupa.lua51 import LuaRuntime as Lua51
+    from lupa.lua53 import LuaRuntime as Lua53
+    groups = {name: texts for name, texts in MEME_STRING_GROUPS.items() if texts}
+    owners = {text: name for name, texts in groups.items() for text in texts}
+    for seed in (17, 519, 811):
+        random.seed(seed)
+        engine = MemeExpressionEngine()
+        for _ in range(10):
+            cycle = [owners[engine._choose_phrase()] for _ in groups]
+            assert set(cycle) == set(groups), cycle
+    # Exact-length small integers must still admit every phrase, including
+    # long/UTF-8 strings. Lua executes the actual residual expressions.
+    for version, runtime in (('5.1', Lua51), ('5.3', Lua53)):
+        lua = runtime(encoding=None)
+        for value in (1, 5):
+            for text in MEME_STRINGS:
+                with patch.object(engine, '_choose_phrase', return_value=text):
+                    expression = engine.generated_int(value, lua_version=version, depth=1)
+                assert engine._length(text) in expression
+                assert lua.eval(expression.encode('utf8')) == value, (version, value, text)
+    # Reusing a pass after resetting the seed must not leak prior bag state.
+    full = MemeStringsPass(); full.replacement_rate = 1.0
+    pipeline = Pipeline(show_header=False).add(full)
+    random.seed(811); before = pipeline.run('print(1,5,1,5,1,5)')
+    pipeline.run('print(77,88,99)')
+    random.seed(811); assert before == pipeline.run('print(1,5,1,5,1,5)')
+
+
 def main():
+    check_group_selection()
     source = '''-- 3 should stay in this comment
 local marker = "한글 123"
 local untouched = "3 bruh 4"
@@ -76,7 +107,7 @@ for i=1,3 do print(i) end
             probe = f'print({size})'
             # Force each direction-controlled phrase through actual Lua
             # parsing, minification, and the VM/packer numeric emitters.
-            with patch.dict(STRINGS_BY_LENGTH, {size: (phrase,)}), \
+            with patch.object(MemeExpressionEngine, '_choose_phrase', return_value=phrase), \
                     patch.object(MemeStringsPass, 'replacement_rate', 1.0):
                 converted = Pipeline(show_header=False).add(full).add(MinifyPass()).run(probe)
                 assert phrase in converted
@@ -97,7 +128,8 @@ for i=1,3 do print(i) end
         lua51 = LuaRuntime(encoding=None)
         # Force a wrapped hexadecimal residual instead of depending on the
         # phrase pool and a seed happening to produce one.
-        with patch('obfuscator.passes.meme_strings.random.choice', side_effect=['lol', '-']):
+        with patch.object(full, '_choose_phrase', return_value='lol'), \
+                patch('obfuscator.passes.meme_strings.random.choice', return_value='-'):
             transformed_integer = full._integer(9007199254740991, depth=1)
         assert lua51.eval(transformed_integer.encode()) != lua51.eval(b'9007199254740991')
     escaped = 'quote" slash\\ newline\n한글'
