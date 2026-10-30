@@ -51,7 +51,8 @@ class SourceProtection:
     def printable(self, data):
         return data.hex().translate(str.maketrans('0123456789abcdef',self.alphabet))
 
-    def raw_payload(self):
+    def raw_payload(self, *, retained_strings=()):
+        missing = set(retained_strings)
         records=[self.prefix]
         for value,seed,gap in zip(self.constants,self.seeds,self.gaps):
             if isinstance(value,(str,bytes)):
@@ -62,10 +63,14 @@ class SourceProtection:
                 encoded=int(value-key)
                 record=struct.pack('<BIqI',self.record_tags['number'],seed,encoded,(encoded%MODULUS+key*257)%MODULUS)
             records.extend((record,gap))
+            if isinstance(value,(str,bytes)):
+                missing.discard(value.encode('utf8') if isinstance(value,str) else value)
+        if missing:
+            raise ValueError('retained pool strings missing from Bare payload')
         return b''.join(records)
 
-    def payload(self, literal):
-        return literal(self.printable(self.raw_payload()))
+    def payload(self, literal, *, retained_strings=()):
+        return literal(self.printable(self.raw_payload(retained_strings=retained_strings)))
 
 
 def _namespace(ir, prefix):

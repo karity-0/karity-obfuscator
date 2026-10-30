@@ -527,7 +527,8 @@ def emit(lowered, context):
         'monitored_factories':len(program.functions)-len(program.retired_factory_slots),
         'initial':True,'factory_identity_period_guard_events':127,
         'factory_metatable_on_full_guard':True,'instruction_blob':False})
-    payload=program.security.payload(literal)
+    payload=program.security.payload(literal,
+        retained_strings=lowered.backend_data.get('retained_pool_strings', ()))
     from ...names import NameAllocator
     name=NameAllocator.for_source(source).allocate('entry')
     body=source[len('return'):].lstrip()

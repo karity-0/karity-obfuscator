@@ -260,6 +260,7 @@ class VMBackend:
                          layout=layout.instruction_layout, constant_tags=layout.constant_tags,
                          vm_count=layout.vm_count,
                          integrity_options={'enabled': lowered.policy.get('integrity_constants', False)},
+                         retained_strings=lowered.backend_data.get('retained_pool_strings', ()),
                          stats=storage_stats)
         context.profile.append({'phase': 'serialize_blob',
                                 'elapsed': round(time.perf_counter() - started, 6), **storage_stats})

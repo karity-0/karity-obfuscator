@@ -4,12 +4,14 @@ import random
 import sys
 import tempfile
 import subprocess
+from unittest.mock import patch
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path[:0]=[str(ROOT),str(ROOT/'test')]
 from lupa.lua51 import LuaRuntime as Lua51
 from lupa.lua53 import LuaRuntime as Lua53
 from obfuscator.vm import VMPass
+from obfuscator.vm import constant_pool
 from obfuscator.vm.targets.profile import TargetProfile
 from obfuscator.vm.backends.bare_emitter import literal
 from run_vm_backend_regression import options
@@ -73,6 +75,7 @@ end'''
         assert fn()==(3,65,91)
 
 
+@patch.object(constant_pool, 'DECOY_STRINGS', ['string1'])
 def main():
     check_native_capture()
     for version in ('5.1','5.3'):

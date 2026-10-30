@@ -18,6 +18,7 @@ from obfuscator.vm.targets.profile import TargetProfile
 from run_cross_backend_generated_regression import execute
 from run_serialization_regression import harness
 from run_vm_backend_regression import options
+from run_source_protection_regression import run
 
 
 def fixture():
@@ -31,6 +32,7 @@ def fixture():
     return SemanticIR('5.3', replace(root, children=(child,)))
 
 
+@patch.object(constant_pool, 'DECOY_STRINGS', ['string1'])
 class ConstantPoolTests(unittest.TestCase):
     def test_root_only_append_preserves_indices_and_instructions(self):
         before = fixture()
@@ -47,7 +49,74 @@ class ConstantPoolTests(unittest.TestCase):
         with patch.object(constant_pool, 'DECOY_STRINGS', []):
             self.assertIs(before, constant_pool.inject_decoy_strings(before))
         with patch.object(constant_pool, 'DECOY_STRINGS', ['original']):
-            self.assertIs(before, constant_pool.inject_decoy_strings(before))
+            reused = constant_pool.inject_decoy_strings(before)
+            self.assertIs(before.root.values, reused.root.values)
+            self.assertEqual((b'original',), reused.root.debug_metadata[constant_pool.RETENTION_KEY])
+            self.assertIs(reused, constant_pool.inject_decoy_strings(reused))
+
+    def test_lowering_that_drops_values_or_the_contract_fails_closed(self):
+        from obfuscator.vm.backends.bare import BareBackend
+        original = BareBackend.optimize
+        for metadata in (False, True):
+            def drop(backend, lowered, context):
+                lowered = original(backend, lowered, context)
+                root = lowered.semantic_ir.root
+                if metadata:
+                    root = replace(root, debug_metadata={k:v for k,v in root.debug_metadata.items()
+                                   if k != constant_pool.RETENTION_KEY})
+                else:
+                    root = replace(root, values=tuple(v for v in root.values if v.literal != b'string1'))
+                lowered.semantic_ir = replace(lowered.semantic_ir, root=root)
+                return lowered
+            vm = VMPass(target=TargetProfile('5.3', 'bare'), vm_options=options('bare'))
+            with patch.object(BareBackend, 'optimize', drop), self.assertRaisesRegex(ValueError, 'retained pool strings'):
+                vm.run('return 7')
+
+    def test_fake_header_or_child_pool_cannot_satisfy_root_retention(self):
+        from run_serialization_regression import fixture as physical_fixture
+        physical = physical_fixture()
+        physical.children[0].source.constants.append(b'string1')
+        with patch.object(handler_codec, '_FAKE_STRINGS', ['string1']), \
+                self.assertRaisesRegex(ValueError, 'serialized root constants'):
+            handler_codec.serialize(physical, retained_strings=(b'string1',))
+        from obfuscator.vm.source_protection import SourceProtection
+        pool = SourceProtection({}, 1, record_tags={'string': 4})
+        pool.add_constant(b'other')
+        with self.assertRaisesRegex(ValueError, 'Bare payload'):
+            pool.payload(lambda v:v, retained_strings=(b'string1',))
+
+    def test_final_vm_output_really_loads_the_retained_envelope(self):
+        from obfuscator.vm import program_integrity
+        from obfuscator.vm.backends import runtime_emitter
+        original_prepare, original_patch = program_integrity.prepare, runtime_emitter.patch_integrity_sources
+        for version in ('5.1', '5.3'):
+            for backend in ('classic', 'karity', 'mov'):
+                with self.subTest(version=version, backend=backend):
+                    identity = []
+                    def expose(source, layout, context, blob, **kwargs):
+                        result = original_prepare(source, layout, context, blob, **kwargs)
+                        index = layout.functions.source.constants.index(b'string1')+1
+                        marker = program_integrity.initialization_source(version, backend)
+                        self.assertEqual(1, result.count(marker))
+                        getter = '''\n_ENV_NATIVE.POOL_ENVELOPE=function()
+local s=_kss(proto.constants[INDEX][2]);local t={}
+for j=1,#s do t[j]=string.format('%02x',string.byte(s,j)) end
+return table.concat(t) end\n'''.replace('INDEX', str(index))
+                        return result.replace(marker, marker+getter)
+                    def observe(data, script, line, *args, **kwargs):
+                        identity.append((script, line))
+                        return original_patch(data, script, line, *args, **kwargs)
+                    random.seed(7719)
+                    vm = VMPass(target=TargetProfile(version, backend), vm_options=options(backend),
+                        vm_output_passes=['strip_info', 'rename_obf', 'string_encode', 'minify'])
+                    with patch.object(program_integrity, 'prepare', expose), \
+                            patch.object(runtime_emitter, 'patch_integrity_sources', observe):
+                        output = vm.run('return 7')
+                    value, envelope = run(version, output, call=b'''local n=assert((loadstring or load)(source))()
+return n,POOL_ENVELOPE()''')
+                    self.assertEqual(7, value)
+                    self.assertEqual(1, len(identity))
+                    self.assertEqual(b'string1', decode(bytes.fromhex(envelope.decode()), *identity[0]))
 
     def test_all_backends_store_real_unreferenced_string_and_preserve_execution(self):
         source = '''local function f(...)return ... end
@@ -68,7 +137,9 @@ local a,b,c=f(7,nil,false);print(a,b,c,'guest');assert(a==7 and b==nil and c==fa
                         o.kind=='constant' and o.value==item.index for o in i.operands)
                         for b in root.blocks for i in b.instructions))
                     if backend == 'bare':
+                        from obfuscator.vm.backends.bare_emitter import literal
                         pool = vm.last_lowered_ir.backend_data['source_protection']
+                        self.assertIn(pool.payload(literal), output)
                         slot = pool.constant_lookup[(bytes, b'string1')]
                         raw = pool.raw_payload();offset = (slot ^ pool.index_mask)-1
                         tag, size = struct.unpack_from('<BI', raw, offset)

@@ -191,8 +191,9 @@ class VMBuildPipeline(PostPass):
         if backend.name!='bare':
             from .runtime_validation import attach
             optimized_ir,private_validator=attach(optimized_ir,context)
-        from .constant_pool import inject_decoy_strings
+        from .constant_pool import inject_decoy_strings, validate_retention, RETENTION_KEY
         optimized_ir = inject_decoy_strings(optimized_ir)
+        retained_strings = optimized_ir.root.debug_metadata.get(RETENTION_KEY, ())
         resolution_started = time.perf_counter()
         initial_plan = planner.build(optimized_ir)
         resolution = resolve_capabilities(initial_plan, backend.capabilities)
@@ -208,6 +209,8 @@ class VMBuildPipeline(PostPass):
         started = time.perf_counter()
         plan = planner.build(semantic_ir)
         lowered = run_phase('vm:lowering', lambda: backend.optimize(backend.lower(protect(semantic_ir, plan), context), context))
+        validate_retention(lowered, retained_strings)
+        lowered.backend_data[RETENTION_KEY] = retained_strings
         if private_validator is not None:
             lowered.backend_data['runtime_validation']={'function':private_validator}
         self.last_semantic_ir = lowered.semantic_ir

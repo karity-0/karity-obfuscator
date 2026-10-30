@@ -381,7 +381,8 @@ def _write_integrity_program(w: Writer, program: list[tuple[int, int | None]]) -
 def serialize(function, *, layout: dict | None = None,
               constant_tags: dict[str, int] | None = None,
               integrity_options: dict | None = None, vm_count: int = 1,
-              stats: dict | None = None, compact_synthesis: bool = True) -> bytes:
+              stats: dict | None = None, compact_synthesis: bool = True,
+              retained_strings: tuple[bytes, ...] = ()) -> bytes:
     from .handler_layout import PhysicalFunction
     if not isinstance(function, PhysicalFunction):
         raise ValueError("handler serialization requires physical layout with concrete protection targets")
@@ -420,7 +421,8 @@ def serialize(function, *, layout: dict | None = None,
     w.mark("fake_constants", start)
     # acc 상태: [acc, instr_index] — 재귀 proto 간 전역 공유
     acc_state = [seed, 0]
-    _write_proto(w, function, acc_state, seed, integrity, constant_tag_values)
+    _write_proto(w, function, acc_state, seed, integrity, constant_tag_values,
+                 set(retained_strings) if retained_strings else None)
     data=w.data()
     if compact_synthesis and any(regions for _,_,regions in w.storage_sections):
         from ..synthesis.storage import pack_sections
@@ -500,7 +502,7 @@ def _skip_metadata(r: BinReader, code_count: int, item_size: int) -> None:
 
 
 def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
-                 integrity: dict, constant_tags: tuple[int, ...]):
+                 integrity: dict, constant_tags: tuple[int, ...], missing: set[bytes] | None = None):
     proto = function.source
     vm_id = function.vm_id
     total = len(function.code)
@@ -563,9 +565,13 @@ def _write_proto(w: Writer, function, acc_state: list[int], seed: int,
             from ..string_storage import encode
             w.u8(c_str)
             w.string(encode(c, integrity['script_hash'], integrity['line_state']))
+            if missing is not None:
+                missing.discard(c.encode('utf8') if isinstance(c, str) else c)
         else:
             raise ValueError(f"unknown constant type: {type(c)}")
     w.mark("constants", start)
+    if missing:
+        raise ValueError('retained pool strings missing from serialized root constants')
 
     # upvalue
     start = len(w._buf)
