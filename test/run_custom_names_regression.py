@@ -12,6 +12,8 @@ from obfuscator import custom_names
 from obfuscator.names import RENAME_OPTIONS
 from obfuscator.passes.rename_obfuscation import RenameObfuscationPass
 from obfuscator.passes.packer import PackerPass
+from obfuscator.passes.strip_info import StripInfoPass
+from obfuscator.passes.minify import MinifyPass
 from obfuscator.passes.rename_ts import resolve_bindings
 from obfuscator.passes.rename_ts import rename_script_ts
 from obfuscator.passes.ts_utils import parse
@@ -144,13 +146,56 @@ print(held)'''
                     output=pipeline.run(source);self.check_count(output)
                     self.assertEqual(execute(version,source),execute(version,output))
                     self.assertEqual(2,pipeline.last_custom_names['applied'])
-        for passes in (['strip_info','minify','vm'],['rename_obf','minify','vm']):
+        for passes in (['minify','vm'],['strip_info','minify','vm'],['rename_obf','minify','vm']):
             config={'passes':passes,'vm_options':options('bare'),
                     'vm_output_passes':['rename_obf','minify'],'signature':{'mode':'none'}}
             pipeline=build_pipeline_from_config(config,Pipeline)
             output=pipeline.run(source)
-            self.check_count(output,0 if 'rename_obf' not in passes else 2)
+            self.check_count(output,2 if {'rename_obf','strip_info'} & set(passes) else 0)
 
+    def test_strip_info_source_naming_and_disabled_paths(self):
+        source='local hp,hp2=123;print(hp,hp2)'
+        excluded='--@NO_VM_START\n'+source+'\n--@NO_VM_END'
+        for passes,text in ((['strip_info','minify'],source),(['strip_info','minify','vm'],excluded),
+                            (['strip_info','rename_obf','minify'],source)):
+            pipeline=build_pipeline_from_config({'passes':passes,'vm_options':options('bare'),
+                'signature':{'mode':'none'}},Pipeline)
+            output=pipeline.run(text);self.check_count(output)
+            for version in ('5.1','5.3'):
+                self.assertEqual(execute(version,text),execute(version,output))
+            self.assertEqual(2,pipeline.last_custom_names['applied'])
+        for pipeline in (Pipeline(show_header=False).add(MinifyPass()),
+                         Pipeline(show_header=False).add(StripInfoPass(rename_locals=False))):
+            output=pipeline.run(source);self.check_count(output,0)
+            self.assertIn('hp',output)
+        protected='--@NO_OBF_START\nlocal hp=123\n--@NO_OBF_END\nlocal hp2=2;print(hp,hp2)'
+        pipeline=Pipeline(show_header=False).add(StripInfoPass())
+        output=pipeline.run(protected);self.check_count(output,0)
+        self.assertIn('local hp=123',output);self.assertIn('local hp2=2',output)
+        token=RENAME_OPTIONS.set({'readable':True})
+        try:
+            self.check_count(Pipeline(show_header=False).add(StripInfoPass()).run(source))
+            self.check_count(PackerPass(['strip_info','minify']).run(source))
+        finally:RENAME_OPTIONS.reset(token)
+        pipeline=build_pipeline_from_config({'passes':['strip_info','vm'],'vm_options':options('bare'),
+            'vm_output_passes':[],'signature':{'mode':'none'}},Pipeline)
+        output=pipeline.run(SOURCE);self.check_count(output)
+        self.assertEqual(execute('5.3',SOURCE),execute('5.3',output))
+
+    def test_strip_info_output_naming_without_rename_pass(self):
+        for version in ('5.1','5.3'):
+            for backend in ('classic','karity','mov','bare'):
+                with self.subTest(version=version,backend=backend):
+                    vm=VMPass(target=TargetProfile(version,backend),vm_options=options(backend),
+                              vm_output_passes=['strip_info','minify'])
+                    output=vm.run(SOURCE);self.check_count(output)
+                    self.assertEqual(execute(version,SOURCE),execute(version,output))
+        for passes in (['pack'],['vm','pack']):
+            pipeline=build_pipeline_from_config({'passes':passes,'vm_options':options('bare'),
+                'packer_output_passes':['strip_info','minify'],'signature':{'mode':'none'}},Pipeline)
+            output=pipeline.run(SOURCE);self.check_count(output)
+            self.assertEqual(execute('5.3',SOURCE),execute('5.3',output))
+            self.assertEqual(2,pipeline.last_custom_names['applied'])
     def test_late_helpers_and_wrapper_native_names(self):
         pool=['select','getfenv','setfenv','_native_api','math','lateAlpha','lateBeta']
         observe=b'local f=assert((loadstring or load)(source));return f(7,nil,false,nil)'

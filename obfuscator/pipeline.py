@@ -247,14 +247,25 @@ class Pipeline:
         from . import custom_names
         from .vm.vm_pass import VMPass
         from .passes.packer import PackerPass
+        from .passes.strip_info import StripInfoPass
         scope = custom_names.ACTIVE.get()
         if scope is not None and scope.owner is self:
             outputs = [p for p in post_passes if isinstance(p, (VMPass, PackerPass))
                        and not (isinstance(p, VMPass) and selection.original_vm_fully_excluded)]
             target = outputs[-1] if outputs else self
-            enabled = bool(renamers) or any('rename_obf' in getattr(p, attribute, ())
+            strip_renames = any(isinstance(p, StripInfoPass) and p.rename_locals for p in self._pre_passes)
+            # NO_OBF makes SelectionRuntime skip the whole StripInfo pre-pass.
+            strip_renames = strip_renames and not (selection.enabled and
+                any(s.feature == 'no_obf' for s in selection.plan.spans))
+            enabled = bool(renamers) or strip_renames or any(
+                any(name in getattr(p, attribute, ()) for name in ('rename_obf', 'strip_info'))
                 for p in outputs for attribute in ('vm_output_passes', 'packer_output_passes'))
             naming = renamers[-1].options if renamers and not outputs else {}
+            visible_passes = getattr(target, 'vm_output_passes', getattr(target, 'packer_output_passes', ()))
+            strip_only = ('strip_info' in visible_passes and 'rename_obf' not in visible_passes
+                          if outputs else strip_renames and not renamers)
+            if strip_only:
+                naming = {'readable': False}
             custom_names.configure(target, enabled=enabled, **naming, opaque_input=isinstance(target, PackerPass))
             if target is self:
                 with custom_names.stage(self):

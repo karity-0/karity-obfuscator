@@ -168,7 +168,11 @@ def output_scope(attribute):
     def decorate(function):
         @wraps(function)
         def run(owner, source, *args, **kwargs):
-            with build_scope(owner, source, enabled='rename_obf' in getattr(owner, attribute, ())) as scope:
+            passes = getattr(owner, attribute, ())
+            enabled = any(name in passes for name in ('rename_obf', 'strip_info'))
+            with build_scope(owner, source, enabled=enabled) as scope:
+                if scope.owner is owner and 'strip_info' in passes and 'rename_obf' not in passes:
+                    configure(owner, enabled=enabled, readable=False)
                 if scope.owner is owner and attribute == 'packer_output_passes':
                     scope.reserved.clear()
                     scope.original_source = None
