@@ -33,6 +33,26 @@ def build(source,version='5.3',seed=1810,protected=False,passes=()):
 
 
 class BareOptimizationTests(unittest.TestCase):
+    def test_dynamic_helpers_are_emitted_only_for_actual_uses(self):
+        for version in ('5.1','5.3'):
+            source='local function pass(...)return ... end;print(pass(7,nil,false,nil))'
+            vm,texts=self.compare(source,version)
+            self.assertGreater(vm.last_lowered_ir.backend_data['optimization'].get('frame_getters_elided',0),0)
+            text=texts['f0.0']
+            self.assertIn('local function _Bstore',text)
+            self.assertIn('local function _Bs',text)
+            self.assertNotIn('local function _Bg',text)
+            source='local function pass(...)return ... end;local t={pass(7,nil,false,nil)};print(t[1],t[2],t[3],t[4])'
+            _,texts=self.compare(source,version)
+            self.assertIn('local function _Bg',texts['f0'])
+            source='local function f('+','.join(f'p{i}' for i in range(64))+')return p0,p63 end;f('+','.join(str(i) for i in range(64))+');print("done")'
+            vm,texts=self.compare(source,version)
+            self.assertGreater(vm.last_lowered_ir.backend_data['optimization'].get('frame_setters_elided',0),0)
+            for frame in vm.last_lowered_ir.backend_data['bare_frame_plans']:
+                text=texts[frame['function']]
+                if '_Bstore(' not in text and '_Bfixed(' not in text:
+                    self.assertNotIn('local function _Bs',text)
+
     def test_chunked_result_stores_keep_counts_nil_padding_and_shrinking_tops(self):
         for version in ('5.1','5.3'):
             for count in (0,3,16,33,64,129):

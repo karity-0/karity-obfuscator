@@ -243,17 +243,21 @@ class Function:
     def helpers(self):
         result = ''
         if self.dynamic:
+            reads=bool(self.support & {'values','get'})
+            writes=bool(self.support & {'fixed','store'})
             # Dynamic open result ranges share the same cells as static reads.
             cells = sorted(i for i in self.captured if i>=self.local_count)
             if cells:
                 cell_entries = ','.join('[' + str(i) + ']=' + self.slot(i) for i in cells)
                 result += 'local _BC={' + cell_entries + '}\n'
-                result += 'local function _Bg(i) local c=_BC[i];if c then return c[1] end;return _BS[i] end\n'
-                result += 'local function _Bs(i,v) local c=_BC[i];if c then c[1]=v else _BS[i]=v end end\n'
+                if reads:result += 'local function _Bg(i) local c=_BC[i];if c then return c[1] end;return _BS[i] end\n'
+                if writes:result += 'local function _Bs(i,v) local c=_BC[i];if c then c[1]=v else _BS[i]=v end end\n'
             else:
                 self.program.optimization['cell_tables_elided'] += 1
-                result += 'local function _Bg(i) return _BS[i] end\n'
-                result += 'local function _Bs(i,v) _BS[i]=v end\n'
+                if reads:result += 'local function _Bg(i) return _BS[i] end\n'
+                if writes:result += 'local function _Bs(i,v) _BS[i]=v end\n'
+            if not reads:self.program.optimization['frame_getters_elided'] += 1
+            if not writes:self.program.optimization['frame_setters_elided'] += 1
         if 'fixed' in self.support:
             result += 'local function _Bfixed(a,n,...) return _Bput(_Bs,a,n,...) end\n'
         if 'values' in self.support:
@@ -425,6 +429,7 @@ class Function:
         elif op == 'SET_LIST':
             span = fields['values']; base = (fields['batch'].value - 1) * 50
             if span.count is None:
+                self.support.add('get')
                 index = self.name('list')
                 code = 'for ' + index + '=1,_BT-' + str(span.value) + '+1 do ' + v('table') + '[' + str(base) + '+' + index + ']=_Bg(' + str(span.value - 1) + '+' + index + ') end\n'
             else:
