@@ -5,7 +5,7 @@ own the backend, target, signature, toolchain or explicit selection settings.
 """
 from copy import deepcopy
 
-REVISION = 5
+REVISION = 6
 PREFIX = 'builtin:'
 CONTEXT_KEYS = ('target', 'signature', 'lua_executable', 'luac_executable',
                 'lua_library', 'selection_modes', 'selection_profiles', 'debug_dumps')
@@ -14,7 +14,7 @@ CONTEXT_KEYS = ('target', 'signature', 'lua_executable', 'luac_executable',
 # without coordinating positional tuples across the other tiers.
 PRESETS = {
     'fast': {
-        'passes': ['strip_info', 'anti_debug', 'anti_decompile', 'minify', 'vm'],
+        'passes': ['strip_info', 'anti_decompile', 'minify', 'vm'],
         'vm_output_passes': ['strip_info', 'rename_obf', 'meme_strings', 'number_obf', 'minify'],
         'packer_output_passes': ['strip_info', 'rename_obf', 'meme_strings', 'number_obf', 'minify'],
         'function_obf_options': {
@@ -101,7 +101,6 @@ PRESETS = {
     'balanced': {
         'passes': [
             'strip_info',
-            'anti_debug',
             'anti_decompile',
             'boolean_obf',
             'table_obf',
@@ -210,7 +209,6 @@ PRESETS = {
     'strong': {
         'passes': [
             'strip_info',
-            'anti_debug',
             'anti_decompile',
             'boolean_obf',
             'table_obf',
@@ -322,7 +320,6 @@ PRESETS = {
     'maximum': {
         'passes': [
             'strip_info',
-            'anti_debug',
             'anti_decompile',
             'boolean_obf',
             'table_obf',

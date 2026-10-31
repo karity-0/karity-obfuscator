@@ -3,7 +3,7 @@
 Catalog revision 1 on `future`, based on `c3ad4ea`. Windows, Python 3.15, Lua 5.3, seed 9300.
 Raw ordinary samples, complete policies and output hashes (generated locally).
 
-These are historical measurements, not results for the 1.6.0 revision 5
+These are historical measurements, not results for the current 1.6.0
 catalog. Revision 5 adds whole-source Table/Compact String to Balanced and
 String Mosaic output to Balanced/Strong/Maximum; see the
 [current policies](../user-presets.md). The descriptions and timings below

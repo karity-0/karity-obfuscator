@@ -40,7 +40,7 @@ def main():
     assert resolve_config_profile({'passes': ['minify']})['passes'] == ['minify']
 
     assert tuple(PRESETS) == USER_PRESETS == ('fast', 'balanced', 'strong', 'maximum')
-    assert REVISION == 5
+    assert REVISION == 6
     for name in USER_PRESETS:
         assert user_preset(name) == user_preset(PREFIX + name) == PRESETS[name]
     snapshot = user_preset('balanced')
@@ -64,6 +64,7 @@ def main():
     for name in USER_PRESETS:
         config = resolve_config_profile({'vm_options': {'backend': 'mov'}}, name)
         assert config['vm_options']['backend'] == 'mov'
+        assert 'anti_debug' not in config['passes']
         assert 'string_encode' not in config['passes']
         assert 'function_obf' not in config['vm_output_passes']
         assert {'number_obf','meme_strings'} <= set(config['vm_output_passes'])
@@ -85,6 +86,16 @@ def main():
             assert 'rename_obf' in config['passes']
         validate_config(config)
         validate_deployment_config(config)
+        optional = copy.deepcopy(config)
+        optional['passes'] = [p for p in optional['passes'] if p not in {'anti_debug','anti_decompile'}]
+        validate_deployment_config(optional)
+        optional['passes'].remove('vm')
+        try:
+            validate_deployment_config(optional)
+        except ReleaseCheckError as error:
+            assert 'passes must include vm' in str(error)
+        else:
+            raise AssertionError('deployment check accepted a missing VM')
     try:
         validate_release_config(resolve_config_profile({}, 'fast'))
     except ReleaseCheckError:

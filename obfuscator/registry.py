@@ -625,7 +625,7 @@ def validate_deployment_config(config: Mapping[str, Any]) -> None:
     """Baseline deployment checks, distinct from legacy strict release policy."""
     validate_config(config)
     errors = []
-    for name in ('vm', 'anti_debug', 'anti_decompile'):
+    for name in ('vm',):
         if name not in config.get('passes', []):
             errors.append('passes must include '+name)
     output = config.get('vm_output_passes', [])
@@ -649,7 +649,7 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
     vm_options = config.get("vm_options", {})
     backend = normalize_vm_backend(vm_options.get("backend"))
 
-    required_passes = ("vm", "anti_debug", "anti_decompile")
+    required_passes = ("vm",)
     for name in required_passes:
         if name not in passes:
             errors.append(f"passes must include '{name}'")
