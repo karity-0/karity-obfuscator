@@ -100,6 +100,7 @@ def build_project(plan: ProjectPlan) -> dict:
                 profile = profiler.as_dict();backends = _backends(profile)
                 actual = backends[0] if len(backends)==1 else 'mixed' if backends else None
                 row.update(status='success',preset=module.preset,backend=actual,actual_backends=backends,
+                           target={'lua_version':pipeline.target_profile.lua_version,'environment':pipeline.target_profile.environment.value},
                            vm_applied=bool(backends),executed_passes=[names.get(r.name,r.name) for r in profiler.records
                                                                    if r.name!='VMPass' or backends],
                            output_bytes=destination.stat().st_size,elapsed=time.perf_counter()-module_started,
@@ -128,8 +129,12 @@ def build_project(plan: ProjectPlan) -> dict:
                 backup = plan.output.with_name('.karity-backup-'+uuid.uuid4().hex)
                 os.replace(plan.output,backup)
             try:os.replace(stage,plan.output)
-            except OSError:
-                if backup is not None and not plan.output.exists():os.replace(backup,plan.output);backup = None
+            except OSError as error:
+                if backup is not None and not plan.output.exists():
+                    try:os.replace(backup,plan.output)
+                    except OSError as rollback:
+                        raise ProjectError(f'Publication failed; previous output retained at {backup}: {rollback}') from error
+                    backup = None
                 raise
             stage = None
             if backup is not None:

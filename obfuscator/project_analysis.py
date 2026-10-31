@@ -7,9 +7,10 @@ from .passes.string_obfuscation import parse_lua_string
 
 
 def analyze_modules(sources: dict[str, str], discovered: set[str], templates: tuple[str, ...],
-                    version: str = '5.3', *, local_exists=None) -> tuple[dict, list[list[str]]]:
+                    version: str = '5.3', *, local_path=None, versions=None) -> tuple[dict, list[list[str]]]:
     modules: dict[str,dict] = {}
     for path, source in sources.items():
+        module_version = versions.get(path,version) if versions is not None else version
         ctx = parse(source)
         if ctx.root.has_error:
             modules[path] = {'requires': [], 'calls': [], 'warnings': ['Dependency analysis: Lua syntax is not statically parseable']}
@@ -45,7 +46,7 @@ def analyze_modules(sources: dict[str, str], discovered: set[str], templates: tu
                 item['reason'] = 'require is resolved through a local _ENV'
             elif len(values) == 1 and values[0].type == 'string':
                 try:
-                    name = parse_lua_string(ctx.plain_text(values[0]), version).decode('utf8')
+                    name = parse_lua_string(ctx.plain_text(values[0]), module_version).decode('utf8')
                     item['module'] = name
                     stem = name.replace('.', '/')
                     if not stem or stem.startswith('/') or '\\' in stem or ':' in stem or '\0' in stem:
@@ -57,20 +58,23 @@ def analyze_modules(sources: dict[str, str], discovered: set[str], templates: tu
                         if '..' in parts or PurePosixPath(candidate).is_absolute():
                             raise ValueError('module path escapes the project')
                         candidate = PurePosixPath(candidate).as_posix()
-                        if (candidate in discovered or local_exists is not None and local_exists(candidate)) and candidate not in candidates:
-                            candidates.append(candidate)
+                        resolved = candidate if candidate in discovered else local_path(candidate) if local_path is not None else None
+                        if resolved is not None and resolved not in candidates:
+                            candidates.append(resolved)
                     item['candidates'] = candidates
                     if len(candidates) > 1:
                         item['status'] = 'ambiguous'
                     elif candidates:
                         item['status'] = 'internal' if candidates[0] in sources else 'unresolved'
                         if item['status'] == 'internal':item['path'] = candidates[0]
-                        else:item['reason'] = 'local module excluded from output'
+                        else:item['reason'] = 'local file is not a selected Lua source'
                     else:
                         item['status'] = 'external'
                 except (ValueError, UnicodeError) as error:
                     item['status'] = 'unresolved';item['reason'] = str(error)
             references.append(item)
+            if item['status'] in ('unresolved','ambiguous'):
+                warnings.append(f"require at line {item['line']}: {item['status']} ({item.get('reason', ', '.join(item['candidates']))})")
         # Paths/searchers remain owned by the program. This warning does not
         # pretend that static resolution models arbitrary runtime loaders.
         for node in ctx.walk():

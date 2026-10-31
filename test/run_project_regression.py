@@ -3,6 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 import copy
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -97,6 +98,31 @@ class ProjectTests(unittest.TestCase):
         self.assertEqual(old,{p.name:p.read_bytes() for p in (self.base/'out').rglob('*') if p.is_file()})
         self.assertFalse(list(self.base.glob('.karity-stage-*')))
 
+    def test_publication_failure_rolls_back_and_reports_a_retained_backup(self):
+        plan = self.plan();build_project(plan)
+        output = self.base/'out'
+        snapshot = lambda folder: {p.relative_to(folder).as_posix():p.read_bytes() for p in folder.rglob('*') if p.is_file()}
+        original = snapshot(output)
+        replace = os.replace
+        def fail_publication(source,destination):
+            if Path(source).name.startswith('.karity-stage-'):raise OSError('injected publication failure')
+            return replace(source,destination)
+        with patch('obfuscator.project_build.os.replace',fail_publication),self.assertRaises(ProjectBuildError):
+            build_project(plan)
+        self.assertEqual(original,snapshot(output))
+        self.assertFalse(list(self.base.glob('.karity-stage-*')))
+        self.assertFalse(list(self.base.glob('.karity-backup-*')))
+        def fail_rollback(source,destination):
+            if Path(source).name.startswith(('.karity-stage-','.karity-backup-')):raise OSError('injected rename failure')
+            return replace(source,destination)
+        with patch('obfuscator.project_build.os.replace',fail_rollback),self.assertRaises(ProjectBuildError) as error:
+            build_project(plan)
+        backup, = self.base.glob('.karity-backup-*')
+        self.assertIn(str(backup),str(error.exception))
+        self.assertEqual(original,snapshot(backup))
+        self.assertFalse(output.exists())
+        self.assertFalse(list(self.base.glob('.karity-stage-*')))
+
     def test_unowned_and_edited_outputs_are_preserved(self):
         output = self.base/'out';output.mkdir();(output/'user.txt').write_text('keep')
         with self.assertRaises(ProjectBuildError):build_project(self.plan())
@@ -128,6 +154,16 @@ do local require=function()end;require("shadowed")end''')
         self.assertEqual({'internal','ambiguous','external','dynamic','unresolved'},set(r['status'] for r in main.analysis['requires']))
         self.assertFalse(any(r['module']=='shadowed' for r in main.analysis['requires']))
         self.assertIn(('cycle/a.lua','cycle/b.lua'),plan.cycles)
+        self.assertTrue(any('unresolved' in warning for warning in main.warnings))
+        self.assertTrue(any('ambiguous' in warning for warning in main.warnings))
+
+    def test_dependency_paths_follow_host_case_resolution(self):
+        self.write('main.lua','return require("LIB.MATH")')
+        main = next(m for m in self.plan().modules if m.file.path=='main.lua')
+        reference, = main.analysis['requires']
+        if (self.root/'LIB/MATH.lua').is_file():
+            self.assertEqual(('internal','lib/math.lua'),(reference['status'],reference['path']))
+        else:self.assertEqual('external',reference['status'])
 
     def test_capabilities_errors_and_unsupported_options_are_visible(self):
         self.document.update(passes=['vm'],vm_options={**options('bare'),'requirements':{'dispatcher_cff':'required'}})
@@ -152,6 +188,21 @@ do local require=function()end;require("shadowed")end''')
         for path in ('lib/CON.lua','/outside.lua','../outside.lua','C:/outside.lua','lib/a:stream.lua','lib/trailing. /x.lua'):
             with self.subTest(path=path),self.assertRaises(ProjectError):relative_path(path)
 
+    def test_modules_share_the_entry_runtime_and_custom_preserves_snapshots(self):
+        self.document['profiles'] = {'lua51':{'passes':['minify'],'target':{'lua_version':'5.1'}}}
+        self.document['project']['preset_selection'] = {'mode':'fixed','value':'custom'}
+        self.document['project']['module_overrides'] = {'lib/math.lua':{'preset':'lua51'}}
+        plan = self.plan();self.assertFalse(plan.valid)
+        self.assertIn('differs',next(m for m in plan.modules if m.file.path=='lib/math.lua').error)
+        self.document['_profile'] = 'builtin:balanced'
+        self.document['project']['module_overrides'] = {}
+        self.document['project']['preset_selection'] = {'mode':'fixed','value':'custom'}
+        self.assertTrue(all(m.preset=='custom' for m in self.plan().modules))
+
+    def test_reserved_report_directory_collision_is_rejected(self):
+        self.write('karity-project-report.json/part.lua','return 0')
+        with self.assertRaises(ProjectError):self.plan()
+
     def test_cli_dry_run_and_build_share_choices(self):
         self.document['project'].update(seed=17,backend_selection={'mode':'weighted','weights':{'bare':2,'classic':1}})
         path = self.base/'project.json';path.write_text(json.dumps(self.document))
@@ -165,6 +216,15 @@ do local require=function()end;require("shadowed")end''')
         self.assertEqual([(m['preset'],m['backend']) for m in preview['modules']],
                          [(m['planned_preset'],m['planned_backend']) for m in built['modules']])
         self.assertTrue(built['published'])
+
+    def test_cli_report_cannot_overwrite_configuration(self):
+        path = self.base/'project.json';text = json.dumps(self.document);path.write_text(text)
+        result = subprocess.run([sys.executable,str(ROOT/'main.py'),'--project',str(path),
+            '--dry-run','--project-report',str(path)],capture_output=True,text=True)
+        self.assertEqual(1,result.returncode)
+        self.assertIn('cannot overwrite',result.stderr)
+        self.assertEqual(text,path.read_text())
+        self.assertFalse((self.base/'out').exists())
 
     def execute(self,root,version):
         if version=='5.3':
@@ -194,6 +254,25 @@ local co=coroutine.create(m.co);print(coroutine.resume(co));print(coroutine.resu
                     plan = self.plan();report = build_project(plan)
                     self.assertEqual(expected,self.execute(plan.output,version))
                     self.assertTrue(all(m['backend']==backend for m in report['modules']))
+
+    def test_loaded_project_modules_keep_runtime_integrity_boundaries(self):
+        self.write('lib/math.lua','return function()MARKER=1;return 17 end')
+        self.write('main.lua','''--@NO_VM_START
+local f=require('lib.math');MARKER=0
+local original=string.byte;string.byte=function()return 0 end
+local ok=pcall(f);string.byte=original
+assert(not ok and MARKER==0);print('tamper-blocked')
+--@NO_VM_END''')
+        for version in ('5.1','5.3'):
+            for backend in ('karity','classic','mov','bare'):
+                with self.subTest(version=version,backend=backend):
+                    self.document.update(passes=['vm'],vm_options={**options(backend),
+                        'integrity_constants':True,'integrity_constant_rate':1.0},
+                        target={'lua_version':version},vm_output_passes=['minify'])
+                    self.document['project']['output'] = f'guard-{version}-{backend}'
+                    plan = self.plan();report = build_project(plan)
+                    self.assertEqual(b'tamper-blocked\n',self.execute(plan.output,version))
+                    self.assertIsNone(next(m for m in report['modules'] if m['path']=='main.lua')['backend'])
 
     def test_mixed_project_preserves_loading_and_resource_semantics(self):
         self.write('pkg/init.lua','return setmetatable({value=8},{__call=function(t,n)return t.value+n end})')

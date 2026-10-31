@@ -35,6 +35,8 @@ def run_project_cli(args) -> int:
             for warning in module.warnings:print(f'warning: {module.file.path}: {warning}',file=sys.stderr)
         report_path = Path(args.project_report).resolve() if args.project_report and args.project_report!='-' else None
         if report_path is not None:
+            if report_path == path:
+                raise ProjectError('Project report cannot overwrite the project configuration')
             if report_path.is_relative_to(plan.root) and not report_path.is_relative_to(plan.output):
                 raise ProjectError('Project report cannot modify the input project')
             if report_path.is_relative_to(plan.output) and report_path!=plan.output/REPORT_NAME:

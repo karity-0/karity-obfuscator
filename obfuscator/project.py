@@ -177,7 +177,9 @@ def _config(context: dict, preset: str | None, backend: str | None) -> dict:
         if selected in target.get('profiles', {}):
             target['profiles'][selected].setdefault('vm_options', {})['backend'] = backend
     if preset == 'custom':
+        if isinstance(context.get('config'),dict) and 'preset' in context:context = context['config']
         context.pop('profile', None);context.pop('profiles', None)
+        context['_profile'] = 'custom'
         preset = None
     config: dict = dict(resolve_config_profile(context, preset))
     if backend is not None:config.setdefault('vm_options', {})['backend'] = backend
@@ -207,7 +209,7 @@ def _discover(root, output, include, exclude, copy_resources, resource_include):
                 prefix = '/'.join(PurePosixPath(rel).parts[:i]);key = prefix.casefold()
                 if key in portable and portable[key] != prefix:raise ProjectError(f'Output path collision: {prefix} / {portable[key]}')
                 portable[key] = prefix
-            if rel.casefold() == REPORT_NAME.casefold():raise ProjectError(f'Reserved output name: {rel}')
+            if rel.split('/')[0].casefold() == REPORT_NAME.casefold():raise ProjectError(f'Reserved output name: {rel}')
             data = node.read_bytes() if lua else None
             try:source = data.decode('utf-8-sig') if data is not None else None
             except UnicodeError as error:raise ProjectError(f'Lua source is not UTF-8: {rel}') from error
@@ -282,10 +284,9 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
     sources = {f.path:f.source for f in files if f.source is not None}
     if entry not in sources:raise ProjectError(f'Entry is missing or excluded: {entry}')
     if set(normalized_overrides)-sources.keys():raise ProjectError('Override refers to missing/excluded module: '+', '.join(sorted(set(normalized_overrides)-sources.keys())))
-    def local_exists(path):
-        return safe_source(root,path).is_file()
-    analysis, cycles = analyze_modules(sources, discovered, tuple(templates),
-                                      context.get('target',{}).get('lua_version','5.3'), local_exists=local_exists)
+    def local_path(path):
+        candidate = safe_source(root,path)
+        return candidate.resolve().relative_to(root).as_posix() if candidate.is_file() else None
     modules = []
     for file in files:
         if file.kind != 'lua':continue
@@ -294,7 +295,7 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
             choices[kind],reasons[kind] = _choose(policies[kind],seed,file.path,kind)
             if kind in normalized_overrides.get(file.path,{}):
                 choices[kind] = normalized_overrides[file.path][kind];reasons[kind] = 'override'
-        config = {};error = None;warnings = list(analysis[file.path]['warnings'])
+        config = {};error = None;warnings = []
         try:
             config = _config(context,choices['preset'],choices['backend'])
             backend = TargetProfile.from_config(cast(ObfuscatorConfig,config)).backend
@@ -302,7 +303,19 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
             warnings.extend(config_warnings(config))
         except (ConfigError,ValueError) as exc:
             error = str(exc);backend = choices['backend'] or 'karity';preset = choices['preset'] or 'custom'
-        modules.append(ModulePlan(file,preset,backend,reasons,config,analysis[file.path],tuple(warnings),error))
+        modules.append(ModulePlan(file,preset,backend,reasons,config,{},tuple(warnings),error))
+    targets = {m.file.path:TargetProfile.from_config(cast(ObfuscatorConfig,m.config)) for m in modules if m.error is None}
+    entry_target = targets.get(entry)
+    if entry_target is not None:
+        for i,module in enumerate(modules):
+            target = targets.get(module.file.path)
+            if target is not None and (target.lua_version,target.environment)!=(entry_target.lua_version,entry_target.environment):
+                modules[i] = replace(module,error='Module Lua version/environment differs from the project entry')
+            elif target is not None and target.runtime_abi and entry_target.runtime_abi and target.runtime_abi!=entry_target.runtime_abi:
+                modules[i] = replace(module,error='Module runtime ABI differs from the project entry')
+    analysis, cycles = analyze_modules(sources,discovered,tuple(templates),local_path=local_path,
+                                      versions={path:t.lua_version for path,t in targets.items()})
+    modules = [replace(m,analysis=analysis[m.file.path],warnings=(*m.warnings,*analysis[m.file.path]['warnings'])) for m in modules]
     plan = ProjectPlan(root,output,entry,seed,tuple(modules),tuple(f for f in files if f.kind=='resource'),
                        tuple(tuple(c) for c in cycles),deepcopy(document),base)
     return replace(plan,id=_seal(plan))
