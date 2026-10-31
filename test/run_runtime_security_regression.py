@@ -715,6 +715,24 @@ assert(not pcall(callback))
                     self.assertEqual(expected,execute(version,harness))
 
 
+    def test_initial_capture_keeps_unicode_offsets_and_marker_region(self):
+        from obfuscator.vm.runtime_security import _freeze_calls,_capture_source
+        prefix='local text="한글😀";local outside={nested={}};'
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            source=prefix+_capture_source(native_unpack='unpack' if version=='5.1' else 'table.unpack',
+                native_table_pack=version!='5.1')+'''
+local value=0
+'''+('value=(value*3+1)%997;'*800)+'''
+local function shadow(type)return type end
+return text,type(value),string.byte('A'),shadow(17),outside.nested
+'''
+            output=_freeze_calls(source)
+            result=runtime_type(unpack_returned_tuples=True).execute(output)
+            self.assertEqual(('한글😀','number',65,17),result[:4])
+            self.assertEqual([],list(result[4].keys()))
+            with self.assertRaisesRegex(ValueError,'capture boundary'):
+                _freeze_calls('return type(7)')
+
     def test_capture_preserves_local_shadowing_and_early_initializers(self):
         from obfuscator.vm.runtime_security import _freeze_calls,_capture_source
         body="""local early=math.floor(3.9)

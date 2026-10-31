@@ -2,6 +2,12 @@
 from pathlib import Path
 import random
 import re
+from bisect import bisect_left
+import tree_sitter as ts
+from ..passes.ts_utils import _LANG
+
+
+_CAPTURE_TABLES = ts.Query(_LANG, '(table_constructor) @table')
 
 
 # Compiler-owned invariant failures have no useful guest-facing diagnostic.
@@ -213,6 +219,7 @@ def _private_field_edits(ctx, bindings):
             for binding in bindings if binding.original in {'_PS','S','A'}
             and any(start<=ctx.cs(node)<end for node in binding.nodes)
             for node in binding.nodes}
+    offsets=sorted(node.start_byte for binding in bindings for node in binding.nodes if node.id in groups)
 
     def owner_group(node):
         if node.type=='identifier':
@@ -227,7 +234,13 @@ def _private_field_edits(ctx, bindings):
     fields=[]
     records=[]
     keys={'values':set(),'api':set()}
-    for node in ctx.walk():
+    stack=[ctx.root]
+    while stack:
+        node=stack.pop()
+        index=bisect_left(offsets,node.start_byte)
+        if index==len(offsets) or offsets[index]>=node.end_byte:
+            continue
+        stack.extend(node.named_children)
         if node.type=='dot_index_expression':
             owner,key=node.named_children
             group=owner_group(owner)
@@ -279,12 +292,14 @@ def _private_field_edits(ctx, bindings):
 def _freeze_calls(source: str) -> str:
     """Freeze native references into numeric slots and hide internal diagnostics."""
     from ..passes.ts_utils import parse
-    from ..passes.rename_ts import resolve_bindings
+    from ..passes.rename_ts import collect_named_identifiers, resolve_bindings
     ctx=parse(source)
     free: dict[int, object]={}
     names=set(_CORE_GLOBALS)|set(_CORE_MEMBERS)|{'unpack','_PS_CORE','_PS','S','A','assert'}
+    captures=collect_named_identifiers(ctx,names)
+    offsets=sorted(node.start_byte for node in captures['identifier'])
     bindings, *_ = resolve_bindings(ctx,free_environments=free,collect_literals=False,
-                                   identifier_filter=lambda node:ctx.plain_text(node) in names)
+                                   captures=captures)
     start=source.find('--<<SECURITY_CAPTURE>>')
     end=source.find('--<<ENDSECURITY_CAPTURE>>')
     if start < 0 or end <= start:
@@ -295,8 +310,15 @@ def _freeze_calls(source: str) -> str:
     core_nodes={node.id for binding in bindings if binding.original=='_PS_CORE'
                 and any(start<=ctx.cs(node)<end for node in binding.nodes)
                 for node in binding.nodes}
-    capture=next(node for node in ctx.walk() if node.type=='table_constructor'
-                 and start<=ctx.cs(node)<ctx.ce(node)<end)
+    cursor=ts.QueryCursor(_CAPTURE_TABLES)
+    cursor.set_byte_range(len(source[:start].encode('utf8')),len(source[:end].encode('utf8')))
+    table_captures=cursor.captures(ctx.root)
+    tables=(table_captures.get('table',[]) if isinstance(table_captures,dict)
+            else [n for n,name in table_captures if name=='table'])
+    # Reverse DFS visits a containing table before its children and later
+    # siblings first: the greatest end offset selects the identical table.
+    capture=next(iter(sorted((n for n in tables if start<=ctx.cs(n)<ctx.ce(n)<end),
+                             key=lambda n:n.end_byte,reverse=True)))
     keys=[*_CORE_GLOBALS,'unpack',
           *(owner+'_'+name for owner,members in _CORE_MEMBERS.items() for name in members)]
     slots=dict(zip(keys,random.sample(range(31,4096),len(keys))))
@@ -315,6 +337,9 @@ def _freeze_calls(source: str) -> str:
     stack=[ctx.root]
     while stack:
         node=stack.pop()
+        index=bisect_left(offsets,node.start_byte)
+        if index==len(offsets) or offsets[index]>=node.end_byte:
+            continue
         if start>=0 and start<=ctx.cs(node) and ctx.ce(node)<end+len('--<<ENDSECURITY_CAPTURE>>'):
             continue
         if node.type == 'function_call':
@@ -353,6 +378,18 @@ def _freeze_calls(source: str) -> str:
             edits.append((ctx.cs(node),ctx.ce(node)+1,replacement))
         else:
             stack.extend(node.named_children)
-    for start,end,replacement in sorted(edits,reverse=True):
-        source=source[:start]+replacement+source[end:]
+    ordered=sorted(edits)
+    if all(left[1]<=right[0] for left,right in zip(ordered,ordered[1:])):
+        # Assemble disjoint edits once instead of copying the whole runtime
+        # for every native/private field. Retain legacy overlap behavior.
+        plain=str(source)
+        parts: list[str]=[]
+        previous=0
+        for start,end,replacement in ordered:
+            parts.extend((plain[previous:start],replacement));previous=end
+        parts.append(plain[previous:])
+        source=''.join(parts)
+    else:
+        for start,end,replacement in sorted(edits,reverse=True):
+            source=source[:start]+replacement+source[end:]
     return source.replace('--<<SECURITY_VALUES>>','').replace('--<<ENDSECURITY_VALUES>>','')
