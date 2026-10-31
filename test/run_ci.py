@@ -14,6 +14,7 @@ REGRESSIONS = (
     'verification',
     'pass_contract',
     'typing',
+    'project',
     'bare_backend',
     'bare_optimization',
     'bare_flow',

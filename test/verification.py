@@ -27,6 +27,7 @@ FEATURE_SUITES = {
     'packing': 'packer signature line_state string_encode string_obf runtime_security vm_finalize',
     'selection': 'selection kes kes_integration user_presets function_cost target_capability',
     'gui': 'gui gui_experience user_presets signature',
+    'project': 'project gui user_presets backend_options target_capability selection',
     'presets': 'user_presets gui gui_experience backend_options target_capability vm_runtime_size',
     'kes': 'kes kes_integration selection',
     'ir': 'ir_facts ir_morphing ir_options vm_ir opcode_edges cross_backend_generated block_permutation register_cache',
@@ -130,6 +131,7 @@ PATH_FEATURES = (
     ('obfuscator/serializer*.py', 'serialization'),
     ('gui/**', 'gui'),
     ('obfuscator_gui.py', 'gui'),
+    ('obfuscator/project*.py', 'project'),
     ('tools/generate_config_docs.py', 'presets'),
 )
 

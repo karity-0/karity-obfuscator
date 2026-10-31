@@ -51,6 +51,9 @@ def build_pipeline(config: ObfuscatorConfig) -> Pipeline:
 def parse_args():
     parser = argparse.ArgumentParser(description="lua obfuscator")
     parser.add_argument("input", nargs="?", help="input lua script")
+    parser.add_argument('--project', help='project JSON configuration (directory output)')
+    parser.add_argument('--dry-run', action='store_true', help='preview a project selection plan without building')
+    parser.add_argument('--project-report', help='write a project plan/build report, or - for stdout')
     parser.add_argument("-o", "--output", help="output lua script")
     parser.add_argument("-c", "--config", default="config.json", help="config json path")
     parser.add_argument(
@@ -219,7 +222,12 @@ def main():
     if args.list_passes:
         print_passes()
         return
-
+    if args.project:
+        from obfuscator.project_cli import run_project_cli
+        sys.exit(run_project_cli(args))
+    if args.dry_run or args.project_report:
+        print('error: --dry-run/--project-report require --project',file=sys.stderr)
+        sys.exit(2)
     config_root = load_config(args.config)
     if args.list_profiles:
         print_profiles(config_root)
