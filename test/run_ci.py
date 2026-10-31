@@ -15,6 +15,7 @@ REGRESSIONS = (
     'pass_contract',
     'typing',
     'project',
+    'project_gui',
     'bare_backend',
     'bare_optimization',
     'bare_flow',

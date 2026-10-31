@@ -60,6 +60,8 @@ GUI에서 저장한 설정은 CLI에서도 사용할 수 있습니다. 기존 JS
 
 ## 문서
 
+- [Project Mode](docs/project-mode.md): 폴더 빌드, 파일별 보호 정책, GUI 출력 탐색기.
+
 - [KES 문법 가이드](docs/kes-guide.ko.md) · [상세 명세(영문)](docs/kes.md)
 - [프리셋과 백엔드 선택(영문)](docs/user-presets.md)
 - [설정 레퍼런스(영문)](docs/configuration.md)

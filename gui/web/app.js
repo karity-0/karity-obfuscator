@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let api = null;
   let experience = null;
+  let projectMode = null;
   let bootstrap = null;
   let state = null;
   let preferences = null;
@@ -98,6 +99,8 @@ document.addEventListener('DOMContentLoaded', () => {
         executeCode, runObfuscation, saveConfiguration, copyOutput,
         presetLabel: name => tr(presetLabels[name]?.[0] || titleCase(name))});
       renderAll();
+      projectMode = window.ProjectMode.attach({api, bootstrap, getConfig: () => clone(state.config), tr,
+        isSingleBusy: () => ui.run.disabled || Boolean(executionId) || executionStarting});
       const version = await api.get_version();
       document.getElementById("app-version").textContent = `v${version}`;
       ui.backendLabel.textContent = 'backend ready';
@@ -821,6 +824,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function saveConfiguration() {
+    if (projectMode?.active()) return projectMode.save();
     try {
       const result = await api.save_config(state);
       ui.saveStatus.textContent = tr(result.ok ? 'Saved locally' : 'Save failed');
@@ -831,6 +835,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function openFile() {
+    if (projectMode?.active()) return projectMode.load();
     setStatus('Opening file…', 'running', 'Waiting for file selection.');
     const result = await api.pick_input_file();
     if (!result) return setStatus('Ready', 'idle', 'File selection cancelled.');
@@ -851,6 +856,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function copyOutput() {
+    if (projectMode?.active()) return projectMode.notice('Select a module and use View output.');
     if (!ui.output.value) return;
     try {
       await navigator.clipboard.writeText(ui.output.value);
@@ -868,6 +874,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function runObfuscation() {
+    if (projectMode?.active()) return projectMode.build();
     if (!ui.input.value.trim()) return setStatus('Input required', 'error', 'Paste Lua source or open a file.');
     ui.run.disabled = true;
     setStatus('Protecting…', 'running', `${ui.activePreset.textContent} / ${ui.activeLevel.textContent}`);
@@ -937,6 +944,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function executeCode(target) {
+    if (projectMode?.active()) return projectMode.notice('Run the project entry from its output directory.');
     if (executionId || executionStarting) return;
     showConsole(true);
     $('console-output').replaceChildren();

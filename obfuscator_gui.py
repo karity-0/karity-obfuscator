@@ -23,6 +23,7 @@ from obfuscator import Pipeline, __version__
 from obfuscator.profiling import Profiler
 from obfuscator.profiling import phase_scope
 from obfuscator.gui_build import GuiBuild
+from obfuscator.gui_project import ProjectApi
 from obfuscator.gui_execution import LuaExecution
 from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
@@ -325,13 +326,14 @@ def _load_preferences() -> dict:
         return _normalize_preferences({})
 
 
-class Api:
+class Api(ProjectApi):
     """Backend exposed to JavaScript through window.pywebview.api."""
 
     def __init__(self):
         self._execution = LuaExecution()
         self._build_lock = threading.Lock()
         self._builds = GuiBuild(self.run_obfuscation)
+        self._init_project()
         self._restore_geometry: tuple[int, int, int, int] | None = None
         self._is_maximized = False
 
@@ -499,6 +501,8 @@ class Api:
             return self._run_obfuscation(copy.deepcopy(payload))
 
     def _run_obfuscation(self, payload: dict):
+        if payload.get('mode')=='project':
+            return self._run_project(payload)
         script = payload.get("script", "")
         config = _complete_config(payload.get("config", {}))
         if not script.strip():

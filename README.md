@@ -61,6 +61,8 @@ development and diagnostics. See [user presets](docs/user-presets.md) and the
 
 ## Documentation
 
+- [Project Mode](docs/project-mode.md): directory builds, per-file policies and GUI output explorer.
+
 - [KES syntax quick guide](docs/kes-guide.md) · [Full reference](docs/kes.md)
 - [Presets and backend selection](docs/user-presets.md)
 - [Configuration reference](docs/configuration.md)
