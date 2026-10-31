@@ -7,11 +7,16 @@ uses the checked bank. No user chunk or captured guest value is evaluated here.
 from dataclasses import dataclass
 import re
 import random
+import tree_sitter as ts
 
 from ..names import NameAllocator
 from ..parser import Lua53Parser, Reader as ChunkReader
-from ..passes.ts_utils import parse
+from ..passes.ts_utils import _LANG, parse
 from ..passes.rename_ts import resolve_bindings, _apply_replacements_once
+
+
+_CHECKPOINT_NODES = ts.Query(_LANG,
+    '[(function_definition) (function_declaration) (while_statement)] @checkpoint')
 
 
 def fingerprint(data):
@@ -209,11 +214,14 @@ local {bank}={{[{tick}]=0}};local {originals}={{}};
                         for index, period in enumerate(periods))
     # Sparse checkpoints cover long-running interpreters and resumed executors.
     # Only generator-owned runtime code enters this service; guest code is data.
-    functions = [n for n in ctx.walk() if n.type in ('function_definition', 'function_declaration') and n.id != root.id]
+    captures = ts.QueryCursor(_CHECKPOINT_NODES).captures(ctx.root)
+    checkpoints_nodes = (captures.get('checkpoint', []) if isinstance(captures, dict)
+                         else [n for n, name in captures if name == 'checkpoint'])
+    functions = [n for n in checkpoints_nodes if n.type in ('function_definition', 'function_declaration') and n.id != root.id]
     largest = max((ctx.ce(n)-ctx.cs(n) for n in functions), default=0)
     excluded = [(ctx.cs(n), ctx.ce(n)) for _, n in candidates]
     checkpoints = 0
-    for node in ctx.walk():
+    for node in checkpoints_nodes:
         if any(a <= ctx.cs(node) <= b for a, b in excluded):
             continue
         checkpoint = node.type == 'while_statement' and ctx.ce(node)-ctx.cs(node) >= 1024

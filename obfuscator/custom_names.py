@@ -217,11 +217,11 @@ def finish(owner, source):
         return
     if scope.names:
         from collections import Counter
-        from .passes.rename_ts import resolve_bindings
+        from .passes.rename_ts import collect_named_identifiers, resolve_bindings
         from .passes.ts_utils import parse
         ctx = parse(source)
         bindings, free, _, _, _ = resolve_bindings(ctx, collect_literals=False,
-            identifier_filter=lambda n: ctx.plain_text(n) in scope.names)
+            captures=collect_named_identifiers(ctx, scope.names))
         counts = Counter(b.original for b in bindings)
         if counts != Counter(scope.names) or set(scope.names) & free:
             raise ValueError('custom names were lost, duplicated or captured after final naming')

@@ -89,6 +89,38 @@ end'''
         output = capture_generated_apis('return function() return _ENV["string"]["char"](65) end', lua_version='5.3')
         self.assertEqual('A', Lua53().execute(output)())
 
+    def test_terminal_native_capture_keeps_stores_declarations_and_unicode(self):
+        from obfuscator.vm.runtime_finalization import capture_generated_apis
+        source='''return function()
+local _ENV=getfenv and getfenv(1) or _ENV
+local original=string.char
+assert=assert;string.char=original
+function string.captureFixture(x)return x end
+function string:captureMethod(x)return x end
+local function shadow(string)
+ function string.custom()return 'shadow' end
+ return string.char(),string.custom()
+end
+local function read()
+ local a,b=shadow({char=function()return 'local' end})
+ return _ENV['string']['\\099har'](65),string['capture'..'Fixture']('한글'),
+        string['capture'..'Method'](string,'method'),a,b
+end
+return read,original
+end'''
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            for style in (False,True):
+                with self.subTest(version=version,style=style):
+                    runtime=runtime_type(unpack_returned_tuples=True)
+                    original=runtime.eval('string.char')
+                    output=capture_generated_apis(source,lua_version=version,string_style=style)
+                    read,captured=runtime.execute(output)()
+                    self.assertTrue(runtime.eval('rawequal')(original,captured))
+                    runtime.execute("string.char=function()return 'rebound' end")
+                    self.assertEqual(('A','한글','method','local','shadow'),read())
+        unchanged='return function()local t={string="math",_ENV="table"};return t.string end'
+        self.assertEqual(unchanged,capture_generated_apis(unchanged,lua_version='5.3'))
+
     def test_late_environment_strings_share_selected_protection(self):
         from unittest.mock import patch
         from obfuscator.passes.string_mosaic import StringMosaic

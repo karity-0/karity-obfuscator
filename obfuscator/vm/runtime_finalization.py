@@ -6,6 +6,7 @@ than teaching every producer the layout of an earlier private capture bank.
 """
 import random
 import re
+from bisect import bisect_left
 
 
 def protect_fragment_strings(source, pass_names, *, lua_version):
@@ -59,7 +60,7 @@ def capture_generated_apis(source, *, lua_version, string_style=False):
     """
     from ..names import NameAllocator
     from ..passes.ts_utils import parse
-    from ..passes.rename_ts import resolve_bindings, _apply_replacements_once
+    from ..passes.rename_ts import collect_named_identifiers, resolve_bindings, _apply_replacements_once
     from ..passes.string_obfuscation import parse_lua_string
     from .runtime_security import _CORE_GLOBALS, _CORE_MEMBERS
     anchor = re.match(r'return\s+function\s*\([^)]*\)', source)
@@ -68,9 +69,11 @@ def capture_generated_apis(source, *, lua_version, string_style=False):
     ctx = parse(source)
     libraries = set(_CORE_MEMBERS)
     globals_ = set(_CORE_GLOBALS) | libraries | {'assert', 'unpack', 'getfenv', 'setfenv'}
+    captures = collect_named_identifiers(ctx, globals_ | {'_ENV'})
+    offsets = sorted(node.start_byte for node in captures['identifier'])
     free = {}
     resolve_bindings(ctx, free_environments=free, collect_literals=False,
-                     identifier_filter=lambda n: ctx.plain_text(n) in globals_ | {'_ENV'})
+                     captures=captures)
 
     def quoted(text):
         from ..passes.string_mosaic import lua_string
@@ -107,6 +110,9 @@ def capture_generated_apis(source, *, lua_version, string_style=False):
     stack = [ctx.root]
     while stack:
         node = stack.pop()
+        index = bisect_left(offsets, node.start_byte)
+        if index == len(offsets) or offsets[index] >= node.end_byte:
+            continue
         if (node.parent is not None and node.parent.type == 'function_declaration'
                 and node.parent.child_by_field_name('name') == node):
             # Lua's function-name grammar cannot contain bracket indexes.

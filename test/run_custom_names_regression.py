@@ -14,7 +14,7 @@ from obfuscator.passes.rename_obfuscation import RenameObfuscationPass
 from obfuscator.passes.packer import PackerPass
 from obfuscator.passes.strip_info import StripInfoPass
 from obfuscator.passes.minify import MinifyPass
-from obfuscator.passes.rename_ts import resolve_bindings
+from obfuscator.passes.rename_ts import collect_named_identifiers, resolve_bindings
 from obfuscator.passes.rename_ts import rename_script_ts
 from obfuscator.passes.binding_kinds import classify_bindings
 from obfuscator.passes.ts_utils import parse
@@ -58,6 +58,39 @@ class CustomNameTests(unittest.TestCase):
         for binding in bindings:
             if binding.original in names:
                 self.assertIn(binding.original, custom_names.CUSTOM_NAMES[kinds[id(binding)]])
+
+    def test_named_capture_preserves_filtered_binding_resolution(self):
+        source='''local string={};local math=1;local object={string="math"}
+function object:call(select)
+ local _ENV={};do local string=math;return string,select,self end
+end
+return string,math,object.string,globalValue,_ENV'''
+        ctx=parse(source);wanted={'string','math','select','self','_ENV'}
+        before_free={};after_free={}
+        before=resolve_bindings(ctx,collect_literals=False,free_environments=before_free,
+            identifier_filter=lambda node:ctx.plain_text(node) in wanted)
+        after=resolve_bindings(ctx,collect_literals=False,free_environments=after_free,
+            captures=collect_named_identifiers(ctx,wanted))
+        def signature(result):
+            return [(b.original,[n.start_byte for n in b.nodes]) for b in result[0]],result[1:]
+        self.assertEqual(signature(before),signature(after))
+        def environments(values):
+            return {key:None if value is None else value.nodes[0].start_byte for key,value in values.items()}
+        self.assertEqual(environments(before_free),environments(after_free))
+        self.assertEqual({'identifier':[]},collect_named_identifiers(ctx,()))
+
+    def test_final_validation_still_rejects_missing_duplicate_and_free_names(self):
+        from types import SimpleNamespace
+        owner=SimpleNamespace();source='local a,b=1,2;print(a,b)'
+        with custom_names.build_scope(owner,source,enabled=True) as scope:
+            with custom_names.stage(owner):output=custom_names.apply(source)
+            custom_names.finish(owner,output)
+            name=scope.names[0]
+            for corrupted in (output.replace(name,'replacementName'),
+                              output+';local '+name+'=1', 'print('+name+');'+output):
+                with self.subTest(source=corrupted):
+                    with self.assertRaisesRegex(ValueError,'lost, duplicated or captured'):
+                        custom_names.finish(owner,corrupted)
 
     def test_binding_category_proofs(self):
         cases = [
