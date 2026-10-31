@@ -33,6 +33,40 @@ def build(source,version='5.3',seed=1810,protected=False,passes=()):
 
 
 class BareOptimizationTests(unittest.TestCase):
+    def test_chunked_result_stores_keep_counts_nil_padding_and_shrinking_tops(self):
+        for version in ('5.1','5.3'):
+            for count in (0,3,16,33,64,129):
+                with self.subTest(version=version,count=count):
+                    arguments=','.join('nil' if i%3==0 else str(i) for i in range(1,count+1))
+                    source='''local function values(...)return ... end
+local function packet(...)return {n=select('#',...),...} end
+local function run(...)return packet(values(...))end
+local value=run('''+arguments+''')
+print(value.n,value[1],value[3],value['''+str(count)+'''])
+local empty=run();print(empty.n,empty[1])
+'''
+                    names=','.join(f'v{i}' for i in range(64))
+                    source+='local '+names+'=values(7,nil,false);print(v0,v1,v2,v63)'
+                    vm,_=self.compare(source,version)
+                    self.assertEqual(1,vm.last_lowered_ir.backend_data['optimization']['shared_result_store_helpers'])
+
+    def test_chunked_result_stores_preserve_captured_cells_and_collection(self):
+        names=','.join(f'v{i}' for i in range(64))
+        source='''local unpack=table.unpack or unpack
+local weak=setmetatable({},{__mode='v'});local objects={};local keep
+for i=1,64 do objects[i]={i};weak[i]=objects[i]end
+local function values(...)return ... end
+do local '''+names+'''=values(unpack(objects,1,64))
+ keep=function()return v0,v63 end;objects=nil
+ collectgarbage('collect');assert(weak[1]~=nil and weak[32]~=nil)
+end
+collectgarbage('collect');collectgarbage('collect')
+assert(weak[32]==nil);local first,last=keep();assert(first[1]==1 and last[1]==64)
+first=nil;last=nil;keep=nil
+collectgarbage('collect');collectgarbage('collect');print(weak[1]==nil,weak[64]==nil)'''
+        for version in ('5.1','5.3'):
+            self.compare(source,version,protected=True)
+
     def compare(self,source,version='5.3',**kwargs):
         output,vm,texts=build(source,version,**kwargs)
         self.assertEqual(execute(version,source),execute(version,output))

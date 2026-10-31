@@ -193,9 +193,12 @@ class Function:
             return '_Bfixed(' + str(operand.value) + ',' + str(operand.count) + ',' + expression + ')\n'
         return self.span(operand) + '=' + expression + '\n'
 
-    def close(self, first):
+    def close(self, first, live=None):
         if first is None: return ''
-        return ''.join(self.slot(i) + '={' + self.r(i) + '}\n' +
+        # Escaped closures keep the old cell. A dead register's replacement
+        # must not root its former value until the whole caller returns.
+        prefix=self.function.id+':r'
+        return ''.join(self.slot(i) + '={' + (self.r(i) if live is None or prefix+str(i) in live else '') + '}\n' +
                        ('_BC[' + str(i) + ']=' + self.slot(i) + '\n' if self.dynamic and i>=self.local_count else '')
                        for i in sorted(self.captured) if i >= first)
 
@@ -252,15 +255,26 @@ class Function:
                 result += 'local function _Bg(i) return _BS[i] end\n'
                 result += 'local function _Bs(i,v) _BS[i]=v end\n'
         if 'fixed' in self.support:
-            result += ('local function _Bfixed(a,n,...) for i=1,n do _Bs(a+i-1,'
-                       + self.api('select') + '(i,...)) end end\n')
+            result += 'local function _Bfixed(a,n,...) return _Bput(_Bs,a,n,...) end\n'
         if 'values' in self.support:
             result += ('local function _Bvalues(a,n) local t={} for i=1,n do t[i]=_Bg(a+i-1) end;return '
                        + self.api('unpack') + '(t,1,n) end\n')
         if 'store' in self.support:
             result += ('local function _Bstore(a,...) local n=' + self.api('select') + '("#",...);'
-                       'for i=1,n do _Bs(a+i-1,' + self.api('select') + '(i,...)) end;'
+                       'if n<16 then for i=1,n do _Bs(a+i-1,' + self.api('select') + '(i,...)) end '
+                       'else _Bput(_Bs,a,n,...) end;'
                        'for i=a+n,_BT do _Bs(i,nil) end;_BT=a+n-1 end\n')
+        if self.support & {'fixed','store'}:
+            # Bound result copies without a packet allocation. All incoming
+            # varargs remain alive in this frame, as in the scalar loop.
+            names=','.join('_Bv'+str(i) for i in range(8))
+            copies=''.join(f'set(a+i+{j-1},_Bv{j});' for j in range(8))
+            if 'result_store' not in self.program.shared_helpers:
+                self.program.optimization['shared_result_store_helpers'] += 1
+            self.program.shared_helpers['result_store']=(
+                'local function _Bput(set,a,n,...) local i=1;while i+7<=n do local '+names+'='
+                +self.api('select')+'(i,...);'+copies+'i=i+8 end;'
+                'for j=i,n do set(a+j-1,'+self.api('select')+'(j,...)) end end\n')
         if 'for' in self.support:
             # FORPREP conversions are shared with Classic. The dispatcher
             # executes FOR_LOOP updates directly in their program block.
@@ -371,7 +385,7 @@ class Function:
         elif op in _UNARY: code = dest(_UNARY[op] + '(' + v('source') + ')')
         elif op == 'CONCAT':
             span = fields['sources']; code = dest('..'.join('(' + self.r(i) + ')' for i in range(span.value, span.value + span.count)))
-        elif op == 'JUMP': code = self.close(fields['close_from'].value)
+        elif op == 'JUMP': code = self.close(fields['close_from'].value,self.liveness.after[ins.id])
         elif op in ('EQUAL', 'LESS_THAN', 'LESS_EQUAL', 'TEST', 'TEST_SET'):
             if op in ('TEST', 'TEST_SET'): condition = '(not not (' + v('condition') + '))'
             else: condition = '(' + v('left') + ({'EQUAL': '==', 'LESS_THAN': '<', 'LESS_EQUAL': '<='}[op]) + v('right') + ')'
