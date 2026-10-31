@@ -26,6 +26,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .base import PostPass
+from ..custom_names import output_scope
 from ..toolchain import LuaToolchain, LIBRARY_DUMP_FUNCTION
 
 
@@ -1242,9 +1243,12 @@ class PackerPass(PostPass):
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain()
         self.last_profile: list[dict] = []
+        self.last_custom_names: dict[str, object] = {}
 
+    @output_scope('packer_output_passes')
     def run(self, script: str) -> str:
         self.last_profile = []
+        self.last_custom_names = {}
 
         # Context shape is decided before the loader is finalized. The actual
         # state-routed indices are rendered only after the loader dump hash is known.
@@ -1277,6 +1281,8 @@ class PackerPass(PostPass):
             cache_literals=plan.is_vm,
         )
 
+        from ..custom_names import apply as apply_custom_names
+        loader_src = apply_custom_names(loader_src, reserved=('_P', '_D', 'select'))
         dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix, self.toolchain))
         state = _context_state(dump_hash, plan)
 

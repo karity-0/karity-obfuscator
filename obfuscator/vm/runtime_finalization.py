@@ -157,6 +157,8 @@ def output_finalizer(pass_names, *, lua_version):
     """One terminal dependency/formatting boundary shared by every VM backend."""
     def finish(source):
         source = capture_generated_apis(source, lua_version=lua_version, string_style='string_encode' in pass_names)
+        from ..custom_names import apply as apply_custom_names
+        source = apply_custom_names(source, reserved=('select', 'getfenv', 'setfenv'))
         if 'minify' in pass_names:
             from ..passes.minify import MinifyPass
             source = MinifyPass().run(source)

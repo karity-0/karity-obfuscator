@@ -11,6 +11,7 @@ __lazy_modules__ = {
 
 from functools import partial
 from ..profiling import run_phase
+from ..custom_names import output_scope
 from typing import Callable, cast
 
 from pathlib import Path
@@ -264,6 +265,7 @@ class VMPass(PostPass):
             raise ValueError("target profile backend mismatch")
         self.target = self.target_profile.adapter()
         self.last_profile: list[dict] = []
+        self.last_custom_names: dict[str, object] = {}
         self.last_source_ir: SemanticIR | None = None
         self.last_optimized_ir: SemanticIR | None = None
         self.last_morphed_ir: SemanticIR | None = None
@@ -281,7 +283,9 @@ class VMPass(PostPass):
             target=self.target_profile,
         )
 
+    @output_scope('vm_output_passes')
     def run(self, script: str) -> str:
+        self.last_custom_names = {}
         self.last_source_ir = None
         self.last_morphed_ir = None
         self.last_optimized_ir = None

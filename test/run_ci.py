@@ -25,6 +25,7 @@ REGRESSIONS = (
     'blob_form',
     'serialization',
     'constant_pool',
+    'custom_names',
     'runtime_security',
     'runtime_probes',
     'runtime_validation',

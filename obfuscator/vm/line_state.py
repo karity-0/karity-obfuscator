@@ -175,8 +175,10 @@ end end''')
     forms = ['index', 'call', 'length', 'add', 'concat']
     rng.shuffle(forms)
     markers = []
+    probe_names: set[str] = set()
     for index, (slot, form) in enumerate(zip(probe_slots, forms)):
         value = allocator.allocate('value')
+        probe_names.add(value)
         expression = {'index': f'{value}[{value}]', 'call': f'{value}()',
                       'length': f'#{value}', 'add': f'{value}+{value}',
                       'concat': f'{value}..{value}'}[form]
@@ -296,7 +298,9 @@ end end''')
         # Late environment/line fragments introduce separators after the main
         # output pass. Compact the assembled source before recording locations,
         # then leave it untouched for both the integrity dump and final wrapper.
-        result = finalizer(result)
+        from ..custom_names import keep_bindings
+        with keep_bindings(probe_names):
+            result = finalizer(result)
     prefix_lines = output_prefix.count('\n')
     probe_lines = []
     for marker in markers:

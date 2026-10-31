@@ -64,6 +64,7 @@ class Pipeline:
         self.selection_config: ObfuscatorConfig = {}
         self.mosaic_scope: LiteralMosaic | None = None
         self.last_mosaic_metrics: dict[str, Any] = {}
+        self.last_custom_names: dict[str, object] = {}
         self.target_profile: TargetProfile
         self.toolchain: LuaToolchain
         self.last_selection_report: list[dict[str, JSONValue]] = []
@@ -89,6 +90,7 @@ class Pipeline:
         profiler: Profiler | None = None,
     ) -> str:
         from .names import RENAME_OPTIONS
+        self.last_custom_names = {}
         from .passes.literal_mosaic import LiteralMosaic, use_mosaic
         from .passes.mosaic_metrics import DiversityMetrics
 
@@ -105,8 +107,11 @@ class Pipeline:
             else None
         )
         try:
-            with use_mosaic(mosaic):
-                return self._run(script, verbose, profiler)
+            from . import custom_names
+            with use_mosaic(mosaic), custom_names.build_scope(self, script):
+                result = self._run(script, verbose, profiler)
+                custom_names.finish(self, result)
+                return result
         finally:
             self.last_mosaic_metrics = mosaic.metrics.report() if mosaic.metrics.enabled else {}
             if token is not None:
@@ -239,6 +244,23 @@ class Pipeline:
                     print(ast.to_pretty_str(new_tree))
 
         post_passes = selection.post_passes(self._post_passes) if selection.enabled else self._post_passes
+        from . import custom_names
+        from .vm.vm_pass import VMPass
+        from .passes.packer import PackerPass
+        scope = custom_names.ACTIVE.get()
+        if scope is not None and scope.owner is self:
+            outputs = [p for p in post_passes if isinstance(p, (VMPass, PackerPass))]
+            target = outputs[-1] if outputs else self
+            enabled = bool(renamers) or any('rename_obf' in getattr(p, attribute, ())
+                for p in outputs for attribute in ('vm_output_passes', 'packer_output_passes'))
+            naming = renamers[-1].options if renamers and not outputs else {}
+            custom_names.configure(target, enabled=enabled, **naming, opaque_input=isinstance(target, PackerPass))
+            if target is self:
+                with custom_names.stage(self):
+                    script = custom_names.apply(script,
+                        keep=(lambda ctx, b: any(selection.plan.excluded(ctx.cs(n),ctx.ce(n)+1)
+                                                for n in b.nodes)) if selection.enabled else None,
+                        render=(lambda edits: selection.plan.apply(script, edits)) if selection.enabled else None)
         for post_index, post in enumerate(post_passes):
             from .vm.vm_pass import VMPass
             if not any(isinstance(p, VMPass) for p in post_passes[post_index:]):
@@ -247,7 +269,8 @@ class Pipeline:
                 before = _size(script)
                 start = time.perf_counter()
 
-                script = selection.run_post(post, script) if selection.enabled else post.run(script)
+                with custom_names.stage(post):
+                    script = selection.run_post(post, script) if selection.enabled else post.run(script)
 
                 elapsed = time.perf_counter() - start
                 details = getattr(post, "last_profile", [])

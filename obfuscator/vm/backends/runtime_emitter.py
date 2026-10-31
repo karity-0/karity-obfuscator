@@ -915,7 +915,9 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     vm_func_src = target.lower_source(vm_func_src)
     vm_func_src = target.bind_environment(vm_func_src, context)
     _line_state_start = time.perf_counter()
-    vm_func_src, line_state, probe_lines = target.bind_lines(vm_func_src, context)
+    from ...custom_names import keep_bindings
+    with keep_bindings((helper_integrity.bank,) if helper_integrity is not None else ()):
+        vm_func_src, line_state, probe_lines = target.bind_lines(vm_func_src, context)
     context.profile.append({
         "phase": "source_line_state",
         "elapsed": round(time.perf_counter() - _line_state_start, 6),
