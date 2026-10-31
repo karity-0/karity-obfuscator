@@ -83,6 +83,7 @@ PATH_FEATURES = (
     ('obfuscator/passes/function*.py', 'functions'),
     ('obfuscator/passes/rename*.py', 'naming'),
     ('obfuscator/custom_names.py', 'naming'),
+    ('obfuscator/passes/binding_kinds.py', 'naming'),
     ('obfuscator/passes/localize_globals.py', 'naming'),
     ('obfuscator/passes/strip_info.py', 'naming formatting'),
     ('obfuscator/passes/remove_comment.py', 'formatting'),

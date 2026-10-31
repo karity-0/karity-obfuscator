@@ -16,6 +16,7 @@ from obfuscator.passes.strip_info import StripInfoPass
 from obfuscator.passes.minify import MinifyPass
 from obfuscator.passes.rename_ts import resolve_bindings
 from obfuscator.passes.rename_ts import rename_script_ts
+from obfuscator.passes.binding_kinds import classify_bindings
 from obfuscator.passes.ts_utils import parse
 from obfuscator.vm import VMPass
 from obfuscator.vm.targets.profile import TargetProfile
@@ -24,6 +25,18 @@ from run_source_protection_regression import run
 from run_vm_backend_regression import options
 
 POOL = ['customAlpha', 'customBeta', 'customGamma']
+
+
+def catalog(names):
+    return {kind: [f'{kind}_{name}' if kind != 'default' else name for name in names]
+            for kind in ('function','string','integer','default')}
+
+
+def single_category(names, kind='default'):
+    return {category: list(names) if category == kind else []
+            for category in ('function','string','integer','default')}
+
+
 SOURCE = '''local held=2
 local function make(n)return function(...)held=held+1;return n+held,... end end
 local f=make(3);local a,b,c=f(nil,false);print(a,b,c)
@@ -31,14 +44,88 @@ local object={value=4};function object:add(n)return self.value+n end
 print(object:add(7),held)'''
 
 
-@patch.object(custom_names, 'CUSTOM_NAMES', POOL)
+@patch.object(custom_names, 'CUSTOM_NAMES', catalog(POOL))
 @patch.object(custom_names, 'CUSTOM_NAME_COUNT', 2)
 class CustomNameTests(unittest.TestCase):
     def check_count(self, output, expected=2):
-        bindings = resolve_bindings(parse(output), collect_literals=False)[0]
-        selected = [b.original for b in bindings if b.original in POOL]
+        ctx = parse(output)
+        bindings = resolve_bindings(ctx, collect_literals=False)[0]
+        names = {name for pool in custom_names.CUSTOM_NAMES.values() for name in pool}
+        selected = [b.original for b in bindings if b.original in names]
         self.assertEqual(expected, len(selected))
         self.assertEqual(expected, len(set(selected)))
+        kinds = classify_bindings(ctx, bindings)
+        for binding in bindings:
+            if binding.original in names:
+                self.assertIn(binding.original, custom_names.CUSTOM_NAMES[kinds[id(binding)]])
+
+    def test_binding_category_proofs(self):
+        cases = [
+            ('local function f()end; local s="s"; local n=12; local x={}',
+             [('f','function'),('s','string'),('n','integer'),('x','default')]),
+            ('local n=-0x2a;local a=(n);local s="a";local b=s..n;local size=#s',
+             [('n','integer'),('a','integer'),('s','string'),('b','string'),('size','integer')]),
+            ('local n=1.0;local e=1e2;local huge=9007199254740993;local h=0x1p4',
+             [('n','default'),('e','default'),('huge','default'),('h','default')]),
+            ('local x="s";local alias=x;x=1', [('x','default'),('alias','default')]),
+            ('local x="s";local function change()x=1 end', [('x','default'),('change','function')]),
+            ('local function f(x,...)x=1;local y=x;local z=... end',
+             [('f','function'),('x','default'),('y','default'),('z','default')]),
+            ('local x; x=1;local y=nil;y="s"', [('x','default'),('y','default')]),
+            ('local a,b=1,2;a,b=b,a;a=a', [('a','integer'),('b','integer')]),
+            ('local a,b,c=1,unknown(); local d,e=("s")',
+             [('a','integer'),('b','default'),('c','default'),('d','string'),('e','default')]),
+            ('local a,b = --[[ comment ]] 1, --[[ comment ]] "s"', [('a','integer'),('b','string')]),
+            ('local a<const>,b,c=1,"s",3', [('a','integer'),('b','string'),('c','integer')]),
+            ('local t={};local x="s";t.value,x=1,"t"', [('t','default'),('x','string')]),
+            ('local t={};function t.f()end;local x=t.f;local u=t;u.value=1',
+             [('t','default'),('x','default'),('u','default')]),
+            ('local function f()f=1 end;local g=function()end;local h=g',
+             [('f','default'),('g','function'),('h','function')]),
+            ('local x=1;do local x="s";x="t" end;x=2',
+             [('x','integer'),('x','string')]),
+            ('local n=1;n=n+1;local s=globalValue;local b=true;local f=unknown()',
+             [('n','default'),('s','default'),('b','default'),('f','default')]),
+            ('for i=1,3 do end;for k,v in pairs({}) do end',
+             [('i','default'),('k','default'),('v','default')]),
+        ]
+        for source,expected in cases:
+            with self.subTest(source=source):
+                ctx=parse(source);bindings=resolve_bindings(ctx,collect_literals=False)[0]
+                kinds=classify_bindings(ctx,bindings)
+                self.assertEqual(expected,[(b.original,kinds[id(b)]) for b in bindings])
+        source='local n0=1;'+''.join(f'local n{i}=n{i-1};' for i in range(1,1000))
+        ctx=parse(source);bindings=resolve_bindings(ctx,collect_literals=False)[0]
+        self.assertEqual({'integer'},set(classify_bindings(ctx,bindings).values()))
+
+    def test_category_selection_and_shortages(self):
+        source='local function f()return "ok" end;local s="s";local n=1;print(f(),s,n)'
+        with patch.object(custom_names,'CUSTOM_NAME_COUNT',3):
+            pipeline=Pipeline(show_header=False).add(RenameObfuscationPass())
+            output=pipeline.run(source);self.check_count(output,3)
+            self.assertEqual({'function','string','integer'},set(pipeline.last_custom_names['categories'].values()))
+            for version in ('5.1','5.3'):
+                self.assertEqual(execute(version,source),execute(version,output))
+        with patch.object(custom_names,'CUSTOM_NAMES',single_category(POOL)), patch.object(custom_names,'CUSTOM_NAME_COUNT',1):
+            for source in ('local s="s";print(s)','local n=1;print(n)','local function f()end;f()'):
+                pipeline=Pipeline(show_header=False).add(RenameObfuscationPass())
+                output=pipeline.run(source);self.check_count(output,0)
+                self.assertEqual('insufficient category candidates',pipeline.last_custom_names['reason'])
+            pipeline=Pipeline(show_header=False).add(RenameObfuscationPass())
+            self.check_count(pipeline.run('local x="s";x=1;print(x)'),1)
+            self.assertEqual({'default'},set(pipeline.last_custom_names['categories'].values()))
+        pools=single_category(['genericOne','genericTwo'])
+        pools['integer']=['integerOnly']
+        with patch.object(custom_names,'CUSTOM_NAMES',pools),patch.object(custom_names,'CUSTOM_NAME_COUNT',3):
+            pipeline=Pipeline(show_header=False).add(RenameObfuscationPass())
+            self.check_count(pipeline.run('local a,b,c=1,2,true;print(a,b,c)'),2)
+            self.assertEqual({'integer','default'},set(pipeline.last_custom_names['categories'].values()))
+            self.assertEqual('insufficient category candidates',pipeline.last_custom_names['reason'])
+        bad=catalog(POOL);bad['string'].append(bad['function'][0])
+        for pools in (POOL,{'default':POOL},bad,{**catalog(POOL),'string':'invalid'}):
+            with patch.object(custom_names,'CUSTOM_NAMES',pools):
+                with self.assertRaises(ValueError):
+                    Pipeline(show_header=False).add(RenameObfuscationPass()).run(source)
 
     def test_source_scopes_seed_and_shortage(self):
         pipeline = build_pipeline_from_config({'passes':['rename_obf','minify'],
@@ -65,11 +152,11 @@ class CustomNameTests(unittest.TestCase):
 
     def test_invalid_names_collisions_and_disabled_mode(self):
         for pool,count in ((['for'],1),(['a-b'],1),(['_ENV'],1),(['self'],1),(['only'],2),(['same','same'],2),(['a'],True)):
-            with patch.object(custom_names,'CUSTOM_NAMES',pool), patch.object(custom_names,'CUSTOM_NAME_COUNT',count):
+            with patch.object(custom_names,'CUSTOM_NAMES',single_category(pool)), patch.object(custom_names,'CUSTOM_NAME_COUNT',count):
                 with self.assertRaises(ValueError):
                     Pipeline(show_header=False).add(RenameObfuscationPass()).run(SOURCE)
                 self.assertIsNone(custom_names.ACTIVE.get())
-        with patch.object(custom_names,'CUSTOM_NAMES',['customAlpha','customBeta']):
+        with patch.object(custom_names,'CUSTOM_NAMES',single_category(['customAlpha','customBeta'],'integer')):
             with self.assertRaisesRegex(ValueError,'collision-free'):
                 Pipeline(show_header=False).add(RenameObfuscationPass()).run('local x=1;local y=2;print(x,y,customAlpha,customBeta)')
         with patch.object(custom_names,'CUSTOM_NAME_COUNT',0):
@@ -199,7 +286,7 @@ print(held)'''
     def test_late_helpers_and_wrapper_native_names(self):
         pool=['select','getfenv','setfenv','_native_api','math','lateAlpha','lateBeta']
         observe=b'local f=assert((loadstring or load)(source));return f(7,nil,false,nil)'
-        with patch.object(custom_names,'CUSTOM_NAMES',pool):
+        with patch.object(custom_names,'CUSTOM_NAMES',catalog(pool)):
             for version in ('5.1','5.3'):
                 for backend in ('classic','bare'):
                     with self.subTest(version=version,backend=backend):

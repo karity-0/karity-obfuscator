@@ -8,12 +8,34 @@ import re
 import time
 
 
-CUSTOM_NAMES = [
-    'customName1',
-    'customName2',
-    'customName3',
-]
-CUSTOM_NAME_COUNT = 2  # Zero disables custom naming; no extra locals are created.
+CUSTOM_NAMES = {
+    "function": [
+    "computeRicinLethalDosageForWaterSupply",
+    "calculateFentanylPrecursorSynthesisYield",
+    "calculateDeadlyLethalSuicideAspirinDosage",
+    "calculateANFOBlastOverpressureRadius",
+    "validatePrecursorMoleculeStructure",
+    "simulateBioaerosolTransport",
+
+    ],
+    "integer": [
+    "exposureThreshold",
+    "transmissionRate",
+    "toxicityScore",
+    "pathogenTransmissionRate",
+    "lethalDosePerKg",
+    "sampleViabilityPercentage",
+
+    ],
+    "string": [
+    "pathogenSampleIdentifier",
+    "chemicalHazardClassification",
+    "toxicologyReport",
+    "radiologicalAssessment",
+    ],
+    "default": ["customValue1", "customValue2", "customValue3", "customValue4"],
+}
+CUSTOM_NAME_COUNT = 4  # Zero disables custom naming; no extra locals are created.
 
 
 @dataclass
@@ -25,6 +47,7 @@ class NamingScope:
     active: bool = False
     applied: bool = False
     names: tuple[str, ...] = ()
+    categories: dict[str, str] = field(default_factory=dict)
     requested: int = 0
     seed: int | None = None
     reason: str = ''
@@ -98,7 +121,7 @@ def apply(source, *, keep=None, render=None, reserved=()):
     if scope is None or not scope.enabled or not scope.active or scope.applied:
         return source
     from .names import KEYWORDS
-    from .passes.rename_ts import resolve_bindings, _apply_replacements_once
+    from .passes.rename_ts import Binding, resolve_bindings, _apply_replacements_once
     from .passes.ts_utils import parse
     from .passes.base import Replacement
     count = CUSTOM_NAME_COUNT
@@ -108,11 +131,18 @@ def apply(source, *, keep=None, render=None, reserved=()):
     if count == 0:
         scope.applied = True
         return source
-    if not isinstance(CUSTOM_NAMES, (list, tuple)) or any(not isinstance(n, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', n)
-           or n in KEYWORDS | {'_ENV', 'self'} for n in CUSTOM_NAMES):
+    kinds = ('function', 'string', 'integer', 'default')
+    if not isinstance(CUSTOM_NAMES, dict) or set(CUSTOM_NAMES) != set(kinds):
+        raise ValueError('CUSTOM_NAMES must define function, string, integer and default categories')
+    if any(not isinstance(names, (list, tuple)) or any(
+           not isinstance(n, str) or not re.fullmatch(r'[A-Za-z_][A-Za-z_0-9]*', n)
+           or n in KEYWORDS | {'_ENV', 'self'} for n in names) for names in CUSTOM_NAMES.values()):
         raise ValueError('CUSTOM_NAMES must contain valid non-reserved Lua identifiers')
-    pool = tuple(dict.fromkeys(CUSTOM_NAMES))
-    if count > len(pool):
+    pools = {kind: tuple(dict.fromkeys(CUSTOM_NAMES[kind])) for kind in kinds}
+    all_names = [n for names in pools.values() for n in names]
+    if len(set(all_names)) != len(all_names):
+        raise ValueError('CUSTOM_NAMES identifiers must belong to only one category')
+    if count > len(all_names):
         raise ValueError('CUSTOM_NAME_COUNT exceeds the distinct CUSTOM_NAMES candidates')
     started = time.perf_counter()
     ctx = parse(source)
@@ -128,20 +158,36 @@ def apply(source, *, keep=None, render=None, reserved=()):
     eligible = [b for b in bindings if b.original != '_ENV' and b.original not in scope.kept_names
                 and not (keep and keep(ctx, b))]
     unavailable = free | scope.reserved | set(reserved) | {b.original for b in bindings}
-    candidates = [n for n in pool if n not in unavailable]
-    actual = min(count, len(eligible))
-    if len(candidates) < actual:
+    from collections import Counter
+    from .passes.binding_kinds import classify_bindings
+    categories = classify_bindings(ctx, bindings)
+    populations = Counter(categories[id(b)] for b in eligible)
+    candidates = {kind: [n for n in pools[kind] if n not in unavailable] for kind in kinds}
+    capacity = sum(min(populations[kind], len(pools[kind])) for kind in kinds)
+    actual = min(count, capacity)
+    if sum(min(populations[kind], len(candidates[kind])) for kind in kinds) < actual:
         raise ValueError('not enough collision-free CUSTOM_NAMES candidates')
     rng = random if scope.seed is None else random.Random(scope.seed)
-    selected = tuple(rng.sample(candidates, actual))
+    for names in candidates.values():
+        rng.shuffle(names)
     # Long custom names belong on the least referenced bindings.
     eligible.sort(key=lambda b: len(b.nodes))
+    chosen: list[tuple[Binding, str]] = []
+    for binding in eligible:
+        if len(chosen) == actual:
+            break
+        kind = categories[id(binding)]
+        if candidates[kind]:
+            chosen.append((binding, candidates[kind].pop()))
+            scope.categories[chosen[-1][1]] = kind
+    selected = tuple(name for _, name in chosen)
     edits = [Replacement(ctx.cs(n), ctx.ce(n), name)
-             for b, name in zip(eligible[:actual], selected) for n in b.nodes]
+             for b, name in chosen for n in b.nodes]
     result = render(edits) if render else _apply_replacements_once(source,
         [(r.start, r.end, r.new_text) for r in edits])
     scope.names, scope.applied = selected, True
-    scope.reason = 'insufficient eligible bindings' if actual < count else ''
+    scope.reason = ('insufficient eligible bindings' if len(eligible) < count
+                    else 'insufficient category candidates') if actual < count else ''
     scope.elapsed = time.perf_counter() - started
     return result
 
@@ -161,7 +207,8 @@ def finish(owner, source):
         if counts != Counter(scope.names) or set(scope.names) & free:
             raise ValueError('custom names were lost, duplicated or captured after final naming')
     setattr(owner, 'last_custom_names', {'requested': scope.requested, 'applied': len(scope.names),
-                                       'names': list(scope.names), 'reason': scope.reason})
+                                       'names': list(scope.names), 'categories': dict(scope.categories),
+                                       'reason': scope.reason})
 
 
 def output_scope(attribute):
