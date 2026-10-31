@@ -249,7 +249,8 @@ class Pipeline:
         from .passes.packer import PackerPass
         scope = custom_names.ACTIVE.get()
         if scope is not None and scope.owner is self:
-            outputs = [p for p in post_passes if isinstance(p, (VMPass, PackerPass))]
+            outputs = [p for p in post_passes if isinstance(p, (VMPass, PackerPass))
+                       and not (isinstance(p, VMPass) and selection.original_vm_fully_excluded)]
             target = outputs[-1] if outputs else self
             enabled = bool(renamers) or any('rename_obf' in getattr(p, attribute, ())
                 for p in outputs for attribute in ('vm_output_passes', 'packer_output_passes'))

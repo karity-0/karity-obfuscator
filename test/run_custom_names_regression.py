@@ -132,6 +132,25 @@ print(held)'''
         output=pipeline.run(source);self.check_count(output)
         self.assertEqual(execute('5.3',source),execute('5.3',output))
 
+    def test_fully_no_vm_source_still_gets_source_renaming(self):
+        source='--@NO_VM_START\nlocal hp,hp2 = 123\n\nprint(hp, hp2)\n--@NO_VM_END'
+        for version in ('5.1','5.3'):
+            for backend in ('classic','karity','mov','bare'):
+                with self.subTest(version=version,backend=backend):
+                    config={'passes':['strip_info','rename_obf','minify','vm'],
+                        'target':{'lua_version':version},'vm_options':options(backend),
+                        'vm_output_passes':['rename_obf','minify'],'signature':{'mode':'none'}}
+                    pipeline=build_pipeline_from_config(config,Pipeline)
+                    output=pipeline.run(source);self.check_count(output)
+                    self.assertEqual(execute(version,source),execute(version,output))
+                    self.assertEqual(2,pipeline.last_custom_names['applied'])
+        for passes in (['strip_info','minify','vm'],['rename_obf','minify','vm']):
+            config={'passes':passes,'vm_options':options('bare'),
+                    'vm_output_passes':['rename_obf','minify'],'signature':{'mode':'none'}}
+            pipeline=build_pipeline_from_config(config,Pipeline)
+            output=pipeline.run(source)
+            self.check_count(output,0 if 'rename_obf' not in passes else 2)
+
     def test_late_helpers_and_wrapper_native_names(self):
         pool=['select','getfenv','setfenv','_native_api','math','lateAlpha','lateBeta']
         observe=b'local f=assert((loadstring or load)(source));return f(7,nil,false,nil)'
