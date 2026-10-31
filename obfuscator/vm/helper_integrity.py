@@ -12,11 +12,19 @@ import tree_sitter as ts
 from ..names import NameAllocator
 from ..parser import Lua53Parser, Reader as ChunkReader
 from ..passes.ts_utils import _LANG, parse
-from ..passes.rename_ts import resolve_bindings, _apply_replacements_once
+from ..passes.rename_ts import collect_named_identifiers, resolve_bindings, _apply_replacements_once
 
 
 _CHECKPOINT_NODES = ts.Query(_LANG,
     '[(function_definition) (function_declaration) (while_statement)] @checkpoint')
+_FUNCTION_NODES = ts.Query(_LANG,
+    '[(function_definition) (function_declaration)] @function')
+
+
+def _function_nodes(root):
+    captures=ts.QueryCursor(_FUNCTION_NODES).captures(root)
+    return (captures.get('function',[]) if isinstance(captures,dict)
+            else [node for node,name in captures if name=='function'])
 
 
 def fingerprint(data):
@@ -68,16 +76,19 @@ class HelperIntegrity:
         if factory.type != 'function_definition':
             raise ValueError('helper integrity factory boundary changed')
         targets = {}
-        def children(node):
-            found = []
-            for child in node.named_children:
-                if child.type in ('function_definition', 'function_declaration'):
-                    found.append(child)
-                else:
-                    found.extend(children(child))
-            return found
+        # Function intervals encode the same immediate lexical parent as the
+        # old expression walk. Ordinary arithmetic never enters this index.
+        children={factory.id:[]}
+        parents=[factory]
+        for node in sorted(_function_nodes(factory),key=lambda n:n.start_byte):
+            if node.id==factory.id:continue
+            while node.start_byte>=parents[-1].end_byte:
+                parents.pop()
+            children[parents[-1].id].append(node)
+            children[node.id]=[]
+            parents.append(node)
         def walk(node, proto):
-            nodes = children(node)
+            nodes = children[node.id]
             if len(nodes) != len(proto.protos):
                 raise ValueError('helper integrity source/prototype correspondence changed')
             for child, compiled in zip(nodes, proto.protos):
@@ -103,26 +114,20 @@ class HelperIntegrity:
 
 
 def _candidates(ctx):
-    bindings, *_ = resolve_bindings(ctx, collect_literals=False)
-    candidates = []
+    if ctx.root.has_error:
+        raise ValueError('Cannot rename Lua source with syntax errors')
+    eligible={}
     allowed = {'return_statement', 'expression_list', 'binary_expression',
                'unary_expression', 'parenthesized_expression', 'identifier', 'number'}
-    for binding in bindings:
-        first = binding.nodes[0]
-        node = first.parent
-        if (node.type != 'function_declaration' or node.children[0].type != 'local'
-                or node.child_by_field_name('name').id != first.id or len(binding.nodes) < 2):
-            continue
-        if any(ref.parent.type != 'function_call'
-               or ref.parent.child_by_field_name('name').id != ref.id
-               for ref in binding.nodes[1:]):
+    for node in _function_nodes(ctx.root):
+        if node.type!='function_declaration' or node.children[0].type!='local':
             continue
         params = node.child_by_field_name('parameters')
         names = {ctx.plain_text(n) for n in params.named_children if n.type == 'identifier'}
         if not 1 <= len(names) <= 2 or len(names) != len(params.named_children):
             continue
         body = node.child_by_field_name('body')
-        if len(body.named_children) != 1 or body.named_children[0].type != 'return_statement':
+        if body is None or len(body.named_children) != 1 or body.named_children[0].type != 'return_statement':
             continue
         pending = list(body.named_children)
         valid = True
@@ -134,7 +139,19 @@ def _candidates(ctx):
                 valid = False; break
             pending.extend(item.named_children)
         if valid:
-            candidates.append((binding, node))
+            eligible[node.child_by_field_name('name').id]=node
+    names={ctx.plain_text(node.child_by_field_name('name')) for node in eligible.values()}
+    bindings, *_ = resolve_bindings(ctx,collect_literals=False,
+        captures=collect_named_identifiers(ctx,names))
+    candidates=[]
+    for binding in bindings:
+        node=eligible.get(binding.nodes[0].id)
+        if node is None or len(binding.nodes)<2:
+            continue
+        if any(ref.parent.type!='function_call' or ref.parent.child_by_field_name('name').id!=ref.id
+               for ref in binding.nodes[1:]):
+            continue
+        candidates.append((binding,node))
     candidates.sort(key=lambda item: ctx.cs(item[1]))
     return candidates[:3]
 

@@ -22,6 +22,50 @@ def native(script, *arguments):
 
 
 class HelperIntegrityTests(unittest.TestCase):
+    def test_candidate_shortlist_keeps_shadowing_and_rejects_escaping_references(self):
+        from obfuscator.vm.helper_integrity import _candidates
+        from obfuscator.passes.ts_utils import parse
+        source='''return function(manifest,...)
+local function escaped(x)return x end;local alias=escaped
+do local function same(x)return x end;same(1) end
+do local function same(x)return x end;same(2) end
+local function changed(x)return x end;changed=function(x)return x end;changed(3)
+local forward;function forward(x)return x end;forward(4)
+local function third(x,y)return x~y end;third(1,2)
+local function unused(x)return x end
+local function unusedEmpty(x)end
+return alias
+end'''
+        ctx=parse(source);candidates=_candidates(ctx)
+        self.assertEqual(['same','same','third'],[binding.original for binding,_ in candidates])
+        self.assertNotEqual(candidates[0][1].id,candidates[1][1].id)
+        self.assertEqual([], _candidates(parse('local function unused(x)return x end')))
+        with self.assertRaises(ValueError):_candidates(parse('local ='))
+
+    def test_manifest_tracks_nested_prototypes_and_rejects_structure_changes(self):
+        from lupa.lua53 import LuaRuntime
+        lua=LuaRuntime(encoding=None,unpack_returned_tuples=True)
+        source='''return function(manifest,...)
+local function a(x,y)return x~y end
+local function b(x)return x end
+local functions={function()return function()return 7 end end}
+local function make(n)return function()return a(b(n),3) end end
+return make(17),functions[1]()
+end'''
+        output,plan=install(source)
+        factory=lua.execute(output.encode())
+        dump=lua.eval(b'string.dump')(factory,True)
+        manifest=plan.manifest(output,dump)
+        first,second=factory(manifest.encode())
+        self.assertEqual((18,7),(first(),second()))
+        changed=output.replace('return function(manifest,...)',
+            'return function(manifest,...) local extra=function()return 1 end;',1)
+        with self.assertRaisesRegex(ValueError,'correspondence'):
+            plan.manifest(changed,dump)
+        changed=output.replace(f'{plan.bank}[{plan.slots[0]}]=',f'{plan.bank}[99999]=',1)
+        with self.assertRaisesRegex(ValueError,'target assignment'):
+            plan.manifest(changed,dump)
+
     def test_function_output_keeps_real_helpers_without_runtime_annotations(self):
         from obfuscator.vm.helper_integrity import preserve_function_targets
         from obfuscator.vm.backends.runtime_emitter import _obfuscate_vm_output
