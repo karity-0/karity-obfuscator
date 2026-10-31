@@ -1,5 +1,6 @@
 """Bare code-generation proofs, frame lifetimes and native Lua semantics."""
 from pathlib import Path
+from dataclasses import replace
 from unittest.mock import patch
 import random
 import sys
@@ -33,6 +34,62 @@ def build(source,version='5.3',seed=1810,protected=False,passes=()):
 
 
 class BareOptimizationTests(unittest.TestCase):
+    def test_initial_liveness_reuse_matches_fresh_analysis(self):
+        from obfuscator.vm.backends import bare_optimizer
+        source='''local weak=setmetatable({},{__mode='v'})
+local function factory(a)
+ local value={a};weak[1]=value
+ return function()return value[1]end
+end
+local get=factory(7);collectgarbage('collect');print(get(),weak[1]~=nil)
+get=nil;collectgarbage('collect');collectgarbage('collect');print(weak[1]==nil)'''
+        prepare=bare_optimizer.prepare_emission
+        for version in ('5.1','5.3'):
+            def observe(lowered, target):
+                with patch.object(bare_optimizer,'analyze_liveness',wraps=bare_optimizer.analyze_liveness) as analyze:
+                    result=prepare(lowered,target)
+                stats=result.backend_data['optimization']
+                self.assertGreater(stats['liveness_reused'],0)
+                self.assertGreater(stats['liveness_recomputed'],0)
+                self.assertEqual(stats['liveness_recomputed'],analyze.call_count)
+                self.assertEqual(len(tuple(result.backend_data['bare_emission_ir'].functions())),
+                                 stats['liveness_reused']+stats['liveness_recomputed'])
+                self.assertNotIn('bare_initial_liveness',result.backend_data)
+                return result
+            with patch.object(bare_optimizer,'prepare_emission',observe):
+                output,vm,_=build(source,version,protected=True)
+            def fresh(lowered, target):
+                lowered.backend_data.pop('bare_initial_liveness')
+                return prepare(lowered,target)
+            with patch.object(bare_optimizer,'prepare_emission',fresh):
+                before,old,_=build(source,version,protected=True)
+            self.assertEqual(before,output)
+            self.assertEqual(execute(version,source),execute(version,output))
+            for key in ('liveness','bare_local_releases','bare_edge_releases'):
+                self.assertEqual(old.last_lowered_ir.backend_data[key],vm.last_lowered_ir.backend_data[key])
+
+    def test_initial_liveness_is_invalidated_after_ir_replacement_or_reuse(self):
+        from obfuscator.vm.backends import bare_optimizer
+        prepare=bare_optimizer.prepare_emission
+        source='local function f(a)local t={a};return function()return t[1]end end;print(f(7)())'
+        for version in ('5.1','5.3'):
+            for mode in ('replacement','repeat'):
+                def observe(lowered, target):
+                    if mode=='replacement':
+                        lowered.semantic_ir=replace(lowered.semantic_ir)
+                    else:
+                        prepare(lowered,target)
+                        previous=lowered.backend_data['liveness']
+                    result=prepare(lowered,target)
+                    stats=result.backend_data['optimization']
+                    self.assertEqual(0,stats['liveness_reused'])
+                    self.assertEqual(len(tuple(result.backend_data['bare_emission_ir'].functions())),
+                                     stats['liveness_recomputed'])
+                    if mode=='repeat':self.assertEqual(previous,result.backend_data['liveness'])
+                    return result
+                with patch.object(bare_optimizer,'prepare_emission',observe):
+                    self.compare(source,version,protected=True)
+
     def test_dynamic_helpers_are_emitted_only_for_actual_uses(self):
         for version in ('5.1','5.3'):
             source='local function pass(...)return ... end;print(pass(7,nil,false,nil))'

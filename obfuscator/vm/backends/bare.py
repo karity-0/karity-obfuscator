@@ -40,10 +40,12 @@ class BareBackend(VMBackend):
         ir,source_protection=prepare(ir,plan,context)
         plan=ProtectionPlanner(context.options).build(ir)
         protected_ir=protect(ir,plan)
+        liveness = {f.id: analyze_liveness(f) for f in ir.functions()}
         return LoweredIR(self.name, self.lowered_kind, ir, plan,
                          resolve_capabilities(plan, self.capabilities), lower_handler_ir(ir),
                          self._policy(context.options), protected_ir,
-                         {'liveness': {f.id: analyze_liveness(f) for f in ir.functions()},
+                         {'liveness': liveness,
+                          'bare_initial_liveness': (ir, liveness),
                           'source_protection':source_protection})
 
     def optimize(self, lowered: LoweredIR, context: BackendContext) -> LoweredIR:

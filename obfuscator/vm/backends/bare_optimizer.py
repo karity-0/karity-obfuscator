@@ -7,8 +7,14 @@ from ..ir.liveness import analyze_liveness
 
 
 def prepare_emission(lowered, lua_version):
-    statistics = {'unreachable_blocks': 0, 'unreachable_instructions': 0}
+    statistics = {'unreachable_blocks': 0, 'unreachable_instructions': 0,
+                  'liveness_reused': 0, 'liveness_recomputed': 0}
     events: list[dict] = []
+    # Consume the raw analysis before preserve_locals extends lifetimes. A
+    # repeated optimization, or a replaced IR, must not reuse that refinement.
+    initial = lowered.backend_data.pop('bare_initial_liveness', None)
+    originals = ({f.id: f for f in initial[0].functions()}
+                 if initial is not None and initial[0] is lowered.semantic_ir else {})
 
     def prune(function):
         blocks = {block.id: block for block in function.blocks}
@@ -25,13 +31,23 @@ def prepare_emission(lowered, lua_version):
         statistics['unreachable_instructions'] += sum(len(block.instructions) for block in removed)
         events.extend({'function': function.id, 'kind': 'unreachable-block',
                        'outcome': 'elided', 'block': block.id} for block in removed)
-        return replace(function, blocks=tuple(block for block in function.blocks if block.id in reachable),
+        kept = tuple(block for block in function.blocks if block.id in reachable) if removed else function.blocks
+        return replace(function, blocks=kept,
                        children=tuple(prune(child) for child in function.children))
 
     view = replace(lowered.semantic_ir, root=prune(lowered.semantic_ir.root))
     validate_semantic_ir(view)
     lowered.backend_data['bare_emission_ir'] = view
-    lowered.backend_data['liveness'] = {f.id: analyze_liveness(f) for f in view.functions()}
+    liveness = {}
+    for function in view.functions():
+        original = originals.get(function.id)
+        if original is not None and function.blocks is original.blocks:
+            liveness[function.id] = initial[1][function.id]
+            statistics['liveness_reused'] += 1
+        else:
+            liveness[function.id] = analyze_liveness(function)
+            statistics['liveness_recomputed'] += 1
+    lowered.backend_data['liveness'] = liveness
     security = lowered.backend_data['source_protection']
     constants = dict(zip(security.constant_slots, security.constants))
     hints: dict[str,dict] = {}
