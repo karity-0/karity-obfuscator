@@ -213,12 +213,11 @@ IOP_GET_LINE_STATE = 11
 # 가짜 상수 풀
 # ---------------------------------------------------------------------------
 _FAKE_STRINGS = [
-    "print", "tostring", "tonumber", "require", "load", "pcall", "xpcall",
-    "io", "os", "math", "string", "table", "package", "debug",
-    "open", "read", "write", "close", "format", "find", "match", "gsub",
-    "insert", "remove", "concat", "sort", "exit", "time", "clock",
-    "loadfile", "dofile", "type", "pairs", "ipairs", "next", "select",
-    "rawget", "rawset", "rawlen", "rawequal", "setmetatable", "getmetatable",
+    "print", "tostring", "require", "loadstring", "load", "pcall",
+    "loadfile", "loader.lua", "setmetatable", "getmetatable",
+    "HttpService", "HttpGet", "GetService",
+    "request", "readfile", "writefile",
+    "decryptURL", "GET", "POST",
 ]
 _FAKE_NUMBERS_INT   = [0, 1, -1, 2, 10, 16, 32, 64, 100, 255, 256, 1000, 0xFF, 0x7F, 0x100]
 _FAKE_NUMBERS_FLOAT = [0.0, 1.0, -1.0, 3.14, 2.718, 0.5, 100.0]

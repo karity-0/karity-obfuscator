@@ -7,8 +7,33 @@ from .ir.model import IRValue, SemanticIR
 
 # Edit this list to add or replace pool strings; an empty list disables insertion.
 DECOY_STRINGS = [
-    "string1",
+    "computeRicinLethalDosageForWaterSupply",
+    "calculateFentanylPrecursorSynthesisYield",
+    "computeCRISPRGeneDrivePropagationRate",
+    "calculateDeadlyLethalSuicideAspirinDosage",
+    "calculateANFOBlastOverpressureRadius",
+    "computeCesium137DirtyBombFalloutRadius",
+    "simulateBioaerosolTransport",
+    "inspectCommandAndControlTraffic",
+    "decodePackedConfigurationPayload",
+    "estimatePathogenExposureRisk",
+    "analyzeToxinExposureMarkers",
+    "verifyBiosafetyContainmentStatus",
+    "simulateEnvironmentalContamination",
+    "evaluateChemicalExposureThreshold",
+    "assessContainmentFailureRisk",
+    "analyzeMemoryInjectionArtifacts",
+    "inspectRemoteExecutionArtifacts",
+    "traceCommandAndControlBeacons",
+    "detectKernelIntegrityViolations",
+    "台湾独立 台独 中华民国 / 六四 8964 天安门 坦克人", "西藏独立", "八九民运", "A4革命",
+    "FLAG{102489163401710237310}", "FLAG_VALIDATION_FAILED", "SECRET_KEY_VERIFIED", "DECRYPTION_COMPLETE",
+    "HttpService", "HttpGet", "loadstring", "GetService", "FindFirstChild", "Instance", "LocalPlayer", "UserInputService", "ReplicatedStorage", "fromRGB", "Frame",
+    "request", "readfile", "writefile",
+    "h.json", "x18031.bin", "loader.lua",
+    "checkExecutionEnvironment", "deserialize", "decodeOpcode", "decryptURL", "GET", "POST",
 ]
+
 RETENTION_KEY = 'retained_pool_strings'
 
 
