@@ -237,7 +237,6 @@ button, select, input { -webkit-app-region: no-drag; }
 .context-block { margin-top: 11px; }
 .context-title { margin: 0 4px 6px; color: var(--faint); font: 9px var(--mono); letter-spacing: .11em; text-transform: uppercase; }
 .toggle-list { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
-.toggle-list.compact { grid-template-columns: 1fr; }
 
 .toggle-item { min-width: 0; display: flex; align-items: center; gap: 8px; padding: 8px; border: 1px solid transparent; border-radius: 8px; color: var(--muted); background: color-mix(in srgb, var(--text) 2%, transparent); cursor: pointer; transition: .15s ease; }
 .toggle-item:hover { color: var(--text); border-color: var(--line); background: color-mix(in srgb, var(--text) 4%, transparent); }
