@@ -82,6 +82,31 @@ class ProjectTests(unittest.TestCase):
         plan.modules[0].config['passes'].append('remove_comment')
         self.assertEqual(['minify'],plan.modules[1].config['passes'])
 
+    def test_empty_source_passes_are_warned_and_signature_only_is_reported(self):
+        self.document.update(passes=[],vm_output_passes=['minify'],signature={'mode':'default'})
+        self.document['project']['backend_selection'] = {'mode':'fixed','value':'bare'}
+        plan = self.plan()
+        self.assertTrue(all(m.vm_requested is False and m.transforms_requested is False for m in plan.modules))
+        self.assertTrue(all(any('No transformation passes' in w for w in m.warnings) for m in plan.modules))
+        report = build_project(plan)
+        self.assertTrue(report['warnings'])
+        self.assertTrue(all(m['protection_status']=='signature_only' and m['backend'] is None for m in report['modules']))
+        self.document['signature'] = {'mode':'none'}
+        report = build_project(self.plan())
+        self.assertTrue(all(m['protection_status']=='unchanged' for m in report['modules']))
+        self.document['project']['preset_selection'] = {'mode':'fixed','value':'builtin:fast'}
+        self.assertTrue(all(m.vm_requested and 'vm' in m.config['passes'] for m in self.plan().modules))
+
+    def test_marker_requested_vm_is_not_misreported_as_signature_only(self):
+        self.document.update(passes=[],vm_options=options('bare'),vm_output_passes=['minify'])
+        self.write('main.lua','--@VM_START\nlocal n=3;print(n)\n--@VM_END')
+        plan = self.plan();main = next(m for m in plan.modules if m.file.path=='main.lua')
+        self.assertTrue(main.vm_requested);self.assertTrue(main.transforms_requested)
+        self.assertFalse(any('No transformation passes' in warning for warning in main.warnings))
+        report = build_project(plan)
+        main = next(m for m in report['modules'] if m['path']=='main.lua')
+        self.assertEqual(('bare','processed'),(main['backend'],main['protection_status']))
+
     def test_weighted_choices_are_path_stable_and_overrides_are_independent(self):
         self.document['project'].update(seed=37,preset_selection={'mode':'weighted','weights':{'builtin:fast':1,'builtin:balanced':3}},
             backend_selection={'mode':'weighted','weights':{'bare':3,'classic':2,'mov':1,'karity':4}})

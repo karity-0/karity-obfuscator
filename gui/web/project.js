@@ -18,11 +18,18 @@
   function backendLabel(row, actual) {
     if (row.kind === 'resource') return row.status === 'copied' ? 'Copied' : actual ? 'Not copied' : 'Copy';
     if (!actual && row.status === 'discovered') return 'Not checked';
+    if (!actual && row.vm_requested === false) return 'No VM';
     if (actual && row.status !== 'success') return 'Not Applied';
     if (actual && row.vm_applied === false) return 'No VM';
     if (actual && row.backend === 'mixed') return 'Mixed';
     const name = row.backend || row.planned_backend;
     return name === 'mov' ? 'MOV' : name ? name[0].toUpperCase() + name.slice(1) : 'No VM';
+  }
+  function backendMatches(row, backend, actual) {
+    if (!backend) return true;
+    if (row.kind === 'resource') return false;
+    if (backend === 'none') return actual ? row.vm_applied === false : row.vm_requested === false;
+    return actual ? (row.actual_backends || []).includes(backend) : row.vm_requested !== false && row.backend === backend;
   }
   function attach({api, bootstrap, getConfig, tr = value => value, isSingleBusy = () => false}) {
     const $ = id => document.getElementById(id);
@@ -115,7 +122,12 @@
           const invalid = plan.modules.find(row => !row.compatibility.valid);selected = invalid.path;
           previewError = `${invalid.path}: ${invalid.compatibility.error}`;
           status('Resolve module errors before building', previewError, 'error');
-        } else status('Ready to build', `${plan.modules.length} Lua · ${plan.resources.length} ${tr('resources')}`, 'ready');
+        } else {
+          const untransformed = plan.modules.filter(row => row.transforms_requested === false).length;
+          status(untransformed ? 'Ready; some files have no transformation passes' : 'Ready to build',
+            untransformed ? `${untransformed}/${plan.modules.length} · ${tr('Only the signature can change. Choose a preset, or import Single File settings with source passes enabled.')}`
+              : `${plan.modules.length} Lua · ${plan.resources.length} ${tr('resources')}`, untransformed ? 'warning' : 'ready');
+        }
         render();
       } catch (error) {
         if (token === revision) {
@@ -152,7 +164,7 @@
       const all = rows(), query = $('project-search').value.toLowerCase(), backend = $('project-filter-backend').value;
       const preset = $('project-filter-preset').value, failed = $('project-failed-only').checked;
       const visible = all.filter(row => (!query || row.path.toLowerCase().includes(query)) && (!preset || row.preset === preset || row.planned_preset === preset)
-        && (!backend || (backend === 'none' ? row.vm_applied === false : (row.backend || row.planned_backend) === backend))
+        && backendMatches(row, backend, Boolean(report))
         && (!failed || ['failed','invalid'].includes(row.status)));
       const target = $('project-tree');target.replaceChildren();
       function append(parent, tree) {
@@ -163,12 +175,12 @@
             append(folder, node);parent.append(folder);continue;
           }
           const row = node.row, button = el('button', null, 'project-file');button.type = 'button';button.dataset.path = row.path;
-          button.classList.toggle('selected', selected === row.path);button.dataset.status = row.status;
+          button.classList.toggle('selected', selected === row.path);button.dataset.status = row.status;button.dataset.protection = row.protection_status || '';
           button.setAttribute('aria-label', row.path);button.setAttribute('aria-pressed', String(selected === row.path));
           button.append(el('span', node.name, 'project-file-name'), el('span', tr(backendLabel(row, Boolean(report))), 'project-tag'));
           if (row.kind !== 'resource') button.append(el('span', presetLabel(row.preset || row.planned_preset), 'project-tag'));
           const selection = row.selection || {}, reason = !Object.keys(selection).length ? '—' : Object.values(selection).includes('override') ? 'Override' : Object.values(selection).includes('weighted') ? 'Weighted' : 'Fixed';
-          button.append(el('span', row.kind === 'resource' ? '' : tr(reason), 'project-selection'), el('span', tr(row.status), 'project-file-status'));
+          button.append(el('span', row.kind === 'resource' ? '' : tr(reason), 'project-selection'), el('span', tr(row.status === 'success' && row.protection_status === 'signature_only' ? 'Signature only' : row.status === 'success' && row.protection_status === 'unchanged' ? 'Unchanged' : row.status), 'project-file-status'));
           if (row.compatibility?.warnings?.length || row.compatibility?.error) button.append(el('span', '!', 'project-warning-mark'));
           button.addEventListener('click', () => { selected = row.path;$('project-result-code').hidden = true;render(); });parent.append(button);
         }
@@ -187,7 +199,8 @@
         $('project-warning-details').hidden = true;$('project-dependencies').replaceChildren();return;
       }
       $('project-detail-name').textContent = row.path;
-      $('project-detail-summary').textContent = `${tr(backendLabel(row, Boolean(report)))} · ${tr(row.status)}`;
+      const actualStatus = row.protection_status === 'signature_only' ? 'Signature only' : row.protection_status === 'unchanged' ? 'Unchanged' : row.status;
+      $('project-detail-summary').textContent = `${tr(backendLabel(row, Boolean(report)))} · ${tr(actualStatus)}`;
       const overrides = documentConfig.project.module_overrides?.[row.path] || {};
       fillSelect($('project-module-preset'), [...new Set([...presetNames, ...Object.keys(documentConfig.profiles || {}), row.planned_preset || row.preset, overrides.preset])].filter(Boolean), 'Use project settings');
       fillSelect($('project-module-backend'), [...new Set([...backendNames, overrides.backend])].filter(Boolean), 'Use project settings');
@@ -273,7 +286,9 @@
         const result = await api.get_build_result(run.id);report = result.report || null;
         if (!result.ok) { status('Build failed; output not published', result.error || report?.error || '', 'error');return; }
         $('project-progress-bar').value = total;$('project-config').open = false;
-        status('Project completed', `${fixedPlan.output} · ${result.elapsed.toFixed(2)} s`, 'ready');
+        const untransformed = report.modules.filter(row => ['signature_only','unchanged'].includes(row.protection_status)).length;
+        status(untransformed ? 'Completed; some files had no transformation passes' : 'Project completed',
+          `${fixedPlan.output} · ${result.elapsed.toFixed(2)} s${untransformed ? ` · ${untransformed}/${report.modules.length} ${tr('files without transformation passes')}` : ''}`, untransformed ? 'warning' : 'ready');
       } catch (error) { status('Build status unavailable',error.message || String(error),'error'); }
       finally { busy = false;render(); }
     }
@@ -307,6 +322,6 @@
     $('language-select').addEventListener('change', () => queueMicrotask(() => { if (active) render(); }));
     return {active:() => active, build, load, save, render, notice:message => status(message)};
   }
-  root.ProjectMode = {attach, rowsToTree, backendLabel};
+  root.ProjectMode = {attach, rowsToTree, backendLabel, backendMatches};
   if (typeof module !== 'undefined' && module.exports) module.exports = root.ProjectMode;
 })(typeof window === 'undefined' ? globalThis : window);

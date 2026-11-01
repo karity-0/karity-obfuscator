@@ -93,12 +93,15 @@ class ModulePlan:
     analysis: dict = field(default_factory=dict)
     warnings: tuple[str, ...] = ()
     error: str | None = None
+    vm_requested: bool | None = None
+    transforms_requested: bool | None = None
 
     def as_dict(self, *, effective=True) -> dict:
         result = {'path': self.file.path, 'module_id': hashlib.sha256(self.file.path.encode()).hexdigest()[:20],
                   'output': self.file.path, 'preset': self.preset, 'backend': self.backend,
                   'selection': dict(self.selection), 'kind': self.file.kind, 'input_bytes': self.file.size,
                   'source_sha256': self.file.sha256, 'status': 'invalid' if self.error else 'pending',
+                  'vm_requested': self.vm_requested, 'transforms_requested': self.transforms_requested,
                   'compatibility': {'valid': self.error is None, 'warnings': list(self.warnings), 'error': self.error},
                   'dependencies': deepcopy(self.analysis)}
         if effective:result['effective_config'] = deepcopy(self.config)
@@ -335,7 +338,7 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
             choices[kind],reasons[kind] = _choose(policies[kind],seed,file.path,kind)
             if kind in normalized_overrides.get(file.path,{}):
                 choices[kind] = normalized_overrides[file.path][kind];reasons[kind] = 'override'
-        config = {};error = None;warnings = []
+        config = {};error = None;warnings = [];vm_requested = transforms_requested = None
         try:
             key = (choices['preset'],choices['backend'])
             if key not in configs:
@@ -346,9 +349,21 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
             backend = TargetProfile.from_config(cast(ObfuscatorConfig,config)).backend
             preset = config.get('_profile', choices['preset'] or 'custom')
             warnings.extend(config_notes)
+            passes = config.get('passes',[])
+            vm_requested = 'vm' in passes
+            transforms_requested = bool(passes)
+            if not vm_requested:
+                from .selection import SelectionPlan, SELECTABLE
+                selection = SelectionPlan(file.source or '',config.get('selection_modes',{}))
+                selected = {span.feature for span in selection.spans}
+                vm_requested = selection.file_vm or 'vm' in selected
+                transforms_requested = bool(passes or selection.file_vm or selected & SELECTABLE)
+            if not transforms_requested:
+                warnings.append('No transformation passes selected; only the output signature can run. Choose a preset or enable source passes in Single File settings.')
         except (ConfigError,ValueError) as exc:
             error = str(exc);backend = choices['backend'] or 'karity';preset = choices['preset'] or 'custom'
-        modules.append(ModulePlan(file,preset,backend,reasons,config,{},tuple(warnings),error))
+        modules.append(ModulePlan(file,preset,backend,reasons,config,{},tuple(warnings),error,
+                                  vm_requested,transforms_requested))
     targets = {m.file.path:TargetProfile.from_config(cast(ObfuscatorConfig,m.config)) for m in modules if m.error is None}
     entry_target = targets.get(entry) if entry is not None else next(iter(targets.values()),None)
     if entry_target is not None:

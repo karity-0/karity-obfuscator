@@ -105,6 +105,9 @@ def build_project(plan: ProjectPlan) -> dict:
                                                                    if r.name!='VMPass' or backends],
                            output_bytes=destination.stat().st_size,elapsed=time.perf_counter()-module_started,
                            profile=profile,selections=deepcopy(pipeline.last_selection_report),error=None)
+                processed = any(name not in ('OutputSignaturePass','signature') for name in row['executed_passes'])
+                row['protection_status'] = ('processed' if processed else 'unchanged'
+                    if module.config.get('signature',{}).get('mode')=='none' else 'signature_only')
                 report['inventory'][module.file.path] = digest_file(destination)
             current = None
         for resource in plan.resources:
@@ -122,6 +125,9 @@ def build_project(plan: ProjectPlan) -> dict:
         with phase_scope('project:publish'):
             validate_plan(plan)
             _owned_output(plan.output,plan.root)
+            untransformed = sum(row.get('protection_status') in ('signature_only','unchanged') for row in report['modules'])
+            if untransformed:
+                report['warnings'].append(f'{untransformed} module(s) completed without transformation passes; see per-module protection_status.')
             for row in report['modules']+report['resources']:row['published'] = True
             report['published'] = True;report['elapsed'] = time.perf_counter()-started
             (stage/REPORT_NAME).write_text(json.dumps(report,ensure_ascii=False,indent=2)+'\n',encoding='utf8')

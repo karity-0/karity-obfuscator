@@ -1,5 +1,11 @@
 (() => {
   const pairs = [
+    ['Import Single File settings','단일 파일 설정 가져오기'],['Copy Single File passes and options, then use them as the project preset.','단일 파일 화면의 패스·옵션을 복사해 프로젝트 프리셋으로 사용합니다.'],
+    ['Applies to files using the VM pass.','VM 패스를 사용하는 파일에 적용됩니다.'],
+    ['Ready; some files have no transformation passes','준비 완료 · 변환 패스가 없는 파일 있음'],
+    ['Only the signature can change. Choose a preset, or import Single File settings with source passes enabled.','서명만 추가될 수 있습니다. 프리셋을 선택하거나, 원본 패스가 켜진 단일 파일 설정을 가져오세요.'],
+    ['Completed; some files had no transformation passes','완료 · 변환 패스 미적용 파일 있음'],
+    ['files without transformation passes','파일 변환 패스 미적용'],['Signature only','서명만 추가'],['Unchanged','원본 유지'],
     ['Choose a source folder and an output folder. Review the files below, then build.','원본 폴더와 출력 폴더를 선택하고, 아래 파일 목록을 확인한 뒤 빌드하세요.'],
     ['Entry (optional)','진입 파일 (선택)'],['Leave empty for a module folder','모듈 폴더라면 비워 두세요'],
     ['Entry, file filters & resources','진입 파일·파일 필터·리소스 (선택)'],

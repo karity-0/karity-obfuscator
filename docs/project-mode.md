@@ -35,6 +35,8 @@ Modules must share a Lua version/environment and compatible explicit runtime ABI
 
 In the GUI, choose **Project**, open a project JSON or choose folders, then inspect the tree before building. Fixed/weighted controls and file-specific overrides update the preview. Building consumes that exact plan; edited sources/settings require refreshing it. Completed rows show actual VM usage, including **No VM** or mixed source-marker regions, plus passes, sizes, timing and dependencies. Existing source-level selection markers retain their behavior.
 
+**Import Single File settings** copies that screen's source/output passes and switches the project preset to the copied settings. Selecting a backend alone does not enable the VM pass; empty source passes are warned and signature-only results are labeled explicitly.
+
 All files build in a temporary directory before publication. Inputs stay unchanged, output paths are excluded from discovery, and failed builds leave the previous output intact. Rebuilds replace only an unchanged output directory owned by the same project; unrelated or edited output files are preserved by refusing replacement. Symlinks/junctions, path escapes and portable filename collisions are rejected. Shared `debug_dumps` paths are unsupported in project builds.
 
 The output keeps relative paths and includes `karity-project-report.json`, separating planned configuration from actual results. Run the entry with the same working-directory/search-path setup as the original project. Dependencies are advisory: custom searchers, dynamic `require` and runtime environment changes retain Lua's original behavior and existing protection constraints; static analysis does not prove arbitrary loader compatibility.

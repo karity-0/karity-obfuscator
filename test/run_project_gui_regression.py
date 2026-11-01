@@ -97,6 +97,16 @@ class ProjectGuiTests(unittest.TestCase):
         main=next(r for r in result['report']['modules'] if r['path']=='main.lua')
         self.assertEqual('bare',main['planned_backend']);self.assertIsNone(main['backend']);self.assertFalse(main['vm_applied'])
 
+    def test_copied_empty_passes_are_not_replaced_with_vm_and_results_are_explicit(self):
+        self.document.update(passes=[],vm_output_passes=['minify'],signature={'mode':'default'})
+        self.document['project'].update(preset_selection={'mode':'fixed','value':'custom'},backend_selection={'mode':'fixed','value':'bare'})
+        plan=self.preview()
+        self.assertTrue(all(row['vm_requested'] is False and row['transforms_requested'] is False for row in plan['modules']))
+        self.assertTrue(all(row['effective_config']['passes']==[] for row in plan['modules']))
+        result,_=self.start(plan);self.assertTrue(result['ok'],result)
+        self.assertTrue(result['report']['warnings'])
+        self.assertTrue(all(row['protection_status']=='signature_only' and row['backend'] is None for row in result['report']['modules']))
+
     def test_config_dialog_roundtrip_rebases_relative_paths(self):
         source=self.base/'project.json';source.write_text(json.dumps(self.document))
         destination=self.base/'config/saved.json';destination.parent.mkdir()
@@ -119,6 +129,12 @@ const tree=p.rowsToTree([{path:'main.lua'},{path:'lib/math.lua'},{path:'assets/d
 assert.equal(tree.children.get('lib').children.get('math.lua').row.path,'lib/math.lua');
 assert.equal(p.backendLabel({backend:'bare'},false),'Bare');
 assert.equal(p.backendLabel({status:'discovered'},false),'Not checked');
+assert.equal(p.backendLabel({status:'pending',backend:'bare',vm_requested:false},false),'No VM');
+assert(p.backendMatches({backend:'bare',vm_requested:false},'none',false));
+assert(!p.backendMatches({backend:'bare',vm_requested:false},'bare',false));
+assert(p.backendMatches({backend:null,planned_backend:'bare',vm_applied:false,actual_backends:[]},'none',true));
+assert(!p.backendMatches({backend:null,planned_backend:'bare',vm_applied:false,actual_backends:[]},'bare',true));
+assert(p.backendMatches({backend:'mixed',vm_applied:true,actual_backends:['bare','classic']},'bare',true));
 assert.equal(p.backendLabel({status:'success',backend:null,planned_backend:'bare',vm_applied:false},true),'No VM');
 assert.equal(p.backendLabel({status:'failed',backend:null,planned_backend:'bare'},true),'Not Applied');
 assert.equal(p.backendLabel({kind:'resource',status:'copied'},true),'Copied');'''

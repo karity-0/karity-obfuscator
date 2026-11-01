@@ -45,6 +45,8 @@ html[data-work-mode="project"] .window-shell > .workspace { grid-template-column
 .project-feedback > div { font: 11px/1.5 var(--mono); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 80px; overflow: auto; }
 .project-feedback > div:not(:empty) { margin-top: 5px; }.project-feedback[data-state="error"] { border-left-color: var(--danger); }
 .project-feedback[data-state="error"] > div { color: var(--danger); }.project-feedback[data-state="ready"] { border-left-color: var(--success); }
+.project-feedback[data-state="warning"] { border-left-color: var(--warning); }.project-feedback[data-state="warning"] > div { color: var(--warning); }
+.project-policy-hint { width: 100%; font-size: 10px; color: var(--muted); }
 .project-settings small { display: block; margin-top: 5px; font-size: 10px; line-height: 1.5; }
 .project-file-options { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }.project-file-options > summary { cursor: pointer; padding: 3px 0; }
 .project-file-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px 14px; padding: 8px 0; }
@@ -85,6 +87,7 @@ html[data-work-mode="project"] .window-shell > .workspace { grid-template-column
 .project-file-status { color: var(--muted); font-size: 10px; }.project-file[data-status="success"] .project-file-status, .project-file[data-status="copied"] .project-file-status { color: var(--success); }
 .project-file[data-status="failed"] .project-file-status, .project-file[data-status="invalid"] .project-file-status { color: var(--danger); }
 .project-file[data-status="building"] .project-file-status { color: var(--cyan); }.project-warning-mark { position: absolute; top: 1px; right: 1px; color: var(--warning); font-size: 9px; }
+.project-file[data-protection="signature_only"] .project-file-status, .project-file[data-protection="unchanged"] .project-file-status { color: var(--warning); }
 .project-detail h2 { margin: 0; font: 12px var(--mono); overflow-wrap: anywhere; }.project-detail #project-override { display: flex; flex-wrap: wrap; gap: 8px; }
 #project-override label { font-size: 10px; color: var(--muted); flex: 1; min-width: 115px; }#project-override select { margin-top: 4px; height: 31px; font-size: 10px; }
 .project-detail-values { display: grid; grid-template-columns: 95px minmax(0,1fr); gap: 7px 10px; font-size: 11px; }
