@@ -1,5 +1,16 @@
 (() => {
   const pairs = [
+    ['Choose a source folder and an output folder. Review the files below, then build.','원본 폴더와 출력 폴더를 선택하고, 아래 파일 목록을 확인한 뒤 빌드하세요.'],
+    ['Entry (optional)','진입 파일 (선택)'],['Leave empty for a module folder','모듈 폴더라면 비워 두세요'],
+    ['Entry, file filters & resources','진입 파일·파일 필터·리소스 (선택)'],
+    ['No entry? Leave empty. Files are built individually; the entry is not executed.','진입 파일이 없으면 비워 두세요. 파일별로 빌드하며, 진입 파일을 실행하지 않습니다.'],
+    ['Original files stay unchanged. Results are saved to the output folder.','원본은 유지되고 결과는 출력 폴더에 저장됩니다.'],
+    ['Choose a project folder to start.','먼저 원본 프로젝트 폴더를 선택하세요.'],['Choose a project folder','프로젝트 폴더 선택 필요'],
+    ['Choose an output folder to build.','빌드할 결과를 저장할 출력 폴더를 선택하세요.'],['Choose an output folder','출력 폴더 선택 필요'],
+    ['Finding project files…','파일 목록을 불러오는 중…'],['Checking project settings…','보호 설정을 확인하는 중…'],
+    ['Ready to build','빌드 준비 완료'],['Check project settings','설정을 확인하세요'],['Not checked','확인 전'],['Files found','검색된 파일'],['discovered','검색됨'],
+    ['Entry not found. Choose a listed Lua file, or clear it for a module-only folder.','진입 파일이 없습니다. 목록의 Lua 파일을 고르거나, 모듈 폴더라면 진입 파일을 비우세요.'],
+    ['No files match the current filters.','현재 필터에 맞는 파일이 없습니다.'],['No Lua files match the include/exclude patterns.','포함·제외 조건에 맞는 Lua 파일이 없습니다.'],
     ['Single File','단일 파일'],['Project','프로젝트'],['Project Output Explorer','프로젝트 출력 탐색기'],
     ['Project settings','프로젝트 설정'],['success','완료'],['pending','대기'],['building','빌드 중'],['failed','실패'],['invalid','설정 오류'],['copied','복사됨'],
     ['Warnings','경고'],

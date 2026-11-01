@@ -59,6 +59,17 @@ class ProjectGuiTests(unittest.TestCase):
         output=self.api.read_project_output({'plan_id':plan['plan_id'],'path':'main.lua'})
         self.assertTrue(output['ok'],output);self.assertIn('require',output['content'])
 
+    def test_discovery_works_before_output_and_invalid_entry_are_resolved(self):
+        self.document['project'].pop('output');self.document['project']['entry']='missing.lua'
+        found=self.api.discover_project({'document':self.document,'base':str(self.base)})
+        self.assertTrue(found['ok'],found);self.assertEqual(2,len(found['files']['modules']))
+        self.assertFalse(self.api.preview_project({'document':self.document,'base':str(self.base)})['ok'])
+        self.assertFalse(self.api._project_plans)
+        self.document['project'].update(output='out',entry='')
+        (self.root/'main.lua').unlink()
+        plan=self.preview();result,_=self.start(plan)
+        self.assertTrue(result['ok'],result);self.assertIsNone(result['report']['entry'])
+
     def test_settings_sources_and_output_tampering_are_rejected(self):
         plan=self.preview();self.document['project']['backend_selection']={'mode':'fixed','value':'bare'}
         result,_=self.start(plan);self.assertFalse(result['ok']);self.assertFalse((self.base/'out').exists())
@@ -107,6 +118,7 @@ class ProjectGuiTests(unittest.TestCase):
 const tree=p.rowsToTree([{path:'main.lua'},{path:'lib/math.lua'},{path:'assets/data.json',kind:'resource'}]);
 assert.equal(tree.children.get('lib').children.get('math.lua').row.path,'lib/math.lua');
 assert.equal(p.backendLabel({backend:'bare'},false),'Bare');
+assert.equal(p.backendLabel({status:'discovered'},false),'Not checked');
 assert.equal(p.backendLabel({status:'success',backend:null,planned_backend:'bare',vm_applied:false},true),'No VM');
 assert.equal(p.backendLabel({status:'failed',backend:null,planned_backend:'bare'},true),'Not Applied');
 assert.equal(p.backendLabel({kind:'resource',status:'copied'},true),'Copied');'''

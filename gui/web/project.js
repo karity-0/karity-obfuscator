@@ -17,6 +17,7 @@
   }
   function backendLabel(row, actual) {
     if (row.kind === 'resource') return row.status === 'copied' ? 'Copied' : actual ? 'Not copied' : 'Copy';
+    if (!actual && row.status === 'discovered') return 'Not checked';
     if (actual && row.status !== 'success') return 'Not Applied';
     if (actual && row.vm_applied === false) return 'No VM';
     if (actual && row.backend === 'mixed') return 'Mixed';
@@ -27,11 +28,14 @@
     const $ = id => document.getElementById(id);
     const panel = $('project-panel');
     let documentConfig = null, base = '', preview = null, plan = null, report = null;
-    let selected = '', active = false, busy = false, revision = 0, timer = null;
+    let selected = '', active = false, busy = false, checking = false, revision = 0, timer = null;
+    let refreshTask = null, queued = false, previewError = '';
     const collapsed = new Set(), states = new Map();
     const presetNames = ['custom', ...Object.keys(bootstrap.profiles || {}).filter(name => name.startsWith('builtin:'))];
     const el = (tag, text, cls) => { const node = document.createElement(tag); if (text != null) node.textContent = text; if (cls) node.className = cls; return node; };
-    const status = (message, detail = '') => { $('project-status').textContent = tr(message); $('project-progress').textContent = detail; };
+    const status = (message, detail = '', tone = 'info') => {
+      $('project-status').textContent = tr(message);$('project-progress').textContent = detail;$('project-feedback').dataset.state = tone;
+    };
     const presetLabel = name => !name ? '—' : name === 'custom' ? tr('Current settings') : name.startsWith('builtin:') ? name.slice(8) : `${name} (${tr('Project')})`;
     function fillSelect(select, values, first = null) {
       select.replaceChildren();
@@ -39,12 +43,12 @@
       for (const name of values) select.add(new Option(select.id.includes('preset') ? presetLabel(name) : backendLabel({backend:name}, false), name));
     }
     function initialDocument() {
-      return {...clone(getConfig()), project: {root: '', output: '', entry: 'main.lua', include: ['**/*.lua'], exclude: ['**/.git/**'],
+      return {...clone(getConfig()), project: {root: '', output: '', entry: '', include: ['**/*.lua'], exclude: ['**/.git/**'],
         preset_selection: {mode:'fixed', value:'custom'}, backend_selection: {mode:'fixed', value:getConfig().vm_options?.backend || 'karity'}, module_overrides: {}}};
     }
     function populate() {
       const project = documentConfig.project;
-      for (const key of ['root', 'output', 'entry']) $('project-' + key).value = project[key] ?? (key === 'entry' ? 'main.lua' : '');
+      for (const key of ['root', 'output', 'entry']) $('project-' + key).value = project[key] ?? '';
       for (const key of ['include', 'exclude']) $('project-' + key).value = (project[key] || (key === 'include' ? ['**/*.lua'] : ['**/.git/**'])).join('\n');
       $('project-copy-resources').checked = Boolean(project.copy_resources);
       for (const kind of ['preset', 'backend']) {
@@ -84,28 +88,59 @@
     }
     function changed() {
       if (busy) return;
-      readFields();revision++;plan = null;report = null;states.clear();$('project-result-code').hidden = true;render();
-      clearTimeout(timer);status('Updating preview…');timer = setTimeout(refresh, 300);
+      readFields();revision++;plan = null;report = null;previewError = '';checking = true;states.clear();$('project-result-code').hidden = true;render();
+      clearTimeout(timer);status('Updating preview…', '', 'busy');timer = setTimeout(refresh, 250);
     }
-    async function refresh() {
-      clearTimeout(timer);
-      if (busy) return;
-      readFields();const token = ++revision;plan = null;report = null;states.clear();$('project-result-code').hidden = true;render();
-      if (!documentConfig.project.root || !documentConfig.project.output) { status('Choose project and output folders.');return; }
-      status('Analyzing project…');
+    async function prepare(snapshot, token) {
+      if (!snapshot.project.root) { preview = null;selected = '';status('Choose a project folder to start.');render();return; }
+      status('Finding project files…', '', 'busy');
       try {
-        const value = await api.preview_project({document:clone(documentConfig), base});
+        const found = await api.discover_project({document:snapshot, base});
+        if (token !== revision) return;
+        if (!found.ok) { preview = null;throw new Error(found.error); }
+        preview = found.files;
+        if (!preview.modules.some(row => row.path === selected)) selected = preview.modules[0]?.path || preview.resources[0]?.path || '';
+        $('project-entry-options').replaceChildren(...preview.modules.map(row => new Option(row.path, row.path)));
+        render();
+        if (!preview.modules.length) throw new Error(tr('No Lua files match the include/exclude patterns.'));
+        if (!snapshot.project.output) { status('Choose an output folder to build.', `${preview.modules.length} Lua · ${preview.resources.length} ${tr('resources')}`);return; }
+        status('Checking project settings…', `${preview.modules.length} Lua · ${preview.resources.length} ${tr('resources')}`, 'busy');
+        const value = await api.preview_project({document:snapshot, base});
         if (token !== revision) return;
         if (!value.ok) throw new Error(value.error);
         preview = value.plan;plan = value.plan;
-        if (!preview.modules.some(row => row.path === selected)) selected = preview.modules[0]?.path || '';
         const presetFilter = $('project-filter-preset'), filter = presetFilter.value;
         fillSelect(presetFilter, [...new Set(preview.modules.map(row => row.preset))].sort(), 'All presets');presetFilter.value = filter;
-        status(plan.valid ? 'Preview ready' : 'Resolve module errors before building', `${plan.modules.length} Lua · ${plan.resources.length} ${tr('resources')}`);
+        if (!plan.valid) {
+          const invalid = plan.modules.find(row => !row.compatibility.valid);selected = invalid.path;
+          previewError = `${invalid.path}: ${invalid.compatibility.error}`;
+          status('Resolve module errors before building', previewError, 'error');
+        } else status('Ready to build', `${plan.modules.length} Lua · ${plan.resources.length} ${tr('resources')}`, 'ready');
         render();
       } catch (error) {
-        if (token === revision) { status('Preview failed', error.message || String(error));updateControls(); }
+        if (token === revision) {
+          previewError = error.message || String(error);
+          if (previewError.startsWith('Entry is missing or excluded:')) {
+            $('project-file-options').open = true;
+            previewError = `${tr('Entry not found. Choose a listed Lua file, or clear it for a module-only folder.')} (${snapshot.project.entry})`;
+          }
+          status('Check project settings', previewError, 'error');render();
+        }
       }
+    }
+    async function refresh() {
+      if (busy) return;
+      clearTimeout(timer);timer = null;
+      readFields();revision++;plan = null;report = null;previewError = '';checking = true;queued = true;
+      states.clear();$('project-result-code').hidden = true;render();
+      if (refreshTask) return refreshTask;
+      // One request pair at a time. Rapid edits replace queued work, rather
+      // than building a backlog behind Python's build lock.
+      refreshTask = (async () => {
+        while (queued) { queued = false;await prepare(clone(documentConfig), revision); }
+      })();
+      try { await refreshTask; }
+      finally { refreshTask = null;checking = timer !== null;render(); }
     }
     function rows() {
       if (!preview) return [];
@@ -132,21 +167,25 @@
           button.setAttribute('aria-label', row.path);button.setAttribute('aria-pressed', String(selected === row.path));
           button.append(el('span', node.name, 'project-file-name'), el('span', tr(backendLabel(row, Boolean(report))), 'project-tag'));
           if (row.kind !== 'resource') button.append(el('span', presetLabel(row.preset || row.planned_preset), 'project-tag'));
-          const selection = row.selection || {}, reason = Object.values(selection).includes('override') ? 'Override' : Object.values(selection).includes('weighted') ? 'Weighted' : 'Fixed';
+          const selection = row.selection || {}, reason = !Object.keys(selection).length ? '—' : Object.values(selection).includes('override') ? 'Override' : Object.values(selection).includes('weighted') ? 'Weighted' : 'Fixed';
           button.append(el('span', row.kind === 'resource' ? '' : tr(reason), 'project-selection'), el('span', tr(row.status), 'project-file-status'));
           if (row.compatibility?.warnings?.length || row.compatibility?.error) button.append(el('span', '!', 'project-warning-mark'));
           button.addEventListener('click', () => { selected = row.path;$('project-result-code').hidden = true;render(); });parent.append(button);
         }
       }
       append(target, rowsToTree(visible));
+      if (!visible.length) target.append(el('p', tr(!preview ? 'Choose a project folder to start.' : all.length ? 'No files match the current filters.' : 'No Lua files match the include/exclude patterns.'), 'project-empty'));
       const counts = {};
       for (const row of all.filter(row => row.kind !== 'resource')) { const label = backendLabel(row, Boolean(report));counts[label] = (counts[label] || 0) + 1; }
-      $('project-counts').textContent = preview ? `${tr(!plan ? 'Preview outdated' : report ? 'Applied' : 'Planned')}: ${Object.entries(counts).map(([name,n]) => `${tr(name)} ${n}`).join(' · ')} · ${visible.length}/${all.length}` : tr('Choose project and output folders.');
+      $('project-counts').textContent = preview ? `${tr(preview.discovery_only ? 'Files found' : !plan ? 'Preview outdated' : report ? 'Applied' : 'Planned')}: ${Object.entries(counts).map(([name,n]) => `${tr(name)} ${n}`).join(' · ')} · ${visible.length}/${all.length}` : tr('Choose a project folder to start.');
     }
     function renderDetail() {
       const row = rows().find(row => row.path === selected), values = $('project-detail-values');values.replaceChildren();
       $('project-override').hidden = !row || row.kind === 'resource';$('project-view-output').disabled = busy || !report?.published || !row || row.kind === 'resource' || row.status !== 'success';
-      if (!row) return;
+      if (!row) {
+        $('project-detail-name').textContent = tr('Module details');$('project-detail-summary').textContent = tr('Select a file in the tree.');
+        $('project-warning-details').hidden = true;$('project-dependencies').replaceChildren();return;
+      }
       $('project-detail-name').textContent = row.path;
       $('project-detail-summary').textContent = `${tr(backendLabel(row, Boolean(report)))} · ${tr(row.status)}`;
       const overrides = documentConfig.project.module_overrides?.[row.path] || {};
@@ -171,7 +210,12 @@
     }
     function updateControls() {
       panel.querySelectorAll('.project-settings input, .project-settings textarea, .project-settings button, .project-policies select, .project-policies input, .project-policies button, #project-override select, #project-override button, #project-load, #project-save').forEach(node => node.disabled = busy);
-      $('project-build').disabled = busy || !plan?.valid;
+      const ready = !checking && plan?.valid, project = documentConfig?.project;
+      const label = busy ? 'Building project…' : !project?.root ? 'Choose a project folder' : !project?.output ? 'Choose an output folder'
+        : checking ? 'Checking project settings…' : ready ? 'Build project →' : 'Check project settings';
+      $('project-build').disabled = busy || !ready;$('project-build').textContent = tr(label);
+      $('project-build').title = previewError || tr(label);
+      $('project-tree').setAttribute('aria-busy', String(checking));
       $('single-mode').disabled = busy;$('project-mode').disabled = busy;
     }
     function render() { renderTree();renderDetail();updateControls(); }
@@ -179,7 +223,7 @@
       if (busy || isSingleBusy()) return;
       active = project;document.documentElement.dataset.workMode = project ? 'project' : 'single';panel.hidden = !project;
       $('single-mode').setAttribute('aria-pressed', String(!project));$('project-mode').setAttribute('aria-pressed', String(project));
-      if (project && !documentConfig) { documentConfig = initialDocument();populate(); }
+      if (project && !documentConfig) { documentConfig = initialDocument();populate();status('Choose a project folder to start.'); }
     }
     function override(kind) {
       if (!selected || busy) return;
@@ -201,10 +245,13 @@
       documentConfig = result.document;base = result.base;populate();await refresh();
     }
     async function build() {
-      clearTimeout(timer);if (busy || !plan?.valid) return;
+      if (busy) return;
+      if (checking) return;
+      if (!plan?.valid) return refresh();
+      clearTimeout(timer);timer = null;
       const fixedPlan = plan;busy = true;report = null;states.clear();$('project-result-code').hidden = true;
       const total = fixedPlan.modules.length + fixedPlan.resources.length;
-      $('project-progress-bar').max = Math.max(1,total);$('project-progress-bar').value = 0;render();status('Building project…');
+      $('project-progress-bar').max = Math.max(1,total);$('project-progress-bar').value = 0;render();status('Building project…', '', 'busy');
       try {
         const run = await api.start_build({mode:'project',plan_id:fixedPlan.plan_id,document:clone(documentConfig)});
         if (!run.ok) throw new Error(run.error);
@@ -215,19 +262,19 @@
             const copy = event.phase.startsWith('project-copy:'), module = event.phase.startsWith('project:');
             if (!copy && !module) continue;
             const path = event.phase.slice(copy ? 13 : 8);
-            if (path === 'publish') { status('Publishing project…');continue; }
+            if (module && path === 'publish') { status('Publishing project…', '', 'busy');continue; }
             states.set(path,event.status === 'running' ? 'building' : event.status === 'success' ? copy ? 'copied' : 'success' : 'failed');
-            status('Building project…',path);
+            status('Building project…',path,'busy');
           }
           $('project-progress-bar').value = [...states.values()].filter(value => ['success','copied','failed'].includes(value)).length;render();
           if (progress.done) break;
           await new Promise(resolve => setTimeout(resolve,150));
         }
         const result = await api.get_build_result(run.id);report = result.report || null;
-        if (!result.ok) { status('Build failed; output not published', result.error || report?.error || '');return; }
+        if (!result.ok) { status('Build failed; output not published', result.error || report?.error || '', 'error');return; }
         $('project-progress-bar').value = total;$('project-config').open = false;
-        status('Project completed', `${fixedPlan.output} · ${result.elapsed.toFixed(2)} s`);
-      } catch (error) { status('Build status unavailable',error.message || String(error)); }
+        status('Project completed', `${fixedPlan.output} · ${result.elapsed.toFixed(2)} s`, 'ready');
+      } catch (error) { status('Build status unavailable',error.message || String(error),'error'); }
       finally { busy = false;render(); }
     }
     $('single-mode').addEventListener('click', () => setMode(false));$('project-mode').addEventListener('click', () => setMode(true));

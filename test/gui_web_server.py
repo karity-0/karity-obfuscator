@@ -21,7 +21,7 @@ def main():
             'get_bootstrap','get_version','save_preferences','save_config',
             'start_build','poll_build','get_build_result','validate_marker_options','validate_kes',
             'start_execution','poll_execution','send_execution_input','stop_execution',
-            'preview_project','read_project_output',
+            'discover_project','preview_project','read_project_output',
         )}
         if '--project-fixture' in sys.argv:
             from run_vm_backend_regression import options

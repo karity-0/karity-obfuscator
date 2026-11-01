@@ -1,4 +1,6 @@
 """Desktop project plans and result access; builds still use GuiBuild."""
+__lazy_modules__ = {'obfuscator.project', 'obfuscator.project_build'}
+
 from collections import OrderedDict
 from copy import deepcopy
 import json
@@ -8,7 +10,7 @@ import threading
 
 import webview
 
-from .project import ProjectError, create_plan, digest_file, is_link, relative_path, safe_source
+from .project import ProjectError, create_plan, discover_project, digest_file, is_link, relative_path, safe_source
 from .project_build import ProjectBuildError, build_project
 
 
@@ -29,6 +31,12 @@ class ProjectApi:
                     identity,_ = self._project_plans.popitem(last=False)
                     self._project_reports.pop(identity,None)
             return {'ok':True,'plan':plan.as_dict()}
+        except (ValueError,OSError,TypeError) as error:
+            return {'ok':False,'error':str(error)}
+
+    def discover_project(self, payload):
+        try:
+            return {'ok':True,'files':discover_project(payload.get('document'),payload.get('base') or Path.cwd())}
         except (ValueError,OSError,TypeError) as error:
             return {'ok':False,'error':str(error)}
 

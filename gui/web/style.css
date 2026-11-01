@@ -40,6 +40,18 @@ html[data-work-mode="project"] .window-shell > .workspace { grid-template-column
 .project-panel { display: flex; flex-direction: column; gap: 12px; flex: 1; min-height: 0; overflow: auto; }
 .project-header, .project-actions { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .project-header h1 { margin: 4px 0 0; font-size: 20px; font-weight: 600; }
+.project-intro { margin: 0; color: var(--muted); font-size: 11px; }
+.project-feedback { flex: 0 0 auto; border: 1px solid var(--line); border-left: 3px solid var(--cyan); border-radius: 7px; background: var(--panel); padding: 9px 12px; font-size: 12px; }
+.project-feedback > div { font: 11px/1.5 var(--mono); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 80px; overflow: auto; }
+.project-feedback > div:not(:empty) { margin-top: 5px; }.project-feedback[data-state="error"] { border-left-color: var(--danger); }
+.project-feedback[data-state="error"] > div { color: var(--danger); }.project-feedback[data-state="ready"] { border-left-color: var(--success); }
+.project-settings small { display: block; margin-top: 5px; font-size: 10px; line-height: 1.5; }
+.project-file-options { grid-column: 1 / -1; font-size: 11px; color: var(--muted); }.project-file-options > summary { cursor: pointer; padding: 3px 0; }
+.project-file-fields { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 10px 14px; padding: 8px 0; }
+.project-file-fields label { min-width: 0; }.project-file-fields .project-resource-toggle { grid-column: 1 / -1; }
+.project-empty { padding: 16px 5px; color: var(--muted); font-size: 12px; }
+#project-build:disabled { cursor: not-allowed; opacity: .5; box-shadow: none; }
+.project-panel:has(#project-feedback[data-state="busy"]) #project-build:disabled { cursor: progress; }
 .project-config { flex: 0 0 auto; }.project-config > summary { cursor: pointer; color: var(--muted); font-size: 11px; padding: 3px 0 8px; }
 .project-config[open] > .project-settings { margin-bottom: 10px; }
 .project-settings { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 10px 14px; }
@@ -80,7 +92,7 @@ html[data-work-mode="project"] .window-shell > .workspace { grid-template-column
 .project-warnings { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--warning); font: 10px/1.6 var(--mono); }.project-warnings:empty { display: none; }
 .project-dependencies { margin: 12px 0; font-size: 11px; overflow-wrap: anywhere; }.project-dependencies div { margin-top: 6px; color: var(--muted); }
 .project-result-code { max-height: 300px; overflow: auto; background: var(--editor-bg); border: 1px solid var(--line); padding: 10px; font: 10px/1.6 var(--mono); }
-.project-footer { display: flex; align-items: center; gap: 14px; padding: 12px 0 2px; }.project-footer > div { flex: 1; min-width: 0; }
+.project-footer { position: sticky; bottom: 0; z-index: 1; background: var(--bg); display: flex; align-items: center; gap: 14px; padding: 12px 0 2px; }.project-footer > div { flex: 1; min-width: 0; }
 .project-footer small { display: block; margin-top: 5px; color: var(--muted); overflow-wrap: anywhere; font-size: 10px; }.project-footer progress { width: 130px; accent-color: var(--cyan); }
 @media (max-width: 1000px) {
   .project-explorer { grid-template-columns: minmax(0,1fr); min-height: 520px; grid-template-rows: minmax(240px,1fr) minmax(200px,.8fr); }

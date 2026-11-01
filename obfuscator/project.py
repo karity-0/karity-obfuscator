@@ -109,7 +109,7 @@ class ModulePlan:
 class ProjectPlan:
     root: Path
     output: Path
-    entry: str
+    entry: str | None
     seed: str
     modules: tuple[ModulePlan, ...]
     resources: tuple[ProjectFile, ...]
@@ -189,12 +189,12 @@ def _config(context: dict, preset: str | None, backend: str | None) -> dict:
     return config
 
 
-def _discover(root, output, include, exclude, copy_resources, resource_include):
+def _discover(root, output, include, exclude, copy_resources, resource_include, *, snapshot=True):
     files = [];discovered = set();portable = {};pending = [root]
     while pending:
         folder = pending.pop()
         for node in sorted(folder.iterdir(),key=lambda p:p.name):
-            if node == output or (node.parent == output.parent and node.name.startswith(('.karity-stage-', '.karity-backup-'))):continue
+            if output is not None and (node == output or (node.parent == output.parent and node.name.startswith(('.karity-stage-', '.karity-backup-')))):continue
             rel = node.relative_to(root).as_posix()
             if any(matches(rel,p) for p in exclude):continue
             if is_link(node):raise ProjectError(f'Symbolic links/junctions are not supported: {rel}')
@@ -210,6 +210,9 @@ def _discover(root, output, include, exclude, copy_resources, resource_include):
                 if key in portable and portable[key] != prefix:raise ProjectError(f'Output path collision: {prefix} / {portable[key]}')
                 portable[key] = prefix
             if rel.split('/')[0].casefold() == REPORT_NAME.casefold():raise ProjectError(f'Reserved output name: {rel}')
+            if not snapshot:
+                files.append(ProjectFile(rel,'lua' if lua else 'resource','',node.stat().st_size))
+                continue
             data = node.read_bytes() if lua else None
             try:source = data.decode('utf-8-sig') if data is not None else None
             except UnicodeError as error:raise ProjectError(f'Lua source is not UTF-8: {rel}') from error
@@ -218,6 +221,48 @@ def _discover(root, output, include, exclude, copy_resources, resource_include):
                 len(data) if data is not None else node.stat().st_size,source))
     files.sort(key=lambda f:f.path)
     return files, discovered
+
+
+def _locations(project: dict, base: Path, *, output_required=True) -> tuple[Path, Path | None]:
+    for key in ('root','output'):
+        value = project.get(key)
+        if key=='output' and not output_required:continue
+        if not isinstance(value,str) or not value.strip() or '\0' in value:
+            raise ProjectError(f'project.{key} is required')
+    raw_root = base / project['root']
+    value = project.get('output')
+    raw_output = base / value if isinstance(value,str) and value and '\0' not in value else None
+    if is_link(raw_root) or output_required and raw_output is not None and is_link(raw_output):
+        raise ProjectError('Project root/output cannot be a symbolic link or junction')
+    root = raw_root.resolve()
+    if not root.is_dir():raise ProjectError('Project root is not a directory')
+    try:output = raw_output.resolve() if raw_output is not None else None
+    except OSError:
+        if output_required:raise
+        output = None
+    if output is not None:
+        conflict = root == output or root.is_relative_to(output)
+        non_directory = output.exists() and not output.is_dir()
+        if output_required:
+            if conflict:raise ProjectError('Output cannot contain or replace the input project')
+            if non_directory:raise ProjectError('Output is not a directory')
+        elif conflict or non_directory or raw_output is not None and is_link(raw_output):output = None
+    return root, output
+
+
+def discover_project(document: dict, base: Path | str = '.') -> dict:
+    """List files before configuration/AST analysis; never read file contents."""
+    if not isinstance(document,dict) or not isinstance(document.get('project'),dict):
+        raise ProjectError('Project configuration requires a project object')
+    project = document['project'];root, output = _locations(project,Path(base).resolve(),output_required=False)
+    copy_resources = project.get('copy_resources',False)
+    if not isinstance(copy_resources,bool):raise ProjectError('project.copy_resources must be a boolean')
+    files, _ = _discover(root,output,patterns(project.get('include',['**/*.lua']),'include'),
+        patterns(project.get('exclude',['**/.git/**']),'exclude'),copy_resources,
+        patterns(project.get('resource_include',['**/*']),'resource_include'),snapshot=False)
+    rows = [{'path':f.path,'output':f.path,'kind':f.kind,'input_bytes':f.size,'status':'discovered'} for f in files]
+    return {'root':str(root),'output':str(output) if output is not None else None,'discovery_only':True,
+            'modules':[r for r in rows if r['kind']=='lua'],'resources':[r for r in rows if r['kind']=='resource']}
 
 
 def _seal(plan: ProjectPlan) -> str:
@@ -246,17 +291,11 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
         raise ProjectError('Project configuration requires a project object')
     base = Path(base).resolve();project = deepcopy(document['project'])
     context = {k: deepcopy(v) for k,v in document.items() if k != 'project'}
-    for key in ('root','output'):
-        if not isinstance(project.get(key),str) or not project[key].strip() or '\0' in project[key]:
-            raise ProjectError(f'project.{key} is required')
-    raw_root = base / project['root'];raw_output = base / project['output']
-    if is_link(raw_root) or is_link(raw_output):raise ProjectError('Project root/output cannot be a symbolic link or junction')
-    root = raw_root.resolve();output = raw_output.resolve()
-    if not root.is_dir():raise ProjectError('Project root is not a directory')
-    if root == output or root.is_relative_to(output):raise ProjectError('Output cannot contain or replace the input project')
-    if output.exists() and not output.is_dir():raise ProjectError('Output is not a directory')
+    root, output = _locations(project,base)
+    assert output is not None
     if project.get('format','directory') != 'directory':raise ProjectError('Only directory project output is supported')
-    entry = relative_path(project.get('entry','main.lua'))
+    raw_entry = project.get('entry')
+    entry = None if raw_entry in (None,'') else relative_path(raw_entry)
     include = patterns(project.get('include',['**/*.lua']), 'include')
     exclude = patterns(project.get('exclude',['**/.git/**']), 'exclude')
     resource_include = patterns(project.get('resource_include',['**/*']), 'resource_include')
@@ -282,12 +321,13 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
     seed = str(seed)
     files, discovered = _discover(root,output,include,exclude,copy_resources,resource_include)
     sources = {f.path:f.source for f in files if f.source is not None}
-    if entry not in sources:raise ProjectError(f'Entry is missing or excluded: {entry}')
+    if not sources:raise ProjectError('No Lua files match the project include/exclude patterns')
+    if entry is not None and entry not in sources:raise ProjectError(f'Entry is missing or excluded: {entry}')
     if set(normalized_overrides)-sources.keys():raise ProjectError('Override refers to missing/excluded module: '+', '.join(sorted(set(normalized_overrides)-sources.keys())))
     def local_path(path):
         candidate = safe_source(root,path)
         return candidate.resolve().relative_to(root).as_posix() if candidate.is_file() else None
-    modules = []
+    modules = [];configs = {}
     for file in files:
         if file.kind != 'lua':continue
         choices = {};reasons = {}
@@ -297,22 +337,27 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
                 choices[kind] = normalized_overrides[file.path][kind];reasons[kind] = 'override'
         config = {};error = None;warnings = []
         try:
-            config = _config(context,choices['preset'],choices['backend'])
+            key = (choices['preset'],choices['backend'])
+            if key not in configs:
+                resolved = _config(context,*key)
+                configs[key] = (resolved,config_warnings(resolved))
+            resolved, config_notes = configs[key]
+            config = deepcopy(resolved)
             backend = TargetProfile.from_config(cast(ObfuscatorConfig,config)).backend
             preset = config.get('_profile', choices['preset'] or 'custom')
-            warnings.extend(config_warnings(config))
+            warnings.extend(config_notes)
         except (ConfigError,ValueError) as exc:
             error = str(exc);backend = choices['backend'] or 'karity';preset = choices['preset'] or 'custom'
         modules.append(ModulePlan(file,preset,backend,reasons,config,{},tuple(warnings),error))
     targets = {m.file.path:TargetProfile.from_config(cast(ObfuscatorConfig,m.config)) for m in modules if m.error is None}
-    entry_target = targets.get(entry)
+    entry_target = targets.get(entry) if entry is not None else next(iter(targets.values()),None)
     if entry_target is not None:
         for i,module in enumerate(modules):
             target = targets.get(module.file.path)
             if target is not None and (target.lua_version,target.environment)!=(entry_target.lua_version,entry_target.environment):
-                modules[i] = replace(module,error='Module Lua version/environment differs from the project entry')
+                modules[i] = replace(module,error='Module Lua version/environment differs from the project runtime')
             elif target is not None and target.runtime_abi and entry_target.runtime_abi and target.runtime_abi!=entry_target.runtime_abi:
-                modules[i] = replace(module,error='Module runtime ABI differs from the project entry')
+                modules[i] = replace(module,error='Module runtime ABI differs from the project runtime')
     analysis, cycles = analyze_modules(sources,discovered,tuple(templates),local_path=local_path,
                                       versions={path:t.lua_version for path,t in targets.items()})
     modules = [replace(m,analysis=analysis[m.file.path],warnings=(*m.warnings,*analysis[m.file.path]['warnings'])) for m in modules]

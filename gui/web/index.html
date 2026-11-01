@@ -167,14 +167,18 @@
         <header class="project-header"><div><span class="eyebrow">PROJECT MODE</span><h1>Project Output Explorer</h1></div>
           <div class="project-actions"><button id="project-load" class="button ghost">Open project</button><button id="project-save" class="button ghost">Save project</button></div>
         </header>
+        <p class="project-intro">Choose a source folder and an output folder. Review the files below, then build.</p>
+        <div id="project-feedback" class="project-feedback" role="status" data-state="info"><strong id="project-status">Choose a project folder to start.</strong><div id="project-progress"></div></div>
         <details id="project-config" class="project-config" open><summary>Project settings</summary>
         <div class="project-settings">
           <label>Project folder<div class="project-path"><input id="project-root" class="text-control" placeholder="Project folder"><button id="project-pick-root" class="button tiny" aria-label="Choose project folder">Browse</button></div></label>
           <label>Output folder<div class="project-path"><input id="project-output" class="text-control" placeholder="Output folder"><button id="project-pick-output" class="button tiny" aria-label="Choose output folder">Browse</button></div></label>
-          <label>Entry<input id="project-entry" class="text-control" value="main.lua"></label>
+          <details id="project-file-options" class="project-file-options"><summary>Entry, file filters &amp; resources</summary><div class="project-file-fields">
+          <label><span>Entry (optional)</span><input id="project-entry" class="text-control" list="project-entry-options" aria-describedby="project-entry-hint" placeholder="Leave empty for a module folder"><datalist id="project-entry-options"></datalist><small id="project-entry-hint">No entry? Leave empty. Files are built individually; the entry is not executed.</small></label>
           <label>Include<textarea id="project-include" class="text-control" rows="1" placeholder="One glob per line">**/*.lua</textarea></label>
           <label>Exclude<textarea id="project-exclude" class="text-control" rows="1" placeholder="One glob per line">**/.git/**</textarea></label>
           <label class="project-resource-toggle"><input id="project-copy-resources" type="checkbox"> Copy non-Lua resources</label>
+          </div></details>
         </div>
         <div class="project-policies">
           <fieldset><legend>Preset policy</legend><select id="project-preset-mode" class="select-control" aria-label="Preset selection mode"><option value="default">Configured defaults</option><option value="fixed">Fixed</option><option value="weighted">Weighted</option></select><select id="project-preset-value" class="select-control" aria-label="Fixed preset"></select><div id="project-preset-weights" class="project-weights" hidden></div></fieldset>
@@ -196,7 +200,7 @@
             <button id="project-view-output" class="button tiny" disabled>View output</button><pre id="project-result-code" class="project-result-code" hidden tabindex="0"></pre>
           </section>
         </div>
-        <footer class="project-footer"><div><div id="project-status" role="status">Ready</div><small id="project-progress">Preview choices before building.</small></div><progress id="project-progress-bar" max="1" value="0" aria-label="Project build progress"></progress><button id="project-build" class="button primary" disabled>Build project →</button></footer>
+        <footer class="project-footer"><div class="project-muted">Original files stay unchanged. Results are saved to the output folder.</div><progress id="project-progress-bar" max="1" value="0" aria-label="Project build progress"></progress><button id="project-build" class="button primary" aria-describedby="project-feedback" disabled>Choose a project folder</button></footer>
       </section>
       <section id="workspace-toolbar" class="workspace-toolbar v2-only">
         <div id="preset-toolbar-slot"></div>

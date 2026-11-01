@@ -25,13 +25,13 @@ python main.py --project project.karity.json --dry-run
 python main.py --project project.karity.json --project-report report.json
 ```
 
-`root` and `output` are relative to the configuration file. `include` defaults to `['**/*.lua']`; `exclude` defaults to `['**/.git/**']`. `copy_resources` is off by default; `resource_include` filters copied non-Lua files. `module_paths` defaults to `['?.lua','?/init.lua']` for advisory dependency analysis.
+`root` and `output` are relative to the configuration file. `entry` is optional: omit it or leave it empty for a module-only folder; it is never executed during builds. `include` defaults to `['**/*.lua']`; `exclude` defaults to `['**/.git/**']`. `copy_resources` is off by default; `resource_include` filters copied non-Lua files. `module_paths` defaults to `['?.lua','?/init.lua']` for advisory dependency analysis.
 
 Preset/backend policies independently accept `{"mode":"fixed","value":"…"}` or `{"mode":"weighted","weights":{"…":1}}`. Presets use existing `builtin:fast|balanced|strong|maximum` names or the document's `profiles`; `custom` uses the common settings. Module overrides take priority. Existing capability-disabled options remain visible as warnings; required unsupported protections fail validation.
 
 Selections use separate per-path streams. Set `project.seed` for repeatable choices across project locations; the default derives from the canonical root. Adding a file or editing one override preserves unrelated choices. Selection seeds do not make encrypted outputs byte-identical. GUI **Reroll** changes only this selection seed.
 
-Modules must share the entry's Lua version/environment and compatible explicit runtime ABI. Presets cannot silently switch part of a project to another runtime.
+Modules must share a Lua version/environment and compatible explicit runtime ABI. Presets cannot silently switch part of a project to another runtime.
 
 In the GUI, choose **Project**, open a project JSON or choose folders, then inspect the tree before building. Fixed/weighted controls and file-specific overrides update the preview. Building consumes that exact plan; edited sources/settings require refreshing it. Completed rows show actual VM usage, including **No VM** or mixed source-marker regions, plus passes, sizes, timing and dependencies. Existing source-level selection markers retain their behavior.
 

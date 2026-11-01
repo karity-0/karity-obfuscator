@@ -11,7 +11,7 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path[:0] = [str(ROOT),str(ROOT/'test')]
-from obfuscator.project import ProjectError, create_plan, matches, relative_path
+from obfuscator.project import ProjectError, create_plan, discover_project, matches, relative_path
 from obfuscator.project_build import ProjectBuildError, build_project
 from obfuscator.toolchain import LuaToolchain
 from run_vm_backend_regression import options
@@ -44,6 +44,43 @@ class ProjectTests(unittest.TestCase):
             self.assertTrue(build_project(plan)['published'])
         self.assertEqual(original,{p.relative_to(self.root).as_posix():p.read_bytes() for p in self.root.rglob('*.lua')})
         self.assertTrue(all(m['backend'] is None and not m['vm_applied'] for m in report['modules']))
+
+    def test_module_only_folders_do_not_need_an_entry(self):
+        (self.root/'main.lua').unlink()
+        for entry in (None,''):
+            with self.subTest(entry=entry):
+                self.document['project']['entry'] = entry
+                plan = self.plan();self.assertIsNone(plan.entry)
+                report = build_project(plan);self.assertTrue(report['published']);self.assertIsNone(report['entry'])
+                self.assertTrue((plan.output/'lib/math.lua').is_file())
+        self.document['project']['entry'] = 'missing.lua'
+        with self.assertRaises(ProjectError):self.plan()
+        self.document['project'].pop('entry')
+        self.assertIsNone(self.plan().entry)
+        (self.root/'lib/math.lua').unlink()
+        with self.assertRaisesRegex(ProjectError,'No Lua files'):self.plan()
+
+    def test_file_discovery_does_not_wait_for_valid_build_settings_or_read_sources(self):
+        self.document['project'].pop('output')
+        self.document['project'].update(entry='missing.lua',backend_selection={'mode':'weighted','weights':{'bare':0}})
+        with patch.object(Path,'read_bytes',side_effect=AssertionError('discovery read source')):
+            found = discover_project(self.document,self.base)
+        self.assertEqual(['lib/math.lua','main.lua'],[row['path'] for row in found['modules']])
+        self.assertTrue(found['discovery_only']);self.assertIsNone(found['output'])
+        self.assertTrue(all(row['status']=='discovered' and 'backend' not in row for row in found['modules']))
+        with self.assertRaises(ProjectError):self.plan()
+        self.document['project']['output'] = 'src/main.lua'
+        found = discover_project(self.document,self.base)
+        self.assertEqual(2,len(found['modules']))
+        with self.assertRaises(ProjectError):self.plan()
+
+    def test_shared_settings_are_validated_once_without_sharing_module_mutations(self):
+        from obfuscator.project import _config
+        with patch('obfuscator.project._config',wraps=_config) as configured:
+            plan = self.plan()
+        self.assertEqual(1,configured.call_count)
+        plan.modules[0].config['passes'].append('remove_comment')
+        self.assertEqual(['minify'],plan.modules[1].config['passes'])
 
     def test_weighted_choices_are_path_stable_and_overrides_are_independent(self):
         self.document['project'].update(seed=37,preset_selection={'mode':'weighted','weights':{'builtin:fast':1,'builtin:balanced':3}},
@@ -189,6 +226,7 @@ do local require=function()end;require("shadowed")end''')
             with self.subTest(path=path),self.assertRaises(ProjectError):relative_path(path)
 
     def test_modules_share_the_entry_runtime_and_custom_preserves_snapshots(self):
+        self.document['project']['entry'] = 'main.lua'
         self.document['profiles'] = {'lua51':{'passes':['minify'],'target':{'lua_version':'5.1'}}}
         self.document['project']['preset_selection'] = {'mode':'fixed','value':'custom'}
         self.document['project']['module_overrides'] = {'lib/math.lua':{'preset':'lua51'}}
