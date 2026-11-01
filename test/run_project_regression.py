@@ -20,7 +20,7 @@ from run_vm_backend_regression import options
 class ProjectTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory(prefix='karity-project-test-')
-        self.base = Path(self.temp.name);self.root = self.base/'src';self.root.mkdir()
+        self.base = Path(self.temp.name).resolve();self.root = self.base/'src';self.root.mkdir()
         self.write('main.lua','local m=require("lib.math");print(m.value)')
         self.write('lib/math.lua','return {value=7}')
         self.document = {'project':{'root':'src','output':'out'},'passes':['minify'],'signature':{'mode':'none'}}

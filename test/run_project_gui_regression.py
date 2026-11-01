@@ -19,7 +19,7 @@ from run_vm_backend_regression import options
 
 class ProjectGuiTests(unittest.TestCase):
     def setUp(self):
-        self.temp=tempfile.TemporaryDirectory(prefix='karity-project-gui-');self.base=Path(self.temp.name)
+        self.temp=tempfile.TemporaryDirectory(prefix='karity-project-gui-');self.base=Path(self.temp.name).resolve()
         self.root=self.base/'src';(self.root/'lib').mkdir(parents=True)
         (self.root/'main.lua').write_text('local m=require("lib.math");return m.x')
         (self.root/'lib/math.lua').write_text('return {x=7}')
