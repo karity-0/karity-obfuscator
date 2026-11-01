@@ -55,12 +55,23 @@ PASS_FEATURES = {
 BACKEND_FEATURES = {'classic': 'backends targets', 'karity': 'karity',
                     'mov': 'mov', 'bare': 'bare'}
 
-# Historical Ubuntu Actions seconds, rounded. Scheduling hints, never budgets
-# or pass criteria. They may be updated without changing coverage.
-WEIGHTS = dict(zip(
-    'kes_integration synthesis_dag synthesis_control opcode_synthesis_backend lua51_pass_matrix mov_backend cross_backend_generated runtime_trace vm_backend lua51_runtime vm_output_emitter vm_lifetime runtime_skeleton vm_runtime_size function_lua51 ir_morphing kes block_permutation lua51_semantic_matrix selection string_obf function_cost'.split(),
-    (510, 495, 490, 450, 370, 270, 225, 195, 185, 135, 125, 105, 100, 85, 85, 80, 80, 65, 65, 50, 50, 45),
-))
+# Observed CI seconds (2026-11-01), rounded up. Scheduling hints only.
+WEIGHTS = {
+    'synthesis_control': 1235, 'synthesis_dag': 1195, 'opcode_synthesis_backend': 940,
+    'fixed_arity': 795, 'kes_integration': 745, 'mov_backend': 640,
+    'lua51_pass_matrix': 540, 'runtime_trace': 375, 'vm_backend': 340,
+    'cross_backend_generated': 295, 'integrity_consumption': 290, 'program_integrity': 250,
+    'lua51_runtime': 230, 'vm_output_emitter': 230, 'kes': 195,
+    'runtime_skeleton': 180, 'vm_lifetime': 175, 'vm_runtime_size': 155,
+    'integrity_integration': 130, 'lua51_semantic_matrix': 130, 'block_permutation': 120,
+    'ir_morphing': 110, 'selection': 110, 'runtime_validation': 100,
+    'string_obf': 95, 'function_lua51': 90,
+    'project': 90, 'runtime_security': 70, 'vm_ir': 70,
+    'bare_backend': 60, 'blob_form': 60, 'opcode_edges': 55,
+    'bare_optimization': 50, 'custom_names': 50, 'register_cache': 45,
+    'closure_gc': 40, 'lua51_word': 40, 'state_coupling': 40,
+    'vm_finalize': 40, 'vm_choke': 35, 'project_gui': 5,
+}
 QUICK = frozenset('verification pass_contract import typing ir_facts ir_options opcode_synthesis strip_info minify rename backend_options target_capability image_resolver dump51 lua51_toolchain'.split())
 
 FULL_PATHS = (

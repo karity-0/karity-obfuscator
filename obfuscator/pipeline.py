@@ -245,15 +245,21 @@ class Pipeline:
 
         post_passes = selection.post_passes(self._post_passes) if selection.enabled else self._post_passes
         from . import custom_names
-        from .vm.vm_pass import VMPass
-        from .passes.packer import PackerPass
-        from .passes.strip_info import StripInfoPass
-        scope = custom_names.ACTIVE.get()
-        if scope is not None and scope.owner is self:
+        outputs = [];packers = [];last_vm_post = -1
+        if any(hasattr(p, 'vm_output_passes') or hasattr(p, 'packer_output_passes') for p in post_passes):
+            from .vm.vm_pass import VMPass
+            from .passes.packer import PackerPass
             outputs = [p for p in post_passes if isinstance(p, (VMPass, PackerPass))
                        and not (isinstance(p, VMPass) and selection.original_vm_fully_excluded)]
+            packers = [p for p in outputs if isinstance(p, PackerPass)]
+            last_vm_post = max((i for i,p in enumerate(post_passes) if isinstance(p, VMPass)),default=-1)
+        scope = custom_names.ACTIVE.get()
+        if scope is not None and scope.owner is self:
             target = outputs[-1] if outputs else self
-            strip_renames = any(isinstance(p, StripInfoPass) and p.rename_locals for p in self._pre_passes)
+            strip_renames = False
+            if any(getattr(p, 'rename_locals', False) for p in self._pre_passes):
+                from .passes.strip_info import StripInfoPass
+                strip_renames = any(isinstance(p, StripInfoPass) and p.rename_locals for p in self._pre_passes)
             # NO_OBF makes SelectionRuntime skip the whole StripInfo pre-pass.
             strip_renames = strip_renames and not (selection.enabled and
                 any(s.feature == 'no_obf' for s in selection.plan.spans))
@@ -266,7 +272,7 @@ class Pipeline:
                           if outputs else strip_renames and not renamers)
             if strip_only:
                 naming = {'readable': False}
-            custom_names.configure(target, enabled=enabled, **naming, opaque_input=isinstance(target, PackerPass))
+            custom_names.configure(target, enabled=enabled, **naming, opaque_input=any(target is p for p in packers))
             if target is self:
                 with custom_names.stage(self):
                     script = custom_names.apply(script,
@@ -274,8 +280,7 @@ class Pipeline:
                                                 for n in b.nodes)) if selection.enabled else None,
                         render=(lambda edits: selection.plan.apply(script, edits)) if selection.enabled else None)
         for post_index, post in enumerate(post_passes):
-            from .vm.vm_pass import VMPass
-            if not any(isinstance(p, VMPass) for p in post_passes[post_index:]):
+            if post_index > last_vm_post:
                 reject_native_intrinsics(script)
             with phase_scope('post:' + post.__class__.__name__):
                 before = _size(script)
