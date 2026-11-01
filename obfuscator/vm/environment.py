@@ -44,7 +44,6 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
         raise ValueError('environment_policy must be compatible or strict')
     from ..names import NameAllocator
     allocator = NameAllocator.for_source(source)
-    kit = allocator.allocate('environment')
     rng = random.Random(hashlib.sha256(repr(random.getstate()).encode()).digest())
     keys = ('guest', 'native', 'check', 'refresh', 'state', 'raw', 'kind', 'meta',
             'fail', 'snapshot', 'watched', 'same')
@@ -131,6 +130,11 @@ end
     # Rename together so every fragment shares the same lexical kit binding.
     separator = '--[[ENVIRONMENT_FRAGMENT]]'
     fragments = separator.join((early, check, refresh))
+    # The shared bank is inserted into these lexical scopes before renaming.
+    # Reserve their locals too, so a bank named M cannot capture the guards'
+    # getmetatable helper (or any other template binding).
+    allocator.used.update(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', fragments))
+    kit = allocator.allocate('environment')
     fragments = fragments.replace('__KIT', kit).replace('__ORIGINAL', original)
     for key, slot in slots.items():
         fragments = re.sub(r'\b__'+key+r'\b', str(slot), fragments)

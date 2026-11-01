@@ -32,6 +32,19 @@ def kernel(version,script=123,line=456):
 
 
 class RuntimeSecurity(unittest.TestCase):
+    def test_environment_bank_cannot_shadow_fragment_locals(self):
+        import string
+        from obfuscator.vm.environment import bind_environment
+        # The input reserves every one-letter name except M. Previously the
+        # bank became M, capturing the guard fragment's getmetatable local.
+        names = ','.join(name for name in string.ascii_letters if name!='M')
+        template = f'return function()local {names};_ENV_CHECK();return 7 end'
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            for compact in (False,True):
+                with self.subTest(version=version,compact=compact):
+                    source,_ = bind_environment(template,lua_version=version,policy='compatible',compact=compact)
+                    self.assertEqual(7,runtime_type().execute(source)())
+
     def test_identity_pointer_check_cannot_call_a_forged_equality_method(self):
         for version in ('5.1','5.3'):
             runtime,ps=kernel(version)
