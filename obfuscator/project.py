@@ -12,7 +12,7 @@ import random
 from typing import cast
 
 from .config_types import ObfuscatorConfig
-from .registry import ConfigError, config_warnings, get_profile_names, resolve_config_profile, validate_config
+from .registry import ConfigError, config_warnings, get_profile_names, redact_config, resolve_config_profile, validate_config
 from .presets import canonical_name
 from .vm.backend import normalize_vm_backend
 from .vm.targets.profile import TargetProfile
@@ -104,7 +104,7 @@ class ModulePlan:
                   'vm_requested': self.vm_requested, 'transforms_requested': self.transforms_requested,
                   'compatibility': {'valid': self.error is None, 'warnings': list(self.warnings), 'error': self.error},
                   'dependencies': deepcopy(self.analysis)}
-        if effective:result['effective_config'] = deepcopy(self.config)
+        if effective:result['effective_config'] = redact_config(self.config)
         return result
 
 
@@ -270,7 +270,8 @@ def discover_project(document: dict, base: Path | str = '.') -> dict:
 
 def _seal(plan: ProjectPlan) -> str:
     public = plan.as_dict();public.pop('plan_id')
-    return hashlib.sha256(json.dumps({'document':plan.document,'base':str(plan.base),'plan':public},
+    return hashlib.sha256(json.dumps({'document':plan.document,'base':str(plan.base),'plan':public,
+                                     'configs':[module.config for module in plan.modules]},
                                     sort_keys=True,ensure_ascii=False).encode()).hexdigest()
 
 
@@ -349,6 +350,8 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
             backend = TargetProfile.from_config(cast(ObfuscatorConfig,config)).backend
             preset = config.get('_profile', choices['preset'] or 'custom')
             warnings.extend(config_notes)
+            if config.get('packer_options', {}).get('external_key') is not None:
+                warnings.append('External-key chunks need an explicit key argument; require/dofile do not supply it')
             passes = config.get('passes',[])
             vm_requested = 'vm' in passes
             transforms_requested = bool(passes)

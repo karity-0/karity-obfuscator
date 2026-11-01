@@ -59,6 +59,7 @@ REGRESSIONS = (
     'backend_options',
     'number_obf',
     'packer',
+    'external_key',
     'runtime_poly',
     'runtime_trace',
     'vm_ir',

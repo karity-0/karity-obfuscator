@@ -29,6 +29,7 @@ from obfuscator.registry import (
     validate_deployment_config,
     validate_config,
     config_warnings,
+    redact_config,
     validate_release_config,
 )
 
@@ -259,7 +260,7 @@ def main():
         print(f"warning: {warning}", file=sys.stderr)
 
     if args.print_config:
-        print(json.dumps(config, indent=4, ensure_ascii=False))
+        print(json.dumps(redact_config(config), indent=4, ensure_ascii=False))
         return
 
     if not args.input:

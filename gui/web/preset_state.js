@@ -2,7 +2,7 @@
 (function (root) {
   const clone = value => JSON.parse(JSON.stringify(value));
   const contextKeys = ['target', 'signature', 'selection_modes', 'selection_profiles',
-    '_selection_profiles', 'lua_executable', 'luac_executable', 'lua_library', 'debug_dumps'];
+    '_selection_profiles', 'lua_executable', 'luac_executable', 'lua_library', 'debug_dumps', 'packer_options'];
   function applyPreset(state, name, definition, revision) {
     const next = clone(state);
     next.preset_snapshots ||= {};

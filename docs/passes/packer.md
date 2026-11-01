@@ -18,6 +18,13 @@ transforms with `packer_output_passes`. Neither `pack` nor `vm` can be nested in
 output-pass lists; validation rejects that configuration. The packer works with
 all supported VM backends and with source-only output.
 
+`packer_options: {"external_key": "your-key"}` requires `pack`; omission/null disables it.
+Run `lua protected.lua your-key` or `assert(loadfile("protected.lua"))("your-key", ...)`.
+The key seeds decryption and consumes only the first chunk argument; GUI output execution supplies it.
+`require`/`dofile` cannot supply keys, including between Project Mode modules.
+Saved settings store keys as plaintext; public reports redact them. Existing 32-bit
+rolling-XOR limits remain: this is an offline gate, not strong cryptographic authentication.
+
 The loader needs Lua 5.3 facilities including dynamic loading and the standard
 libraries used by its decoding and integrity code. A sandbox that removes or
 replaces these facilities is not automatically compatible. Compression does not

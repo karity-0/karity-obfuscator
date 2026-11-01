@@ -487,6 +487,19 @@ def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None =
     return cast(ObfuscatorConfig, resolved)
 
 
+def redact_config(value):
+    """Keep build keys out of public configuration/plan reports."""
+    if isinstance(value, list):
+        return [redact_config(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: redact_config(item) for key, item in value.items()}
+    options = result.get('packer_options')
+    if isinstance(options, dict) and options.get('external_key') is not None:
+        options['external_key'] = '<redacted>'
+    return result
+
+
 def config_warnings(config: Mapping[str, Any]) -> list[str]:
     """Valid but unsupported controls are retained and ignored, never coerced.
 
@@ -540,6 +553,21 @@ def validate_config(config: object) -> None:
 
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
+    packer_options = config.get('packer_options', {})
+    if not isinstance(packer_options, dict) or set(packer_options) - {'external_key'}:
+        raise ConfigError('packer_options supports only external_key')
+    external_key = packer_options.get('external_key')
+    if external_key is not None:
+        if not isinstance(external_key, str) or not external_key:
+            raise ConfigError('packer_options.external_key must be a non-empty string or null')
+        try:
+            external_key.encode('utf-8')
+        except UnicodeEncodeError:
+            raise ConfigError('packer_options.external_key must be valid UTF-8') from None
+        if 'pack' not in config.get('passes', []):
+            raise ConfigError('packer_options.external_key requires pack in passes')
+        if config['passes'].count('pack') != 1:
+            raise ConfigError('packer_options.external_key requires exactly one pack in passes')
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_literal_mosaic(config.get('literal_mosaic',{}))
     _validate_string_obf_options(config.get('string_obf_options', {}))
@@ -1015,6 +1043,7 @@ def build_pipeline_from_config[P: Pipeline](
         elif name == "pack":
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
+                external_key=config.get('packer_options', {}).get('external_key'),
                 packer_output_passes=packer_output_passes + [
                     finalizer for finalizer in finalizers
                     if finalizer not in packer_output_passes

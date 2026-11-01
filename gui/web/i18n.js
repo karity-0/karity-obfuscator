@@ -1,5 +1,8 @@
 (() => {
   const pairs = [
+    ['External execution key (optional)','외부 실행 키 (선택)'],
+    ['Empty: no key required','비워 두면 키 없이 실행'],
+    ['Requires Packer. Pass the key as the first chunk argument. Saving settings stores it as plaintext.','Packer가 필요합니다. 실행 시 첫 인자로 키를 전달하세요. 설정 저장 시 키가 평문으로 저장됩니다.'],
     ['Import Single File settings','단일 파일 설정 가져오기'],['Copy Single File passes and options, then use them as the project preset.','단일 파일 화면의 패스·옵션을 복사해 프로젝트 프리셋으로 사용합니다.'],
     ['Applies to files using the VM pass.','VM 패스를 사용하는 파일에 적용됩니다.'],
     ['Ready; some files have no transformation passes','준비 완료 · 변환 패스가 없는 파일 있음'],

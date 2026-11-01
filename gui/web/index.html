@@ -81,6 +81,11 @@
               <div class="context-title">Packer output</div>
               <div id="packer-output-list" class="toggle-list compact"></div>
             </div>
+            <div class="context-block">
+              <label class="field-label" for="packer-external-key">External execution key (optional)</label>
+              <input id="packer-external-key" class="text-control" type="password" autocomplete="off" spellcheck="false" placeholder="Empty: no key required">
+              <p>Requires Packer. Pass the key as the first chunk argument. Saving settings stores it as plaintext.</p>
+            </div>
           </div>
         </details>
 

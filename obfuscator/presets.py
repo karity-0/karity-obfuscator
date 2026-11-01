@@ -7,7 +7,7 @@ from copy import deepcopy
 
 REVISION = 6
 PREFIX = 'builtin:'
-CONTEXT_KEYS = ('target', 'signature', 'lua_executable', 'luac_executable',
+CONTEXT_KEYS = ('packer_options', 'target', 'signature', 'lua_executable', 'luac_executable',
                 'lua_library', 'selection_modes', 'selection_profiles', 'debug_dumps')
 
 # Complete policies are keyed by name so one tier can be reviewed or tuned

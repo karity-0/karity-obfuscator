@@ -553,7 +553,9 @@ class Api(ProjectApi):
                 from obfuscator.kes import lower_source
                 script = lower_source(script, config.get('target', {}).get('lua_version', '5.3')).source
                 script = SelectionPlan(script, config.get("selection_modes")).source
-            return self._execution.start(script, config, payload.get("source_path", ""))
+            key = config.get('packer_options', {}).get('external_key') if payload.get('target') == 'output' else None
+            arguments = [key] if key is not None else None
+            return self._execution.start(script, config, payload.get("source_path", ""), arguments=arguments)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 

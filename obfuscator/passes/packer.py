@@ -284,8 +284,7 @@ def _cache_loader_meme_constants(source: str) -> str:
     return "".join(parts)
 
 
-def _fnv1a32(data: bytes) -> int:
-    h = 0x811C9DC5
+def _fnv1a32(data: bytes, h: int = 0x811C9DC5) -> int:
     for b in data:
         h = ((h ^ b) * 0x01000193) & _MASK32
     return h
@@ -1221,12 +1220,15 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     return prefix + body
 
 
-def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
-    arguments="{n=select('#',...),...}" if plan.forward_args else '{n=0}'
+def _render_packed(loader_src: str, payload: str, plan: ContextPlan, *, keyed: bool = False) -> str:
+    forwarded = 'select(2,...)' if keyed else '...'
+    arguments = (f"{{n=select('#',{forwarded}),{forwarded}}}"
+                 if plan.forward_args else '{n=0}')
+    key_argument = ',(...)' if keyed else ''
     return (
         f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
-        f"return _P(_D,_P,{arguments})\n"
+        f"return _P(_D,_P,{arguments}{key_argument})\n"
     )
 
 
@@ -1238,7 +1240,16 @@ class PackerPass(PostPass):
         packer_output_passes: list[str] | None = None,
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
+        external_key: str | None = None,
     ):
+        if external_key is not None:
+            if not isinstance(external_key, str) or not external_key:
+                raise ValueError('external_key must be a non-empty string or null')
+            try:
+                external_key.encode('utf-8')
+            except UnicodeEncodeError:
+                raise ValueError('external_key must be valid UTF-8') from None
+        self.external_key = external_key
         self.packer_output_passes = packer_output_passes or []
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain()
@@ -1268,6 +1279,18 @@ class PackerPass(PostPass):
         }
 
         stub = _STUB_PATH.read_text(encoding="utf-8")
+        if self.external_key is not None:
+            # Reuse the loader hash with a build-bound initial state. Neither
+            # the plaintext key nor an independent key verifier is emitted.
+            stub = stub.replace('return function(_D,_self,_args)',
+                                'return function(_D,_self,_args,_key)')
+            stub = stub.replace('local function _hash(s)\n    local h=0x811C9DC5',
+                                'local function _hash(s,h)\n    h=h or 0x811C9DC5')
+            stub = stub.replace('__CTX_SETUP__',
+                'if _type(_key)~="string" or #_key==0 then '
+                'error("external key required as first chunk argument",0) end\n__CTX_SETUP__')
+            stub = stub.replace('local _src=_inf(_xor(_enc,_seed))',
+                                'local _src=_inf(_xor(_enc,_hash(_key,_seed)))')
         if self.toolchain.lua_library:
             stub = stub.replace("local _dump=string.dump", "local _dump=" + LIBRARY_DUMP_FUNCTION)
         loader_src = _render_loader(
@@ -1304,6 +1327,9 @@ class PackerPass(PostPass):
             ^ ((len(comp) * 0x045D9F3B) & _MASK32)
         ) & _MASK32
 
+        if self.external_key is not None:
+            seed = _fnv1a32(self.external_key.encode('utf-8'), seed)
+
         encrypted = _rolling_xor(comp, seed)
         payload = base64.b64encode(encrypted).decode("ascii")
-        return _render_packed(loader_src, payload, plan)
+        return _render_packed(loader_src, payload, plan, keyed=self.external_key is not None)

@@ -325,6 +325,11 @@ document.addEventListener('DOMContentLoaded', () => {
       state.config.target.host_images = event.target.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
       markPresetCustom();
     });
+    $('packer-external-key').addEventListener('input', event => {
+      state.config.packer_options ||= {};
+      state.config.packer_options.external_key = event.target.value || null;
+      markPresetCustom();
+    });
     ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
       $(key).addEventListener('input', event => {
         state.config[key] = event.target.value.trim() || null;
@@ -362,6 +367,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAll() {
     ensureConfigShape();
+    $('packer-external-key').value = state.config.packer_options?.external_key ?? '';
     $('target-host_images').value = (state.config.target.host_images || []).join('\n');
     Object.entries({lua_version: '5.3', environment: 'standalone', compatibility: 'runtime_specific'}).forEach(([key, fallback]) => {
       $(`target-${key}`).value = state.config.target[key] || fallback;
