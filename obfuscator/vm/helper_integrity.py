@@ -10,7 +10,7 @@ import random
 import tree_sitter as ts
 
 from ..names import NameAllocator
-from ..parser import Lua53Parser, Reader as ChunkReader
+from ..parser import Lua53Parser
 from ..passes.ts_utils import _LANG, parse
 from ..passes.rename_ts import collect_named_identifiers, resolve_bindings, _apply_replacements_once
 
@@ -59,12 +59,6 @@ class HelperIntegrity:
         if dump[12:17] not in (bytes((4,4,4,8,8)), bytes((4,8,4,8,8))):
             raise ValueError('helper integrity requires standard Lua 5.3 integer/double chunks')
         parser = Parser(dump)
-        # The bundled Windows interpreter uses 32-bit size_t; compiler/library
-        # consumers can use 64-bit size_t. Preserve either native dump layout.
-        class DumpReader(ChunkReader):
-            def read_size_t(reader):
-                return int.from_bytes(reader.read_bytes(dump[13]), 'little')
-        parser._r = DumpReader(dump)
         root = parser.parse()
         if parser._r.remaining():
             raise ValueError('helper integrity dump has an unsupported trailing section')
