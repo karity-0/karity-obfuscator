@@ -1,10 +1,13 @@
 (() => {
   const pairs = [
-    ['External execution key (optional)','외부 실행 키 (선택)'],
+    ['Key authentication','키 인증'],['Use key authentication','키 인증 사용'],
+    ['Execution key','실행 키'],
+    ['Authentication enabled','사용 중'],['Authentication disabled','사용 안 함'],
+    ['Packer required','Packer 필요'],['Enter an execution key','실행 키 입력 필요'],
+    ['When enabled, execution requires a key as the first argument. Requires Packer.','켜면 실행 시 첫 인자로 키를 전달해야 합니다. Packer가 필요합니다.'],
+    ['Saving settings stores the key as plaintext.','설정 저장 시 키가 평문으로 저장됩니다.'],
     ['Missing-key error message','키 없을 때 오류 문구'],
     ['Applies to missing, empty or non-string keys.','키 누락·빈 문자열·문자열이 아닌 인자에 적용됩니다.'],
-    ['Empty: no key required','비워 두면 키 없이 실행'],
-    ['Requires Packer. Pass the key as the first chunk argument. Saving settings stores it as plaintext.','Packer가 필요합니다. 실행 시 첫 인자로 키를 전달하세요. 설정 저장 시 키가 평문으로 저장됩니다.'],
     ['Import Single File settings','단일 파일 설정 가져오기'],['Copy Single File passes and options, then use them as the project preset.','단일 파일 화면의 패스·옵션을 복사해 프로젝트 프리셋으로 사용합니다.'],
     ['Applies to files using the VM pass.','VM 패스를 사용하는 파일에 적용됩니다.'],
     ['Ready; some files have no transformation passes','준비 완료 · 변환 패스가 없는 파일 있음'],

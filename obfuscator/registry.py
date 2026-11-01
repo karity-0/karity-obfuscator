@@ -487,6 +487,11 @@ def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None =
     return cast(ObfuscatorConfig, resolved)
 
 
+def packer_key_enabled(options: Mapping[str, Any]) -> bool:
+    # Preserve already-keyed configurations written before the explicit switch.
+    return options.get('external_key_enabled', options.get('external_key') is not None) is True
+
+
 def redact_config(value):
     """Keep build keys out of public configuration/plan reports."""
     if isinstance(value, list):
@@ -554,8 +559,11 @@ def validate_config(config: object) -> None:
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
     packer_options = config.get('packer_options', {})
-    if not isinstance(packer_options, dict) or set(packer_options) - {'external_key', 'missing_key_message'}:
-        raise ConfigError('packer_options supports only external_key and missing_key_message')
+    if not isinstance(packer_options, dict) or set(packer_options) - {'external_key_enabled', 'external_key', 'missing_key_message'}:
+        raise ConfigError('packer_options supports only external_key_enabled, external_key and missing_key_message')
+    if 'external_key_enabled' in packer_options and not isinstance(packer_options['external_key_enabled'], bool):
+        raise ConfigError('packer_options.external_key_enabled must be boolean')
+    keyed = packer_key_enabled(packer_options)
     message = packer_options.get('missing_key_message')
     if message is not None:
         if not isinstance(message, str):
@@ -566,12 +574,15 @@ def validate_config(config: object) -> None:
             raise ConfigError('packer_options.missing_key_message must be valid UTF-8') from None
     external_key = packer_options.get('external_key')
     if external_key is not None:
-        if not isinstance(external_key, str) or not external_key:
+        if not isinstance(external_key, str) or (keyed and not external_key):
             raise ConfigError('packer_options.external_key must be a non-empty string or null')
         try:
             external_key.encode('utf-8')
         except UnicodeEncodeError:
             raise ConfigError('packer_options.external_key must be valid UTF-8') from None
+    if keyed:
+        if not external_key:
+            raise ConfigError('key authentication requires a non-empty packer_options.external_key')
         if 'pack' not in config.get('passes', []):
             raise ConfigError('packer_options.external_key requires pack in passes')
         if config['passes'].count('pack') != 1:
@@ -1051,7 +1062,8 @@ def build_pipeline_from_config[P: Pipeline](
         elif name == "pack":
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
-                external_key=config.get('packer_options', {}).get('external_key'),
+                external_key=(config.get('packer_options', {}).get('external_key')
+                              if packer_key_enabled(config.get('packer_options', {})) else None),
                 missing_key_message=config.get('packer_options', {}).get('missing_key_message'),
                 packer_output_passes=packer_output_passes + [
                     finalizer for finalizer in finalizers

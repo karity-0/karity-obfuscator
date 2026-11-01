@@ -172,6 +172,14 @@ return a,b,c,d
         self.assertNotIn(b'guest-executed',result.stdout)
 
     def test_configuration_requires_packer_and_reports_hide_keys(self):
+        for enabled in (None,1,'true',[]):
+            with self.subTest(enabled=enabled):
+                config = self.config();config['packer_options']['external_key_enabled'] = enabled
+                with self.assertRaisesRegex(ConfigError,'external_key_enabled'):validate_config(config)
+        for key in (None,''):
+            config = self.config(key=key)
+            config['packer_options'] = {'external_key_enabled':True,'external_key':key}
+            with self.assertRaises(ConfigError):validate_config(config)
         for message in (False,123,[],{},'\ud800'):
             with self.subTest(message=repr(message)):
                 config = self.config();config['packer_options']['missing_key_message'] = message
@@ -197,6 +205,24 @@ return a,b,c,d
         self.assertEqual(0,result.returncode,result.stderr)
         self.assertEqual('<redacted>',json.loads(result.stdout)['packer_options']['external_key'])
 
+    def test_disabled_authentication_keeps_saved_key_without_consuming_guest_arguments(self):
+        config = self.config()
+        config['packer_options']['external_key_enabled'] = False
+        for passes in (['pack'],['minify']):
+            with self.subTest(passes=passes):
+                config['passes'] = passes
+                output = build_pipeline_from_config(config,Pipeline).run(GUEST)
+                path = self.base/'disabled.lua';path.write_text(output,encoding='utf8')
+                result = self.run_lua('local r=table.pack(assert(loadfile('+json_lua_string(str(path))+
+                    '))(17,nil,"guest",nil));assert(r.n==4 and r[3]=="tail")')
+                self.assertEqual(0,result.returncode,result.stderr)
+        root = self.base/'src';root.mkdir()
+        (root/'main.lua').write_text('return 42',encoding='utf8')
+        plan = create_plan({**config,'project':{'root':'src','output':'out'}},self.base)
+        self.assertTrue(plan.valid)
+        self.assertFalse(any('require/dofile' in w for w in plan.modules[0].warnings))
+        self.assertEqual(KEY,config['packer_options']['external_key'])
+
     def test_project_outputs_redact_keys_and_keep_private_plan_sealed(self):
         root = self.base/'src';root.mkdir()
         (root/'main.lua').write_text('assert(select("#",...)==0);return 42',encoding='utf8')
@@ -221,25 +247,27 @@ return a,b,c,d
             try:
                 config = self.config()
                 config['packer_options']['missing_key_message'] = '실행 키를 먼저 전달하세요'
-                saved = api.save_config({'config':config})
-                self.assertTrue(saved['ok'],saved)
-                restored = api.get_bootstrap()['state']['config']['packer_options']
-                self.assertEqual(config['packer_options'],restored)
                 source = 'assert(select("#",...)==0);print("gui-key-ok")'
-                built = api.run_obfuscation({'script':source,'config':config})
-                self.assertTrue(built['ok'],built.get('error'))
-                self.assert_hidden(built)
-                for target,script in (('source',source),('output',built['output'])):
-                    started = api.start_execution({'script':script,'target':target,'config':config})
-                    self.assertTrue(started['ok'],started)
-                    deadline = time.monotonic()+20
-                    while time.monotonic()<deadline:
-                        result = api.poll_execution(started['id'])
-                        if result['done']:break
-                        time.sleep(0.02)
-                    self.assertTrue(result['done'])
-                    self.assertEqual(0,result['exit_code'],result)
-                    self.assertIn('gui-key-ok',''.join(e['text'] for e in result['events']))
+                for enabled in (True,False):
+                    config['packer_options']['external_key_enabled'] = enabled
+                    saved = api.save_config({'config':config})
+                    self.assertTrue(saved['ok'],saved)
+                    restored = api.get_bootstrap()['state']['config']['packer_options']
+                    self.assertEqual(config['packer_options'],restored)
+                    built = api.run_obfuscation({'script':source,'config':config})
+                    self.assertTrue(built['ok'],built.get('error'))
+                    self.assert_hidden(built)
+                    for target,script in (('source',source),('output',built['output'])):
+                        started = api.start_execution({'script':script,'target':target,'config':config})
+                        self.assertTrue(started['ok'],started)
+                        deadline = time.monotonic()+20
+                        while time.monotonic()<deadline:
+                            result = api.poll_execution(started['id'])
+                            if result['done']:break
+                            time.sleep(0.02)
+                        self.assertTrue(result['done'])
+                        self.assertEqual(0,result['exit_code'],result)
+                        self.assertIn('gui-key-ok',''.join(e['text'] for e in result['events']))
             finally:
                 api._builds.close();api._execution.close()
 

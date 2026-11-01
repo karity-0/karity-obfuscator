@@ -325,10 +325,17 @@ document.addEventListener('DOMContentLoaded', () => {
       state.config.target.host_images = event.target.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
       markPresetCustom();
     });
+    $('packer-key-enabled').addEventListener('change', event => {
+      state.config.packer_options ||= {};
+      state.config.packer_options.external_key_enabled = event.target.checked;
+      markPresetCustom();
+      renderKeyAuthentication();
+    });
     $('packer-external-key').addEventListener('input', event => {
       state.config.packer_options ||= {};
       state.config.packer_options.external_key = event.target.value || null;
       markPresetCustom();
+      renderKeyAuthentication(false);
     });
     $('packer-missing-key-message').addEventListener('input', event => {
       state.config.packer_options ||= {};
@@ -372,9 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAll() {
     ensureConfigShape();
-    $('packer-external-key').value = state.config.packer_options?.external_key ?? '';
-    $('packer-missing-key-message').value = state.config.packer_options?.missing_key_message
-      ?? 'external key required as first chunk argument';
+    renderKeyAuthentication();
     $('target-host_images').value = (state.config.target.host_images || []).join('\n');
     Object.entries({lua_version: '5.3', environment: 'standalone', compatibility: 'runtime_specific'}).forEach(([key, fallback]) => {
       $(`target-${key}`).value = state.config.target[key] || fallback;
@@ -627,6 +632,21 @@ document.addEventListener('DOMContentLoaded', () => {
     markPresetCustom();
   }
 
+  function renderKeyAuthentication(refreshFields = true) {
+    const options = state.config.packer_options || {};
+    const enabled = options.external_key_enabled ?? (options.external_key != null);
+    $('packer-key-enabled').checked = enabled;
+    $('packer-key-fields').disabled = !enabled;
+    const status = !enabled ? 'Authentication disabled' : !state.config.passes.includes('pack') ? 'Packer required'
+      : !options.external_key ? 'Enter an execution key' : 'Authentication enabled';
+    $('key-auth-status').textContent = tr(status);
+    if (refreshFields) {
+      $('packer-external-key').value = options.external_key ?? '';
+      $('packer-missing-key-message').value = options.missing_key_message
+        ?? 'external key required as first chunk argument';
+    }
+  }
+
   function renderPasses() {
     Object.entries(ui.passLists).forEach(([context, container]) => {
       container.innerHTML = '';
@@ -640,6 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
           togglePass(context, pass.name, event.target.checked);
           markPresetCustom();
           renderPasses();
+          renderKeyAuthentication(false);
           updateOverview();
         });
         container.appendChild(label);

@@ -258,6 +258,9 @@ button, select, input { -webkit-app-region: no-drag; }
 .text-control, .text-area-control { width: 100%; padding: 8px 9px; color: var(--text); border: 1px solid var(--line); border-radius: 7px; outline: none; background: var(--control-bg); font: 10px/1.45 var(--mono); }
 .text-area-control { resize: vertical; min-height: 58px; }
 .text-control:focus, .text-area-control:focus { border-color: var(--violet); box-shadow: 0 0 0 3px rgba(157,140,255,.09); }
+.key-auth-fields { border: 0; margin: 0; padding: 0; min-width: 0; }
+.key-auth-fields:disabled { opacity: .45; }
+.key-auth-fields:disabled input, .key-auth-fields:disabled textarea { cursor: not-allowed; }
 
 .option-row { display: grid; grid-template-columns: minmax(0,1fr) 122px; gap: 10px; align-items: center; padding: 9px 4px; border-bottom: 1px solid var(--line); }
 .option-row:last-child { border-bottom: 0; }

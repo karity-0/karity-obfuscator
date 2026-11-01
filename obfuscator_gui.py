@@ -36,6 +36,7 @@ from obfuscator.registry import (
     resolve_config_profile,
     validate_config,
     config_warnings,
+    packer_key_enabled,
     validate_release_config,
     validate_deployment_config,
 )
@@ -553,7 +554,9 @@ class Api(ProjectApi):
                 from obfuscator.kes import lower_source
                 script = lower_source(script, config.get('target', {}).get('lua_version', '5.3')).source
                 script = SelectionPlan(script, config.get("selection_modes")).source
-            key = config.get('packer_options', {}).get('external_key') if payload.get('target') == 'output' else None
+            options = config.get('packer_options', {})
+            key = (options.get('external_key') if payload.get('target') == 'output'
+                   and packer_key_enabled(options) else None)
             arguments = [key] if key is not None else None
             return self._execution.start(script, config, payload.get("source_path", ""), arguments=arguments)
         except Exception as exc:

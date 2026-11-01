@@ -18,7 +18,7 @@ transforms with `packer_output_passes`. Neither `pack` nor `vm` can be nested in
 output-pass lists; validation rejects that configuration. The packer works with
 all supported VM backends and with source-only output.
 
-`packer_options: {"external_key": "your-key"}` requires `pack`; omission/null disables it.
+`packer_options: {"external_key_enabled": true, "external_key": "your-key"}` requires `pack`; `false` disables authentication while retaining the saved key. Legacy configurations with only `external_key` remain enabled.
 `packer_options.missing_key_message` customizes missing/empty/non-string key errors; omission/null keeps the default, `""` uses an empty message.
 Run `lua protected.lua your-key` or `assert(loadfile("protected.lua"))("your-key", ...)`.
 The key seeds decryption and consumes only the first chunk argument; GUI output execution supplies it.

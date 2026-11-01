@@ -12,7 +12,7 @@ import random
 from typing import cast
 
 from .config_types import ObfuscatorConfig
-from .registry import ConfigError, config_warnings, get_profile_names, redact_config, resolve_config_profile, validate_config
+from .registry import ConfigError, config_warnings, get_profile_names, packer_key_enabled, redact_config, resolve_config_profile, validate_config
 from .presets import canonical_name
 from .vm.backend import normalize_vm_backend
 from .vm.targets.profile import TargetProfile
@@ -350,7 +350,7 @@ def create_plan(document: dict, base: Path | str = '.') -> ProjectPlan:
             backend = TargetProfile.from_config(cast(ObfuscatorConfig,config)).backend
             preset = config.get('_profile', choices['preset'] or 'custom')
             warnings.extend(config_notes)
-            if config.get('packer_options', {}).get('external_key') is not None:
+            if packer_key_enabled(config.get('packer_options', {})):
                 warnings.append('External-key chunks need an explicit key argument; require/dofile do not supply it')
             passes = config.get('passes',[])
             vm_requested = 'vm' in passes
