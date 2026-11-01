@@ -33,6 +33,7 @@ from ..toolchain import LuaToolchain, LIBRARY_DUMP_FUNCTION
 _STUB_PATH = Path(__file__).parent / "pack_stub.lua"
 _MASK32 = 0xFFFFFFFF
 _ROUTE_MASK = 0x7FFFFFFF
+DEFAULT_MISSING_KEY_MESSAGE = 'external key required as first chunk argument'
 
 _COMPRESSION_CANDIDATES = (
     (9, zlib.Z_DEFAULT_STRATEGY),
@@ -1126,7 +1127,8 @@ def _context_setup(plan: ContextPlan) -> str:
     return "".join(parts)
 
 
-def _render_loader(stub: str, plan: ContextPlan, scalar_values: dict[str, int]) -> str:
+def _render_loader(stub: str, plan: ContextPlan, scalar_values: dict[str, int],
+                   *, key_error: str | None = None) -> str:
     values = {
         **scalar_values,
         "__CTX_STATE_SLOT__": plan.slot("state"),
@@ -1134,7 +1136,15 @@ def _render_loader(stub: str, plan: ContextPlan, scalar_values: dict[str, int]) 
     }
     for token, value in values.items():
         stub = stub.replace(token, f"0x{value:08X}")
-    stub = stub.replace("__CTX_SETUP__", _context_setup(plan))
+    context = _context_setup(plan)
+    if key_error is not None:
+        from .string_mosaic import quote_plain
+        message = quote_plain(key_error.encode('utf-8'), preserve_utf8=True)
+        # Insert user text after all template substitutions, so token-like text
+        # remains literal and cannot change the generated loader or its context.
+        context = ('if _type(_key)~="string" or #_key==0 then '
+                   f'error({message},0) end\n' + context)
+    stub = stub.replace("__CTX_SETUP__", context)
     return stub
 
 
@@ -1241,7 +1251,17 @@ class PackerPass(PostPass):
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
         external_key: str | None = None,
+        missing_key_message: str | None = None,
     ):
+        if missing_key_message is not None:
+            if not isinstance(missing_key_message, str):
+                raise ValueError('missing_key_message must be a string or null')
+            try:
+                missing_key_message.encode('utf-8')
+            except UnicodeEncodeError:
+                raise ValueError('missing_key_message must be valid UTF-8') from None
+        self.missing_key_message = (DEFAULT_MISSING_KEY_MESSAGE if missing_key_message is None
+                                    else missing_key_message)
         if external_key is not None:
             if not isinstance(external_key, str) or not external_key:
                 raise ValueError('external_key must be a non-empty string or null')
@@ -1286,9 +1306,6 @@ class PackerPass(PostPass):
                                 'return function(_D,_self,_args,_key)')
             stub = stub.replace('local function _hash(s)\n    local h=0x811C9DC5',
                                 'local function _hash(s,h)\n    h=h or 0x811C9DC5')
-            stub = stub.replace('__CTX_SETUP__',
-                'if _type(_key)~="string" or #_key==0 then '
-                'error("external key required as first chunk argument",0) end\n__CTX_SETUP__')
             stub = stub.replace('local _src=_inf(_xor(_enc,_seed))',
                                 'local _src=_inf(_xor(_enc,_hash(_key,_seed)))')
         if self.toolchain.lua_library:
@@ -1297,6 +1314,7 @@ class PackerPass(PostPass):
             stub,
             plan,
             scalar_values,
+            key_error=self.missing_key_message if self.external_key is not None else None,
         )
         loader_src = _obfuscate_packer_output(
             loader_src,

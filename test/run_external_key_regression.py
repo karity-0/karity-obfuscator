@@ -95,6 +95,25 @@ print('return-ok')''')
         self.assertEqual(0,good.returncode,good.stderr)
         self.assertIn(b'42',good.stdout)
 
+    def test_missing_key_messages_are_literal_and_do_not_handle_wrong_keys(self):
+        from obfuscator.passes.packer import DEFAULT_MISSING_KEY_MESSAGE
+        custom = '키를 입력하세요 "\\\n\0 __SALT__ __CTX_SETUP__ __FP_C__'
+        for message in (None,'',custom):
+            with self.subTest(message=repr(message)):
+                config = self.config()
+                config['packer_options']['missing_key_message'] = message
+                config['packer_output_passes'] = ['rename_obf','string_encode','minify']
+                output = build_pipeline_from_config(config,Pipeline).run('return 42')
+                path = self.base/'message.lua';path.write_text(output,encoding='utf8')
+                expected = DEFAULT_MISSING_KEY_MESSAGE if message is None else message
+                result = self.run_lua('local fn=assert(loadfile('+json_lua_string(str(path))+'))\n'
+                    'local expected='+json_lua_string(expected)+'\n'
+                    'for _,args in ipairs({{},{n=1,[1]=""},{n=1,[1]=false},{n=1,[1]={}}}) do '
+                    'local ok,err=pcall(fn,table.unpack(args,1,args.n or 0));assert(not ok and err==expected) end\n'
+                    'assert(fn('+json_lua_string(KEY)+')==42)\n'
+                    'local ok,err=pcall(fn,"incorrect-secret");assert(not ok and err~=expected)')
+                self.assertEqual(0,result.returncode,result.stderr)
+
     def test_loader_transformations_and_native_cli_arguments(self):
         # The key is a chunk argument, not another loader in the emitted output.
         for transforms in ([],['rename_obf','string_encode','minify']):
@@ -153,6 +172,10 @@ return a,b,c,d
         self.assertNotIn(b'guest-executed',result.stdout)
 
     def test_configuration_requires_packer_and_reports_hide_keys(self):
+        for message in (False,123,[],{},'\ud800'):
+            with self.subTest(message=repr(message)):
+                config = self.config();config['packer_options']['missing_key_message'] = message
+                with self.assertRaisesRegex(ConfigError,'missing_key_message'):validate_config(config)
         for key in ('',False,1,[],{},'\ud800'):
             with self.subTest(key=repr(key)):
                 with self.assertRaises(ConfigError):validate_config(self.config(key=key))
@@ -197,6 +220,11 @@ return a,b,c,d
             api = gui.Api()
             try:
                 config = self.config()
+                config['packer_options']['missing_key_message'] = '실행 키를 먼저 전달하세요'
+                saved = api.save_config({'config':config})
+                self.assertTrue(saved['ok'],saved)
+                restored = api.get_bootstrap()['state']['config']['packer_options']
+                self.assertEqual(config['packer_options'],restored)
                 source = 'assert(select("#",...)==0);print("gui-key-ok")'
                 built = api.run_obfuscation({'script':source,'config':config})
                 self.assertTrue(built['ok'],built.get('error'))

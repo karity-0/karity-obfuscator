@@ -19,6 +19,7 @@ output-pass lists; validation rejects that configuration. The packer works with
 all supported VM backends and with source-only output.
 
 `packer_options: {"external_key": "your-key"}` requires `pack`; omission/null disables it.
+`packer_options.missing_key_message` customizes missing/empty/non-string key errors; omission/null keeps the default, `""` uses an empty message.
 Run `lua protected.lua your-key` or `assert(loadfile("protected.lua"))("your-key", ...)`.
 The key seeds decryption and consumes only the first chunk argument; GUI output execution supplies it.
 `require`/`dofile` cannot supply keys, including between Project Mode modules.

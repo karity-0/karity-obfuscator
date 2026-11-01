@@ -554,8 +554,16 @@ def validate_config(config: object) -> None:
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
     packer_options = config.get('packer_options', {})
-    if not isinstance(packer_options, dict) or set(packer_options) - {'external_key'}:
-        raise ConfigError('packer_options supports only external_key')
+    if not isinstance(packer_options, dict) or set(packer_options) - {'external_key', 'missing_key_message'}:
+        raise ConfigError('packer_options supports only external_key and missing_key_message')
+    message = packer_options.get('missing_key_message')
+    if message is not None:
+        if not isinstance(message, str):
+            raise ConfigError('packer_options.missing_key_message must be a string or null')
+        try:
+            message.encode('utf-8')
+        except UnicodeEncodeError:
+            raise ConfigError('packer_options.missing_key_message must be valid UTF-8') from None
     external_key = packer_options.get('external_key')
     if external_key is not None:
         if not isinstance(external_key, str) or not external_key:
@@ -1044,6 +1052,7 @@ def build_pipeline_from_config[P: Pipeline](
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
                 external_key=config.get('packer_options', {}).get('external_key'),
+                missing_key_message=config.get('packer_options', {}).get('missing_key_message'),
                 packer_output_passes=packer_output_passes + [
                     finalizer for finalizer in finalizers
                     if finalizer not in packer_output_passes

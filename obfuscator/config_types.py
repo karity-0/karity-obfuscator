@@ -97,6 +97,7 @@ class RenameOptions(TypedDict, total=False):
 
 class PackerOptions(TypedDict, total=False):
     external_key: str | None
+    missing_key_message: str | None
 
 
 class FunctionOptions(TypedDict, total=False):

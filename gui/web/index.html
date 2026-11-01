@@ -84,6 +84,9 @@
             <div class="context-block">
               <label class="field-label" for="packer-external-key">External execution key (optional)</label>
               <input id="packer-external-key" class="text-control" type="password" autocomplete="off" spellcheck="false" placeholder="Empty: no key required">
+              <label class="field-label" for="packer-missing-key-message">Missing-key error message</label>
+              <textarea id="packer-missing-key-message" class="text-area-control" rows="2" spellcheck="false"></textarea>
+              <p>Applies to missing, empty or non-string keys.</p>
               <p>Requires Packer. Pass the key as the first chunk argument. Saving settings stores it as plaintext.</p>
             </div>
           </div>

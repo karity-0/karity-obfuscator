@@ -330,6 +330,11 @@ document.addEventListener('DOMContentLoaded', () => {
       state.config.packer_options.external_key = event.target.value || null;
       markPresetCustom();
     });
+    $('packer-missing-key-message').addEventListener('input', event => {
+      state.config.packer_options ||= {};
+      state.config.packer_options.missing_key_message = event.target.value;
+      markPresetCustom();
+    });
     ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
       $(key).addEventListener('input', event => {
         state.config[key] = event.target.value.trim() || null;
@@ -368,6 +373,8 @@ document.addEventListener('DOMContentLoaded', () => {
   function renderAll() {
     ensureConfigShape();
     $('packer-external-key').value = state.config.packer_options?.external_key ?? '';
+    $('packer-missing-key-message').value = state.config.packer_options?.missing_key_message
+      ?? 'external key required as first chunk argument';
     $('target-host_images').value = (state.config.target.host_images || []).join('\n');
     Object.entries({lua_version: '5.3', environment: 'standalone', compatibility: 'runtime_specific'}).forEach(([key, fallback]) => {
       $(`target-${key}`).value = state.config.target[key] || fallback;
