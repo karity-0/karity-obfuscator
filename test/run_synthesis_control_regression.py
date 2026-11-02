@@ -11,7 +11,7 @@ from profile_opcode_synthesis import build,BASE,PROTECTED
 from profile_vm_runtime import execute
 from obfuscator.vm.synthesis.strategies import TERMINAL
 from obfuscator.vm.synthesis import kernels,planner
-from run_opcode_synthesis_regression import must_fail,frontend
+from run_opcode_synthesis_regression import must_fail,frontend,guest_plan
 
 FIXTURES={
     'zero_args': ('''local t={function()return 7,nil end};local f=t[1];local g=f
@@ -103,7 +103,7 @@ def chains(backend,version):
             'opcode_synthesis':True,'synthesis_policy':'protection',
             'synthesis_max_code_growth':64,'block_variant_rate':0})
     assert execute(output,version)[0]==execute(CHAIN_SOURCE,version)[0]
-    plan=p.last_lowered_ir.backend_data['synthesis_plan']
+    plan=guest_plan(p)
     locations={i.id:b.id for f in p.last_lowered_ir.semantic_ir.functions() for b in f.blocks for i in b.instructions}
     cross=[o for o in plan.occurrences if len({locations[s] for s in o.source_ids})>=3]
     assert cross and data['handlers'],(backend,version,plan.dump())
@@ -136,7 +136,7 @@ if c<100 then return 'less' else return 'more' end end;print(f(2),f(8))'''
     output,data,p=build(source,backend,version,{**BASE,**PROTECTED,'opcode_synthesis':True,
         'synthesis_policy':'protection','synthesis_max_code_growth':64,'block_variant_rate':1})
     assert execute(output,version)[0]==execute(source,version)[0]
-    plan=p.last_lowered_ir.backend_data['synthesis_plan']
+    plan=guest_plan(p)
     assert dict(plan.rejected).get('terminal_block_variants')
     assert any(d.get('fallback')=='terminal_block_variants' for d in plan.decisions)
     assert data['handlers'] and any(d.get('recovered_prefix_candidates',0)>0 for d in plan.decisions)
@@ -166,7 +166,7 @@ def check(source,operation,backend,version,protected,bank=False,dispatcher=None)
     if dispatcher is not None:settings['dispatcher_type']=dispatcher
     output,data,p=build(source,backend,version,settings)
     assert execute(output,version)[0]==execute(source,version)[0],(backend,version,operation,protected)
-    plan=p.last_lowered_ir.backend_data['synthesis_plan'];recipes={r.id:r for r in plan.recipes}
+    plan=guest_plan(p);recipes={r.id:r for r in plan.recipes}
     matched=[o for o in plan.occurrences if recipes[o.recipe].steps[-1].operation==operation]
     assert matched and data['handlers'],(backend,version,operation,data['rejected'],plan.decisions)
     if operation=='CALL' and source not in (FIXTURES['zero_args'][0],FIXTURES['open_results'][0]):

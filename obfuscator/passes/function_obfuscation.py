@@ -2393,6 +2393,8 @@ def _build_generic_cff(blocks: list[dict], entry_id: int, c: list[int],
         pooled_params = list(param_names or [])
         all_hoisted_names.update(pooled_params)
         use_tables = True
+    if use_tables and _FUNCTION_FEATURES.get().get('merge_no_frame_pooling', False):
+        raise RuntimeError('function merge would pool captured invocation locals')
 
     # ------------------------------------------------------------------
     # Lua for-control variable 보호
@@ -2783,6 +2785,20 @@ def _static_integer(ctx, node) -> int | None:
     if node is None:
         return None
     text = ctx.text(node).strip()
+    transport = CURRENT.get()
+    if transport is not None:
+        # A merged worker carries registered numeric provenance through a
+        # second AST. Only remove this transport's comments and literal
+        # parentheses; do not evaluate an arbitrary constant expression.
+        text = transport.clean(text).strip()
+        while text.startswith('(') and text.endswith(')'):
+            text = text[1:-1].strip()
+        sign = text[:1] if text[:1] in ('+','-') else ''
+        if sign:
+            text = text[1:].strip()
+            while text.startswith('(') and text.endswith(')'):
+                text = text[1:-1].strip()
+            text = sign+text
     if not re.fullmatch(r"[+-]?(?:0[xX][0-9A-Fa-f]+|[0-9]+)", text):
         return None
     try:
@@ -3356,7 +3372,7 @@ def _transform_body(
         boundary_stats['reconstruction_statements'] = before
         boundary_stats['coalesced_states'] = before-len(blocks)
 
-    c: list[int] = [0]
+    c: list[int] = [_FUNCTION_FEATURES.get().get('merge_counter_start', 0)]
     params = list(lexical_plan.root_param_names)
 
     prefix_lines: list[str] = []
@@ -3417,7 +3433,7 @@ def _transform_body(
 
 
 # Build-time annotation, removed by the VM output pipeline. No runtime sentinel.
-_DISPATCH_SENTINEL = re.compile(r"--\[\[VM_DISPATCH_ENTRY\]\]")
+_DISPATCH_SENTINEL = re.compile(r"--\[\[(?:VM_DISPATCH_ENTRY|VM_INTEGRITY_HELPER)\]\]")
 _VM_HOT_LOOP_SENTINEL = re.compile(r'__VM_HOT_LOOP__')
 
 
@@ -3429,6 +3445,8 @@ class FunctionObfuscationPass(BasePass):
     - 다문장 함수의 CFF block 일부는 helper closure들로 분리하고 일부는 outer
       dispatcher에 inline해 한 원본 함수가 여러 실행 경계에 걸치게 한다.
     - 안전한 zero-argument/single-value local helper는 호출식에 직접 inline한다.
+    - 같은 캡처를 공유하는 인접 local 함수들은 원본 callable wrapper를 유지하며
+      하나의 공통 CFF worker에 본문을 병합한다. merge=False로 끌 수 있다.
     - 이미 `...`를 사용하는 함수, `goto`/label이 있는 함수, 본문이 비어있는
       함수는 건드리지 않는다.
 
@@ -3459,6 +3477,8 @@ class FunctionObfuscationPass(BasePass):
                  loop_max_depth: int = 3,
                  cff: bool = True, junk: bool = True,
                  inline: bool = True, wrapper: bool = True,
+                 merge: bool = True, merge_max_functions: int = 4,
+                 merge_max_groups: int = 64,
                  max_jump_instructions: int = MAX_JUMP//4,
                  max_function_instructions: int = MAX_JUMP//2,
                  max_pass_instructions: int | None = None,
@@ -3472,6 +3492,15 @@ class FunctionObfuscationPass(BasePass):
                 "boundary_mode must be 'mixed', 'split', or 'cff'"
             )
         self.skip_vm_dispatcher = skip_vm_dispatcher
+        if not isinstance(merge, bool):
+            raise ValueError('merge must be a boolean')
+        for name, value, low, high in (('merge_max_functions', merge_max_functions, 2, 8),
+                                     ('merge_max_groups', merge_max_groups, 0, 256)):
+            if type(value) is not int or not low <= value <= high:
+                raise ValueError(f'{name} must be an integer between {low} and {high}')
+        self.merge = merge
+        self.merge_max_functions = merge_max_functions
+        self.merge_max_groups = merge_max_groups
         limits = {
             'max_jump_instructions': (max_jump_instructions, 32, MAX_JUMP//2),
             'max_function_instructions': (max_function_instructions, 256, MAX_JUMP),
@@ -3547,6 +3576,52 @@ class FunctionObfuscationPass(BasePass):
         self.last_loop_unrolled_iteration_count = 0
         self.last_loop_unsafe_skip_count = 0
         self.last_loop_budget_fallback_count = 0
+        self.last_merge_group_count = 0
+        self.last_merged_function_count = 0
+
+    def _source_sibling_replacements(self, source_ctx, nodes, children_by_id, provenance, processed_ids):
+        """Reconstruct original siblings once, optionally under a common worker."""
+        from .function_merging import emit_group
+        result = []
+        owned = set()
+        for node in nodes:
+            if node.id in owned:
+                continue
+            group = self._merge_groups.get(node.id)
+            if group is None:
+                text, _ = self._transform_source_function(source_ctx,node,children_by_id,provenance,processed_ids)
+                if text != source_ctx.text(node):
+                    result.append(Replacement(source_ctx.cs(node),source_ctx.ce(node),text))
+                continue
+            fragments = [self._transform_source_function(source_ctx,member,children_by_id,provenance,
+                         processed_ids,descend_only=True)[0] for member in group.nodes]
+            merged, detail = emit_group(self,source_ctx,group,fragments)
+            if merged is None:
+                self.last_function_costs.append({'phase':'function_merge','outcome':'fallback',
+                                                'functions':group.names,**detail})
+                for member, fragment in zip(group.nodes,fragments):
+                    text, _ = self._transform_source_function(source_ctx,member,children_by_id,provenance,
+                                                              processed_ids,prepared_fragment=fragment)
+                    if text != source_ctx.text(member):
+                        result.append(Replacement(source_ctx.cs(member),source_ctx.ce(member),text))
+            else:
+                result.append(Replacement(source_ctx.cs(group.nodes[0]),source_ctx.ce(group.nodes[-1]),merged))
+                self.last_merge_group_count += 1
+                self.last_merged_function_count += len(group.nodes)
+                self.last_transformed_count += len(group.nodes)
+                stats = detail['stats']
+                for field, key in (('last_split_helper_count','split_helpers'),('last_inline_block_count','inline_blocks'),
+                                   ('last_inlined_function_count','inlined_functions'),('last_loop_split_body_count','split_bodies'),
+                                   ('last_loop_lowered_count','lowered_loops'),('last_loop_unrolled_count','unrolled_loops'),
+                                   ('last_loop_unrolled_iteration_count','unrolled_iterations'),
+                                   ('last_loop_unsafe_skip_count','skipped_unsafe'),('last_loop_budget_fallback_count','budget_fallbacks')):
+                    setattr(self,field,getattr(self,field)+stats[key])
+                for member in group.nodes:
+                    if provenance[member.id].depth > 0:self.last_nested_transformed_count += 1
+                    if self.selection_resolver is not None:self.last_selection_results[member.id] = True
+                self.last_function_costs.append(detail)
+            owned.update(member.id for member in group.nodes)
+        return result
 
     @staticmethod
     def _apply_replacements(source: str, replacements: list[Replacement]) -> str:
@@ -3563,13 +3638,15 @@ class FunctionObfuscationPass(BasePass):
 
     def _transform_source_function(
         self, source_ctx, source_node, children_by_id, provenance, processed_ids,
+        *, descend_only=False, prepared_fragment=None,
     ):
         from .literal_mosaic import ACTIVE
         from contextlib import nullcontext
         mosaic = ACTIVE.get()
         with mosaic.at(source_ctx.cs(source_node),source_ctx.ce(source_node)+1) if mosaic is not None else nullcontext():
             return self._transform_source_function_scoped(source_ctx,source_node,
-                children_by_id,provenance,processed_ids)
+                children_by_id,provenance,processed_ids,
+                descend_only=descend_only,prepared_fragment=prepared_fragment)
 
     def _transform_source_function_scoped(
         self,
@@ -3578,42 +3655,34 @@ class FunctionObfuscationPass(BasePass):
         children_by_id: dict[int, list],
         provenance: dict[int, _FunctionProvenance],
         processed_ids: set[int],
+        *, descend_only=False, prepared_fragment=None,
     ) -> tuple[str, bool]:
         """초기 SOURCE 함수 subtree를 bottom-up으로 정확히 한 번 변환한다."""
         source_id = source_node.id
         record = provenance[source_id]
-        if source_id in processed_ids:
+        if source_id in processed_ids and prepared_fragment is None:
             raise RuntimeError(
                 f"function_obf source node processed twice: {source_id}"
             )
-        processed_ids.add(source_id)
+        if prepared_fragment is None:processed_ids.add(source_id)
 
         node_start = source_ctx.cs(source_node)
-        fragment = source_ctx.text(source_node)
+        fragment = source_ctx.text(source_node) if prepared_fragment is None else prepared_fragment
         reconstruction = (0, len(fragment)) in getattr(fragment, 'reconstructions', ())
         child_replacements: list[Replacement] = []
 
         can_descend = self.selection_resolver is not None or (self.nested and
                         (self.all_source_functions or record.depth < self.nested_max_depth))
-        for child in children_by_id.get(source_id, []):
-            child_record = provenance[child.id]
-            if not can_descend:
-                self.last_depth_limited_count += 1
-                continue
-            child_text, _ = self._transform_source_function(
-                source_ctx,
-                child,
-                children_by_id,
-                provenance,
-                processed_ids,
-            )
-            child_replacements.append(Replacement(
-                start=source_ctx.cs(child) - node_start,
-                end=source_ctx.ce(child) - node_start,
-                new_text=child_text,
-            ))
+        children = children_by_id.get(source_id, [])
+        if prepared_fragment is None:
+            if can_descend:
+                child_replacements = [Replacement(edit.start-node_start,edit.end-node_start,edit.new_text)
+                    for edit in self._source_sibling_replacements(source_ctx,children,children_by_id,provenance,processed_ids)]
+            else:self.last_depth_limited_count += len(children)
 
         fragment = self._apply_replacements(fragment, child_replacements)
+        if descend_only:
+            return fragment, False
 
         worker = self
         if self.selection_resolver is not None:
@@ -3843,6 +3912,9 @@ class FunctionObfuscationPass(BasePass):
         self.last_loop_unrolled_iteration_count = 0
         self.last_loop_unsafe_skip_count = 0
         self.last_loop_budget_fallback_count = 0
+        self.last_merge_group_count = 0
+        self.last_merged_function_count = 0
+        self._merge_groups = {}
         original_script = script
         chunk_rewritten = False
         if (not self.skip_vm_dispatcher and self.selection_resolver is None
@@ -3855,6 +3927,11 @@ class FunctionObfuscationPass(BasePass):
                 chunk_rewritten = True
                 self.last_inlined_function_count += chunk_inline_count
         replacements: list[Replacement] = []
+        if not self.skip_vm_dispatcher and (self.merge or self.selection_resolver is not None):
+            from .function_merging import plan_groups
+            self._merge_groups, decisions = plan_groups(self,ctx)
+            if self._merge_groups:self._merge_allocator = NameAllocator.for_source(script)
+            self.last_function_costs.extend(decisions)
         scan_start = time.perf_counter()
         # 이미 변환 대상으로 선택된 함수의 body(block) 범위들. 이 범위에 완전히
         # 포함되는 nested 함수는 건너뛴다 (outer 본문 텍스트에 nested 함수 정의가
@@ -3958,20 +4035,7 @@ class FunctionObfuscationPass(BasePass):
             ) if self.nested else 0
 
             processed_ids: set[int] = set()
-            for node in top_level_nodes:
-                transformed_text, _ = self._transform_source_function(
-                    ctx,
-                    node,
-                    children_by_id,
-                    provenance,
-                    processed_ids,
-                )
-                if transformed_text != ctx.text(node):
-                    replacements.append(Replacement(
-                        start=ctx.cs(node),
-                        end=ctx.ce(node),
-                        new_text=transformed_text,
-                    ))
+            replacements.extend(self._source_sibling_replacements(ctx,top_level_nodes,children_by_id,provenance,processed_ids))
 
             self.last_processed_source_count = len(processed_ids)
             expected_processed = {

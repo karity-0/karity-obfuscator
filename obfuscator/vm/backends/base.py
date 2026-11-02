@@ -8,7 +8,10 @@ __lazy_modules__ = {
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from ..runtime_probes import ProbePlan
 
 from ...config_types import BackendPolicy, VMOptions
 
@@ -32,6 +35,7 @@ class BackendContext:
     output_transform: Any = None
     target: Any = None
     constant_provider: Any = None
+    runtime_probe_plan: ProbePlan | None = None
 
 
 @dataclass
@@ -256,6 +260,7 @@ class VMBackend:
                          layout=layout.instruction_layout, constant_tags=layout.constant_tags,
                          vm_count=layout.vm_count,
                          integrity_options={'enabled': lowered.policy.get('integrity_constants', False)},
+                         retained_strings=lowered.backend_data.get('retained_pool_strings', ()),
                          stats=storage_stats)
         context.profile.append({'phase': 'serialize_blob',
                                 'elapsed': round(time.perf_counter() - started, 6), **storage_stats})
@@ -305,6 +310,7 @@ CLASSIC_OPTIONS = SHARED_OPTIONS | frozenset((
 ))
 
 KARITY_ONLY_OPTIONS = frozenset((
+    'encoded_bitwise', 'distributed_integrity',
     "state_dependency_limit",
     "graph_execution_rate", "cross_instruction_rate", "runtime_polymorphism_rate",
     "runtime_trace", "block_variant_rate", "block_variant_count",

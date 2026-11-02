@@ -11,6 +11,7 @@ class MemeStringsPass(MemeExpressionEngine, BasePass):
     replacement_rate = 0.35
 
     def run(self, script: str, tree) -> list[Replacement]:
+        self._reset_selection()
         replacements = []
         self.last_skipped_generated_count = 0
         from .literal_mosaic import ACTIVE

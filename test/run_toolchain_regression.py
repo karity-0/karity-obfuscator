@@ -5,6 +5,7 @@ import copy
 import os
 from pathlib import Path
 import shutil
+import struct
 import subprocess
 import sys
 import tempfile
@@ -23,6 +24,60 @@ from obfuscator.vm.vm_pass import _compile
 
 
 class ToolchainTests(unittest.TestCase):
+    def test_lua53_long_strings_use_the_header_size_t_width(self):
+        # Independent chunk fixtures exercise both layouts on every host,
+        # including long source names and long child/local/upvalue strings.
+        values = [b'x'*n for n in (0,253,254,255,300,1200)] + ['한글\0value'.encode()]
+        for width in (4,8):
+            def string(value):
+                size = len(value)+1
+                return (bytes((size,)) if size<255 else b'\xff'+size.to_bytes(width,'little'))+value
+            def proto(child=False):
+                result = string(b'@'+b's'*300)+struct.pack('<iiBBB',0,0,0,1,2)
+                result += struct.pack('<iI',1,0x00800026)
+                result += struct.pack('<i',len(values))+b''.join(bytes((0x14,))+string(v) for v in values)
+                result += struct.pack('<iBB',1,1,0)
+                result += struct.pack('<i',0 if child else 1)+(b'' if child else proto(True))
+                result += struct.pack('<ii',1,1)
+                result += struct.pack('<i',1)+string(b'l'*300)+struct.pack('<ii',0,1)
+                result += struct.pack('<i',1)+string(b'u'*300)
+                return result
+            data = (b'\x1bLua\x53\0\x19\x93\r\n\x1a\n'+bytes((4,width,4,8,8))
+                    +struct.pack('<qd',0x5678,370.5)+b'\x01'+proto())
+            parser = Lua53Parser(data);root = parser.parse()
+            self.assertEqual(values,root.constants);self.assertEqual(values,root.protos[0].constants)
+            self.assertEqual(b'@'+b's'*300,root.source)
+            self.assertEqual(b'l'*300,root.locvars[0].name);self.assertEqual(b'u'*300,root.upvalues[0].name)
+            self.assertEqual(0,parser._r.remaining())
+            for offset in (12,13,14,15,16):
+                invalid = bytearray(data);invalid[offset] = 3
+                with self.subTest(width=width,offset=offset),self.assertRaisesRegex(ValueError,'unsupported Lua 5.3 chunk sizes'):
+                    Lua53Parser(bytes(invalid)).parse()
+
+    def test_lua53_native_compilers_preserve_long_string_constants(self):
+        from lupa.lua53 import LuaRuntime
+        payload = 'unicode 한글\n'+('long payload '*100)
+        source = "local text=[=["+payload+"]=];return function()return text,'"+('z'*300)+"' end"
+        native = LuaRuntime(encoding=None).eval(b'function(s)return string.dump(assert(load(s)),false)end')
+        for data in (_compile(source),native(source.encode())):
+            parser = Lua53Parser(data);root = parser.parse()
+            self.assertIn(payload.encode(),root.constants)
+            self.assertIn(b'z'*300,root.protos[0].constants)
+            self.assertEqual(0,parser._r.remaining())
+
+    def test_lua53_all_backends_preserve_long_string_payloads(self):
+        from obfuscator.vm import VMPass
+        from obfuscator.vm.targets.profile import TargetProfile
+        from run_vm_backend_regression import options
+        from run_cross_backend_generated_regression import execute
+        payload = ('line 한글\n'*80)
+        source = 'local value=[=['+payload+']=];local function f()return "'+('z'*300)+'" end;print(#value,value==[=['+payload+']=],#f())'
+        expected = execute('5.3',source)
+        for backend in ('classic','karity','mov','bare'):
+            with self.subTest(backend=backend):
+                vm = VMPass(target=TargetProfile('5.3',backend),vm_options=options(backend),vm_output_passes=['minify'])
+                self.assertEqual(expected,execute('5.3',vm.run(source)))
+
     def test_shared_test_resolvers_on_windows_and_linux(self):
         from lua_runtime import lua_executable, luac_executable
         for platform in ('nt', 'posix'):

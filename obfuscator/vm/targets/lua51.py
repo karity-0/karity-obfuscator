@@ -265,9 +265,9 @@ class Lua51Target:
             raise ValueError(f'unknown runtime template: {name}')
         return (_ROOT.parent/'runtimes'/'lua51'/name).read_text(encoding='utf-8')
 
-    def direct_runtime_entry(self):
-        return ('_EX[proto.vm_id+1](proto,{env_box,environment=self_func},'
-                '_root_args,nil,{})')
+    def direct_runtime_entry(self, *, proto='proto', args='_root_args'):
+        return (f'_EX[{proto}.vm_id+1]({proto},{{env_box,environment=self_func}},'
+                f'{args},nil,{{}})')
 
     def value_packet_api(self):
         return '_pack_values', '_unpack_values'

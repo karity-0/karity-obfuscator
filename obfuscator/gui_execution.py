@@ -24,7 +24,8 @@ class LuaExecution:
         self._run = None
         self._closed = False
 
-    def start(self, script: str, config: dict, source_path: str = "") -> dict:
+    def start(self, script: str, config: dict, source_path: str = "",
+              arguments: list[str] | None = None) -> dict:
         if not script.strip():
             return {"ok": False, "error": "No code to run"}
         with self._lock:
@@ -43,9 +44,12 @@ class LuaExecution:
                 wrapper = Path(folder.name) / "run.lua"
                 # A wrapper keeps print/io.write live even when stdout is a pipe.
                 literal = json_lua_path(source)
+                argument_literals = [json_lua_string(value) for value in arguments or []]
                 wrapper.write_text(
                     'io.stdout:setvbuf("no"); io.stderr:setvbuf("no"); '
-                    f'arg={{[0]={literal}}}; dofile({literal})', encoding="utf-8")
+                    f'arg={{[0]={literal}' + ''.join(','+value for value in argument_literals) + '}; '
+                    + (f'assert(loadfile({literal}))({",".join(argument_literals)})'
+                       if argument_literals else f'dofile({literal})'), encoding="utf-8")
                 worker = Path(__file__).with_name("gui_execution_worker.py")
                 python = Path(sys.executable)
                 if python.name.lower() == "pythonw.exe":
@@ -177,6 +181,10 @@ class LuaExecution:
 
 
 def json_lua_path(path: Path) -> str:
+    return json_lua_string(str(path))
+
+
+def json_lua_string(value: str) -> str:
     # Decimal escapes also handle non-ASCII user/temp directory names on Windows.
     return '"' + ''.join(chr(byte) if 32 <= byte < 127 and byte not in (34, 92)
-                         else f"\\{byte:03d}" for byte in str(path).encode("utf-8")) + '"'
+                         else f"\\{byte:03d}" for byte in value.encode("utf-8")) + '"'

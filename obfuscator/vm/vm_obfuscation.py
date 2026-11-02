@@ -331,7 +331,8 @@ def _rebuild_chain(blocks: dict[int, str]) -> str:
 def apply_split_to_vm(vm_code: str,
                       split_map: dict[int, dict[str, tuple[int, ...]]],
                       mutate: bool = True, *, native_state: bool = False,
-                      mutation_seed: int | None = None) -> str:
+                      mutation_seed: int | None = None,
+                      integer_aliases=frozenset(), encoded_integer=False) -> str:
     """split_map의 각 (orig_op, parts) 조합에 대해 분할 핸들러를 체인에 추가.
 
     split 핸들러는 실제로 실행되는 진짜 로직이므로, real/fake 핸들러와
@@ -350,6 +351,11 @@ def apply_split_to_vm(vm_code: str,
     for orig_op, parts_map in split_map.items():
         for parts_str, vops in parts_map.items():
             bodies = split_handler_bodies(orig_op, int(parts_str))
+            from .backends.karity_integer import SUPPORTED, split_integer_bodies
+            proven = all(vop in integer_aliases for vop in vops)
+            if proven or (encoded_integer and orig_op in SUPPORTED):
+                bodies = [' ' + body + _SPLIT_PAD
+                          for body in split_integer_bodies(orig_op, int(parts_str),proven=proven)]
             for part, (vop, body) in enumerate(zip(vops, bodies)):
                 split_blocks[vop] = body
                 identities[vop] = f"split:{orig_op}:{parts_str}:{part}"
@@ -370,7 +376,8 @@ def apply_split_to_vm(vm_code: str,
 # 4. fusion(superopcode) 핸들러 삽입
 # ---------------------------------------------------------------------------
 def _op_body(op: int, a: str, b: str, c: str, bx: str,
-             av: str = "_av", *, native_state: bool = False) -> str:
+             av: str = "_av", *, native_state: bool = False,
+             encoded_integer=False, proven_integer=False) -> str:
     """단일 op의 동작을 주어진 필드 변수명으로 표현한 Lua 문장 1개."""
     if op == 0:   # MOVE
         return f"rset({a},_carry(_sem(__VM_DATA_VALUE__,rget({b}),nil,nil),{av},0))"
@@ -381,12 +388,31 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
     if op == 28:  # LEN (must observe virtual-table sequence state)
         return f"rset({a},_carry(_tlen(rget({b})),{av},28))"
     if op in _GRAPH_BINARY_SLOTS:
-        linear = "1" if op == 13 else "-1" if op == 14 else "nil"
-        return f"_arith2r({a},{b},{c},{av},{_GRAPH_BINARY_SLOTS[op]},{linear})"
+        linear = "1" if op == 13 else "-1" if op == 14 else "0" if op == 15 else "nil"
+        if encoded_integer:
+            from .backends.karity_integer import SELECTORS
+            linear = str(SELECTORS[op])
+        helper = '_eonly2r' if proven_integer else '_arith2r'
+        result=f"{helper}({a},{b},{c},{av},{_GRAPH_BINARY_SLOTS[op]},{linear})"
+        if encoded_integer:
+            result+=f'; if _PD[_rpos(5,{a})]~=nil then _pending_finish({a}) end'
+        return result
     if op in _GRAPH_UNARY_SLOTS:
         linear = "-1" if op == 25 else "nil"
-        return f"_arith1r({a},{b},{av},{_GRAPH_UNARY_SLOTS[op]},{linear})"
+        if encoded_integer and op == 26:
+            linear = '2'
+        helper = '_eonly1r' if proven_integer else '_arith1r'
+        result=f"{helper}({a},{b},{av},{_GRAPH_UNARY_SLOTS[op]},{linear})"
+        if encoded_integer:
+            result+=f'; if _PD[_rpos(5,{a})]~=nil then _pending_finish({a}) end'
+        return result
     if op in _BINARY_OP_LUA:
+        if encoded_integer and op in (16,19):
+            attempt=f"_ediv2r({a},{b},{c},{'true' if op == 16 else 'false'})"
+            if proven_integer:
+                return f"assert({attempt},'invalid integer proof'); if _PD[_rpos(5,{a})]~=nil then _pending_finish({a}) end"
+            token=_SEMANTIC_BINARY_TOKENS[op]
+            return f"if not {attempt} then rset({a},_carry(_sem({token},rget({b}),rget({c}),nil),{av},{op})) end"
         if native_state and op == 19:
             expr = f"math.floor(rget({b})/rget({c}))"
             return f"rset({a},_carry({expr},{av},{op}))"
@@ -402,7 +428,8 @@ def _op_body(op: int, a: str, b: str, c: str, bx: str,
     raise ValueError(f"non-fuseable op: {op}")
 
 
-def fused_handler_body(op1: int, op2: int, *, native_state: bool = False) -> str:
+def fused_handler_body(op1: int, op2: int, *, native_state: bool = False,
+                       encoded_integer=False, proven_integer=False) -> str:
     """(op1, op2) 쌍을 하나로 실행하는 fused 핸들러 본문.
 
     슬롯 N(현재)은 instr1의 A/B/C를 갖고, 다음 슬롯 N+1을 직접 읽어
@@ -429,9 +456,11 @@ def fused_handler_body(op1: int, op2: int, *, native_state: bool = False) -> str
         "local _fav=_avd[pc]",
         "local _ei=_ixor(_cd[pc],_ksm(pc)); pc=pc+1",
         *fields,
-        _op_body(op1, "A", "B", "C", "Bx", "_av", native_state=native_state),
+        _op_body(op1, "A", "B", "C", "Bx", "_av", native_state=native_state,
+                 encoded_integer=encoded_integer, proven_integer=proven_integer),
         "_av_read()",
-        _op_body(op2, "_fa", "_fb", "_fc", "_fbx", "_fav", native_state=native_state),
+        _op_body(op2, "_fa", "_fb", "_fc", "_fbx", "_fav", native_state=native_state,
+                 encoded_integer=encoded_integer, proven_integer=proven_integer),
     ]
     return " " + _SPLIT_PAD.join(lines) + _SPLIT_PAD
 
@@ -439,7 +468,8 @@ def fused_handler_body(op1: int, op2: int, *, native_state: bool = False) -> str
 def apply_fuse_to_vm(vm_code: str,
                      fuse_map: dict[tuple[int, int], int],
                      mutate: bool = True, *, native_state: bool = False,
-                     mutation_seed: int | None = None) -> str:
+                     mutation_seed: int | None = None,
+                     encoded_integer=False, integer_aliases=frozenset()) -> str:
     """fuse_map의 각 (op1, op2) 쌍에 대해 합쳐진 핸들러를 체인에 추가.
 
     fused 핸들러도 실제로 실행되는 진짜 로직이므로 real/split/fake와
@@ -454,7 +484,8 @@ def apply_fuse_to_vm(vm_code: str,
     fuse_blocks: dict[int, str] = {}
     identities: dict[int, str] = {}
     for (op1, op2), vop in fuse_map.items():
-        fuse_blocks[vop] = fused_handler_body(op1, op2, native_state=native_state)
+        fuse_blocks[vop] = fused_handler_body(op1, op2, native_state=native_state,
+            encoded_integer=encoded_integer, proven_integer=vop in integer_aliases)
         identities[vop] = f"fuse:{op1}:{op2}"
 
     if mutate:
@@ -472,7 +503,8 @@ def apply_fuse_to_vm(vm_code: str,
 def apply_defer_to_vm(vm_code: str,
                       defer_map: dict[int, int],
                       mutate: bool = True, *, native_state: bool = False,
-                      mutation_seed: int | None = None) -> str:
+                      mutation_seed: int | None = None,
+                      integer_aliases=frozenset()) -> str:
     """Insert lazy producer handlers whose result is completed by a later rget."""
     if not defer_map:
         return vm_code
@@ -499,6 +531,8 @@ def apply_defer_to_vm(vm_code: str,
             )
         else:
             raise ValueError(f"non-deferable op: {op}")
+        if vop in integer_aliases:
+            body = body.replace('_defer2r(', '_edefer2r(').replace('_defer1r(', '_edefer1r(')
         deferred[vop] = body
         identities[vop] = f"defer:{op}"
     if mutate:
@@ -539,7 +573,8 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
                     semantic_alias_modes: dict[int, tuple[bool, ...]] | None = None,
                     *, native_state: bool = False,
                     alias_transition_indices: dict[int, tuple[int, ...]] | None = None,
-                    comparison_specializations=frozenset()) -> str:
+                    comparison_specializations=frozenset(), bitwise_aliases=frozenset(),
+                    integer_aliases=frozenset(), encoded_integer=False) -> str:
     """
     vm.lua의 op==N 체인을 파싱해서:
     1. 각 원본 op의 alias vop들에 대해 state 전이가 다른 핸들러를 생성
@@ -572,11 +607,16 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
             transition = transitions[i % len(transitions)]
             pre = (i % 2 == 0)
             alias_body = body
+            if vop in bitwise_aliases:
+                from .backends.karity_bitwise import SELECTORS
+                selector = SELECTORS[orig_op]
+                alias_body = alias_body.replace(',nil)', f',{selector})')
             # Keep one graph-backed alias as the baseline. Other aliases may
             # lower the same operation directly so table/upvalue/control
             # semantics do not all converge on _sem.
             direct = planned_modes[i]
-            if orig_op in _DIRECT_SEMANTIC_BODIES and direct:
+            if (orig_op in _DIRECT_SEMANTIC_BODIES and direct
+                    and not (encoded_integer and orig_op in (31,32,33))):
                 alias_body = _DIRECT_SEMANTIC_BODIES[orig_op]
                 if '_PS.cell_set(box,v)' in vm_code:
                     # Karity strings are values, not native table identities.
@@ -585,7 +625,10 @@ def apply_vop_to_vm(vm_code: str, vop_map: dict[int, list[int]],
                     for operator, helper in (('==', 'eq'), ('<=', 'le'), ('<', 'lt')):
                         alias_body = alias_body.replace('left'+operator+'right',
                                                         '_PS.'+helper+'(left,right)')
-            if vop in comparison_specializations:
+            if vop in integer_aliases:
+                from .backends.karity_integer import proven_body
+                alias_body = proven_body(orig_op, alias_body)
+            if vop in comparison_specializations and vop not in integer_aliases:
                 if orig_op not in (31, 32, 33):
                     raise ValueError("comparison specialization targets a non-comparison alias")
                 guard = "if B==C then right=left else right=rget(C) end"
@@ -1090,9 +1133,10 @@ def _clone_local_helper(vm_code: str, helper: str, count: int) -> tuple[str, lis
                 "elseif _k==3 then value=nil else value=_RO[_v][1] end"
             )
             clone = re.sub(
-                r"local value=_rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
+                r"(local )?value=_rdecode\((\(--<<TARGET_PRIVATE_EXPRESSION>>.*?"
                 r"--<<ENDTARGET_PRIVATE_EXPRESSION>>\s*\)),_RT\[p4\]\)",
-                lambda match: "local _v="+match.group(1)+"; local _k=_RT[p4]; local value; "+decode,
+                lambda match: ("local value; " if match.group(1) else "")
+                    + "local _v="+match.group(2)+"; local _k=_RT[p4]; "+decode,
                 clone, count=1, flags=re.S,
             )
             if clone == before:

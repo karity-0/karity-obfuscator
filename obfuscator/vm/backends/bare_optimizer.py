@@ -1,0 +1,81 @@
+"""Bare emission views preserve protected IR identities and reachable events."""
+from dataclasses import replace
+
+from ..ir import validate_semantic_ir
+from ..ir.facts import analyze_function, literal_fact
+from ..ir.liveness import analyze_liveness
+
+
+def prepare_emission(lowered, lua_version):
+    statistics = {'unreachable_blocks': 0, 'unreachable_instructions': 0,
+                  'liveness_reused': 0, 'liveness_recomputed': 0}
+    events: list[dict] = []
+    # Consume the raw analysis before preserve_locals extends lifetimes. A
+    # repeated optimization, or a replaced IR, must not reuse that refinement.
+    initial = lowered.backend_data.pop('bare_initial_liveness', None)
+    originals = ({f.id: f for f in initial[0].functions()}
+                 if initial is not None and initial[0] is lowered.semantic_ir else {})
+
+    def prune(function):
+        blocks = {block.id: block for block in function.blocks}
+        pending = [function.blocks[0].id]
+        reachable = set()
+        while pending:
+            key = pending.pop()
+            if key in reachable:
+                continue
+            reachable.add(key)
+            pending.extend(blocks[key].successors)
+        removed = [block for block in function.blocks if block.id not in reachable]
+        statistics['unreachable_blocks'] += len(removed)
+        statistics['unreachable_instructions'] += sum(len(block.instructions) for block in removed)
+        events.extend({'function': function.id, 'kind': 'unreachable-block',
+                       'outcome': 'elided', 'block': block.id} for block in removed)
+        kept = tuple(block for block in function.blocks if block.id in reachable) if removed else function.blocks
+        return replace(function, blocks=kept,
+                       children=tuple(prune(child) for child in function.children))
+
+    view = replace(lowered.semantic_ir, root=prune(lowered.semantic_ir.root))
+    validate_semantic_ir(view)
+    lowered.backend_data['bare_emission_ir'] = view
+    liveness = {}
+    for function in view.functions():
+        original = originals.get(function.id)
+        if original is not None and function.blocks is original.blocks:
+            liveness[function.id] = initial[1][function.id]
+            statistics['liveness_reused'] += 1
+        else:
+            liveness[function.id] = analyze_liveness(function)
+            statistics['liveness_recomputed'] += 1
+    lowered.backend_data['liveness'] = liveness
+    security = lowered.backend_data['source_protection']
+    constants = dict(zip(security.constant_slots, security.constants))
+    hints: dict[str,dict] = {}
+    for function in view.functions():
+        literals = {v.index:v.literal for v in function.values if v.kind=='constant'}
+        hints[function.id] = {}
+        for block in function.blocks:
+            for instruction in block.instructions:
+                call = instruction.metadata.get('bare_call')
+                if (call and call[0]=='method' and call[1]=='constant' and len(call[2])==1
+                        and call[2][0][0]=='constant'):
+                    slot = literals[call[2][0][1]]
+                    hints[function.id][instruction.metadata['bare_call_end']] = literal_fact(constants[slot],lua_version)
+    lowered.backend_data['bare_facts'] = {f.id: analyze_function(f, lua_version,
+        liveness=lowered.backend_data['liveness'][f.id],result_hints=hints[f.id]) for f in view.functions()}
+    lowered.backend_data['bare_result_hints'] = hints
+    from .bare_lifetimes import preserve_locals
+    lowered.backend_data['bare_local_releases']={}
+    lowered.backend_data['bare_edge_releases']={}
+    for function in view.functions():
+        info=lowered.backend_data['bare_facts'][function.id]
+        releases: dict[str,tuple[int,...]]={}
+        edges: dict[tuple[str,str],tuple[int,...]]={}
+        lifetime=preserve_locals(function,info.liveness,info,hints[function.id],releases,edges)
+        info.liveness=lifetime
+        lowered.backend_data['liveness'][function.id]=lifetime
+        lowered.backend_data['bare_local_releases'][function.id]=releases
+        lowered.backend_data['bare_edge_releases'][function.id]=edges
+    lowered.backend_data['optimization'] = statistics
+    lowered.backend_data['optimization_events'] = tuple(events)
+    return lowered

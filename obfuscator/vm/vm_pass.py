@@ -11,6 +11,7 @@ __lazy_modules__ = {
 
 from functools import partial
 from ..profiling import run_phase
+from ..custom_names import output_scope
 from typing import Callable, cast
 
 from pathlib import Path
@@ -84,6 +85,13 @@ class VMBuildPipeline(PostPass):
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain(lua_version=target.lua_version if target else "5.3")
         self.target_profile = target or TargetProfile(backend=self.backend)
+        if self.backend == 'karity' and self.target_profile.lua_version == '5.3':
+            self.vm_options.setdefault('encoded_bitwise', True)
+            self.vm_options.setdefault('distributed_integrity', True)
+        if self.backend == 'karity' and self.target_profile.lua_version != '5.3':
+            for option in ('encoded_bitwise', 'distributed_integrity'):
+                if self.vm_options.get(option):
+                    raise ValueError(f'{option} requires Lua 5.3')
         validate_pass_target("vm", self.target_profile)
         for name in self.vm_output_passes:
             validate_vm_output_pass_target(name, self.target_profile)
@@ -134,10 +142,12 @@ class VMBuildPipeline(PostPass):
                 return isolated, details
             output_transform = isolated_transform
         self.target.isolate_runtime_globals = self.isolate_runtime_globals
+        from .runtime_probes import new_plan
         context = BackendContext(
             self.vm_options, self.toolchain, tuple(self.vm_output_passes),
             self.output_prefix, self.last_profile, output_transform, self.target,
             constant_provider=constant_provider,
+            runtime_probe_plan=new_plan(self.target_profile.lua_version),
         )
         started = time.perf_counter()
         from .intrinsics import mark_intrinsics
@@ -178,6 +188,13 @@ class VMBuildPipeline(PostPass):
         self.last_profile.extend(morph_profile)
         self.last_morphed_ir = morphed_ir
         optimized_ir = morphed_ir
+        private_validator=None
+        if backend.name!='bare':
+            from .runtime_validation import attach
+            optimized_ir,private_validator=attach(optimized_ir,context)
+        from .constant_pool import inject_decoy_strings, validate_retention, RETENTION_KEY
+        optimized_ir = inject_decoy_strings(optimized_ir)
+        retained_strings = optimized_ir.root.debug_metadata.get(RETENTION_KEY, ())
         resolution_started = time.perf_counter()
         initial_plan = planner.build(optimized_ir)
         resolution = resolve_capabilities(initial_plan, backend.capabilities)
@@ -193,6 +210,10 @@ class VMBuildPipeline(PostPass):
         started = time.perf_counter()
         plan = planner.build(semantic_ir)
         lowered = run_phase('vm:lowering', lambda: backend.optimize(backend.lower(protect(semantic_ir, plan), context), context))
+        validate_retention(lowered, retained_strings)
+        lowered.backend_data[RETENTION_KEY] = retained_strings
+        if private_validator is not None:
+            lowered.backend_data['runtime_validation']={'function':private_validator}
         self.last_semantic_ir = lowered.semantic_ir
         self.last_protected_ir = lowered.protected_ir
         self.last_protection_plan = lowered.protection_plan
@@ -244,6 +265,7 @@ class VMPass(PostPass):
             raise ValueError("target profile backend mismatch")
         self.target = self.target_profile.adapter()
         self.last_profile: list[dict] = []
+        self.last_custom_names: dict[str, object] = {}
         self.last_source_ir: SemanticIR | None = None
         self.last_optimized_ir: SemanticIR | None = None
         self.last_morphed_ir: SemanticIR | None = None
@@ -261,7 +283,9 @@ class VMPass(PostPass):
             target=self.target_profile,
         )
 
+    @output_scope('vm_output_passes')
     def run(self, script: str) -> str:
+        self.last_custom_names = {}
         self.last_source_ir = None
         self.last_morphed_ir = None
         self.last_optimized_ir = None

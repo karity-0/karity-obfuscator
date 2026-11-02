@@ -23,6 +23,27 @@ def must_fail(fn):
     except ValueError:return
     raise AssertionError('invalid synthesis accepted')
 
+def guest_plan(vm):
+    plan=vm.last_lowered_ir.backend_data['synthesis_plan']
+    guest={f.id for f in vm.last_semantic_ir.functions() if not f.debug_metadata.get('security_owned')}
+    instructions={i.id for f in vm.last_semantic_ir.functions() if f.id in guest for b in f.blocks for i in b.instructions}
+    occurrences=tuple(o for o in plan.occurrences if o.function in guest)
+    recipes={o.recipe for o in occurrences}
+    return replace(plan,occurrences=occurrences,recipes=tuple(r for r in plan.recipes if r.id in recipes),
+        decisions=tuple(d for d in plan.decisions if d.get('sources') and set(d['sources'])<=instructions))
+
+def guest_budget(version):
+    from obfuscator.vm.source_protection import _namespace
+    ir=frontend('local function f(x)local a=x*3;local b=a+7;local c=b*5;return c end;return f',version)
+    private=frontend('local function f()local s=0;for i=1,4 do local a=i*7;local b=a+11;local c=b*13;s=s+c end;return s end;return f',version)
+    function=_namespace(private,'budget-private:').root.children[0]
+    combined=replace(ir,root=replace(ir.root,children=(*ir.root.children,function)))
+    for budget in (1,64):
+        plan=build_plan(combined,lua_version=version,backend='classic',enabled=True,
+                        policy='protection',max_recipes=budget)
+        assert any(o.function==ir.root.children[0].id for o in plan.occurrences)
+        if budget==64:assert any(o.function==function.id for o in plan.occurrences)
+
 def main():
     from obfuscator.registry import validate_config
     for value in (True,False,float('nan'),float('inf'),-.1,64.1,'1'):
@@ -30,6 +51,7 @@ def main():
     for value in (0,.1,64):
         validate_config({'passes':['vm'],'vm_options':{'synthesis_max_code_growth':value}})
     for version in ('5.1','5.3'):
+        guest_budget(version)
         ir=frontend(SOURCE,version);original=ir.dump()
         before=random.getstate()
         plan=build_plan(ir,lua_version=version,enabled=True,policy='efficiency',seed=19)

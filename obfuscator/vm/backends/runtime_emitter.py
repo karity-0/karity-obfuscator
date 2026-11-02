@@ -704,13 +704,14 @@ def _obfuscate_vm_output_scoped(
     details.extend(post_details)
 
     # Never expose build-time dispatcher annotations, even without minify.
-    if protect_vm_dispatcher and "--[[VM_DISPATCH_ENTRY]]" in output:
+    annotations={'--[[VM_DISPATCH_ENTRY]]','--[[VM_INTEGRITY_HELPER]]'}
+    if protect_vm_dispatcher and any(marker in output for marker in annotations):
         from obfuscator.passes.minify import _COMMENT_TOKEN_RE
         from obfuscator.passes.rename_ts import _apply_replacements_once
         # Strip only annotation tokens; an identical string literal is data.
         marker_edits = [(match.start(), match.end()-1, ' ')
                         for match in _COMMENT_TOKEN_RE.finditer(output)
-                        if match.group('longcmt') == '--[[VM_DISPATCH_ENTRY]]']
+                        if match.group('longcmt') in annotations]
         output = _apply_replacements_once(output, marker_edits)
     return output, details
 
@@ -740,8 +741,18 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
                              target=target)
     from ..intrinsics import prepare_intrinsic_runtime
     from ..runtime_security import prepare as prepare_security
+    from ..runtime_validation import entry_source
+    validation=lowered_ir.backend_data.get('runtime_validation')
+    if validation is None or context.runtime_probe_plan is None:
+        raise ValueError('protected runtime validation IR is missing')
     runtime_source = prepare_security(runtime_source, backend=lowered_ir.backend,
+                                      probe_plan=context.runtime_probe_plan,
+                                      validation_entry=entry_source(lowered_ir.backend,target,prepared,validation['function']),
                                       **target.security_runtime_options())
+    from ..program_integrity import prepare as prepare_program_integrity
+    runtime_source=prepare_program_integrity(runtime_source,prepared,context,blob,
+        mov=lowered_ir.backend_data if backend_adapter.mov_microcode else None,
+        validation_id=validation['function'])
     runtime_source = prepare_intrinsic_runtime(runtime_source, protected_semantic_ir)
     from ..synthesis.storage import prepare_reader
     runtime_source=prepare_reader(runtime_source,blob,instr_layout)
@@ -836,6 +847,18 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
         vm_func_src, lowered_ir, target=target,
     )
     vm_func_src = runtime_body.source
+    distributed = bool(lowered_ir.policy.get('distributed_integrity', False))
+    if distributed:
+        # Target support is resolved before lowering. The finalized emitter
+        # consumes that policy rather than rediscovering a target version.
+        if not vm_func_src.startswith('return function(...)'):
+            raise ValueError('distributed integrity factory contract changed')
+        manifest_parameter = NameAllocator.for_source(vm_func_src).allocate('helper_manifest')
+        vm_func_src = vm_func_src.replace('return function(...)', f'return function({manifest_parameter},...)', 1)
+        crc = 'local crc=(dump_crc~(_LS or 0))&0xFFFFFFFF'
+        if vm_func_src.count(crc) != 1:
+            raise ValueError('distributed integrity key boundary changed')
+        vm_func_src = vm_func_src.replace(crc, f'local crc=(dump_crc~(_LS or 0)~_crc32({manifest_parameter}))&0xFFFFFFFF')
     _runtime_body_elapsed = time.perf_counter() - _runtime_body_start
     _runtime_body_output_bytes = len(vm_func_src.encode("utf-8"))
     graph_detail = {
@@ -856,6 +879,9 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     from ..runtime_security import _freeze_calls
     vm_func_src = _freeze_calls(vm_func_src)
     vm_func_src = target.finalize_runtime(vm_func_src)
+    if distributed and 'function_obf' in context.output_passes:
+        from ..helper_integrity import preserve_function_targets
+        vm_func_src=preserve_function_targets(vm_func_src)
     from ...passes.function_costs import POLICY
     cost_token = POLICY.set(target.function_cost_policy())
     try:
@@ -880,10 +906,18 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     ).replace("--[[KARITY_EXACT_END]]", "")
     vm_output_details.insert(0, graph_detail)
 
+    helper_integrity = None
+    if distributed:
+        from ..helper_integrity import install
+        vm_func_src, helper_integrity = install(vm_func_src,
+            library_dump=bool(context.toolchain.lua_library), output_passes=context.output_passes)
+
     vm_func_src = target.lower_source(vm_func_src)
     vm_func_src = target.bind_environment(vm_func_src, context)
     _line_state_start = time.perf_counter()
-    vm_func_src, line_state, probe_lines = target.bind_lines(vm_func_src, context)
+    from ...custom_names import keep_bindings
+    with keep_bindings((helper_integrity.bank,) if helper_integrity is not None else ()):
+        vm_func_src, line_state, probe_lines = target.bind_lines(vm_func_src, context)
     context.profile.append({
         "phase": "source_line_state",
         "elapsed": round(time.perf_counter() - _line_state_start, 6),
@@ -913,6 +947,16 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     from ..runtime_identity import checksum
     dump_crc   = checksum(dump_bytes)
     effective_crc = (dump_crc ^ line_state) & 0xFFFFFFFF
+    factory_argument = ''
+    if helper_integrity is not None:
+        manifest = helper_integrity.manifest(vm_func_src, dump_bytes)
+        factory_argument = '"' + manifest + '"'
+        effective_crc ^= checksum(manifest.encode('ascii'))
+        context.profile.append({'phase': 'distributed_integrity',
+                                'helpers': helper_integrity.helpers,
+                                'regions': len(helper_integrity.slots),
+                                'checkpoints': helper_integrity.checkpoints,
+                                'periods': list(helper_integrity.periods)})
     blob = patch_integrity_sources(
         blob, effective_crc, line_state, constant_tags,
     )
@@ -938,5 +982,8 @@ def emit_runtime(backend_adapter, lowered_ir, context) -> str:
     # vm_func_src: "return function(...) ... end" → _vmf 본문으로 그대로 사용
     forward_args=any(instruction.operation in {'VARARG','PACK_VARARG'}
                      for block in protected_semantic_ir.root.blocks for instruction in block.instructions)
+    wrap_options: dict[str, object] = {'forward_args': forward_args}
+    if helper_integrity is not None:
+        wrap_options['factory_argument'] = factory_argument
     return run_phase('finalization:runtime', target.wrap, vm_func_src,
-                     vmf_name, lua_blob, forward_args=forward_args)
+                     vmf_name, lua_blob, **wrap_options)

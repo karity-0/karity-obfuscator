@@ -7,7 +7,8 @@ from ..vm_obfuscation import (
 
 def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
                     handler_map=None, used_ops=None,
-                    comparison_specializations=frozenset()):
+                    comparison_specializations=frozenset(), bitwise_aliases=frozenset(),
+                    integer_aliases=frozenset()):
     layout = lowered.backend_data['layout']
     vops, splits, fuses, defers = (
         handler_map if handler_map is not None else layout.vm_maps[vm_index]
@@ -22,6 +23,18 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
             'vm':vm_index,'retired_aliases':inventory['retired_aliases'],
             'retired_composite_handlers':inventory['retired_composite_handlers'],
             'logical_aliases_retained':len(layout.used_ops[vm_index])}
+    if lowered.backend == 'karity' and layout.encoded_bitwise:
+        from .runtime_layout import iter_functions
+        referenced = {item.vop for function in iter_functions(layout.functions)
+                      if function.vm_id == vm_index for item in function.code}
+        referenced.update(vop for function in iter_functions(layout.functions)
+                          if function.vm_id == vm_index for entry in function.synthesis
+                          for vop in entry.original_vops)
+        splits = {op: {kind: values for kind, values in forms.items()
+                       if any(vop in referenced for vop in values)}
+                  for op, forms in splits.items()}
+        splits = {op: forms for op, forms in splits.items() if forms}
+        fuses = {pair: vop for pair, vop in fuses.items() if vop in referenced}
     mutate = variant['mutate_handlers']
     mutation_seed = variant['mutation_seed'] if mutate else None
     mutation_identities = {
@@ -38,6 +51,9 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
         native_state=native_state,
         alias_transition_indices=variant['alias_transition_indices'],
         comparison_specializations=comparison_specializations,
+        bitwise_aliases=bitwise_aliases,
+        integer_aliases=integer_aliases,
+        encoded_integer=lowered.backend == 'karity' and layout.encoded_bitwise,
     )
     source = prune_and_inject_handlers(
         source, used_ops, fake_handlers=bool(variant['decoy_body_variants']),
@@ -46,11 +62,13 @@ def single_handlers(source, lowered, variant, *, vm_index=0, executor_name=None,
         mutation_identities=mutation_identities,
         reserved_vops=inventory['reserved'] if inventory is not None else None)
     source = apply_split_to_vm(source, splits, mutate=mutate, native_state=native_state,
-                               mutation_seed=mutation_seed)
+                               mutation_seed=mutation_seed, integer_aliases=integer_aliases,
+                               encoded_integer=lowered.backend == 'karity' and layout.encoded_bitwise)
     source = apply_fuse_to_vm(source, fuses, mutate=mutate, native_state=native_state,
-                              mutation_seed=mutation_seed)
+                              mutation_seed=mutation_seed, integer_aliases=integer_aliases,
+                              encoded_integer=lowered.backend == 'karity' and layout.encoded_bitwise)
     source = apply_defer_to_vm(source, defers, mutate=mutate, native_state=native_state,
-                               mutation_seed=mutation_seed)
+                               mutation_seed=mutation_seed, integer_aliases=integer_aliases)
     if lowered.backend_data.get('synthesis_definitions'):
         from ..synthesis.emission import inject_handlers
         source=inject_handlers(source,lowered,variant,vm_index)

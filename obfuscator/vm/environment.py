@@ -44,7 +44,6 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
         raise ValueError('environment_policy must be compatible or strict')
     from ..names import NameAllocator
     allocator = NameAllocator.for_source(source)
-    kit = allocator.allocate('environment')
     rng = random.Random(hashlib.sha256(repr(random.getstate()).encode()).digest())
     keys = ('guest', 'native', 'check', 'refresh', 'state', 'raw', 'kind', 'meta',
             'fail', 'snapshot', 'watched', 'same')
@@ -71,7 +70,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
   for _,k in next,{"type","rawget","rawequal","error","pcall","tonumber","tostring","select"} do
    if T(R(e,k))~="function" then return false end
   end
-  for _,k in next,{"string","table","math","debug"} do
+  for _,k in next,{"string","table","math","debug","coroutine"} do
    if T(R(e,k))~="table" then return false end
   end
   return true
@@ -92,7 +91,7 @@ def bind_environment(source: str, *, lua_version: str, policy: str, compact: boo
   watched[#watched+1]=b
  end
  watch(E);watch(N)
- for _,k in next,{"string","table","math","debug"} do watch(N[k]) end
+ for _,k in next,{"string","table","math","debug","coroutine"} do watch(N[k]) end
  S[__raw]=R;S[__kind]=T;S[__meta]=M;S[__fail]=fail
  S[__snapshot]=snapshot;S[__watched]=watched;S[__same]=same
  return {[__guest]=E,[__native]=N,[__state]=S}
@@ -131,6 +130,11 @@ end
     # Rename together so every fragment shares the same lexical kit binding.
     separator = '--[[ENVIRONMENT_FRAGMENT]]'
     fragments = separator.join((early, check, refresh))
+    # The shared bank is inserted into these lexical scopes before renaming.
+    # Reserve their locals too, so a bank named M cannot capture the guards'
+    # getmetatable helper (or any other template binding).
+    allocator.used.update(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', fragments))
+    kit = allocator.allocate('environment')
     fragments = fragments.replace('__KIT', kit).replace('__ORIGINAL', original)
     for key, slot in slots.items():
         fragments = re.sub(r'\b__'+key+r'\b', str(slot), fragments)

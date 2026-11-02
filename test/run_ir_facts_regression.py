@@ -26,6 +26,13 @@ def main():
     ir,facts=analyze('local x=1;for i=1,20 do x=x~i end;print(x)')
     integer_ops=[i for b in ir.root.blocks for i in b.instructions if i.operation=='BIT_XOR']
     assert integer_ops and all(facts[ir.root.id].operand(i,r).kind=='integer' for i in integer_ops for r in ('left','right'))
+    ir,table=analyze('local a,b=17,3;local q=a//b;local r=a%b;print(q+r)')
+    info=table[ir.root.id]
+    instructions=[i for b in ir.root.blocks for i in b.instructions]
+    divisions=[i for i in instructions if i.operation in {'MOD','FLOOR_DIV'}]
+    assert len(divisions)==2 and all(not info.effects[i.id].pure for i in divisions)
+    addition=next(i for i in instructions if i.operation=='ADD')
+    assert all(info.operand(addition,role).kind=='integer' for role in ('left','right'))
     for source in (
         "local x=1;local function f()x='changed'end;f();print(x+1)",
         "local x=1;local a=setmetatable({},{__add=function()x='changed';return 1 end});local z=a+1;print(x+1)",
@@ -36,6 +43,13 @@ def main():
     ir,table=analyze('local function f(v)local a=v&1;return a~2 end;return f')
     child=ir.root.children[0]
     assert all(table[child.id].operand(i,'left')==UNKNOWN for b in child.blocks for i in b.instructions if i.operation=='BIT_XOR')
+    ir,_=analyze("local x=1;local function f()x='changed';return 7 end;local n=f();print(n,x+1)")
+    instructions=[i for b in ir.root.blocks for i in b.instructions]
+    call=next(i for i in instructions if i.operation=='CALL')
+    typed=analyze_function(ir.root,'5.3',result_hints={call.id:INTEGER})
+    assert typed.effects[call.id].may_call and not typed.effects[call.id].pure
+    addition=next(i for i in instructions if i.operation=='ADD')
+    assert typed.operand(addition,'left')==UNKNOWN, 'return type hint hid a captured write'
     assert literal_fact(-0.0,'5.3')!=literal_fact(0.0,'5.3')
     assert merge_facts([literal_fact(-0.0,'5.3'),literal_fact(0.0,'5.3')]).known is False
     assert literal_fact(True,'5.3').kind=='boolean'

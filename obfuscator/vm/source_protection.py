@@ -6,7 +6,7 @@ import random
 import re
 import struct
 
-from .host_guards import inspector_source
+from .host_guards import inspector_source, WRITE_BINDINGS
 from .ir.model import IRBlock, IRFunction, IRInstruction as I, IROperand as O, IRValue, SemanticIR
 from .ir.validate import validate_semantic_ir
 from .string_storage import MODULUS, encode as encode_string, _key
@@ -30,6 +30,7 @@ class SourceProtection:
     seeds: list[int] = field(default_factory=list)
     constant_slots: list[int] = field(default_factory=list)
     runtime_id: str = ''
+    validation_id: str = ''
     line_state: int = 0
     script_hash: int = 0
 
@@ -50,7 +51,8 @@ class SourceProtection:
     def printable(self, data):
         return data.hex().translate(str.maketrans('0123456789abcdef',self.alphabet))
 
-    def raw_payload(self):
+    def raw_payload(self, *, retained_strings=()):
+        missing = set(retained_strings)
         records=[self.prefix]
         for value,seed,gap in zip(self.constants,self.seeds,self.gaps):
             if isinstance(value,(str,bytes)):
@@ -61,10 +63,14 @@ class SourceProtection:
                 encoded=int(value-key)
                 record=struct.pack('<BIqI',self.record_tags['number'],seed,encoded,(encoded%MODULUS+key*257)%MODULUS)
             records.extend((record,gap))
+            if isinstance(value,(str,bytes)):
+                missing.discard(value.encode('utf8') if isinstance(value,str) else value)
+        if missing:
+            raise ValueError('retained pool strings missing from Bare payload')
         return b''.join(records)
 
-    def payload(self, literal):
-        return literal(self.printable(self.raw_payload()))
+    def payload(self, literal, *, retained_strings=()):
+        return literal(self.printable(self.raw_payload(retained_strings=retained_strings)))
 
 
 def _namespace(ir, prefix):
@@ -83,13 +89,13 @@ def _namespace(ir, prefix):
 
 def prepare(ir, plan, context):
     import string
-    names=('guard','constant','write','global_get','global_set','script_hash','setmeta','inspect','fail')
+    names=('guard','constant','write','global_get','global_set','script_hash','setmeta','inspect','fail','evidence','complete','admission')
     p=SourceProtection(dict(zip(names,random.sample(range(31,4000),len(names)))),random.randrange(1,2**24))
     p.record_tags=dict(zip(('number','string'),random.sample(range(1,256),2)))
     p.index_mask=random.randrange(2**20,2**31)
     p.prefix=random.randbytes(random.randint(3,15))
     p.payload_size=len(p.prefix)
-    p.bootstrap_slots=dict(zip(range(1,14),random.sample(range(31,4000),13)))
+    p.bootstrap_slots=dict(zip(range(1,15),random.sample(range(31,4000),14)))
     p.alphabet=''.join(random.sample(string.ascii_letters+string.digits,16))
     p.add_constant(p.sentinel)
     operations={i.operation for f in ir.functions() for b in f.blocks for i in b.instructions}
@@ -100,7 +106,10 @@ def prepare(ir, plan, context):
     if context.target.lua_version=='5.1' and operations & {'GLOBAL_GET','GLOBAL_SET'}:features.add('global_get')
     if context.target.lua_version=='5.1' and 'GLOBAL_SET' in operations:features.add('global_set')
     protected=_instrument(ir,plan,p,context)
-    if any(isinstance(v,(str,bytes)) for v in p.constants):features.add('string')
+    used_constants={key for f in ir.functions() for b in f.blocks
+                    for i in b.instructions for key in i.constants}
+    if any(v.id in used_constants and v.kind=='constant' and isinstance(v.literal,(str,bytes))
+           for f in ir.functions() for v in f.values):features.add('string')
     p.features=frozenset(features)
     text=(Path(__file__).parent/'runtimes/source_security.lua').read_text(encoding='utf8')
     for feature in ('string','write','setmeta','script_hash','global_get','global_set'):
@@ -108,7 +117,17 @@ def prepare(ir, plan, context):
         text=re.sub(pattern,lambda m:m[1] if feature in features else '',text,flags=re.S)
     apis={'byte':'string.byte','char':'string.char','sub':'string.sub','concat':'table.concat',
           'info':'debug.getinfo','hook':'debug.gethook','pcall':'pcall'}
-    text=text.replace('__SHARED_INSPECTOR__',inspector_source())
+    inspector=inspector_source().replace('function S.inspect(force)',
+        'function S.inspect(force,guest)\n if guest and validation_phase~=2 then return false end').replace('if _ENV_CHECK then _ENV_CHECK() end',
+        "if kind(factory_bank)~='table' or P[6](factory_bank)~=nil then return false end\n if _ENV_CHECK then _ENV_CHECK() end")
+    text=text.replace('__SHARED_INSPECTOR__',inspector)
+    from .runtime_probes import bootstrap_source, verifier_source, EVIDENCE_SOURCE, new_plan
+    probe_plan=context.runtime_probe_plan or new_plan(context.target.lua_version)
+    evidence=EVIDENCE_SOURCE.replace('if ok~=true or not present then fail() end',
+        'if ok~=true or not present then fail() end\n if not pcall(retire_factories) then fail() end')
+    text=text.replace('--<<RUNTIME_EVIDENCE>>',evidence)
+    text=text.replace('--<<BOOTSTRAP_PROBE>>',bootstrap_source('N',plan=probe_plan,protected=True))
+    text=text.replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
     text=text.replace('_ENV_CHECK','envcheck').replace('_ENV_REFRESH','envrefresh')
     used=sorted(set(re.findall(r'\bA\.(\w+)',text)))
     api_slots=dict(zip(used,random.sample(range(31,4000),len(used))))
@@ -127,14 +146,26 @@ def prepare(ir, plan, context):
     # Only the decisions/call boundaries are dispatched. Repeated byte decoding,
     # table walks and authorized refresh use one shared primitive implementation.
     driver=f'''return function(make,P,self,payload,line)
+local validate={verifier_source(probe_plan)}
 local S,install=make(P,self,payload,line)
-local inspect,fail=S[{p.slots['inspect']}],S[{p.slots['fail']}]
-local function guard(force) if not inspect(force) then fail() end end
-install(guard);guard(true);return S
+local inspect,fail,complete=S[{p.slots['inspect']}],S[{p.slots['fail']}],S[{p.slots['complete']}]
+local function guard(force) if not inspect(force,true) then fail() end end
+install(guard);if not inspect(true) then fail() end
+local evidence,kind,call=S[{p.slots['evidence']}]()
+local ok,result=call(validate,evidence,kind)
+complete(ok and result==true);guard(true)
+return S
 end'''
     security=context.target.build_ir(context.target.compile(driver,context.toolchain))
+    from .runtime_validation import mark_validation
+    main=security.root.children[0]
+    validators=[f for f in main.children if f.params==2]
+    if len(validators)!=1:raise ValueError('Bare runtime validator is missing or ambiguous')
+    security=replace(security,root=replace(security.root,children=(replace(main,
+        children=tuple(mark_validation(f) if f is validators[0] else f for f in main.children)),)))
     security=_namespace(security,'security:')
     p.runtime_id=security.root.id
+    p.validation_id=next(f.id for f in security.functions() if f.debug_metadata.get('security_subsystem')=='runtime_validation')
     protected=replace(protected,root=replace(protected.root,children=(*protected.root.children,security.root)))
     validate_semantic_ir(protected)
     return protected,p
@@ -142,6 +173,8 @@ end'''
 
 def _instrument(ir, plan, protection, context):
     def transform(function, parent_context=None, parent_guard=None):
+        from .guard_policy import internal_calls
+        internal=internal_calls(function,context.target.lua_version)
         values=list(function.values)
         upvalues=sum(v.kind=='upvalue' for v in values)
         context_up,guard_up=upvalues,upvalues+1
@@ -199,13 +232,17 @@ def _instrument(ir, plan, protection, context):
             out.append(make('CALL',(reg('callee',base),O('arguments','register_range',base+1,len(args)),
                 O('results','register_range',result if result is not None else base,1 if result is not None else 0))))
             return compact(out,('method',name,tuple((a.kind,a.value) for a in args),result))
-        def guard(force):
-            return compact([make('GET_UPVALUE',(reg('destination',base),O('source','upvalue',guard_up))),
+        def guard(force,event='block',proof=None):
+            out=compact([make('GET_UPVALUE',(reg('destination',base),O('source','upvalue',guard_up))),
                     make('LOAD_BOOL',(reg('destination',base+1),O('value','immediate',force),O('skip','immediate',False))),
                     make('CALL',(reg('callee',base),O('arguments','register_range',base+1,1),O('results','register_range',base,0)))],('guard',force))
+            return [replace(i,metadata={**i.metadata,'guard_event':event,'guard_proof':proof}) for i in out]
+        source_pcs={i.id:i.metadata.get('source_pc') for b in function.blocks for i in b.instructions}
         blocks=[]
         for block in function.blocks:
-            instructions=guard(block.id==function.blocks[0].id)
+            instructions=guard(block.id==function.blocks[0].id,'entry' if block.id==function.blocks[0].id else 'block')
+            entry_pc=next((i.metadata['source_pc'] for i in block.instructions if isinstance(i.metadata.get('source_pc'),int)),None)
+            instructions=[replace(i,metadata={**i.metadata,'source_pc':entry_pc}) for i in instructions]
             for original in block.instructions:
                 start=len(instructions)
                 operands=[]
@@ -230,17 +267,24 @@ def _instrument(ir, plan, protection, context):
                         table=reg('table',base+3)
                     instructions.extend(method('write',[table,fields['key'],fields['value']]))
                 else:
-                    if op in ('CALL','TAIL_CALL','RETURN'):instructions.extend(guard(True))
+                    proof='generated-closure' if original.id in internal else None
+                    if op in ('CALL','TAIL_CALL','RETURN'):
+                        instructions.extend(guard(not bool(proof),'call-before' if op=='CALL' else op.lower(),proof))
                     changed=replace(original,targets=(),operands=tuple(operands))
                     if operands!=list(original.operands):
                         extra=tuple(f'{function.id}:r{o.value}' for o in operands if o.kind=='register' and o.value>=base)
                         changed=replace(changed,inputs=(*original.inputs,*extra),constants=tuple(
                             f'{function.id}:k{o.value}' for o in operands if o.kind=='constant'))
                     instructions.append(changed)
-                    if op=='CALL':instructions.extend(guard(True))
+                    if op=='CALL':instructions.extend(guard(not bool(proof),'call-after',proof))
                 # Original edges belong only to the final replacement operation.
                 if original.targets:
                     instructions[-1]=replace(instructions[-1],targets=original.targets)
+                # Keep native source-local residence available after guard and
+                # constant/write call expansion. This is debug provenance only.
+                for index in range(start,len(instructions)):
+                    instructions[index]=replace(instructions[index],metadata={**instructions[index].metadata,
+                        'source_pc':original.metadata.get('source_pc',source_pcs.get(original.metadata.get('protected_instruction')))})
                 if len(instructions)==start:raise AssertionError('empty protected instruction')
             blocks.append(replace(block,instructions=tuple(instructions)))
         children=tuple(transform(c,context_up,guard_up) for c in function.children)

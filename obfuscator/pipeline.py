@@ -64,6 +64,7 @@ class Pipeline:
         self.selection_config: ObfuscatorConfig = {}
         self.mosaic_scope: LiteralMosaic | None = None
         self.last_mosaic_metrics: dict[str, Any] = {}
+        self.last_custom_names: dict[str, object] = {}
         self.target_profile: TargetProfile
         self.toolchain: LuaToolchain
         self.last_selection_report: list[dict[str, JSONValue]] = []
@@ -89,6 +90,7 @@ class Pipeline:
         profiler: Profiler | None = None,
     ) -> str:
         from .names import RENAME_OPTIONS
+        self.last_custom_names = {}
         from .passes.literal_mosaic import LiteralMosaic, use_mosaic
         from .passes.mosaic_metrics import DiversityMetrics
 
@@ -105,8 +107,11 @@ class Pipeline:
             else None
         )
         try:
-            with use_mosaic(mosaic):
-                return self._run(script, verbose, profiler)
+            from . import custom_names
+            with use_mosaic(mosaic), custom_names.build_scope(self, script):
+                result = self._run(script, verbose, profiler)
+                custom_names.finish(self, result)
+                return result
         finally:
             self.last_mosaic_metrics = mosaic.metrics.report() if mosaic.metrics.enabled else {}
             if token is not None:
@@ -239,15 +244,50 @@ class Pipeline:
                     print(ast.to_pretty_str(new_tree))
 
         post_passes = selection.post_passes(self._post_passes) if selection.enabled else self._post_passes
-        for post_index, post in enumerate(post_passes):
+        from . import custom_names
+        outputs = [];packers = [];last_vm_post = -1
+        if any(hasattr(p, 'vm_output_passes') or hasattr(p, 'packer_output_passes') for p in post_passes):
             from .vm.vm_pass import VMPass
-            if not any(isinstance(p, VMPass) for p in post_passes[post_index:]):
+            from .passes.packer import PackerPass
+            outputs = [p for p in post_passes if isinstance(p, (VMPass, PackerPass))
+                       and not (isinstance(p, VMPass) and selection.original_vm_fully_excluded)]
+            packers = [p for p in outputs if isinstance(p, PackerPass)]
+            last_vm_post = max((i for i,p in enumerate(post_passes) if isinstance(p, VMPass)),default=-1)
+        scope = custom_names.ACTIVE.get()
+        if scope is not None and scope.owner is self:
+            target = outputs[-1] if outputs else self
+            strip_renames = False
+            if any(getattr(p, 'rename_locals', False) for p in self._pre_passes):
+                from .passes.strip_info import StripInfoPass
+                strip_renames = any(isinstance(p, StripInfoPass) and p.rename_locals for p in self._pre_passes)
+            # NO_OBF makes SelectionRuntime skip the whole StripInfo pre-pass.
+            strip_renames = strip_renames and not (selection.enabled and
+                any(s.feature == 'no_obf' for s in selection.plan.spans))
+            enabled = bool(renamers) or strip_renames or any(
+                any(name in getattr(p, attribute, ()) for name in ('rename_obf', 'strip_info'))
+                for p in outputs for attribute in ('vm_output_passes', 'packer_output_passes'))
+            naming = renamers[-1].options if renamers and not outputs else {}
+            visible_passes = getattr(target, 'vm_output_passes', getattr(target, 'packer_output_passes', ()))
+            strip_only = ('strip_info' in visible_passes and 'rename_obf' not in visible_passes
+                          if outputs else strip_renames and not renamers)
+            if strip_only:
+                naming = {'readable': False}
+            custom_names.configure(target, enabled=enabled, **naming, opaque_input=any(target is p for p in packers))
+            if target is self:
+                with custom_names.stage(self):
+                    script = custom_names.apply(script,
+                        keep=(lambda ctx, b: any(selection.plan.excluded(ctx.cs(n),ctx.ce(n)+1)
+                                                for n in b.nodes)) if selection.enabled else None,
+                        render=(lambda edits: selection.plan.apply(script, edits)) if selection.enabled else None)
+        for post_index, post in enumerate(post_passes):
+            if post_index > last_vm_post:
                 reject_native_intrinsics(script)
             with phase_scope('post:' + post.__class__.__name__):
                 before = _size(script)
                 start = time.perf_counter()
 
-                script = selection.run_post(post, script) if selection.enabled else post.run(script)
+                with custom_names.stage(post):
+                    script = selection.run_post(post, script) if selection.enabled else post.run(script)
 
                 elapsed = time.perf_counter() - start
                 details = getattr(post, "last_profile", [])

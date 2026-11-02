@@ -913,7 +913,8 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     --<<RGET>>
     local function rget(i)
         local box=boxes[i]; if box then return get_upvalue(box) end
-        if _PD[_rpos(5,i)]~=nil then _pending_finish(i) end
+        local completed
+        if _PD[_rpos(5,i)]~=nil then completed=_pending_finish(i) end
         local generation=_MG[1]
         local cached=_RC[i]
         -- The cached epoch-bank address is valid only in this generation.
@@ -925,10 +926,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local epoch=_RE[p3]
         if epoch==nil then _RC[i]={nil,nil,generation,p3}; return nil end
         local _,b,inv=_rparams(i,epoch)
-        local value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
+        local value=completed
+        if value==nil then value=_rdecode((--<<TARGET_PRIVATE_EXPRESSION>>
                               ((regs[p1]+_RS[p2])-b)*inv
                               --<<ENDTARGET_PRIVATE_EXPRESSION>>
-                             ),_RT[p4])
+                             ),_RT[p4]) end
         _RC[i]={value,epoch,generation,p3}
         return value
     end
@@ -1649,11 +1651,22 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local _,rb,ri=_rparams(rhs,re)
         local epoch=_rnext(dst,sign~lhs~(rhs<<8))
         local oa,ob=_rparams(dst,epoch)
-        local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
-                       oa*li*(regs[l1]+_RS[l2]-lb)+
-                       sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
-                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
-                      )
+        -- A zero selector denotes multiplication. Compose the affine
+        -- factors before touching either operand, keeping both inputs encoded.
+        -- Private arithmetic wraps in the target's exact word domain.
+        local encoded
+        if sign==0 then
+            encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     (oa*li*ri)*(regs[l1]+_RS[l2]-lb)*(regs[r1]+_RS[r2]-rb)+ob
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
+        else
+            encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     oa*li*(regs[l1]+_RS[l2]-lb)+
+                     sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
+        end
         _rstore(dst,encoded,epoch,1)
         return true
     end
@@ -1671,6 +1684,58 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                      sign*oa*si*(regs[p1]+_RS[p2]-sb)+ob
                      --<<ENDTARGET_PRIVATE_EXPRESSION>>
                     ),epoch,1)
+        return true
+    end
+
+    -- Boolean packets use the existing independently mapped packet bank.
+    -- The Boolean family tag (false) is separate from the guest value kind.
+    local function _ebit_snapshot(slot)
+        if boxes[slot] then return nil end
+        local packet=_PD[_rpos(5,slot)]
+        if packet and packet[1]==false then return packet[2],packet[3] end
+        if packet then _pending_finish(slot) end
+        local p1,p2,p3,p4=_rpositions(slot)
+        local epoch=_RE[p3]
+        if epoch==nil or _RT[p4]~=1 then return nil end
+        local _,bias,inverse=_rparams(slot,epoch)
+        -- This is an explicit affine-to-Boolean conversion boundary. It is
+        -- not claimed to be plaintext-free; following Boolean steps use shares.
+        local value=(regs[p1]+_RS[p2]-bias)*inverse
+        local mask=_rmix(epoch~slot~_RZ)
+        return value~mask,mask
+    end
+
+    local function _ebit2(dst,lhs,rhs,selector)
+        if boxes[dst] then return false end
+        local a,b=_ebit_snapshot(lhs)
+        if a==nil then return false end
+        local c,d
+        if lhs==rhs then c,d=a,b else c,d=_ebit_snapshot(rhs) end
+        if c==nil then return false end
+        local epoch=_rnext(dst,selector~lhs~(rhs<<8))
+        local mask=_rmix(epoch~_RZ)
+        local left,right
+        if selector==4 then
+            left,right=a~c~mask,b~d~mask
+        else
+            if selector==3 then a,c=~a,~c end
+            left=(a&c)~mask
+            right=(b&d)~(a&d)~(b&c)~mask
+            if selector==3 then left=~left end
+        end
+        _PD[_rpos(5,dst)]={false,left,right,nil,nil,epoch}
+        _RC[dst]=nil;_RX[3][dst]=nil;_RL[dst]=true
+        return true
+    end
+
+    local function _ebit1(dst,src)
+        if boxes[dst] then return false end
+        local a,b=_ebit_snapshot(src)
+        if a==nil then return false end
+        local epoch=_rnext(dst,src~0x424E4F54)
+        local mask=_rmix(epoch~_RZ)
+        _PD[_rpos(5,dst)]={false,(~a)~mask,b~mask,nil,nil,epoch}
+        _RC[dst]=nil;_RX[3][dst]=nil;_RL[dst]=true
         return true
     end
 
@@ -1700,6 +1765,12 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         local q=_PD[physical]
         if q==nil then return end
         _PD[physical]=nil
+        if q[1]==false then
+            local scale,bias=_rparams(dst,q[6])
+            local value=q[2]~q[3]
+            _rstore(dst,scale*value+bias,q[6],1)
+            return value
+        end
         local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
                        q[2]+q[3]
                        --<<ENDTARGET_PRIVATE_EXPRESSION>>
@@ -1770,7 +1841,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _arith2r(dst,lhs,rhs,av,slot,linear)
         _gq=(_gq or 0)+1
         local desc=_gsl and _gsl[_gq]
-        if linear and (not desc or desc[1]==0) and
+        --<<BITWISE_BINARY_PATH>>
+        if linear and linear>=2 and (not desc or desc[1]==0) and
+           _ebit2(dst,lhs,rhs,linear) then return end
+        --<<ENDBITWISE_BINARY_PATH>>
+        if linear and linear<2 and (not desc or desc[1]==0) and
            _elinear2(dst,lhs,rhs,linear) then return end
         local left=rget(lhs)
         local right
@@ -1781,7 +1856,11 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
     local function _arith1r(dst,src,av,slot,linear)
         _gq=(_gq or 0)+1
         local desc=_gsl and _gsl[_gq]
-        if linear and (not desc or desc[1]==0) and
+        --<<BITWISE_UNARY_PATH>>
+        if linear==2 and (not desc or desc[1]==0) and
+           _ebit1(dst,src) then return end
+        --<<ENDBITWISE_UNARY_PATH>>
+        if linear and linear<2 and (not desc or desc[1]==0) and
            _elinear1(dst,src,linear) then return end
         rset(dst,_arith1(rget(src),av,slot,desc))
     end
@@ -1907,7 +1986,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==12 then local t=rget(B); rset(A+1,_carry(_sem(__VM_DATA_VALUE__,t,nil,nil),_av,112)); rset(A,_carry(_sem(__VM_DATA_GET__,t,rget(C),nil),_av,12))
         elseif op==13 then _arith2r(A,B,C,_av,__VM_SLOT_ADD__,1)
         elseif op==14 then _arith2r(A,B,C,_av,__VM_SLOT_SUB__,-1)
-        elseif op==15 then _arith2r(A,B,C,_av,__VM_SLOT_MUL__,nil)
+        elseif op==15 then _arith2r(A,B,C,_av,__VM_SLOT_MUL__,0)
         elseif op==16 then rset(A,_carry(_sem(__VM_OP_MOD__,rget(B),rget(C),nil),_av,16))
         elseif op==17 then rset(A,_carry(_sem(__VM_OP_POW__,rget(B),rget(C),nil),_av,17))
         elseif op==18 then rset(A,_carry(_sem(__VM_OP_DIV__,rget(B),rget(C),nil),_av,18))
@@ -2182,6 +2261,7 @@ local function run(blob,self_func,_root_args)
     --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
     local proto=read_proto(r,acc_state)
     local env_box={v=_ENV}
+    --<<RUNTIME_VERIFY>>
     --<<RUN_ENTRY>>
     local _root_result=_CG[__VM_ROUTE_ENTER__](_NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,

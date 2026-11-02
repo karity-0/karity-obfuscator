@@ -21,6 +21,8 @@ class Segment:
 
 
 def emit(function: IRFunction, emitter: 'Function') -> str:
+    # Keep each function's layout draws independent of its optimized shape.
+    rng = random.Random(random.getrandbits(64))
     segments: list[Segment] = []
     entries: dict[str, int] = {}
     for block in function.blocks:
@@ -35,45 +37,14 @@ def emit(function: IRFunction, emitter: 'Function') -> str:
         while offset<len(units):
             # Keep short straight-line blocks together. Dispatching every few
             # bytecode instructions magnifies source pre-pass expansion.
-            width=random.randint(16,32)
+            width=rng.randint(16,32)
             items=tuple(i for unit in units[offset:offset+width] for i in unit)
             offset += width
             following = len(segments) + 1 if offset < len(units) else None
             segments.append(Segment(block, items, following))
-    ids = random.sample(range(1, 2**24), len(segments))
+    ids = rng.sample(range(1, 2**24), len(segments))
     for segment, position in zip(segments, ids):
         segment.position = position
 
-    def advance(index: int) -> str:
-        return '_Bposition=' + str(segments[index].position) + '\n'
-
-    leaves = []
-    for segment in segments:
-        code = ''.join(emitter.instruction(i, segment.block) for i in segment.instructions)
-        if segment.following is not None:
-            code += advance(segment.following)
-        elif len(segment.block.successors) == 2:
-            left, right = segment.block.successors
-            code += ('if ' + emitter.condition(segment.block) + ' then\n' + advance(entries[left])
-                     + 'else\n' + advance(entries[right]) + 'end\n')
-        elif segment.block.successors:
-            code += advance(entries[segment.block.successors[0]])
-        else:
-            code += '_Bposition=nil\n'
-        leaves.append((segment.position, code))
-    leaves.sort()
-
-    def tree(items: list[tuple[int, str]]) -> str:
-        if len(items) == 1:
-            return items[0][1]
-        middle = len(items) // 2
-        bound = random.randint(items[middle - 1][0] + 1, items[middle][0])
-        left, right = tree(items[:middle]), tree(items[middle:])
-        if random.getrandbits(1):
-            condition = '_Bposition<' + str(bound)
-        else:
-            condition = str(bound) + '<=_Bposition'
-            left, right = right, left
-        return 'if ' + condition + ' then\n' + left + 'else\n' + right + 'end\n'
-
-    return '--[[VM_DISPATCH_ENTRY]]\nlocal _Bposition=' + str(ids[entries[function.blocks[0].id]]) + '\nwhile _Bposition do\n' + tree(leaves) + 'end\n'
+    from .bare_flow import emit as emit_flow
+    return emit_flow(function,emitter,segments,entries,rng)

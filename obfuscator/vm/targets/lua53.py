@@ -22,8 +22,8 @@ class Lua53Target:
             raise ValueError(f'unknown runtime template: {name}')
         return (root/name if name=='vm.lua' else root/'runtimes'/name).read_text(encoding='utf-8')
 
-    def direct_runtime_entry(self):
-        return '_EX[proto.vm_id+1](proto,{env_box,environment=env_box.v},_root_args)'
+    def direct_runtime_entry(self, *, proto='proto', args='_root_args'):
+        return f'_EX[{proto}.vm_id+1]({proto},{{env_box,environment=env_box.v}},{args})'
 
     def value_packet_api(self):
         return 'table.pack', 'table.unpack'
@@ -101,12 +101,12 @@ class Lua53Target:
         from ..backends.runtime_emitter import _dump_function_stripped
         return _dump_function_stripped(source, header, toolchain)
 
-    def wrap(self, source, vm_name, blob, *, forward_args=False):
+    def wrap(self, source, vm_name, blob, *, forward_args=False, factory_argument=''):
         returned = re.match(r'\Areturn\b', source)
         if returned is None:
             raise ValueError('Lua 5.3 VM source must return its runtime function')
         body = source[returned.end():].lstrip()
         arguments=",{n=select('#',...),...}" if forward_args else ''
         return (f'local {vm_name}={body};'
-                f'return ({vm_name}())'
+                f'return ({vm_name}({factory_argument}))'
                 f'({blob},{vm_name}{arguments})')

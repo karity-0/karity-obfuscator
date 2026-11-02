@@ -29,6 +29,7 @@ from obfuscator.registry import (
     validate_deployment_config,
     validate_config,
     config_warnings,
+    redact_config,
     validate_release_config,
 )
 
@@ -51,6 +52,9 @@ def build_pipeline(config: ObfuscatorConfig) -> Pipeline:
 def parse_args():
     parser = argparse.ArgumentParser(description="lua obfuscator")
     parser.add_argument("input", nargs="?", help="input lua script")
+    parser.add_argument('--project', help='project JSON configuration (directory output)')
+    parser.add_argument('--dry-run', action='store_true', help='preview a project selection plan without building')
+    parser.add_argument('--project-report', help='write a project plan/build report, or - for stdout')
     parser.add_argument("-o", "--output", help="output lua script")
     parser.add_argument("-c", "--config", default="config.json", help="config json path")
     parser.add_argument(
@@ -219,7 +223,12 @@ def main():
     if args.list_passes:
         print_passes()
         return
-
+    if args.project:
+        from obfuscator.project_cli import run_project_cli
+        sys.exit(run_project_cli(args))
+    if args.dry_run or args.project_report:
+        print('error: --dry-run/--project-report require --project',file=sys.stderr)
+        sys.exit(2)
     config_root = load_config(args.config)
     if args.list_profiles:
         print_profiles(config_root)
@@ -251,7 +260,7 @@ def main():
         print(f"warning: {warning}", file=sys.stderr)
 
     if args.print_config:
-        print(json.dumps(config, indent=4, ensure_ascii=False))
+        print(json.dumps(redact_config(config), indent=4, ensure_ascii=False))
         return
 
     if not args.input:

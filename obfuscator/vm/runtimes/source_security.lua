@@ -2,20 +2,44 @@ return function(P,self,payload,line)
  local E,raw,kind,throw,next0=P[1],P[2],P[3],P[4],P[5]
  local same=rawequal
  local N,_ENV_CHECK,_ENV_REFRESH=P[11],P[12],P[13]
- local failed,ticks=false,0
- local function fail() failed=true;throw(nil,0);local n=nil;return n[n] end
+ local failed,ticks,pending_evidence=false,0,nil
+ local validation_phase=0
+ local function fail() failed=true;validation_phase=3;pending_evidence=nil;throw(nil,0);local n=nil;return n[n] end
  local A=__API__
  local hook0=A.hook
  local bindings=__BARE_NATIVE_BINDINGS__
  local S={}
  local trusted={}
+ local factory_bank=P[14]
+ local retire_factories
+ --<<RUNTIME_EVIDENCE>>
  __SHARED_INSPECTOR__
  function S.guard(force) if not S.inspect(force) then fail() end end
  S.fail=fail
+ local factory_slots=__FACTORY_SLOTS__
+ if kind(factory_bank)~='table' or P[6](factory_bank)~=nil then fail() end
+ local factory_count=0
+ for _ in next0,factory_bank do factory_count=factory_count+1 end
+ if factory_count~=#factory_slots then fail() end
+ for i=1,#factory_slots do local slot=factory_slots[i];local fn=raw(factory_bank,slot)
+  if kind(fn)~='function' then fail() end
+  periodic[#periodic+1]={factory_bank,slot,fn}
+ end
+ local retired=__FACTORY_RETIRED__
+ retire_factories=function()
+  if P[6](factory_bank)~=nil then fail() end
+  local write=1
+  for i=1,#periodic do local record=periodic[i]
+   if same(record[1],factory_bank) and retired[record[2]] then
+    factory_bank[record[2]]=nil
+   else periodic[write]=record;write=write+1 end
+  end
+  for i=write,#periodic do periodic[i]=nil end
+ end
 --<<write>>
  function S.write(t,k,v)
   _ENV_REFRESH(t,false);t[k]=v;_ENV_REFRESH(t,true)
-  for i=1,#bindings do local b=bindings[i];if same(b[1],t) and same(b[2],k) then b[3]=t[k] end end
+  --<<WRITE_BINDINGS>>
  end
 --<<ENDwrite>>
 --<<global_get>>
@@ -39,6 +63,7 @@ return function(P,self,payload,line)
   if kind(b[3])=='function' and not isC(b[3]) then fail() end
  end
  S.guard(true)
+ --<<BOOTSTRAP_PROBE>>
  local xor=P[9]
  local script=xor(P[8](P[7](self)),line)
  local M=2147483647
@@ -54,7 +79,7 @@ return function(P,self,payload,line)
   return a*16+b
  end
  local function u32(i) return byte(i)+byte(i+1)*256+byte(i+2)*65536+byte(i+3)*16777216 end
- function S.constant(index)
+ local function recover(index)
   if failed then fail() end
   local c=cache[index]
   if c then if kind(c)~='table' or c[1]~=expected[index] then fail() end;return c[1] end
@@ -92,6 +117,10 @@ return function(P,self,payload,line)
   cache[index]={value};expected[index]=value
   return value
  end
+ function S.constant(index)
+  if validation_phase~=2 then fail() end
+  return recover(index)
+ end
 --<<script_hash>>
  function S.script_hash() return script end
 --<<ENDscript_hash>>
@@ -99,7 +128,7 @@ return function(P,self,payload,line)
  for name,value in next0,A do trusted[#trusted+1]={A,name,value} end
  for name,value in next0,P do trusted[#trusted+1]={P,name,value} end
  for name,value in next0,_BCore do trusted[#trusted+1]={_BCore,name,value} end
- if S.constant(__SENTINEL_SLOT__)~=__SENTINEL__ then fail() end
+ if recover(__SENTINEL_SLOT__)~=__SENTINEL__ then fail() end
  S.guard(true)
  return S,function(g)
   S.guard=g

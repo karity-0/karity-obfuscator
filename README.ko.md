@@ -32,10 +32,10 @@ Windows용 Lua 도구는 `bin/`에 포함되어 있습니다. 다른 플랫폼�
 
 | 프리셋 | 용도 |
 |---|---|
-| **Fast · 빠르게** | 가벼운 VM 보호. 무거운 소스 변환은 마커로 지정한 곳에 적용합니다. |
-| **Balanced · 균형** | 가벼운 소스 변환과 더 다양한 VM 구성을 제공합니다. |
-| **Strong · 강하게** | String Flow Obf와 CFF를 포함한 전체 소스 보호를 적용합니다. |
-| **Maximum · 최대** | 보호 예산과 VM 변형을 늘리고 패킹을 적용합니다. |
+| **Fast · 빠르게** | 최소한의 소스 변환, 경량 VM 1개, 기존 경량 출력. |
+| **Balanced · 균형** | Boolean + Table + Compact String, VM 1개, String Mosaic 출력. |
+| **Strong · 강하게** | Flow String + CFF + Number, VM 2개, String Mosaic 출력. |
+| **Maximum · 최대** | Strong의 예산 강화와 소스 이름 변형, VM 3개, Packer + 출력 다양화. |
 
 모든 프리셋은 VM 출력에 NumberObf와 MemeStrings를 적용합니다. 프리셋과
 백엔드는 독립적으로 선택하며, 고급 설정에서 각각 조정할 수 있습니다.
@@ -59,6 +59,8 @@ GUI에서 저장한 설정은 CLI에서도 사용할 수 있습니다. 기존 JS
 [사용자 프리셋(영문)](docs/user-presets.md)과 [설정 레퍼런스(영문)](docs/configuration.md)를 참고하세요.
 
 ## 문서
+
+- [Project Mode](docs/project-mode.md): 폴더 빌드, 파일별 보호 정책, GUI 출력 탐색기.
 
 - [KES 문법 가이드](docs/kes-guide.ko.md) · [상세 명세(영문)](docs/kes.md)
 - [프리셋과 백엔드 선택(영문)](docs/user-presets.md)

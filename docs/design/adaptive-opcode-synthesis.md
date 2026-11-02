@@ -9,7 +9,7 @@ The runtime/storage follow-up is measured against `ce20b16` in
 [numeric DAG measurements](../performance/synthesis-storage.md). This first
 implementation began with a conservative numeric DAG vocabulary. The ordered
 DAG follow-up adds table/upvalue reads, moves and further scalar operations;
-the next extension admits terminal VM calls/comparisons and proven linear block chains.
+the terminal extension admits terminal VM calls/comparisons and proven linear block chains.
 The expanded integer-bit vocabulary and revised admission model are compared in
 [cost selection measurements](../performance/synthesis-cost-selection.md) and
 [full user-preset pipeline measurements](../performance/synthesis-pipeline.md).

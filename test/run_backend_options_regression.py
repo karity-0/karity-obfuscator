@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from obfuscator.registry import (
     ConfigError, VM_OPTION_DOCS, config_warnings, resolve_config_profile,
-    validate_config, validate_release_config,
+    validate_config, validate_release_config, ReleaseCheckError,
 )
 from obfuscator.vm.backend import unsupported_vm_options
 from obfuscator_gui import _vm_option_meta
@@ -46,6 +46,16 @@ def main():
     config = resolve_config_profile(json.loads((ROOT / "config.example.json").read_text()), "high")
     config["vm_options"]["backend"] = "mov"
     validate_release_config(config)
+    config['passes'] = [name for name in config['passes'] if name not in {'anti_debug','anti_decompile'}]
+    validate_release_config(config)
+    missing_vm = copy.deepcopy(config)
+    missing_vm['passes'].remove('vm')
+    try:
+        validate_release_config(missing_vm)
+    except ReleaseCheckError as error:
+        assert "passes must include 'vm'" in str(error)
+    else:
+        raise AssertionError('release check accepted a missing VM')
     config["vm_options"]["backend"] = "default"
     validate_release_config(config)
     assert not config_warnings(config)

@@ -6,17 +6,41 @@ loop variables and implicit method self without Python recursion limits.
 from __future__ import annotations
 
 import time
+import json
 from bisect import bisect_left
+from collections.abc import Iterable
 from dataclasses import dataclass, field
+from functools import lru_cache
 import tree_sitter as ts
 from ..names import NameAllocator, RENAME_OPTIONS
 from .base import Replacement
-from .ts_utils import _LANG, parse as _ts_parse
+from .ts_utils import _LANG, TSContext, parse as _ts_parse
 
 
 _IDENTIFIERS = ts.Query(_LANG, '(identifier) @identifier')
 _RENAME_NODES = ts.Query(_LANG, '(identifier) @identifier (number) @literal (string) @literal [(true) (false)] @literal')
 _OUTPUT_NODES = ts.Query(_LANG, '(identifier) @identifier (number) @literal (string) @literal [(true) (false)] @literal (comment) @comment (label_statement (identifier) @label) (goto_statement (identifier) @label)')
+
+
+@lru_cache(maxsize=16)
+def _named_identifier_query(names: tuple[str, ...]) -> ts.Query:
+    choices = ' '.join(json.dumps(name) for name in names)
+    return ts.Query(_LANG, f'((identifier) @identifier (#any-of? @identifier {choices}))')
+
+
+def collect_named_identifiers(ctx: TSContext, names: Iterable[str]) -> dict[str, list[ts.Node]]:
+    """Filter spellings in the syntax query, retaining fields and declarations.
+
+    Callers still use lexical resolution to distinguish local/free references.
+    The result can also prove that a subtree contains no relevant identifier.
+    """
+    names = tuple(sorted(set(names)))
+    if not names:
+        return {'identifier': []}
+    captures = ts.QueryCursor(_named_identifier_query(names)).captures(ctx.root)
+    if isinstance(captures, dict):
+        return {'identifier': captures.get('identifier', [])}
+    return {'identifier': [node for node, name in captures if name == 'identifier']}
 
 
 def collect_output_nodes(ctx):

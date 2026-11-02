@@ -16,8 +16,11 @@ class ClassicBackend(VMBackend):
 
     def compose_runtime(self, source, lowered, *, target=None):
         from .runtime_templates import classic_executor, direct_executor
+        from ..call_arity import prepare_classic_calls
+        executor=target.runtime_template('classic_exec.lua') if target else classic_executor()
+        executor=prepare_classic_calls(executor,lowered,target)
         return direct_executor(
-            source, target.runtime_template('classic_exec.lua') if target else classic_executor(),
+            source, executor,
             target=target,
         )
 

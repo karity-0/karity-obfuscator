@@ -61,7 +61,7 @@ class LiteralMosaic:
         finally:
             self._allowed = previous
 
-    def strings(self, *, force=False, line_safe=False):
+    def strings(self, *, force=False, line_safe=True):
         """Share target/activation with numeric generation; no new pass layer."""
         from .string_mosaic import StringMosaic, StringPolicy
         return StringMosaic(StringPolicy(lua_version=self.policy.lua_version,

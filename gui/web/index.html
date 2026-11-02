@@ -75,12 +75,28 @@
             </div>
             <div class="context-block">
               <div class="context-title">VM output</div>
-              <div id="vm-output-list" class="toggle-list compact"></div>
+              <div id="vm-output-list" class="toggle-list"></div>
             </div>
             <div class="context-block">
               <div class="context-title">Packer output</div>
-              <div id="packer-output-list" class="toggle-list compact"></div>
+              <div id="packer-output-list" class="toggle-list"></div>
             </div>
+          </div>
+        </details>
+
+        <details class="config-section" data-section-key="key-authentication" open>
+          <summary><span>Key authentication</span><span class="section-count" id="key-auth-status">Authentication disabled</span></summary>
+          <div class="section-body">
+            <label class="choice-item"><input id="packer-key-enabled" type="checkbox"><span>Use key authentication</span></label>
+            <div class="key-auth-help"><p>When enabled, execution requires a key as the first argument. Requires Packer.</p></div>
+            <fieldset id="packer-key-fields" class="key-auth-fields" disabled>
+              <label class="field-label" for="packer-external-key">Execution key</label>
+              <input id="packer-external-key" class="text-control" type="password" autocomplete="off" spellcheck="false" required>
+              <label class="field-label" for="packer-missing-key-message">Missing-key error message</label>
+              <textarea id="packer-missing-key-message" class="text-area-control" rows="2" spellcheck="false"></textarea>
+              <p>Applies to missing, empty or non-string keys.</p>
+            </fieldset>
+            <div class="key-auth-help"><p>Saving settings stores the key as plaintext.</p></div>
           </div>
         </details>
 
@@ -159,6 +175,49 @@
     </aside>
 
     <main class="main-stage">
+      <nav id="work-mode" class="work-mode" aria-label="Work mode">
+        <button id="single-mode" type="button" aria-pressed="true">Single File</button>
+        <button id="project-mode" type="button" aria-pressed="false">Project</button>
+      </nav>
+      <section id="project-panel" class="project-panel" hidden aria-label="Project protection">
+        <header class="project-header"><div><span class="eyebrow">PROJECT MODE</span><h1>Project Output Explorer</h1></div>
+          <div class="project-actions"><button id="project-load" class="button ghost">Open project</button><button id="project-save" class="button ghost">Save project</button></div>
+        </header>
+        <p class="project-intro">Choose a source folder and an output folder. Review the files below, then build.</p>
+        <div id="project-feedback" class="project-feedback" role="status" data-state="info"><strong id="project-status">Choose a project folder to start.</strong><div id="project-progress"></div></div>
+        <details id="project-config" class="project-config" open><summary>Project settings</summary>
+        <div class="project-settings">
+          <label>Project folder<div class="project-path"><input id="project-root" class="text-control" placeholder="Project folder"><button id="project-pick-root" class="button tiny" aria-label="Choose project folder">Browse</button></div></label>
+          <label>Output folder<div class="project-path"><input id="project-output" class="text-control" placeholder="Output folder"><button id="project-pick-output" class="button tiny" aria-label="Choose output folder">Browse</button></div></label>
+          <details id="project-file-options" class="project-file-options"><summary>Entry, file filters &amp; resources</summary><div class="project-file-fields">
+          <label><span>Entry (optional)</span><input id="project-entry" class="text-control" list="project-entry-options" aria-describedby="project-entry-hint" placeholder="Leave empty for a module folder"><datalist id="project-entry-options"></datalist><small id="project-entry-hint">No entry? Leave empty. Files are built individually; the entry is not executed.</small></label>
+          <label>Include<textarea id="project-include" class="text-control" rows="1" placeholder="One glob per line">**/*.lua</textarea></label>
+          <label>Exclude<textarea id="project-exclude" class="text-control" rows="1" placeholder="One glob per line">**/.git/**</textarea></label>
+          <label class="project-resource-toggle"><input id="project-copy-resources" type="checkbox"> Copy non-Lua resources</label>
+          </div></details>
+        </div>
+        <div class="project-policies">
+          <fieldset><legend>Preset policy</legend><select id="project-preset-mode" class="select-control" aria-label="Preset selection mode"><option value="default">Configured defaults</option><option value="fixed">Fixed</option><option value="weighted">Weighted</option></select><select id="project-preset-value" class="select-control" aria-label="Fixed preset"></select><div id="project-preset-weights" class="project-weights" hidden></div></fieldset>
+          <fieldset><legend>Backend policy</legend><select id="project-backend-mode" class="select-control" aria-label="Backend selection mode"><option value="default">Configured defaults</option><option value="fixed">Fixed</option><option value="weighted">Weighted</option></select><select id="project-backend-value" class="select-control" aria-label="Fixed backend"></select><div id="project-backend-weights" class="project-weights" hidden></div><small class="project-policy-hint">Applies to files using the VM pass.</small></fieldset>
+          <div class="project-actions"><button id="project-current" class="button ghost" title="Copy Single File passes and options, then use them as the project preset.">Import Single File settings</button><button id="project-preview" class="button">Refresh preview</button><button id="project-reroll" class="button ghost">Reroll</button></div>
+        </div>
+        </details>
+        <div class="project-explorer">
+          <section class="project-tree-panel" aria-label="Project modules">
+            <div class="project-filters"><input id="project-search" class="text-control" type="search" placeholder="Search modules" aria-label="Search modules"><select id="project-filter-backend" class="select-control" aria-label="Filter backend"><option value="">All backends</option><option value="karity">Karity</option><option value="classic">Classic</option><option value="mov">MOV</option><option value="bare">Bare</option><option value="none">No VM</option></select><select id="project-filter-preset" class="select-control" aria-label="Filter preset"><option value="">All presets</option></select><label><input id="project-failed-only" type="checkbox"> Failed only</label></div>
+            <p id="project-counts" class="project-muted">Choose a project folder to preview modules.</p>
+            <div id="project-tree" class="project-tree" data-live-ui></div>
+          </section>
+          <section id="project-detail" class="project-detail" aria-label="Selected module">
+            <h2 id="project-detail-name">Module details</h2><p id="project-detail-summary" class="project-muted">Select a file in the tree.</p>
+            <div id="project-override" hidden><label>Preset override<select id="project-module-preset" class="select-control"></select></label><label>Backend override<select id="project-module-backend" class="select-control"></select></label><button id="project-clear-override" class="button tiny ghost">Use project settings</button></div>
+            <dl id="project-detail-values" class="project-detail-values"></dl><details id="project-warning-details" hidden><summary id="project-warning-summary">Warnings</summary><pre id="project-detail-warnings" class="project-warnings"></pre></details>
+            <div id="project-dependencies" class="project-dependencies"></div>
+            <button id="project-view-output" class="button tiny" disabled>View output</button><pre id="project-result-code" class="project-result-code" hidden tabindex="0"></pre>
+          </section>
+        </div>
+        <footer class="project-footer"><div class="project-muted">Original files stay unchanged. Results are saved to the output folder.</div><progress id="project-progress-bar" max="1" value="0" aria-label="Project build progress"></progress><button id="project-build" class="button primary" aria-describedby="project-feedback" disabled>Choose a project folder</button></footer>
+      </section>
       <section id="workspace-toolbar" class="workspace-toolbar v2-only">
         <div id="preset-toolbar-slot"></div>
         <div id="toolbar-actions" class="toolbar-actions"><button id="settings-open" class="button ghost" title="빌드 설정">⚒ <span>설정</span></button></div>
@@ -400,6 +459,7 @@ print(&quot;hello, karity&quot;)"></textarea>
 <script src="editor.js"></script>
 <script src="preset_state.js"></script>
 <script src="experience.js"></script>
+<script src="project.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

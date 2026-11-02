@@ -1,6 +1,8 @@
 """Shared repeated host checks independent of opcode/blob representation."""
 
-GUARD_SOURCE = '''function S.guard(force)
+GUARD_SOURCE = '''local periodic,binding_owners={},{}
+for i=1,#bindings do binding_owners[bindings[i][1]]=true end
+function S.guard(force)
  if failed then fail() end
  ticks=(ticks+1)%127
  if not force and ticks~=0 then return end
@@ -11,8 +13,22 @@ GUARD_SOURCE = '''function S.guard(force)
  for i=1,#bindings do local b=bindings[i]
   if not same(b[1][b[2]],b[3]) then fail() end
  end
+ if ticks==0 then
+  for i=1,#periodic do local b=periodic[i]
+   if not same(b[1][b[2]],b[3]) then fail() end
+  end
+ end
  local hook,mask,count=hook0()
  if hook~=nil or (mask and #mask>0) or (count and count~=0) then fail() end
+end'''
+
+
+WRITE_BINDINGS = '''if binding_owners[t] then
+ for group=1,2 do local records=group==1 and bindings or periodic
+  for i=1,#records do local b=records[i]
+   if same(b[1],t) and same(b[2],k) then b[3]=t[k] end
+  end
+ end
 end'''
 
 

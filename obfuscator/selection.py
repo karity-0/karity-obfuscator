@@ -85,14 +85,15 @@ def _options(source, position, tail, feature):
         if len(set(flags)) != len(flags) or set(flags) & set(result):
             raise ValueError()
         if feature == "function_obf" and flags:
-            known = {"cff", "junk", "inline", "wrapper", "split", "loop_split", "loop_unroll"}
+            known = {"cff", "junk", "inline", "wrapper", "merge", "split", "loop_split", "loop_unroll"}
             if set(flags) - known:
                 raise ValueError("unknown function feature: " + ", ".join(sorted(set(flags) - known)))
             result = {**{key: key in flags for key in known - {"split"}}, **result}
-            if "split" in flags:
+            if "split" in flags or "merge" in flags:
                 if result.get("cff") is False and "cff" in {item.arg for item in call.keywords}:
-                    raise ValueError("split requires cff")
+                    raise ValueError("split/merge requires cff")
                 result["cff"] = True
+            if "split" in flags:
                 result["boundary_mode"] = "split"
         else:
             result.update({key: True for key in flags})

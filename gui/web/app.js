@@ -29,6 +29,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   let api = null;
   let experience = null;
+  let projectMode = null;
   let bootstrap = null;
   let state = null;
   let preferences = null;
@@ -45,7 +46,12 @@ document.addEventListener('DOMContentLoaded', () => {
   const clone = (value) => JSON.parse(JSON.stringify(value));
   const titleCase = (value) => String(value || '').replace(/[-_]/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
   const formatPercent = (value) => `${Math.round(Number(value || 0) * 100)}%`;
-  const presetLabels = { 'builtin:fast': ['빠르게', '선택 보호'], 'builtin:balanced': ['균형', '선택 보호'], 'builtin:strong': ['강하게', '전체 보호'], 'builtin:maximum': ['최대', '전체 보호'] };
+  const presetLabels = {
+    'builtin:fast': ['빠르게', '최소 소스 변환 · 1 VM'],
+    'builtin:balanced': ['균형', 'Boolean + Table + Compact String · 1 VM'],
+    'builtin:strong': ['강하게', 'Flow String + CFF + Number · 2 VM'],
+    'builtin:maximum': ['최대', '강화된 소스 보호 + Packer · 3 VM'],
+  };
   const preferenceTabs = ['appearance', 'gui', 'editor', 'general'];
   const editors = [window.LuaCodeEditor.attach(ui.input), window.LuaCodeEditor.attach(ui.output)];
   const tr = text => window.GuiI18n.tr(text, preferences?.language || 'ko');
@@ -93,6 +99,8 @@ document.addEventListener('DOMContentLoaded', () => {
         executeCode, runObfuscation, saveConfiguration, copyOutput,
         presetLabel: name => tr(presetLabels[name]?.[0] || titleCase(name))});
       renderAll();
+      projectMode = window.ProjectMode.attach({api, bootstrap, getConfig: () => clone(state.config), tr,
+        isSingleBusy: () => ui.run.disabled || Boolean(executionId) || executionStarting});
       const version = await api.get_version();
       document.getElementById("app-version").textContent = `v${version}`;
       ui.backendLabel.textContent = 'backend ready';
@@ -138,7 +146,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const button = document.createElement('button');
       button.className = 'preset-button';
       button.dataset.preset = name;
-      button.title = presetLabels[name]?.[1] || titleCase(name);
+      button.title = tr(presetLabels[name]?.[1] || titleCase(name));
       const [label] = presetLabels[name] || [titleCase(name)];
       const title = document.createElement('strong'); title.textContent = label;
       button.append(title);
@@ -317,6 +325,23 @@ document.addEventListener('DOMContentLoaded', () => {
       state.config.target.host_images = event.target.value.split(/\r?\n/).map(path => path.trim()).filter(Boolean);
       markPresetCustom();
     });
+    $('packer-key-enabled').addEventListener('change', event => {
+      state.config.packer_options ||= {};
+      state.config.packer_options.external_key_enabled = event.target.checked;
+      markPresetCustom();
+      renderKeyAuthentication();
+    });
+    $('packer-external-key').addEventListener('input', event => {
+      state.config.packer_options ||= {};
+      state.config.packer_options.external_key = event.target.value || null;
+      markPresetCustom();
+      renderKeyAuthentication(false);
+    });
+    $('packer-missing-key-message').addEventListener('input', event => {
+      state.config.packer_options ||= {};
+      state.config.packer_options.missing_key_message = event.target.value;
+      markPresetCustom();
+    });
     ['lua_executable', 'luac_executable', 'lua_library'].forEach(key => {
       $(key).addEventListener('input', event => {
         state.config[key] = event.target.value.trim() || null;
@@ -354,6 +379,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
   function renderAll() {
     ensureConfigShape();
+    renderKeyAuthentication();
     $('target-host_images').value = (state.config.target.host_images || []).join('\n');
     Object.entries({lua_version: '5.3', environment: 'standalone', compatibility: 'runtime_specific'}).forEach(([key, fallback]) => {
       $(`target-${key}`).value = state.config.target[key] || fallback;
@@ -606,6 +632,21 @@ document.addEventListener('DOMContentLoaded', () => {
     markPresetCustom();
   }
 
+  function renderKeyAuthentication(refreshFields = true) {
+    const options = state.config.packer_options || {};
+    const enabled = options.external_key_enabled ?? (options.external_key != null);
+    $('packer-key-enabled').checked = enabled;
+    $('packer-key-fields').disabled = !enabled;
+    const status = !enabled ? 'Authentication disabled' : !state.config.passes.includes('pack') ? 'Packer required'
+      : !options.external_key ? 'Enter an execution key' : 'Authentication enabled';
+    $('key-auth-status').textContent = tr(status);
+    if (refreshFields) {
+      $('packer-external-key').value = options.external_key ?? '';
+      $('packer-missing-key-message').value = options.missing_key_message
+        ?? 'external key required as first chunk argument';
+    }
+  }
+
   function renderPasses() {
     Object.entries(ui.passLists).forEach(([context, container]) => {
       container.innerHTML = '';
@@ -619,6 +660,7 @@ document.addEventListener('DOMContentLoaded', () => {
           togglePass(context, pass.name, event.target.checked);
           markPresetCustom();
           renderPasses();
+          renderKeyAuthentication(false);
           updateOverview();
         });
         container.appendChild(label);
@@ -659,7 +701,11 @@ document.addEventListener('DOMContentLoaded', () => {
     row.dataset.hint = option.description;
     row.innerHTML = `<div><span class="option-label">${option.label}</span><small class="option-description">${option.name}</small></div><div class="option-control"></div>`;
     const host = row.querySelector('.option-control');
-    const current = state.config.vm_options[option.name] ?? option.default;
+    const defaultBackend = bootstrap.backend_aliases[state.config.vm_options.backend] ?? state.config.vm_options.backend ?? 'karity';
+    const targetDefault = option.default_target
+      ? option.default_target.backend === defaultBackend && option.default_target.lua_version === (state.config.target?.lua_version ?? '5.3')
+      : option.default;
+    const current = state.config.vm_options[option.name] ?? targetDefault;
 
     if (option.kind === 'requirements') {
       const fields = document.createElement('div');
@@ -812,6 +858,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function saveConfiguration() {
+    if (projectMode?.active()) return projectMode.save();
     try {
       const result = await api.save_config(state);
       ui.saveStatus.textContent = tr(result.ok ? 'Saved locally' : 'Save failed');
@@ -822,6 +869,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function openFile() {
+    if (projectMode?.active()) return projectMode.load();
     setStatus('Opening file…', 'running', 'Waiting for file selection.');
     const result = await api.pick_input_file();
     if (!result) return setStatus('Ready', 'idle', 'File selection cancelled.');
@@ -842,6 +890,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function copyOutput() {
+    if (projectMode?.active()) return projectMode.notice('Select a module and use View output.');
     if (!ui.output.value) return;
     try {
       await navigator.clipboard.writeText(ui.output.value);
@@ -859,6 +908,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function runObfuscation() {
+    if (projectMode?.active()) return projectMode.build();
     if (!ui.input.value.trim()) return setStatus('Input required', 'error', 'Paste Lua source or open a file.');
     ui.run.disabled = true;
     setStatus('Protecting…', 'running', `${ui.activePreset.textContent} / ${ui.activeLevel.textContent}`);
@@ -928,6 +978,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
 
   async function executeCode(target) {
+    if (projectMode?.active()) return projectMode.notice('Run the project entry from its output directory.');
     if (executionId || executionStarting) return;
     showConsole(true);
     $('console-output').replaceChildren();

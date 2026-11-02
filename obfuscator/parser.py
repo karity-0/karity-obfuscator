@@ -76,6 +76,7 @@ class Reader:
     def __init__(self, data: bytes):
         self._data = data
         self._pos  = 0
+        self.size_t_size = 8
 
     # -- 기본 ---
     def remaining(self) -> int:
@@ -96,8 +97,8 @@ class Reader:
         return struct.unpack_from('<i', self.read_bytes(4))[0]
 
     def read_size_t(self) -> int:
-        """8-byte little-endian unsigned (64-bit 플랫폼 기본)."""
-        return struct.unpack_from('<Q', self.read_bytes(8))[0]
+        """Unsigned string length using the chunk header's native width."""
+        return int.from_bytes(self.read_bytes(self.size_t_size), 'little')
 
     def read_lua_integer(self) -> int:
         """lua_Integer = int64."""
@@ -151,6 +152,10 @@ class Lua53Parser:
         instr_size       = self._r.read_byte()   # 4
         lua_integer_size = self._r.read_byte()   # 8
         lua_number_size  = self._r.read_byte()   # 8
+
+        if (int_size, instr_size, lua_integer_size, lua_number_size)!=(4,4,8,8) or size_t_size not in (4,8):
+            raise ValueError(f"unsupported Lua 5.3 chunk sizes: {(int_size,size_t_size,instr_size,lua_integer_size,lua_number_size)}")
+        self._r.size_t_size = size_t_size
 
         # 검증용 샘플 값
         chk_int = self._r.read_lua_integer()

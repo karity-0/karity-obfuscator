@@ -26,12 +26,14 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .base import PostPass
+from ..custom_names import output_scope
 from ..toolchain import LuaToolchain, LIBRARY_DUMP_FUNCTION
 
 
 _STUB_PATH = Path(__file__).parent / "pack_stub.lua"
 _MASK32 = 0xFFFFFFFF
 _ROUTE_MASK = 0x7FFFFFFF
+DEFAULT_MISSING_KEY_MESSAGE = 'external key required as first chunk argument'
 
 _COMPRESSION_CANDIDATES = (
     (9, zlib.Z_DEFAULT_STRATEGY),
@@ -283,8 +285,7 @@ def _cache_loader_meme_constants(source: str) -> str:
     return "".join(parts)
 
 
-def _fnv1a32(data: bytes) -> int:
-    h = 0x811C9DC5
+def _fnv1a32(data: bytes, h: int = 0x811C9DC5) -> int:
     for b in data:
         h = ((h ^ b) * 0x01000193) & _MASK32
     return h
@@ -1126,7 +1127,8 @@ def _context_setup(plan: ContextPlan) -> str:
     return "".join(parts)
 
 
-def _render_loader(stub: str, plan: ContextPlan, scalar_values: dict[str, int]) -> str:
+def _render_loader(stub: str, plan: ContextPlan, scalar_values: dict[str, int],
+                   *, key_error: str | None = None) -> str:
     values = {
         **scalar_values,
         "__CTX_STATE_SLOT__": plan.slot("state"),
@@ -1134,7 +1136,15 @@ def _render_loader(stub: str, plan: ContextPlan, scalar_values: dict[str, int]) 
     }
     for token, value in values.items():
         stub = stub.replace(token, f"0x{value:08X}")
-    stub = stub.replace("__CTX_SETUP__", _context_setup(plan))
+    context = _context_setup(plan)
+    if key_error is not None:
+        from .string_mosaic import quote_plain
+        message = quote_plain(key_error.encode('utf-8'), preserve_utf8=True)
+        # Insert user text after all template substitutions, so token-like text
+        # remains literal and cannot change the generated loader or its context.
+        context = ('if _type(_key)~="string" or #_key==0 then '
+                   f'error({message},0) end\n' + context)
+    stub = stub.replace("__CTX_SETUP__", context)
     return stub
 
 
@@ -1220,12 +1230,15 @@ def _rewrite_vm_payload(script: str, plan: ContextPlan, state: int) -> str:
     return prefix + body
 
 
-def _render_packed(loader_src: str, payload: str, plan: ContextPlan) -> str:
-    arguments="{n=select('#',...),...}" if plan.forward_args else '{n=0}'
+def _render_packed(loader_src: str, payload: str, plan: ContextPlan, *, keyed: bool = False) -> str:
+    forwarded = 'select(2,...)' if keyed else '...'
+    arguments = (f"{{n=select('#',{forwarded}),{forwarded}}}"
+                 if plan.forward_args else '{n=0}')
+    key_argument = ',(...)' if keyed else ''
     return (
         f"{_loader_binding(loader_src)}"
         f'local _D="{payload}";'
-        f"return _P(_D,_P,{arguments})\n"
+        f"return _P(_D,_P,{arguments}{key_argument})\n"
     )
 
 
@@ -1237,14 +1250,36 @@ class PackerPass(PostPass):
         packer_output_passes: list[str] | None = None,
         output_prefix: str = "",
         toolchain: LuaToolchain | None = None,
+        external_key: str | None = None,
+        missing_key_message: str | None = None,
     ):
+        if missing_key_message is not None:
+            if not isinstance(missing_key_message, str):
+                raise ValueError('missing_key_message must be a string or null')
+            try:
+                missing_key_message.encode('utf-8')
+            except UnicodeEncodeError:
+                raise ValueError('missing_key_message must be valid UTF-8') from None
+        self.missing_key_message = (DEFAULT_MISSING_KEY_MESSAGE if missing_key_message is None
+                                    else missing_key_message)
+        if external_key is not None:
+            if not isinstance(external_key, str) or not external_key:
+                raise ValueError('external_key must be a non-empty string or null')
+            try:
+                external_key.encode('utf-8')
+            except UnicodeEncodeError:
+                raise ValueError('external_key must be valid UTF-8') from None
+        self.external_key = external_key
         self.packer_output_passes = packer_output_passes or []
         self.output_prefix = output_prefix
         self.toolchain = toolchain or LuaToolchain()
         self.last_profile: list[dict] = []
+        self.last_custom_names: dict[str, object] = {}
 
+    @output_scope('packer_output_passes')
     def run(self, script: str) -> str:
         self.last_profile = []
+        self.last_custom_names = {}
 
         # Context shape is decided before the loader is finalized. The actual
         # state-routed indices are rendered only after the loader dump hash is known.
@@ -1264,12 +1299,22 @@ class PackerPass(PostPass):
         }
 
         stub = _STUB_PATH.read_text(encoding="utf-8")
+        if self.external_key is not None:
+            # Reuse the loader hash with a build-bound initial state. Neither
+            # the plaintext key nor an independent key verifier is emitted.
+            stub = stub.replace('return function(_D,_self,_args)',
+                                'return function(_D,_self,_args,_key)')
+            stub = stub.replace('local function _hash(s)\n    local h=0x811C9DC5',
+                                'local function _hash(s,h)\n    h=h or 0x811C9DC5')
+            stub = stub.replace('local _src=_inf(_xor(_enc,_seed))',
+                                'local _src=_inf(_xor(_enc,_hash(_key,_seed)))')
         if self.toolchain.lua_library:
             stub = stub.replace("local _dump=string.dump", "local _dump=" + LIBRARY_DUMP_FUNCTION)
         loader_src = _render_loader(
             stub,
             plan,
             scalar_values,
+            key_error=self.missing_key_message if self.external_key is not None else None,
         )
         loader_src = _obfuscate_packer_output(
             loader_src,
@@ -1277,6 +1322,8 @@ class PackerPass(PostPass):
             cache_literals=plan.is_vm,
         )
 
+        from ..custom_names import apply as apply_custom_names
+        loader_src = apply_custom_names(loader_src, reserved=('_P', '_D', 'select'))
         dump_hash = _fnv1a32(_dump_loader_stripped(loader_src, self.output_prefix, self.toolchain))
         state = _context_state(dump_hash, plan)
 
@@ -1298,6 +1345,9 @@ class PackerPass(PostPass):
             ^ ((len(comp) * 0x045D9F3B) & _MASK32)
         ) & _MASK32
 
+        if self.external_key is not None:
+            seed = _fnv1a32(self.external_key.encode('utf-8'), seed)
+
         encrypted = _rolling_xor(comp, seed)
         payload = base64.b64encode(encrypted).decode("ascii")
-        return _render_packed(loader_src, payload, plan)
+        return _render_packed(loader_src, payload, plan, keyed=self.external_key is not None)

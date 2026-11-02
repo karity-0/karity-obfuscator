@@ -7,7 +7,8 @@ _PS=(function()
         type=type,rawget=rawget,rawequal=rawequal,error=error,floor=math.floor,tonumber=tonumber,
         tostring=tostring,getmetatable=getmetatable,max=math.max,min=math.min}}
     local A=S.api
-    local counter,ticks,failed=0,0,false
+    local counter,ticks,failed,pending_evidence=0,0,false,nil
+    local validation_phase=0
     local raw,throw,hook0,kind,next0,same=A.rawget,A.error,A.hook,A.type,next,A.rawequal
     local trusted={}
     local M=2147483647
@@ -16,8 +17,28 @@ _PS=(function()
     local bindings=__PS_BINDINGS__
     local function fail()
         failed=true
+        validation_phase=3
+        pending_evidence=nil
         throw(nil,0)
+        local n=nil;return n[n]
     end
+    S.program_error=fail
+    local program_check,program_poll
+    local identity_table,script_identity,line_identity=_IT
+    function S.bind_program(bank)
+        if program_check~=nil or kind(bank)~='table' then fail() end
+        program_check,program_poll=bank.check,bank.poll
+        if kind(program_check)~='function' or kind(program_poll)~='function' then fail() end
+        for name,value in next0,bank do trusted[#trusted+1]={bank,name,value} end
+    end
+    function S.bind_identity(script,line)
+        if script_identity~=nil or kind(script)~='number' or kind(line)~='number'
+            or script<0 or script>4294967295 or script%1~=0
+            or line<0 or line>4294967295 or line%1~=0
+            or not same(_IT,identity_table) or raw(_IT,'script')~=script or raw(_IT,'line')~=line then fail() end
+        script_identity,line_identity=script,line
+    end
+    --<<RUNTIME_EVIDENCE>>
     --<<SHARED_HOST_GUARD>>
     function S.watched(t,k)
         for i=1,#bindings do local b=bindings[i]
@@ -29,12 +50,13 @@ _PS=(function()
         if _ENV_REFRESH then _ENV_REFRESH(t,false) end
         t[k]=v
         if _ENV_REFRESH then _ENV_REFRESH(t,true) end
-        for i=1,#bindings do local b=bindings[i]
-            if same(b[1],t) and same(b[2],k) then b[3]=t[k] end
-        end
+        --<<WRITE_BINDINGS>>
     end
     local function key(seed)
-        return (seed+(_IT.script or 0)%M+((_IT.line or 0)%M)*17)%(M-1)+1
+        if validation_phase==3 then fail() end
+        if script_identity==nil or not same(_IT,identity_table) or raw(_IT,'script')~=script_identity
+            or raw(_IT,'line')~=line_identity then fail() end
+        return (seed+script_identity%M+(line_identity%M)*17)%(M-1)+1
     end
     local function tag(data,seed)
         local h=(key(seed)+#data)%M
@@ -212,6 +234,7 @@ _PS=(function()
         end
     end
     trusted[#trusted+1]={S,'api',A}
+    --<<BOOTSTRAP_PROBE>>
     return S
 end)()
 _PS_GUARD=_PS.guard

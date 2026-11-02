@@ -28,6 +28,9 @@ def _unicode_unit(data, index):
 
 
 def encode_quoted(data, lua_version='5.3', *, mode=None, allow_newlines=False):
+    """Spell bytes without physical newlines, including for legacy callers
+    passing allow_newlines=True.
+    """
     if lua_version not in {'5.1', '5.3'}:
         raise ValueError('String Encode target must be Lua 5.1 or 5.3')
     if mode not in {None, 'decimal', 'short', 'hex', 'unicode'}:
@@ -65,9 +68,8 @@ def encode_quoted(data, lua_version='5.3', *, mode=None, allow_newlines=False):
         parts.append(token)
         index += size
         if mode is None and lua_version == '5.3' and index < len(data) and random.randrange(12) == 0:
-            # Emit canonical LF only: host text I/O may translate it to CRLF.
-            # Embedding CRLF here would be translated twice on Windows.
-            parts.append(r'\z' + random.choice((' ', '\t', ' \t ', '\n') if allow_newlines else (' ', '\t', ' \t ')))
+            # Spelling diversity must not add physical source lines.
+            parts.append(r'\z' + random.choice((' ', '\t', ' \t ')))
     parts.append(quote)
     return ''.join(parts)
 
@@ -92,7 +94,7 @@ class StringPolicy:
     lua_version: str = '5.3'
     enabled: bool = True
     allow_fragments: bool = True
-    allow_newlines: bool = True
+    allow_newlines: bool = False
     max_fragments: int = 4
 
     def __post_init__(self):
@@ -117,7 +119,7 @@ class StringMosaic:
             return None
         if not self.policy.allow_newlines and '\n' in content:
             return None
-        if content.startswith('\n') or (self.policy.allow_newlines and random.randrange(3) == 0):
+        if content.startswith('\n'):
             content = '\n' + content
         levels = list(range(5))
         random.shuffle(levels)

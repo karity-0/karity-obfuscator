@@ -5,6 +5,7 @@ import random
 import subprocess
 import sys
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -91,8 +92,13 @@ print(cells[1](),cells[4](),p.n,p[1],p[2],p[3],p[4])
                 pass
             else:
                 raise AssertionError('Lua 5.1 unexpectedly accepted selective VM boundaries')
-        small = build('print("hi")', version, ('strip_info','rename_obf','minify'))
-        assert len(small.encode()) < 20000
+        # Keep this structural size fixture independent of the editable catalog.
+        with patch('obfuscator.vm.constant_pool.DECOY_STRINGS', ['string1']):
+            small = build('print("hi")', version, ('strip_info','rename_obf','minify'))
+        # The protected runtime verdict adds fixed IR code even for tiny input.
+        # Source-protection regression retains the incremental growth budget;
+        # runtime-validation regression asserts the verdict really exists in IR.
+        assert len(small.encode()) < 38000
         assert all(marker not in small for marker in ('KARITY/', 'read_proto', '_ksm', 'unknown op'))
         # Getter values identify this backend's semantic representation.
         build('''local h=KARITY_GET_SCRIPT_HASH();local l=KARITY_GET_LAYOUT_HASH()

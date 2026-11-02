@@ -11,12 +11,12 @@ sys.path[:0]=[str(ROOT),str(ROOT/'test')]
 from lupa.lua51 import LuaRuntime as Lua51
 from lupa.lua53 import LuaRuntime as Lua53
 from obfuscator.vm.string_storage import encode,decode,rebind
-from obfuscator.vm.host_guards import GUARD_SOURCE
+from obfuscator.vm.host_guards import GUARD_SOURCE, WRITE_BINDINGS
 
 
 def guarded_template():
     source=(ROOT/'obfuscator/vm/runtimes/protected_strings.lua').read_text(encoding='utf8')
-    return source.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE)
+    return source.replace('--<<SHARED_HOST_GUARD>>',GUARD_SOURCE).replace('--<<WRITE_BINDINGS>>',WRITE_BINDINGS)
 
 
 def kernel(version,script=123,line=456):
@@ -27,10 +27,51 @@ def kernel(version,script=123,line=456):
     body=body.replace('__PS_UNPACK__','unpack' if version=='5.1' else 'table.unpack').replace('__PS_BINDINGS__','{}')
     runtime=(Lua51 if version=='5.1' else Lua53)(encoding=None)
     ps=runtime.execute((f'local _IT={{script={script},line={line},seed=7}}; local function _kss(v) return v end; local _PS,_PS_GUARD;'+xor+body+';return _PS').encode())
+    ps[b'bind_identity'](script,line)
     return runtime,ps
 
 
 class RuntimeSecurity(unittest.TestCase):
+    def test_environment_bank_cannot_shadow_fragment_locals(self):
+        import string
+        from obfuscator.vm.environment import bind_environment
+        # The input reserves every one-letter name except M. Previously the
+        # bank became M, capturing the guard fragment's getmetatable local.
+        names = ','.join(name for name in string.ascii_letters if name!='M')
+        template = f'return function()local {names};_ENV_CHECK();return 7 end'
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            for compact in (False,True):
+                with self.subTest(version=version,compact=compact):
+                    source,_ = bind_environment(template,lua_version=version,policy='compatible',compact=compact)
+                    self.assertEqual(7,runtime_type().execute(source)())
+
+    def test_identity_pointer_check_cannot_call_a_forged_equality_method(self):
+        for version in ('5.1','5.3'):
+            runtime,ps=kernel(version)
+            value=ps[b'seal'](b'identity-bound')
+            forge=runtime.eval(b'''function(bind)
+ local slot,original
+ for i=1,40 do local name,v=debug.getupvalue(bind,i)
+  if name=='_IT' then slot,original=i,v;break end
+ end
+ assert(slot and type(original)=='table')
+ local calls=0;local mt={__eq=function()calls=calls+1;return true end}
+ setmetatable(original,mt)
+ debug.setupvalue(bind,slot,setmetatable({script=123,line=456,seed=7},mt))
+ return function()return calls end
+end''')
+            calls=forge(ps[b'bind_identity'])
+            with self.assertRaises(Exception):ps[b'open'](value)
+            self.assertEqual(0,calls())
+
+    def test_terminal_failure_revokes_existing_protected_string_reads(self):
+        for version in ('5.1','5.3'):
+            runtime,ps=kernel(version)
+            value=ps[b'seal'](b'held-before-failure')
+            self.assertEqual(b'held-before-failure',ps[b'open'](value))
+            with self.assertRaises(Exception):ps[b'program_error']()
+            with self.assertRaises(Exception):ps[b'open'](value)
+
     def test_terminal_native_capture_preserves_shadowing_and_function_identity(self):
         from obfuscator.vm.runtime_finalization import capture_generated_apis
         source = '''return function()
@@ -61,17 +102,64 @@ end'''
         output = capture_generated_apis('return function() return _ENV["string"]["char"](65) end', lua_version='5.3')
         self.assertEqual('A', Lua53().execute(output)())
 
+    def test_terminal_native_capture_keeps_stores_declarations_and_unicode(self):
+        from obfuscator.vm.runtime_finalization import capture_generated_apis
+        source='''return function()
+local _ENV=getfenv and getfenv(1) or _ENV
+local original=string.char
+assert=assert;string.char=original
+function string.captureFixture(x)return x end
+function string:captureMethod(x)return x end
+local function shadow(string)
+ function string.custom()return 'shadow' end
+ return string.char(),string.custom()
+end
+local function read()
+ local a,b=shadow({char=function()return 'local' end})
+ return _ENV['string']['\\099har'](65),string['capture'..'Fixture']('한글'),
+        string['capture'..'Method'](string,'method'),a,b
+end
+return read,original
+end'''
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            for style in (False,True):
+                with self.subTest(version=version,style=style):
+                    runtime=runtime_type(unpack_returned_tuples=True)
+                    original=runtime.eval('string.char')
+                    output=capture_generated_apis(source,lua_version=version,string_style=style)
+                    read,captured=runtime.execute(output)()
+                    self.assertTrue(runtime.eval('rawequal')(original,captured))
+                    runtime.execute("string.char=function()return 'rebound' end")
+                    self.assertEqual(('A','한글','method','local','shadow'),read())
+        unchanged='return function()local t={string="math",_ENV="table"};return t.string end'
+        self.assertEqual(unchanged,capture_generated_apis(unchanged,lua_version='5.3'))
+
     def test_late_environment_strings_share_selected_protection(self):
+        from unittest.mock import patch
+        from obfuscator.passes.string_mosaic import StringMosaic
         from obfuscator.vm.environment import bind_environment
         from obfuscator.vm.runtime_finalization import output_finalizer
         template = 'return function() _ENV_CHECK();return _ENV_NATIVE end'
         for version, runtime_type, passes in (('5.1', Lua51, ['string_encode']),
                 ('5.3', Lua53, ['string_obf', 'minify'])):
             random.seed(4147)
-            source, _ = bind_environment(template, lua_version=version, policy='compatible',
-                compact=False, output_passes=passes)
-            for word in ('getmetatable', '__index', '__newindex', 'function', 'rawget'):
-                self.assertNotIn('"'+word+'"', source)
+            seen = set()
+            original = StringMosaic.fragments
+            def observe(generator, data, **kwargs):
+                if generator.policy.enabled:
+                    seen.add(data.encode() if isinstance(data,str) else data)
+                return original(generator, data, **kwargs)
+            with patch.object(StringMosaic, 'fragments', observe):
+                source, _ = bind_environment(template, lua_version=version, policy='compatible',
+                    compact=False, output_passes=passes)
+            words = ('getmetatable', '__index', '__newindex', 'function', 'rawget')
+            if 'string_encode' in passes:
+                # Mosaic deliberately permits plain quoted spelling. Verify
+                # activation, not an accidental spelling chosen by one seed.
+                self.assertTrue({word.encode() for word in words} <= seen)
+            else:
+                for word in words:
+                    self.assertNotIn('"'+word+'"', source)
             source = output_finalizer(passes, lua_version=version)(source)
             self.assertNotIn('string.char', source)
             self.assertNotIn('table.concat', source)
@@ -156,12 +244,18 @@ assert(comparisons==1)
                 'fake_handlers':False,'mutate_handlers':False,'junk_instructions':False,
                 'graph_execution_rate':0.0,'block_variant_rate':0.0,
             },vm_output_passes=['strip_info','rename_obf','minify']).run(source)
-            self.assertRegex(output,r'\Alocal \w+=function\(\.\.\.\)local ')
+            self.assertRegex(output,r'\Alocal \w+=function\((?:\w+,)?\.\.\.\)local ')
             match=_VM_TAIL_RE.search(output)
             self.assertIsNotNone(match)
             self.assertIsNone(match.group('tail'))
-            self.assertEqual('',match.group('args'))
-            self.assertEqual([],_alloc_plan(output).vm_args)
+            if version=='5.3':
+                # The default helper-integrity manifest is one factory argument;
+                # it must remain distinct from guest varargs and the old tail.
+                self.assertRegex(match.group('args'),r'\A"[0-9a-f]{32}(?:[0-9a-f]{16})?"\Z')
+                self.assertEqual([match.group('args')],_alloc_plan(output).vm_args)
+            else:
+                self.assertEqual('',match.group('args'))
+                self.assertEqual([],_alloc_plan(output).vm_args)
             self.assertTrue(match.group('forward_args'))
             for token in ('karityObfuscator/','runtime integrity mismatch','line_state','function_dump','_runctx'):
                 self.assertNotIn(token,output)
@@ -280,6 +374,7 @@ return r.iword(),"iword metadata header",r'''
         from obfuscator.vm.runtime_security import _capture_source, _freeze_calls
         runtime_body=guarded_template()
         body='''
+_PS.bind_identity(123,456)
 local function exercise()
  local S={length=function() return 'shadow-length' end}
  local A={max=function() return 'shadow-max' end}
@@ -633,6 +728,24 @@ assert(not pcall(callback))
                     self.assertEqual(expected,execute(version,harness))
 
 
+    def test_initial_capture_keeps_unicode_offsets_and_marker_region(self):
+        from obfuscator.vm.runtime_security import _freeze_calls,_capture_source
+        prefix='local text="한글😀";local outside={nested={}};'
+        for version,runtime_type in (('5.1',Lua51),('5.3',Lua53)):
+            source=prefix+_capture_source(native_unpack='unpack' if version=='5.1' else 'table.unpack',
+                native_table_pack=version!='5.1')+'''
+local value=0
+'''+('value=(value*3+1)%997;'*800)+'''
+local function shadow(type)return type end
+return text,type(value),string.byte('A'),shadow(17),outside.nested
+'''
+            output=_freeze_calls(source)
+            result=runtime_type(unpack_returned_tuples=True).execute(output)
+            self.assertEqual(('한글😀','number',65,17),result[:4])
+            self.assertEqual([],list(result[4].keys()))
+            with self.assertRaisesRegex(ValueError,'capture boundary'):
+                _freeze_calls('return type(7)')
+
     def test_capture_preserves_local_shadowing_and_early_initializers(self):
         from obfuscator.vm.runtime_security import _freeze_calls,_capture_source
         body="""local early=math.floor(3.9)
@@ -666,7 +779,10 @@ assert(not pcall(callback))
                     capture=folder/(mode+'.captures')
                     result=subprocess.run([lua_executable(),str(ROOT/'test/fixtures/vm_security_observer.lua'),str(artifact),mode,str(capture),secret.decode()],capture_output=True,timeout=30)
                     self.assertNotIn(b'AUDIT_CANARY_FOUND',result.stderr)
-                    if mode in ('concat','hook-late','upvalues-rewrite'):
+                    # The masked observer returns the original C function in
+                    # getinfo(...,'f'), rather than the queried wrapper. The
+                    # bootstrap's function-identity check now rejects it too.
+                    if mode in ('concat','native-masked','hook-late','upvalues-rewrite'):
                         self.assertNotEqual(0,result.returncode,result.stdout)
                         self.assertNotIn(b'AUDIT_REWRITE',result.stdout)
                     else:

@@ -23,6 +23,7 @@ from obfuscator import Pipeline, __version__
 from obfuscator.profiling import Profiler
 from obfuscator.profiling import phase_scope
 from obfuscator.gui_build import GuiBuild
+from obfuscator.gui_project import ProjectApi
 from obfuscator.gui_execution import LuaExecution
 from obfuscator.vm.backend import VM_BACKENDS, VM_BACKEND_ALIASES, unsupported_vm_options
 from obfuscator.registry import (
@@ -35,6 +36,7 @@ from obfuscator.registry import (
     resolve_config_profile,
     validate_config,
     config_warnings,
+    packer_key_enabled,
     validate_release_config,
     validate_deployment_config,
 )
@@ -74,6 +76,7 @@ _OPTION_GROUPS = {
     "fake_handlers": "Handlers", "mutate_handlers": "Handlers",
     "junk_instructions": "Handlers", "junk_rate": "Handlers",
     "integrity_constants": "Integrity", "integrity_constant_rate": "Integrity",
+    'distributed_integrity': 'Integrity', 'encoded_bitwise': 'Semantic routing',
     "graph_execution_rate": "Semantic routing", "cross_instruction_rate": "Semantic routing",
     "state_dependency_limit": "Semantic routing",
     "runtime_polymorphism_rate": "Runtime diversity", "runtime_trace": "Runtime diversity",
@@ -110,6 +113,7 @@ _OPTION_LABELS = {
     "cross_instruction_rate": "Cross-instruction rate",
     "runtime_polymorphism_rate": "Runtime polymorphism rate",
     "runtime_trace": "Runtime trace diagnostics", "block_variant_rate": "Block variant rate",
+    'distributed_integrity': 'Distributed helper integrity', 'encoded_bitwise': 'Encoded integer operations',
     "block_variant_count": "Block variants",
     "block_variant_max_instructions": "Block size limit",
     "helper_variant_count": "Helper variants", "helper_diversity_rate": "Helper diversity rate",
@@ -230,8 +234,10 @@ def _vm_option_meta() -> list[dict]:
             "resolution": {backend: vm_option_resolution(backend, name) for backend in VM_BACKENDS},
             "supported_backends": [backend for backend in VM_BACKENDS
                                    if name not in unsupported_vm_options(backend)],
-            "supported_lua_versions": ['5.3'] if name in ('ir_mba_rate','ir_rematerialization_rate') else ['5.1','5.3'],
+            "supported_lua_versions": ['5.3'] if name in ('ir_mba_rate','ir_rematerialization_rate','encoded_bitwise','distributed_integrity') else ['5.1','5.3'],
         }
+        if name in ('encoded_bitwise', 'distributed_integrity'):
+            item['default_target'] = {'backend': 'karity', 'lua_version': '5.3'}
         if name == "requirements":
             from obfuscator.vm.protection import protection_features
             item["kind"] = "requirements"
@@ -321,13 +327,14 @@ def _load_preferences() -> dict:
         return _normalize_preferences({})
 
 
-class Api:
+class Api(ProjectApi):
     """Backend exposed to JavaScript through window.pywebview.api."""
 
     def __init__(self):
         self._execution = LuaExecution()
         self._build_lock = threading.Lock()
         self._builds = GuiBuild(self.run_obfuscation)
+        self._init_project()
         self._restore_geometry: tuple[int, int, int, int] | None = None
         self._is_maximized = False
 
@@ -376,9 +383,14 @@ class Api:
                     for key, label, common in (
                         ('cff', 'CFF', True), ('junk', 'Junk', True),
                         ('inline', 'Inline helpers', True), ('wrapper', 'Wrapper', True),
+                        ('merge', 'Merge functions', True),
                         ('loop_split', 'Loop splitting', False), ('loop_unroll', 'Loop unrolling', False),
                         ('nested', 'Nested functions', False))]
         function += [
+            {'name': 'merge_max_functions', 'label': 'Functions per merge', 'kind': 'integer',
+             'min': 2, 'max': 8, 'step': 1, 'common': False},
+            {'name': 'merge_max_groups', 'label': 'Merge groups', 'kind': 'integer',
+             'min': 0, 'max': 256, 'step': 1, 'common': False},
             {'name': 'boundary_mode', 'label': 'Boundary mode', 'kind': 'enum',
              'choices': ['mixed', 'split', 'cff'], 'common': False},
             {'name': 'nested_max_depth', 'label': 'Nested depth', 'kind': 'integer',
@@ -490,6 +502,8 @@ class Api:
             return self._run_obfuscation(copy.deepcopy(payload))
 
     def _run_obfuscation(self, payload: dict):
+        if payload.get('mode')=='project':
+            return self._run_project(payload)
         script = payload.get("script", "")
         config = _complete_config(payload.get("config", {}))
         if not script.strip():
@@ -540,7 +554,11 @@ class Api:
                 from obfuscator.kes import lower_source
                 script = lower_source(script, config.get('target', {}).get('lua_version', '5.3')).source
                 script = SelectionPlan(script, config.get("selection_modes")).source
-            return self._execution.start(script, config, payload.get("source_path", ""))
+            options = config.get('packer_options', {})
+            key = (options.get('external_key') if payload.get('target') == 'output'
+                   and packer_key_enabled(options) else None)
+            arguments = [key] if key is not None else None
+            return self._execution.start(script, config, payload.get("source_path", ""), arguments=arguments)
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 

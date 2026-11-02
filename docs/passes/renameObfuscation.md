@@ -15,6 +15,12 @@ Each binding receives a unique name across the chunk, conservatively avoiding
 capture across nested functions. Sibling scopes do not currently reuse names.
 Private generated table fields use a separate allocator namespace.
 
+Edit `CUSTOM_NAMES` and `CUSTOM_NAME_COUNT` in `obfuscator/custom_names.py`
+for a single final-output budget (0 disables it). Shortages are recorded
+in `last_custom_names`; no extra locals are added. Readable mode keeps its debug names.
+Both `rename_obf` and StripInfo's local renaming enable this budget; minify does not.
+`CUSTOM_NAMES` groups function/string/integer/default names; mixed or unproven bindings use default only.
+
 Generated runtime templates may use internal symbols such as `_zN` while their
 structure is still being transformed. They pass through the same lexical planner
 at the final source emission boundary. Base pipelines finalize after generated

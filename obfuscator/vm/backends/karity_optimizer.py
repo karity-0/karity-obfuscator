@@ -61,6 +61,14 @@ def optimize_layout(layout) -> tuple[
     before = 0
     after = 0
     for vm_id, (aliases, splits, fuses, defers) in enumerate(layout.vm_maps):
+        if layout.encoded_bitwise:
+            from .karity_integer import SUPPORTED
+            unused = {vop for op, values in aliases.items() if op in SUPPORTED
+                      for vop in values if vop not in referenced[vm_id]}
+            layout.used_ops[vm_id].difference_update(unused)
+            events.append({'vm': vm_id, 'kind': 'unused-integer-alias',
+                           'outcome': 'elided', 'count': len(unused),
+                           'reason': 'no-physical-or-synthesis-reference'})
         before += len(defers)
         retained = {}
         for operation, vop in sorted(defers.items()):

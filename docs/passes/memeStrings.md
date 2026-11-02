@@ -7,8 +7,9 @@ Enable `meme_strings` in `passes`, `vm_output_passes`, or
 python main.py input.lua --passes meme_strings,minify
 ```
 
-Every numeric literal has a 35% chance of replacement, regardless of whether
-a phrase matches its value. Exact matches can use `(#"lol")` for `3`.
+Every numeric literal has a 35% chance of replacement. Groups are shuffled and
+visited once per cycle; integers choose from the full pool before correcting
+the value. A selected exact match can use `(#"lol")` for `3`.
 Other integers use string lengths plus or minus a correction, for example
 `(#"bruh" + (#"lol"))` for `7`. Corrections may themselves use string lengths;
 recursion is capped at two arithmetic levels to bound output growth.
@@ -24,12 +25,8 @@ Phrase lengths count UTF-8 bytes, including Unicode phrases. Parentheses
 preserve precedence, including powers and unary minus. Comments and existing
 strings are never rewritten. The usual build seed controls selection.
 
-The phrase pool also includes six variants wrapped in U+202E (RIGHT-TO-LEFT
-OVERRIDE) and U+202C (POP DIRECTIONAL FORMATTING). Supporting viewers display
-the phrase in reverse character order. Both controls stay inside the quoted
-Lua string; each contributes three UTF-8 bytes to its length. Generated Lua
-contains the actual control characters, while the Python phrase list spells
-them with Unicode escapes for readability.
+The `bidi` group contains U+202E (RIGHT-TO-LEFT OVERRIDE). Its Python Unicode
+escape becomes a control character inside the generated Lua string.
 
 Place this pass after string transformations to keep the fun strings visible.
 For VM/packer output, `meme_strings` before `number_obf` keeps the phrases visible

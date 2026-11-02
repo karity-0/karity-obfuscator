@@ -2011,11 +2011,22 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
                                 --<<ENDTARGET_PRIVATE_EXPRESSION>>
                                ))
         local oa,ob=_rparams(dst,epoch)
-        local encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
-                       oa*li*(regs[l1]+_RS[l2]-lb)+
-                       sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
-                       --<<ENDTARGET_PRIVATE_EXPRESSION>>
-                      )
+        -- A zero selector denotes multiplication. Compose the affine
+        -- factors before touching either operand, keeping both inputs encoded.
+        -- Private arithmetic wraps in the target's exact word domain.
+        local encoded
+        if sign==0 then
+            encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     (oa*li*ri)*(regs[l1]+_RS[l2]-lb)*(regs[r1]+_RS[r2]-rb)+ob
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
+        else
+            encoded=(--<<TARGET_PRIVATE_EXPRESSION>>
+                     oa*li*(regs[l1]+_RS[l2]-lb)+
+                     sign*oa*ri*(regs[r1]+_RS[r2]-rb)+ob
+                     --<<ENDTARGET_PRIVATE_EXPRESSION>>
+                    )
+        end
         _rstore(dst,encoded,epoch,1)
         return true
     end
@@ -2299,7 +2310,7 @@ exec = function(proto, upvals, args, va_in, _fr, _kk, _rr, _zz, _xx)
         elseif op==12 then local t=rget(B); rset(A+1,_carry(_sem(__VM_DATA_VALUE__,t,nil,nil),_av,112)); rset(A,_carry(_sem(__VM_DATA_GET__,t,rget(C),nil),_av,12))
         elseif op==13 then _arith2r(A,B,C,_av,__VM_SLOT_ADD__,1)
         elseif op==14 then _arith2r(A,B,C,_av,__VM_SLOT_SUB__,-1)
-        elseif op==15 then _arith2r(A,B,C,_av,__VM_SLOT_MUL__,nil)
+        elseif op==15 then _arith2r(A,B,C,_av,__VM_SLOT_MUL__,0)
         elseif op==16 then rset(A,_carry(_sem(__VM_OP_MOD__,rget(B),rget(C),nil),_av,16))
         elseif op==17 then rset(A,_carry(_sem(__VM_OP_POW__,rget(B),rget(C),nil),_av,17))
         elseif op==18 then rset(A,_carry(_sem(__VM_OP_DIV__,rget(B),rget(C),nil),_av,18))
@@ -2660,6 +2671,7 @@ local _fn=r.uint()
 --<<ENDTARGET_FAKE_CONSTANT_SKIP>>
     local proto=ctx.read_proto(r,acc_state)
     local env_box={v=ctx.env}
+    --<<RUNTIME_VERIFY>>
     --<<RUN_ENTRY>>
     local _root_result=ctx.CG[__VM_ROUTE_ENTER__](ctx.NX[proto.vm_id+1],
         {[__VM_Q_KIND__]=__VM_CALL_ENTER__,[__VM_Q_PROTO__]=proto,

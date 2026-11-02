@@ -21,8 +21,8 @@ The junk body uses Lua 5.3 operators; Lua 5.1 is not a supported target here.
 
 This pass is separate from `vm_options.runtime_trace`: disabling runtime trace
 removes diagnostic instrumentation during generation, while this wrapper changes
-what runs when a hook is detected. Release-check requires source anti-debug
-protection but does not certify resistance to a controlled runtime.
+what runs when a hook is detected. VM regions already perform runtime hook and
+environment validation; deployment/release checks do not require this optional pass.
 
 Implementation: [anti_debug.py](../../obfuscator/passes/anti_debug.py).
 The shared [verification suite](../../test/run_ci.py) exercises configured source

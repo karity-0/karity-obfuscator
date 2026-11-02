@@ -21,7 +21,20 @@ def main():
             'get_bootstrap','get_version','save_preferences','save_config',
             'start_build','poll_build','get_build_result','validate_marker_options','validate_kes',
             'start_execution','poll_execution','send_execution_input','stop_execution',
+            'discover_project','preview_project','read_project_output',
         )}
+        if '--project-fixture' in sys.argv:
+            from run_vm_backend_regression import options
+            source=Path(folder)/'project';(source/'lib').mkdir(parents=True);(source/'assets').mkdir()
+            (source/'main.lua').write_text('local m=require("lib.math");return m.value')
+            (source/'lib/math.lua').write_text('return {value=7}')
+            (source/'lib/native.lua').write_text('--@NO_VM_START\nreturn 9\n--@NO_VM_END')
+            (source/'util.lua').write_text('return function(a,b)return a+b end')
+            (source/'assets/settings.json').write_text('{"value":7}')
+            document={'project':{'root':str(source),'output':str(Path(folder)/'dist'),'copy_resources':True,
+                'preset_selection':{'mode':'fixed','value':'custom'},'backend_selection':{'mode':'fixed','value':'bare'}},
+                'passes':['vm'],'vm_options':options('bare'),'vm_output_passes':['minify'],'signature':{'mode':'none'}}
+            methods['load_project']=lambda:{'ok':True,'document':document,'base':folder,'path':str(Path(folder)/'project.json')}
         class Handler(SimpleHTTPRequestHandler):
             def __init__(self, *args, **kwargs):
                 super().__init__(*args, directory=str(gui.WEB_DIR), **kwargs)

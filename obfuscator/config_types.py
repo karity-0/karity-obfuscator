@@ -24,6 +24,8 @@ class LiteralMosaicOptions(TypedDict, total=False):
 
 
 class ProtectionOptions(TypedDict, total=False):
+    encoded_bitwise: bool
+    distributed_integrity: bool
     ir_mba_rate: float
     ir_test_set_rate: float
     ir_tail_duplication_rate: float
@@ -93,6 +95,12 @@ class RenameOptions(TypedDict, total=False):
     readable: bool
 
 
+class PackerOptions(TypedDict, total=False):
+    external_key_enabled: bool
+    external_key: str | None
+    missing_key_message: str | None
+
+
 class FunctionOptions(TypedDict, total=False):
     max_pass_expansion_ratio: float
     all_source_functions: bool
@@ -106,6 +114,9 @@ class FunctionOptions(TypedDict, total=False):
     junk: bool
     inline: bool
     wrapper: bool
+    merge: bool
+    merge_max_functions: int
+    merge_max_groups: int
     boundary_mode: Literal["mixed", "split", "cff"]
     nested: bool
     nested_max_depth: int
@@ -159,6 +170,7 @@ class ObfuscatorConfig(TypedDict, total=False):
     passes: list[str]
     vm_output_passes: list[str]
     packer_output_passes: list[str]
+    packer_options: PackerOptions
     vm_options: VMOptions
     rename_obf_options: RenameOptions
     function_obf_options: FunctionOptions

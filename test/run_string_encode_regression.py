@@ -65,6 +65,8 @@ class StringEncodeTests(unittest.TestCase):
                     shapes.update('long'+str(t.index('[', 1)-1) if t.startswith('[') else t[0] for t in tokens)
                     random.seed(seed)
                     expression = generator.expression(data)
+                    self.assertNotIn('\n', expression)
+                    self.assertNotIn('\r', expression)
                     for source in ('return ' + expression,
                                    'local function f(x,...)return x,select("#",...) end;return f ' + expression,
                                    'local t={[' + expression + ']=9};return ' + expression + ',t[' + expression + ']',
@@ -96,14 +98,33 @@ class StringEncodeTests(unittest.TestCase):
         for seed in range(128):
             random.seed(seed)
             outputs.append(StringMosaic().expression(b'Karity Obfuscator'))
-        self.assertTrue(any('\\z\n' in s or '\\z\r\n' in s for s in outputs))
-        self.assertTrue(any('[[\n' in s or '[=[\n' in s or '[==[\n' in s for s in outputs))
+        self.assertTrue(any('\\z' in s for s in outputs))
+        self.assertTrue(any('[' in s for s in outputs))
         for output in outputs:
+            self.assertNotIn('\n', output)
+            self.assertNotIn('\r', output)
             self.assertEqual(b'Karity Obfuscator', lua.eval(MinifyPass().run(output).encode()))
+        # Shared generation and the source pass must escape original LF bytes
+        # too, including the LF Lua normally discards after a long delimiter.
+        source = 'return "plain text", "\\nfirst\\r\\nsecond"'
+        for seed in range(32):
+            random.seed(seed)
+            output = build_pipeline_from_config({'passes':['string_encode','minify']},
+                Pipeline, show_header=False).run(source)
+            self.assertNotIn('\n', output)
+            self.assertNotIn('\r', output)
+            self.assertEqual(lua.execute(source.encode()), lua.execute(output.encode()))
+            # Even callers allowing existing multiline values never receive
+            # randomly inserted blank lines or newline whitespace after \z.
+            output = StringMosaic(StringPolicy(allow_newlines=True)).expression(b'plain text')
+            self.assertNotIn('\n', output)
+            output = _encode_bytes(b'plain text', allow_newlines=True)
+            self.assertNotIn('\n', output)
         service = LiteralMosaic(['string_encode'],lua_version='5.1')
         with use_mosaic(service):
             self.assertTrue(service.strings().policy.enabled)
             self.assertEqual('5.1',service.strings().policy.lua_version)
+            self.assertFalse(service.strings().policy.allow_newlines)
             # Output activation does not leak from source stages.
             self.assertFalse(boundary([],lua_version='5.3').strings().policy.enabled)
         self.assertFalse(LiteralMosaic().strings().policy.enabled)

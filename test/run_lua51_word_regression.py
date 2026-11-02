@@ -780,7 +780,9 @@ end''').encode())
     float_storage=mov_source.split('--<<TARGET_MOV_FLOAT_STORAGE>>',1)[1].split(
         '--<<ENDTARGET_MOV_FLOAT_STORAGE>>',1)[0]
     assert '_target51' not in float_storage and 'string.pack' not in float_storage
-    roundtrip=lua.execute((captured_api(mov_source)+float_storage+'''local encode,decode={},{}
+    words='local function words(value)'+mov_source.split('local function words(value)',1)[1].split('local function valid_value',1)[0]
+    words+='local _PG_WORDS=words\n'
+    roundtrip=lua.execute((captured_api(mov_source)+words+float_storage+'''local encode,decode={},{}
 for i=0,15 do encode[i]=(i*7+3)%16;decode[(i*7+3)%16]=i end
 return function(value)
     local result=_mov_f64_from_digits(_mov_f64_digits(value,encode),decode,0)

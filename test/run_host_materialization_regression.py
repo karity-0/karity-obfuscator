@@ -4,6 +4,7 @@ from pathlib import Path
 import random
 import hashlib
 import tempfile
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
@@ -11,6 +12,7 @@ from run_image_resolver_regression import fixture
 from obfuscator.vm.targets.image_resolver import CEBinaryResolver
 from obfuscator.vm.targets.profile import TargetProfile
 from obfuscator.vm.vm_pass import VMPass
+from obfuscator.vm.targets.materialization import MaterializationPlan
 from run_vm_output_emitter_regression import run_source
 
 
@@ -57,6 +59,32 @@ def main():
             actual=(0,b'\n'.join(values)+b'\n',b'')
         assert actual == (0, b'constant\nconstant\n', b''), (backend, actual)
         print('host-backend-ok', version, backend, flush=True)
+    original=MaterializationPlan.prepare_runtime
+    for version in versions:
+        for bypass in (False,True):
+            def swapped(plan,source):
+                source=original(plan,source)
+                binding='entry[1][3]=_PS.cell_set(entry[1],entry[2]);'
+                assert source.count(binding)==1
+                if bypass:source=source.replace(binding,'entry[1][3]=_PS.seal(entry[2]);')
+                return source.replace('_host_pending[i]=nil',"_host_pending[i]=nil;entry[1][3]=_PS.seal('tampered')")
+            random.seed(123)
+            profile=TargetProfile(version,'classic',environment='cheatengine',
+                                  compatibility='binary_specific',host_images=(str(image_path),))
+            with patch.object(MaterializationPlan,'prepare_runtime',swapped):
+                output=VMPass(target=profile,vm_options={'backend':'classic','fake_handlers':False,
+                    'mutate_handlers':False,'junk_instructions':False}).run('print("constant")')
+            if version=='5.3':
+                code,stdout,_=run_source(setup+output)
+                assert (code==0 and stdout==b'tampered\n') if bypass else (code!=0 and stdout==b'')
+            else:
+                from lupa.lua51 import LuaError
+                lua=LuaRuntime(encoding=None);values=[];failed=False
+                lua.globals()[b'print']=lambda value:values.append(value)
+                try:lua.execute((setup+output).encode())
+                except LuaError:failed=True
+                assert (not failed and values==[b'tampered']) if bypass else (failed and not values)
+            print('host-cache-owner-ok',version,bypass,flush=True)
     folder.cleanup()
     return 0
 

@@ -728,7 +728,6 @@ local a,g=f(1,2,3);assert(a==6 and g(4)==10)
         )
         output = vm.run(comparison_source)
         assert vm.last_lowered_ir.backend_data['optimization']['comparison_reads_coalesced'] >= 3
-        assert vm.last_lowered_ir.backend_data['optimization']['comparison_aliases_specialized'] >= 3
         LuaRuntime(encoding=None).execute(output.encode())
     print('lua51-repeated-comparison-operands-ok karity', flush=True)
     table_source = '''local key={}

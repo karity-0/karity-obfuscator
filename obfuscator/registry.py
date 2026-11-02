@@ -213,6 +213,14 @@ PASS_DESCRIPTIONS = {
 }
 
 VM_OPTION_DOCS: dict[str, dict[str, Any]] = {
+    'encoded_bitwise': {
+        'description': 'Automatically select encoded integer representations, including bitwise, shift, comparison and division circuits (Karity, Lua 5.3; enabled by default on that target).',
+        'default': True,
+    },
+    'distributed_integrity': {
+        'description': 'Cross-check a bounded set of actual runtime helper references with externally bound prototype fingerprints (Karity, Lua 5.3; enabled by default on that target).',
+        'default': True,
+    },
     "opcode_synthesis": {"description": "Synthesize connected arithmetic, bitwise and ordered table/upvalue IR regions into program-specific opcodes, preserving logical protection events and exact source fallback.", "default": False},
     "synthesis_policy": {"description": "Choose estimated work savings or bounded regional opcode diversity. All policies enforce the same semantic and protection gates.", "default": "balanced", "values": [("efficiency","Prefer shared recipes and low overhead"),("balanced","Share common recipes with bounded regional forms"),("protection","Prefer bounded region-specific recipes")]},
     "synthesis_max_code_growth": {"description": "Per-VM additional kernel source budget relative to the target loader. Efficiency uses half, Balanced the full budget and Protection twice this allowance; compiler safety bounds always apply.", "default": 0.1, "min": 0.0, "max": 64.0},
@@ -479,6 +487,24 @@ def resolve_config_profile(config: Mapping[str, Any], profile_name: str | None =
     return cast(ObfuscatorConfig, resolved)
 
 
+def packer_key_enabled(options: Mapping[str, Any]) -> bool:
+    # Preserve already-keyed configurations written before the explicit switch.
+    return options.get('external_key_enabled', options.get('external_key') is not None) is True
+
+
+def redact_config(value):
+    """Keep build keys out of public configuration/plan reports."""
+    if isinstance(value, list):
+        return [redact_config(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+    result = {key: redact_config(item) for key, item in value.items()}
+    options = result.get('packer_options')
+    if isinstance(options, dict) and options.get('external_key') is not None:
+        options['external_key'] = '<redacted>'
+    return result
+
+
 def config_warnings(config: Mapping[str, Any]) -> list[str]:
     """Valid but unsupported controls are retained and ignored, never coerced.
 
@@ -532,17 +558,52 @@ def validate_config(config: object) -> None:
 
     _reject_nested_output_passes(config, "vm_output_passes")
     _reject_nested_output_passes(config, "packer_output_passes")
+    packer_options = config.get('packer_options', {})
+    if not isinstance(packer_options, dict) or set(packer_options) - {'external_key_enabled', 'external_key', 'missing_key_message'}:
+        raise ConfigError('packer_options supports only external_key_enabled, external_key and missing_key_message')
+    if 'external_key_enabled' in packer_options and not isinstance(packer_options['external_key_enabled'], bool):
+        raise ConfigError('packer_options.external_key_enabled must be boolean')
+    keyed = packer_key_enabled(packer_options)
+    message = packer_options.get('missing_key_message')
+    if message is not None:
+        if not isinstance(message, str):
+            raise ConfigError('packer_options.missing_key_message must be a string or null')
+        try:
+            message.encode('utf-8')
+        except UnicodeEncodeError:
+            raise ConfigError('packer_options.missing_key_message must be valid UTF-8') from None
+    external_key = packer_options.get('external_key')
+    if external_key is not None:
+        if not isinstance(external_key, str) or (keyed and not external_key):
+            raise ConfigError('packer_options.external_key must be a non-empty string or null')
+        try:
+            external_key.encode('utf-8')
+        except UnicodeEncodeError:
+            raise ConfigError('packer_options.external_key must be valid UTF-8') from None
+    if keyed:
+        if not external_key:
+            raise ConfigError('key authentication requires a non-empty packer_options.external_key')
+        if 'pack' not in config.get('passes', []):
+            raise ConfigError('packer_options.external_key requires pack in passes')
+        if config['passes'].count('pack') != 1:
+            raise ConfigError('packer_options.external_key requires exactly one pack in passes')
     _validate_rename_options(config.get("rename_obf_options", {}))
     _validate_literal_mosaic(config.get('literal_mosaic',{}))
     _validate_string_obf_options(config.get('string_obf_options', {}))
     _validate_string_obf_options(config.get('string_flow_obf_options', {}))
     _validate_literal_pass_options(config)
     _validate_function_obf_options(config.get("function_obf_options", {}))
-    _validate_vm_options(config.get("vm_options", {}))
+    target_options = config.get('target', {})
+    _validate_vm_options(config.get("vm_options", {}), lua_version=(
+        target_options.get('lua_version', '5.3') if isinstance(target_options, dict) else '5.3'))
     _validate_debug_dumps(config.get("debug_dumps", {}))
     _validate_signature(config.get("signature", {}))
     try:
         target = TargetProfile.from_config(cast(ObfuscatorConfig, config))
+        if target.backend == 'karity' and target.lua_version != '5.3':
+            for option in ('encoded_bitwise', 'distributed_integrity'):
+                if config.get('vm_options', {}).get(option):
+                    raise ValueError(f'{option} requires Lua 5.3')
         if target.host_images and "vm" not in config.get("passes", []):
             raise ValueError("target.host_images requires the VM materialization stage")
         for name in config.get("passes", []):
@@ -611,7 +672,7 @@ def validate_deployment_config(config: Mapping[str, Any]) -> None:
     """Baseline deployment checks, distinct from legacy strict release policy."""
     validate_config(config)
     errors = []
-    for name in ('vm', 'anti_debug', 'anti_decompile'):
+    for name in ('vm',):
         if name not in config.get('passes', []):
             errors.append('passes must include '+name)
     output = config.get('vm_output_passes', [])
@@ -635,7 +696,7 @@ def validate_release_config(config: Mapping[str, Any]) -> None:
     vm_options = config.get("vm_options", {})
     backend = normalize_vm_backend(vm_options.get("backend"))
 
-    required_passes = ("vm", "anti_debug", "anti_decompile")
+    required_passes = ("vm",)
     for name in required_passes:
         if name not in passes:
             errors.append(f"passes must include '{name}'")
@@ -704,7 +765,7 @@ def _validate_function_obf_options(options: dict) -> None:
     if not isinstance(options, dict):
         raise ConfigError("'function_obf_options' must be an object")
     allowed = {
-        "cff", "junk", "inline", "wrapper",
+        "cff", "junk", "inline", "wrapper", "merge", "merge_max_functions", "merge_max_groups",
         "all_source_functions",
         "max_pass_expansion_ratio",
         "boundary_mode", "nested", "nested_max_depth",
@@ -739,11 +800,13 @@ def _validate_function_obf_options(options: dict) -> None:
         raise ConfigError(
             "function_obf_options.nested_max_depth must be an integer between 0 and 16"
         )
-    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper", "all_source_functions"):
+    for key in ("loop_split", "loop_unroll", "cff", "junk", "inline", "wrapper", "merge", "all_source_functions"):
         value = options.get(key)
         if value is not None and not isinstance(value, bool):
             raise ConfigError(f"function_obf_options.{key} must be a boolean")
     for key, minimum, maximum in (
+        ("merge_max_functions", 2, 8),
+        ("merge_max_groups", 0, 256),
         ("loop_unroll_max_iterations", 0, 32),
         ("loop_max_generated_blocks", 1, 1024),
         ("loop_max_depth", 0, 16),
@@ -788,7 +851,7 @@ def _validate_function_obf_options(options: dict) -> None:
         )
 
 
-def _validate_vm_options(options: dict) -> None:
+def _validate_vm_options(options: dict, *, lua_version='5.3') -> None:
     if not isinstance(options, dict):
         raise ConfigError("'vm_options' must be an object")
     unknown = sorted(set(options) - set(VM_OPTION_DOCS))
@@ -834,7 +897,7 @@ def _validate_vm_options(options: dict) -> None:
 
     for key in ("fake_handlers", "mutate_handlers", "junk_instructions",
                 "opcode_synthesis", "opcode_splitting", "opcode_fusion",
-                "integrity_constants", "runtime_trace",
+                "integrity_constants", "runtime_trace", "encoded_bitwise", "distributed_integrity",
                 "dispatcher_target_hiding", "semantic_state_threading",
                 "argument_virtualization", "upvalue_virtualization",
                 "table_virtualization", "branch_virtualization"):
@@ -878,6 +941,9 @@ def _validate_vm_options(options: dict) -> None:
     from .vm.protection import protection_requests, resolve_capabilities
     try:
         effective = {name: info["default"] for name, info in VM_OPTION_DOCS.items()}
+        backend = normalize_vm_backend(options.get('backend'))
+        for option in ('encoded_bitwise', 'distributed_integrity'):
+            effective[option] = backend == 'karity' and lua_version == '5.3'
         effective.update(options)
         resolve_capabilities(protection_requests(cast(VMOptions, effective)),
                              backend_capabilities(normalize_vm_backend(options.get("backend"))))
@@ -996,6 +1062,9 @@ def build_pipeline_from_config[P: Pipeline](
         elif name == "pack":
             pipeline.add(cls(
                 toolchain=pipeline.toolchain,
+                external_key=(config.get('packer_options', {}).get('external_key')
+                              if packer_key_enabled(config.get('packer_options', {})) else None),
+                missing_key_message=config.get('packer_options', {}).get('missing_key_message'),
                 packer_output_passes=packer_output_passes + [
                     finalizer for finalizer in finalizers
                     if finalizer not in packer_output_passes

@@ -227,12 +227,17 @@ def check_extended_setlist():
     from obfuscator.vm import VMPass
     from lua_runtime import lua_executable
     parse = Lua53Parser.parse
+    mutated = False
     def extended(parser):
+        nonlocal mutated
         function = parse(parser)
+        if mutated:
+            return function
         for index, raw in enumerate(function.code):
             if raw & 63 == 43:
                 function.code[index] = raw & ~(511 << 14)
                 function.code.insert(index + 1, 46 | (512 << 6))
+                mutated = True
                 break
         else:
             raise AssertionError("fixture compiler did not emit SETLIST")
@@ -240,6 +245,7 @@ def check_extended_setlist():
     with tempfile.TemporaryDirectory() as directory:
         for backend in ("classic", "karity", "mov"):
             random.seed(719)
+            mutated = False
             with patch.object(Lua53Parser, "parse", extended):
                 output = VMPass(vm_options={
                     "backend": backend, "junk_instructions": False,
@@ -704,9 +710,8 @@ def check_backend_layouts():
             random.seed(71)
             conditional = VMPass(vm_options={'backend': 'mov'})
             conditional.run('local x=1;if x==1 then return x else return 2 end')
-            origins = [slot.origin
-                       for function in conditional.last_lowered_ir.backend_data['mov_slots']
-                       for slot in function.slots]
+            origins = [slot.origin for slot in
+                       conditional.last_lowered_ir.backend_data['mov_slots'][0].slots]
             assert origins.count('linker-control') == 2
             conditional_lowered = conditional.last_lowered_ir
             conditional_function = conditional_lowered.backend_data['layout'].functions
